@@ -16,9 +16,9 @@ graph LR
     Doc[Onboarding Doc] -- 2. AUTHORED_BY --> Alice[Alice]
     Alice -- 3. WORKS_WITH --> Dave[Dave]
     
-    style Doc fill:#e1f5fe,stroke:#01579b
-    style Alice fill:#e8f5e9,stroke:#1b5e20
-    style Dave fill:#fff3e0,stroke:#e65100
+    style Doc fill:#e1f5fe,stroke:#01579b,color:#333
+    style Alice fill:#e8f5e9,stroke:#1b5e20,color:#333
+    style Dave fill:#fff3e0,stroke:#e65100,color:#333
 ```
 
 ### 2. H-MEM (Hierarchical Memory)
@@ -38,10 +38,10 @@ flowchart TD
     L2 -->|Summarizes| L3
     L3 -->|Derived from| L4
     
-    style L1 fill:#ede7f6,stroke:#4527a0
-    style L2 fill:#d1c4e9,stroke:#4527a0
-    style L3 fill:#b39ddb,stroke:#4527a0
-    style L4 fill:#9575cd,stroke:#4527a0
+    style L1 fill:#ede7f6,stroke:#4527a0,color:#333
+    style L2 fill:#d1c4e9,stroke:#4527a0,color:#333
+    style L3 fill:#b39ddb,stroke:#4527a0,color:#333
+    style L4 fill:#9575cd,stroke:#4527a0,color:#333
 ```
 
 ### 3. System-1 vs System-2 Routing

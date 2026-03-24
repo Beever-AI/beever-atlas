@@ -125,13 +125,13 @@ flowchart TB
     Retrieval --> Output
     Storage <--> Lifecycle
 
-    style UserJourney fill:#e1f5fe
-    style Sources fill:#fff3e0
-    style Pipeline fill:#f3e5f5
-    style Storage fill:#e8f5e9
-    style Retrieval fill:#fce4ec
-    style Output fill:#e0f2f1
-    style Lifecycle fill:#fff8e1
+    style UserJourney fill:#e1f5fe,color:#333
+    style Sources fill:#fff3e0,color:#333
+    style Pipeline fill:#f3e5f5,color:#333
+    style Storage fill:#e8f5e9,color:#333
+    style Retrieval fill:#fce4ec,color:#333
+    style Output fill:#e0f2f1,color:#333
+    style Lifecycle fill:#fff8e1,color:#333
 ```
 
 ---
@@ -178,9 +178,9 @@ flowchart LR
     Traditional -.->|"vs"| WikiFirst
     WikiFirst --> Savings
 
-    style Traditional fill:#ffebee
-    style WikiFirst fill:#e8f5e9
-    style Savings fill:#e3f2fd
+    style Traditional fill:#ffebee,color:#333
+    style WikiFirst fill:#e8f5e9,color:#333
+    style Savings fill:#e3f2fd,color:#333
 ```
 
 ### Wiki Content Structure
@@ -275,10 +275,10 @@ flowchart TB
     P1 & P2 & P3 & P4 & P5 --> Unified
     Unified --> Search
 
-    style Input fill:#e3f2fd
-    style Processing fill:#f3e5f5
-    style Unified fill:#e8f5e9
-    style Search fill:#fff3e0
+    style Input fill:#e3f2fd,color:#333
+    style Processing fill:#f3e5f5,color:#333
+    style Unified fill:#e8f5e9,color:#333
+    style Search fill:#fff3e0,color:#333
 ```
 
 ### Competitor Comparison: Multimodal Support
@@ -366,12 +366,12 @@ flowchart TB
     C3 -->|Yes| C4 --> C5
     C3 -->|No| C6
 
-    style Ingest fill:#e3f2fd
-    style Novelty fill:#fff3e0
-    style Evolution fill:#e8f5e9
-    style Forgetting fill:#ffebee
-    style Reinforce fill:#f3e5f5
-    style Conflict fill:#fce4ec
+    style Ingest fill:#e3f2fd,color:#333
+    style Novelty fill:#fff3e0,color:#333
+    style Evolution fill:#e8f5e9,color:#333
+    style Forgetting fill:#ffebee,color:#333
+    style Reinforce fill:#f3e5f5,color:#333
+    style Conflict fill:#fce4ec,color:#333
 ```
 
 ---
@@ -433,12 +433,12 @@ flowchart TB
     S1 -->|Yes| S2 --> Response
     S1 -->|No| S3 --> R3
 
-    style Query fill:#e3f2fd
-    style Classifier fill:#fff3e0
-    style RAG fill:#e8f5e9
-    style LLM fill:#f3e5f5
-    style Sufficiency fill:#fce4ec
-    style Response fill:#e0f2f1
+    style Query fill:#e3f2fd,color:#333
+    style Classifier fill:#fff3e0,color:#333
+    style RAG fill:#e8f5e9,color:#333
+    style LLM fill:#f3e5f5,color:#333
+    style Sufficiency fill:#fce4ec,color:#333
+    style Response fill:#e0f2f1,color:#333
 ```
 
 ---
@@ -486,11 +486,11 @@ flowchart TB
     AppLayer --> DataLayer
     DataLayer --> InfraLayer
 
-    style UserLayer fill:#e3f2fd
-    style AppLayer fill:#f3e5f5
-    style MLLayer fill:#fff3e0
-    style DataLayer fill:#e8f5e9
-    style InfraLayer fill:#eceff1
+    style UserLayer fill:#e3f2fd,color:#333
+    style AppLayer fill:#f3e5f5,color:#333
+    style MLLayer fill:#fff3e0,color:#333
+    style DataLayer fill:#e8f5e9,color:#333
+    style InfraLayer fill:#eceff1,color:#333
 ```
 
 ### Technology Decision Matrix
@@ -541,7 +541,7 @@ flowchart TB
         end
     end
 
-    style Features fill:#f5f5f5
+    style Features fill:#f5f5f5,color:#333
 ```
 
 ### Summary Table
@@ -634,13 +634,13 @@ flowchart TB
     Hierarchy <--> Lifecycle
     Hierarchy --> Output
 
-    style Sources fill:#e3f2fd
-    style Adapters fill:#fff3e0
-    style Pipeline fill:#f3e5f5
-    style Memory fill:#e8f5e9
-    style Hierarchy fill:#e0f2f1
-    style Lifecycle fill:#fff8e1
-    style Output fill:#fce4ec
+    style Sources fill:#e3f2fd,color:#333
+    style Adapters fill:#fff3e0,color:#333
+    style Pipeline fill:#f3e5f5,color:#333
+    style Memory fill:#e8f5e9,color:#333
+    style Hierarchy fill:#e0f2f1,color:#333
+    style Lifecycle fill:#fff8e1,color:#333
+    style Output fill:#fce4ec,color:#333
 ```
 
 ---

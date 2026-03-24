@@ -168,18 +168,18 @@ flowchart TB
     SemanticMem <--> Lifecycle
     GraphMem <--> Lifecycle
 
-    style Sources fill:#e3f2fd
-    style Adapters fill:#fff3e0
-    style Pipeline fill:#f3e5f5
-    style SemanticMem fill:#e8f5e9
-    style GraphMem fill:#e1f5fe
-    style State fill:#eceff1
-    style Router fill:#fff8e1
-    style Sys1 fill:#e8f5e9
-    style Sys2 fill:#e1f5fe
-    style Response fill:#e0f2f1
-    style Wiki fill:#fce4ec
-    style Lifecycle fill:#fff8e1
+    style Sources fill:#e3f2fd,color:#333
+    style Adapters fill:#fff3e0,color:#333
+    style Pipeline fill:#f3e5f5,color:#333
+    style SemanticMem fill:#e8f5e9,color:#333
+    style GraphMem fill:#e1f5fe,color:#333
+    style State fill:#eceff1,color:#333
+    style Router fill:#fff8e1,color:#333
+    style Sys1 fill:#e8f5e9,color:#333
+    style Sys2 fill:#e1f5fe,color:#333
+    style Response fill:#e0f2f1,color:#333
+    style Wiki fill:#fce4ec,color:#333
+    style Lifecycle fill:#fff8e1,color:#333
 ```
 
 ---
@@ -219,8 +219,8 @@ flowchart LR
     PY --> Norm
     CS -.->|"POST /api/ingest"| Norm
 
-    style Mode1 fill:#e8f5e9
-    style Mode2 fill:#fff3e0,stroke-dasharray: 5 5
+    style Mode1 fill:#e8f5e9,color:#333
+    style Mode2 fill:#fff3e0,stroke-dasharray: 5 5,color:#333
 ```
 
 **Mode 1 (Python Adapters)** is the primary ingestion path. Each adapter fetches message history via platform-specific APIs and normalizes to `NormalizedMessage`.
@@ -629,9 +629,9 @@ flowchart TB
 
     MERGE --> RESP["Response Generator<br/>(Gemini Flash)<br/>Grounded answer + citations"]
 
-    style S1 fill:#e8f5e9
-    style S2 fill:#e1f5fe
-    style BOTH fill:#fff8e1
+    style S1 fill:#e8f5e9,color:#333
+    style S2 fill:#e1f5fe,color:#333
+    style BOTH fill:#fff8e1,color:#333
 ```
 
 ### Routing Decision Table
@@ -838,10 +838,10 @@ flowchart TB
 
     Trigger --> ClusterUpdate --> SummaryUpdate --> WikiRefresh
 
-    style Trigger fill:#fff8e1
-    style ClusterUpdate fill:#e8f5e9
-    style SummaryUpdate fill:#e3f2fd
-    style WikiRefresh fill:#fce4ec
+    style Trigger fill:#fff8e1,color:#333
+    style ClusterUpdate fill:#e8f5e9,color:#333
+    style SummaryUpdate fill:#e3f2fd,color:#333
+    style WikiRefresh fill:#fce4ec,color:#333
 ```
 
 ### Contradiction Detection + Temporal Supersession
@@ -957,11 +957,11 @@ flowchart TB
     App --> Data
     Data --> Infra
 
-    style UI fill:#e3f2fd
-    style App fill:#f3e5f5
-    style AI fill:#fff3e0
-    style Data fill:#e8f5e9
-    style Infra fill:#eceff1
+    style UI fill:#e3f2fd,color:#333
+    style App fill:#f3e5f5,color:#333
+    style AI fill:#fff3e0,color:#333
+    style Data fill:#e8f5e9,color:#333
+    style Infra fill:#eceff1,color:#333
 ```
 
 ### Technology Decision Matrix
