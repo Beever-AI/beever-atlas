@@ -1,10 +1,17 @@
 """FastAPI application entry point."""
 
+from pathlib import Path
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+# Load .env into os.environ so all modules (adapters, etc.) can read env vars
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from beever_atlas.api.ask import router as ask_router
+from beever_atlas.api.channels import router as channels_router
 from beever_atlas.infra.config import get_settings
 from beever_atlas.infra.health import DependencyHealth
 from beever_atlas.server.models import ComponentHealth, HealthResponse
@@ -26,6 +33,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API routers
+app.include_router(ask_router)
+app.include_router(channels_router)
 
 # Health check registry
 health_registry = DependencyHealth()

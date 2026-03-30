@@ -5,21 +5,31 @@ interface SummaryCardProps {
 }
 
 export function SummaryCard({ summary }: SummaryCardProps) {
+  const updatedDate = new Date(summary.updated_at);
+
   return (
-    <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-indigo-900">
-          {summary.channel_name} — Overview
-        </h3>
-        <span className="text-xs text-indigo-600">
+    <div className="rounded-2xl border border-border bg-card shadow-sm p-5 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Channel Summary</p>
+          <h3 className="text-xl font-semibold text-foreground">
+            {summary.channel_name} <span className="text-muted-foreground">overview</span>
+          </h3>
+        </div>
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-medium w-fit">
           {summary.message_count.toLocaleString()} messages
-        </span>
+        </div>
       </div>
-      <p className="text-sm text-indigo-800 leading-relaxed">
+      <p className="mt-4 text-base text-foreground/85 leading-relaxed">
         {summary.summary}
       </p>
-      <p className="mt-2 text-xs text-indigo-500">
-        Updated {new Date(summary.updated_at).toLocaleDateString()}
+      <p className="mt-4 text-sm text-muted-foreground">
+        Updated{" "}
+        {updatedDate.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}
       </p>
     </div>
   );

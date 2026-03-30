@@ -1,0 +1,382 @@
+/**
+ * Bridge REST API — exposes Chat SDK fetch capabilities to the Python backend.
+ *
+ * The bot service is the single gateway for all platform communication.
+ * These endpoints let the Python backend fetch messages, channels, and threads
+ * without needing platform-specific SDKs.
+ */
+
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Chat } from "chat";
+import type { SlackAdapter } from "@chat-adapter/slack";
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+interface NormalizedMessage {
+  content: string;
+  author: string;
+  author_name: string;
+  author_image: string | null;
+  platform: string;
+  channel_id: string;
+  channel_name: string;
+  message_id: string;
+  timestamp: string;
+  thread_id: string | null;
+  attachments: Array<{ type: string; url?: string; name?: string }>;
+  reactions: Array<{ name: string; count: number }>;
+  reply_count: number;
+  is_bot: boolean;
+  links: Array<{ url: string; title?: string; description?: string; imageUrl?: string; siteName?: string }>;
+}
+
+interface NormalizedChannel {
+  channel_id: string;
+  name: string;
+  platform: string;
+  is_member: boolean;
+  member_count: number | null;
+  topic: string | null;
+  purpose: string | null;
+}
+
+// ── Auth ────────────────────────────────────────────────────────────────────
+
+const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY || "";
+
+function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!BRIDGE_API_KEY) return true; // No key configured = no auth required (dev mode)
+
+  const authHeader = req.headers.authorization || "";
+  if (authHeader !== `Bearer ${BRIDGE_API_KEY}`) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unauthorized", code: "AUTH_FAILED" }));
+    return false;
+  }
+  return true;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function jsonResponse(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+function parseQuery(url: string): URLSearchParams {
+  const idx = url.indexOf("?");
+  return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : "");
+}
+
+function detectPlatform(bot: Chat): string {
+  // Return the first registered adapter name as default platform
+  const adapterNames = Object.keys((bot as any)._adapters || {});
+  return adapterNames[0] || "slack";
+}
+
+// ── User profile cache (module-level, persists across requests) ─────────────
+
+const userProfileCache = new Map<string, { name: string; image: string | null }>();
+
+async function resolveUser(
+  slackAdapter: SlackAdapter,
+  userId: string,
+): Promise<{ name: string; image: string | null }> {
+  if (userProfileCache.has(userId)) return userProfileCache.get(userId)!;
+  try {
+    const result = await (slackAdapter as any).client.users.info({ user: userId });
+    const profile = result.user?.profile;
+    const resolved = {
+      name: result.user?.real_name || result.user?.name || userId,
+      image: profile?.image_48 || profile?.image_72 || null,
+    };
+    userProfileCache.set(userId, resolved);
+    return resolved;
+  } catch {
+    const fallback = { name: userId, image: null };
+    userProfileCache.set(userId, fallback);
+    return fallback;
+  }
+}
+
+// ── Route handlers ──────────────────────────────────────────────────────────
+
+async function handleListChannels(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  bot: Chat,
+  slackAdapter: SlackAdapter,
+): Promise<void> {
+  try {
+    // Chat SDK has no listChannels() — use raw adapter API
+    const channels: NormalizedChannel[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const result = await (slackAdapter as any).client.conversations.list({
+        types: "public_channel,private_channel",
+        limit: 200,
+        exclude_archived: true,
+        ...(cursor ? { cursor } : {}),
+      });
+
+      for (const ch of result.channels || []) {
+        channels.push({
+          channel_id: ch.id,
+          name: ch.name || "",
+          platform: "slack",
+          is_member: ch.is_member ?? false,
+          member_count: ch.num_members ?? null,
+          topic: ch.topic?.value ?? null,
+          purpose: ch.purpose?.value ?? null,
+        });
+      }
+
+      cursor = result.response_metadata?.next_cursor;
+    } while (cursor);
+
+    jsonResponse(res, 200, { channels });
+  } catch (err) {
+    console.error("Bridge: listChannels error:", err);
+    jsonResponse(res, 500, { error: String(err), code: "FETCH_ERROR" });
+  }
+}
+
+async function handleGetChannel(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  bot: Chat,
+  slackAdapter: SlackAdapter,
+  channelId: string,
+): Promise<void> {
+  try {
+    const platform = detectPlatform(bot);
+
+    // Use Slack API directly to get channel info including is_member
+    const result = await (slackAdapter as any).client.conversations.info({
+      channel: channelId,
+    });
+    const ch = result.channel;
+
+    jsonResponse(res, 200, {
+      channel_id: channelId,
+      name: ch?.name || "",
+      platform,
+      is_member: ch?.is_member ?? false,
+      member_count: ch?.num_members ?? null,
+      topic: ch?.topic?.value ?? null,
+      purpose: ch?.purpose?.value ?? null,
+    });
+  } catch (err) {
+    console.error("Bridge: getChannel error:", err);
+    jsonResponse(res, 404, { error: `Channel ${channelId} not found`, code: "NOT_FOUND" });
+  }
+}
+
+async function handleGetMessages(
+  req: IncomingMessage,
+  res: ServerResponse,
+  bot: Chat,
+  channelId: string,
+  slackAdapter: SlackAdapter,
+): Promise<void> {
+  try {
+    const query = parseQuery(req.url || "");
+    const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
+    const sinceStr = query.get("since");
+    const sinceDate = sinceStr ? new Date(sinceStr) : null;
+
+    const platform = detectPlatform(bot);
+    const channel = bot.channel(`${platform}:${channelId}`);
+    const channelName = (await channel.fetchMetadata()).name || "";
+
+    const messages: NormalizedMessage[] = [];
+    let count = 0;
+
+    for await (const msg of channel.messages) {
+      if (count >= limit) break;
+
+      const dateSent = msg.metadata?.dateSent;
+      if (sinceDate && dateSent && dateSent < sinceDate) {
+        // channel.messages is newest-first, so once we hit a message older than `since`, stop
+        break;
+      }
+
+      const userInfo = await resolveUser(slackAdapter, msg.author?.userId || "unknown");
+
+      messages.push({
+        content: msg.text || "",
+        author: msg.author?.userId || "unknown",
+        author_name: userInfo.name,
+        author_image: userInfo.image,
+        platform,
+        channel_id: channelId,
+        channel_name: channelName,
+        message_id: msg.id || "",
+        timestamp: dateSent?.toISOString() || new Date().toISOString(),
+        thread_id: null, // top-level channel messages
+        attachments: (msg.attachments || []).map((a) => ({
+          type: a.type || "file",
+          url: a.url,
+          name: a.name,
+        })),
+        reactions: [], // Chat SDK doesn't expose reactions on fetched messages
+        reply_count: 0,
+        is_bot: msg.author?.isBot === true,
+        links: (msg.links || []).map((l) => ({
+          url: l.url,
+          title: l.title,
+          description: l.description,
+          imageUrl: l.imageUrl,
+          siteName: l.siteName,
+        })),
+      });
+      count++;
+    }
+
+    // Reverse to chronological order (oldest first)
+    messages.reverse();
+
+    jsonResponse(res, 200, { messages });
+  } catch (err) {
+    console.error("Bridge: getMessages error:", err);
+    jsonResponse(res, 500, { error: String(err), code: "FETCH_ERROR" });
+  }
+}
+
+async function handleGetThreadMessages(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  bot: Chat,
+  channelId: string,
+  threadId: string,
+): Promise<void> {
+  try {
+    const platform = detectPlatform(bot);
+    const channel = bot.channel(`${platform}:${channelId}`);
+    const channelName = (await channel.fetchMetadata()).name || "";
+
+    // Construct thread ID in Chat SDK format
+    const fullThreadId = `${platform}:${channelId}:${threadId}`;
+
+    // Access thread through the channel
+    const messages: NormalizedMessage[] = [];
+
+    for await (const msg of channel.messages) {
+      // Find the thread root and its replies
+      if (msg.id === threadId || msg.threadId === fullThreadId) {
+        messages.push({
+          content: msg.text || "",
+          author: msg.author?.userId || "unknown",
+          author_name: msg.author?.userName || msg.author?.fullName || "unknown",
+          author_image: null,
+          platform,
+          channel_id: channelId,
+          channel_name: channelName,
+          message_id: msg.id || "",
+          timestamp: msg.metadata?.dateSent?.toISOString() || new Date().toISOString(),
+          thread_id: threadId,
+          attachments: (msg.attachments || []).map((a) => ({
+            type: a.type || "file",
+            url: a.url,
+            name: a.name,
+          })),
+          reactions: [],
+          reply_count: 0,
+          is_bot: msg.author?.isBot === true,
+          links: [],
+        });
+      }
+    }
+
+    jsonResponse(res, 200, { messages });
+  } catch (err) {
+    console.error("Bridge: getThreadMessages error:", err);
+    jsonResponse(res, 500, { error: String(err), code: "FETCH_ERROR" });
+  }
+}
+
+async function handleFileProxy(
+  req: IncomingMessage,
+  res: ServerResponse,
+  slackAdapter: SlackAdapter,
+  fileUrl: string,
+): Promise<void> {
+  try {
+    const decodedUrl = decodeURIComponent(fileUrl);
+    const token = (slackAdapter as any).client.token;
+    const response = await fetch(decodedUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      jsonResponse(res, response.status, { error: "Failed to fetch file" });
+      return;
+    }
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=3600",
+    });
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.end(buffer);
+  } catch (err) {
+    console.error("Bridge: fileProxy error:", err);
+    jsonResponse(res, 500, { error: String(err), code: "FETCH_ERROR" });
+  }
+}
+
+// ── Route registration ──────────────────────────────────────────────────────
+
+export function registerBridgeRoutes(
+  bot: Chat,
+  slackAdapter: SlackAdapter,
+): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    const url = req.url || "";
+
+    if (!url.startsWith("/bridge/")) return false;
+    if (!checkAuth(req, res)) return true;
+
+    // GET /bridge/channels
+    if (req.method === "GET" && url.match(/^\/bridge\/channels(\?|$)/)) {
+      await handleListChannels(req, res, bot, slackAdapter);
+      return true;
+    }
+
+    // GET /bridge/channels/:id/threads/:tid/messages
+    const threadMatch = url.match(
+      /^\/bridge\/channels\/([^/]+)\/threads\/([^/]+)\/messages/,
+    );
+    if (req.method === "GET" && threadMatch) {
+      await handleGetThreadMessages(req, res, bot, threadMatch[1], threadMatch[2]);
+      return true;
+    }
+
+    // GET /bridge/channels/:id/messages
+    const messagesMatch = url.match(/^\/bridge\/channels\/([^/]+)\/messages/);
+    if (req.method === "GET" && messagesMatch) {
+      await handleGetMessages(req, res, bot, messagesMatch[1], slackAdapter);
+      return true;
+    }
+
+    // GET /bridge/channels/:id
+    const channelMatch = url.match(/^\/bridge\/channels\/([^/]+)$/);
+    if (req.method === "GET" && channelMatch) {
+      await handleGetChannel(req, res, bot, slackAdapter, channelMatch[1]);
+      return true;
+    }
+
+    // GET /bridge/files?url=...
+    if (req.method === "GET" && url.startsWith("/bridge/files")) {
+      const fileQuery = parseQuery(url);
+      const fileUrl = fileQuery.get("url");
+      if (fileUrl) {
+        await handleFileProxy(req, res, slackAdapter, fileUrl);
+        return true;
+      }
+    }
+
+    jsonResponse(res, 404, { error: "Bridge endpoint not found", code: "NOT_FOUND" });
+    return true;
+  };
+}

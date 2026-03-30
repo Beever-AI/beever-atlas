@@ -18,6 +18,8 @@ services:
       NEO4J_AUTH: neo4j/beever_atlas_dev
       MONGODB_URI: mongodb://mongodb:27017/beever_atlas
       REDIS_URL: redis://redis:6379
+      BRIDGE_URL: http://bot:3001
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
       interval: 30s
@@ -79,14 +81,23 @@ services:
 
   bot:
     build: ./bot
+    ports: ["3001:3001"]
     depends_on:
       redis:
         condition: service_healthy
       beever-atlas:
         condition: service_healthy
+    env_file: .env
     environment:
-      BEEVER_API_URL: http://beever-atlas:8000
+      BACKEND_URL: http://beever-atlas:8000
       REDIS_URL: redis://redis:6379
+      BOT_PORT: "3001"
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   weaviate_data:

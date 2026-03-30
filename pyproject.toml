@@ -16,6 +16,7 @@ dependencies = [
     "pymongo>=4.10.0",
     "redis>=5.2.0",
     "httpx>=0.28.0",
+    "sse-starlette>=2.1.0",
 ]
 
 [project.optional-dependencies]

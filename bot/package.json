@@ -1,19 +1,25 @@
 {
   "name": "beever-atlas-bot",
-  "version": "0.1.0",
-  "description": "Beever Atlas Chat SDK bot placeholder",
+  "version": "0.2.0",
+  "description": "Beever Atlas Chat SDK bot for Slack and multi-platform chat",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@chat-adapter/slack": "^4.23.0",
+    "@chat-adapter/state-redis": "^4.23.0",
+    "chat": "^4.23.0",
+    "dotenv": "^17.3.1",
     "ioredis": "^5.4.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }

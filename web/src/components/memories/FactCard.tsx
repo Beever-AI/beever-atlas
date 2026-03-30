@@ -7,17 +7,17 @@ interface FactCardProps {
 }
 
 function qualityBadgeColor(score: number): string {
-  if (score >= 7) return "bg-emerald-100 text-emerald-700";
-  if (score >= 4) return "bg-amber-100 text-amber-700";
-  return "bg-red-100 text-red-700";
+  if (score >= 7) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
+  if (score >= 4) return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+  return "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300";
 }
 
 function importanceBadge(importance: string): string {
   const colors: Record<string, string> = {
-    critical: "bg-red-100 text-red-700",
-    high: "bg-orange-100 text-orange-700",
-    medium: "bg-blue-100 text-blue-700",
-    low: "bg-slate-100 text-slate-600",
+    critical: "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300",
+    high: "bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300",
+    medium: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+    low: "bg-muted text-muted-foreground",
   };
   return colors[importance] || colors.low;
 }
@@ -26,32 +26,32 @@ export function FactCard({ fact }: FactCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-md border border-slate-100 bg-slate-50 hover:bg-white transition-colors">
+    <div className="rounded-xl border border-border bg-background hover:bg-muted/35 transition-colors">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-start gap-2 p-3 text-left"
+        className="w-full flex items-start gap-2.5 p-3.5 text-left"
       >
         {expanded ? (
-          <ChevronDown size={14} className="text-slate-400 mt-0.5 shrink-0" />
+          <ChevronDown size={14} className="text-muted-foreground mt-0.5 shrink-0" />
         ) : (
-          <ChevronRight size={14} className="text-slate-400 mt-0.5 shrink-0" />
+          <ChevronRight size={14} className="text-muted-foreground mt-0.5 shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-slate-800 leading-relaxed">
+          <p className="text-sm sm:text-[15px] text-foreground leading-relaxed">
             {fact.memory}
           </p>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
             <span
-              className={`px-1.5 py-0.5 text-xs font-medium rounded ${qualityBadgeColor(fact.quality_score)}`}
+              className={`px-2 py-0.5 text-xs font-semibold rounded-full ${qualityBadgeColor(fact.quality_score)}`}
             >
-              {fact.quality_score.toFixed(1)}
+              quality {fact.quality_score.toFixed(1)}
             </span>
             <span
-              className={`px-1.5 py-0.5 text-xs rounded ${importanceBadge(fact.importance)}`}
+              className={`px-2 py-0.5 text-xs font-medium rounded-full capitalize ${importanceBadge(fact.importance)}`}
             >
               {fact.importance}
             </span>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-muted-foreground">
               {fact.user_name} &middot;{" "}
               {new Date(fact.timestamp).toLocaleDateString()}
             </span>
@@ -60,12 +60,12 @@ export function FactCard({ fact }: FactCardProps) {
       </button>
 
       {expanded && (
-        <div className="border-t border-slate-100 px-3 py-2 space-y-1.5">
-          <div className="flex flex-wrap gap-1">
+        <div className="border-t border-border px-3.5 py-3 space-y-2">
+          <div className="flex flex-wrap gap-1.5">
             {fact.entity_tags.map((tag) => (
               <span
                 key={tag}
-                className="px-1.5 py-0.5 text-xs rounded bg-indigo-50 text-indigo-600"
+                className="px-2 py-0.5 text-xs rounded-full bg-primary/10 text-primary"
               >
                 {tag}
               </span>
@@ -73,7 +73,7 @@ export function FactCard({ fact }: FactCardProps) {
             {fact.topic_tags.map((tag) => (
               <span
                 key={tag}
-                className="px-1.5 py-0.5 text-xs rounded bg-slate-100 text-slate-500"
+                className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground"
               >
                 {tag}
               </span>
@@ -83,9 +83,9 @@ export function FactCard({ fact }: FactCardProps) {
             href={fact.permalink}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800"
+            className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
           >
-            <ExternalLink size={12} />
+            <ExternalLink size={14} />
             View original message
           </a>
         </div>
