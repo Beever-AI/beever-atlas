@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
-import type { MemoryTier0, MemoryTier1, MemoryTier2 } from "@/lib/types";
-import { mockSummary, mockClusters, mockFacts } from "@/lib/mock-memories";
+import { useState, useEffect } from "react";
+import { api } from "@/lib/api";
+import type { MemoryTier2 } from "@/lib/types";
 
 export interface MemoryFilters {
   topic: string;
@@ -18,42 +18,72 @@ const defaultFilters: MemoryFilters = {
   dateTo: "",
 };
 
-export function useMemories(_channelId: string) {
+interface MemoriesResponse {
+  memories: MemoryTier2[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export function useMemories(channelId: string, page = 1, limit = 50) {
   const [filters, setFilters] = useState<MemoryFilters>(defaultFilters);
-  const isLoading = false;
+  const [data, setData] = useState<MemoriesResponse>({
+    memories: [],
+    total: 0,
+    page: 1,
+    pages: 0,
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  const summary: MemoryTier0 = mockSummary;
-  const clusters: MemoryTier1[] = mockClusters;
-
-  const facts: MemoryTier2[] = useMemo(() => {
-    let filtered = [...mockFacts];
-
-    if (filters.topic) {
-      filtered = filtered.filter((f) =>
-        f.topic_tags.some((t) =>
-          t.toLowerCase().includes(filters.topic.toLowerCase()),
-        ),
-      );
+  useEffect(() => {
+    if (!channelId) {
+      setIsLoading(false);
+      return;
     }
 
-    if (filters.entity) {
-      filtered = filtered.filter((f) =>
-        f.entity_tags.some((e) =>
-          e.toLowerCase().includes(filters.entity.toLowerCase()),
-        ),
-      );
-    }
+    setIsLoading(true);
 
-    if (filters.minImportance) {
-      const levels = ["low", "medium", "high", "critical"];
-      const minIdx = levels.indexOf(filters.minImportance);
-      filtered = filtered.filter(
-        (f) => levels.indexOf(f.importance) >= minIdx,
-      );
-    }
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("limit", String(limit));
+    if (filters.topic) params.set("topic", filters.topic);
+    if (filters.entity) params.set("entity", filters.entity);
+    if (filters.minImportance) params.set("importance", filters.minImportance);
 
-    return filtered;
-  }, [filters]);
+    api
+      .get<MemoriesResponse>(
+        `/api/channels/${channelId}/memories?${params.toString()}`,
+      )
+      .then((res) => {
+        setData(res);
+        setError(null);
+      })
+      .catch((err: Error) => setError(err))
+      .finally(() => setIsLoading(false));
+  }, [channelId, page, limit, filters.topic, filters.entity, filters.minImportance]);
 
-  return { summary, clusters, facts, filters, setFilters, isLoading };
+  // Derive summary and clusters stubs for backward compat
+  const summary = {
+    channel_id: channelId,
+    channel_name: channelId,
+    summary: "",
+    updated_at: "",
+    message_count: 0,
+  };
+
+  const clusters: never[] = [];
+
+  return {
+    summary,
+    clusters,
+    facts: data.memories,
+    total: data.total,
+    page: data.page,
+    pages: data.pages,
+    filters,
+    setFilters,
+    isLoading,
+    error,
+  };
 }

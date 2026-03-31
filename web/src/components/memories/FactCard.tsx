@@ -7,8 +7,8 @@ interface FactCardProps {
 }
 
 function qualityBadgeColor(score: number): string {
-  if (score >= 7) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
-  if (score >= 4) return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
+  if (score >= 0.7) return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
+  if (score >= 0.4) return "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300";
   return "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300";
 }
 
@@ -20,6 +20,19 @@ function importanceBadge(importance: string): string {
     low: "bg-muted text-muted-foreground",
   };
   return colors[importance] || colors.low;
+}
+
+function formatTimestamp(ts: string | null): string {
+  if (!ts) return "";
+  try {
+    // Handle Slack epoch timestamps (e.g., "1711670772.571000")
+    if (/^\d+\.\d+$/.test(ts)) {
+      return new Date(parseFloat(ts) * 1000).toLocaleDateString();
+    }
+    return new Date(ts).toLocaleDateString();
+  } catch {
+    return "";
+  }
 }
 
 export function FactCard({ fact }: FactCardProps) {
@@ -38,7 +51,7 @@ export function FactCard({ fact }: FactCardProps) {
         )}
         <div className="flex-1 min-w-0">
           <p className="text-sm sm:text-[15px] text-foreground leading-relaxed">
-            {fact.memory}
+            {fact.memory_text}
           </p>
           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
             <span
@@ -51,10 +64,16 @@ export function FactCard({ fact }: FactCardProps) {
             >
               {fact.importance}
             </span>
-            <span className="text-xs text-muted-foreground">
-              {fact.user_name} &middot;{" "}
-              {new Date(fact.timestamp).toLocaleDateString()}
-            </span>
+            {fact.author_name && (
+              <span className="text-xs text-muted-foreground">
+                {fact.author_name}
+              </span>
+            )}
+            {fact.message_ts && (
+              <span className="text-xs text-muted-foreground">
+                &middot; {formatTimestamp(fact.message_ts)}
+              </span>
+            )}
           </div>
         </div>
       </button>
@@ -78,16 +97,21 @@ export function FactCard({ fact }: FactCardProps) {
                 {tag}
               </span>
             ))}
+            {fact.action_tags.map((tag) => (
+              <span
+                key={tag}
+                className="px-2 py-0.5 text-xs rounded-full bg-amber-100/60 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+              >
+                {tag}
+              </span>
+            ))}
           </div>
-          <a
-            href={fact.permalink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
-          >
-            <ExternalLink size={14} />
-            View original message
-          </a>
+          {fact.source_message_id && (
+            <div className="text-xs text-muted-foreground">
+              <ExternalLink size={14} className="inline mr-1" />
+              Source: {fact.source_message_id}
+            </div>
+          )}
         </div>
       )}
     </div>

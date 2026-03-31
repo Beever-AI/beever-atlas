@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,7 +17,6 @@ import httpx
 from beever_atlas.adapters.base import (
     BaseAdapter,
     ChannelInfo,
-    ConfigurationError,
     NormalizedMessage,
 )
 
@@ -49,8 +47,10 @@ class ChatBridgeAdapter(BaseAdapter):
         bridge_url: str | None = None,
         api_key: str | None = None,
     ) -> None:
-        self._bridge_url = bridge_url or os.environ.get("BRIDGE_URL", "http://localhost:3001")
-        self._api_key = api_key or os.environ.get("BRIDGE_API_KEY", "")
+        from beever_atlas.infra.config import get_settings
+        _settings = get_settings()
+        self._bridge_url = bridge_url or _settings.bridge_url
+        self._api_key = api_key or _settings.bridge_api_key
 
         headers: dict[str, str] = {}
         if self._api_key:
@@ -205,3 +205,7 @@ class ChatBridgeAdapter(BaseAdapter):
             )
             for ch in data.get("channels", [])
         ]
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()

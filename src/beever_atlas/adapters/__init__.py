@@ -21,8 +21,11 @@ __all__ = [
     "ConfigurationError",
     "MockAdapter",
     "NormalizedMessage",
+    "close_adapter",
     "get_adapter",
 ]
+
+_adapter: BaseAdapter | None = None
 
 
 def get_adapter() -> BaseAdapter:
@@ -34,7 +37,20 @@ def get_adapter() -> BaseAdapter:
     Returns:
         A BaseAdapter instance.
     """
+    global _adapter
+    if _adapter is not None:
+        return _adapter
     if os.environ.get("ADAPTER_MOCK", "").lower() in ("true", "1", "yes"):
-        return MockAdapter()
+        _adapter = MockAdapter()
+    else:
+        _adapter = ChatBridgeAdapter()
+    return _adapter
 
-    return ChatBridgeAdapter()
+
+async def close_adapter() -> None:
+    """Close the singleton adapter (if any) and reset it."""
+    global _adapter
+    if _adapter is None:
+        return
+    await _adapter.close()
+    _adapter = None

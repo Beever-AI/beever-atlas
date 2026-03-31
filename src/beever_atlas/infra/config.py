@@ -27,8 +27,33 @@ class Settings(BaseSettings):
     jina_api_key: str = Field(default="")
     tavily_api_key: str = Field(default="")
 
+    # LLM model tiers (ADK pipeline)
+    llm_fast_model: str = Field(default="gemini-2.5-flash")
+    llm_quality_model: str = Field(default="gemini-2.5-flash")
+
+    # Pipeline config
+    sync_batch_size: int = Field(default=10)
+    sync_max_messages: int = Field(default=1000)
+    quality_threshold: float = Field(default=0.5)
+    entity_threshold: float = Field(default=0.6)
+    max_facts_per_message: int = Field(default=2)
+    sync_batch_timeout_seconds: int = Field(default=180)
+
+    # Jina embeddings
+    jina_api_url: str = Field(default="https://api.jina.ai/v1/embeddings")
+    jina_model: str = Field(default="jina-embeddings-v4")
+    jina_dimensions: int = Field(default=2048)
+
+    # Reconciler
+    reconciler_interval_minutes: int = Field(default=15)
+
     # Application
     beever_api_url: str = Field(default="http://localhost:8000")
+    cors_origins: str = Field(default="http://localhost:5173,http://localhost:3000")
+
+    # Bridge (bot service)
+    bridge_url: str = Field(default="http://localhost:3001")
+    bridge_api_key: str = Field(default="")
 
     @property
     def neo4j_user(self) -> str:

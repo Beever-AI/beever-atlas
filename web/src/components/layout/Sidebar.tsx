@@ -4,6 +4,7 @@ import {
   MessageSquare,
   Search,
   Network,
+  Activity,
   Settings,
   PanelLeftClose,
   PanelLeft,
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/channels", icon: MessageSquare, label: "Channels" },
   { to: "/search", icon: Search, label: "Search" },
   { to: "/graph", icon: Network, label: "Graph Explorer" },
+  { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 

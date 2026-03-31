@@ -80,3 +80,7 @@ class BaseAdapter(abc.ABC):
     @abc.abstractmethod
     def normalize_message(self, raw: dict[str, Any]) -> NormalizedMessage:
         """Convert a platform-specific message dict to NormalizedMessage."""
+
+    async def close(self) -> None:
+        """Optional cleanup hook for adapters with network clients."""
+        return None

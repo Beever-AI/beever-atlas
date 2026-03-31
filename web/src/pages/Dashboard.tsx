@@ -5,6 +5,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Search } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
+import { StatCards } from "@/components/dashboard/StatCards";
+import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
+import { useStats, useActivity } from "@/hooks/useStats";
 
 interface Channel {
   channel_id: string;
@@ -21,6 +24,8 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
+  const { stats, loading: statsLoading } = useStats();
+  const { events, loading: activityLoading } = useActivity(5);
 
   useEffect(() => {
     api
@@ -69,6 +74,26 @@ export function Dashboard() {
               </button>
             ))}
           </div>
+        </section>
+
+        {/* Stats */}
+        <section className="mt-8">
+          <StatCards stats={stats} loading={statsLoading} />
+        </section>
+
+        {/* Activity Feed */}
+        <section className="mt-6">
+          <ActivityFeed events={events} loading={activityLoading} />
+          {events.length > 0 && (
+            <div className="mt-2 text-center">
+              <Link
+                to="/activity"
+                className="text-sm font-medium text-primary hover:text-primary/80"
+              >
+                View all activity →
+              </Link>
+            </div>
+          )}
         </section>
 
         {/* Connected Channels */}

@@ -16,11 +16,13 @@ import { ChannelWorkspace } from "@/pages/ChannelWorkspace";
 import { SearchPage } from "@/pages/SearchPage";
 import { GraphExplorer } from "@/pages/GraphExplorer";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ActivityPage } from "@/pages/ActivityPage";
 import { NotFound } from "@/pages/NotFound";
 import { TierBrowser } from "@/components/memories/TierBrowser";
 import { AskTab } from "@/components/channel/AskTab";
 import { WikiTab } from "@/components/channel/WikiTab";
 import { MessagesTab } from "@/components/channel/MessagesTab";
+import { GraphTab } from "@/components/graph/GraphTab";
 import { useTheme } from "@/hooks/useTheme";
 
 function PlaceholderTab({ label }: { label: string }) {
@@ -82,11 +84,12 @@ function AppShell() {
                 <Route path="ask" element={<AskTab />} />
                 <Route path="messages" element={<MessagesTab />} />
                 <Route path="memories" element={<TierBrowser />} />
-                <Route path="graph" element={<PlaceholderTab label="Graph" />} />
+                <Route path="graph" element={<GraphTab />} />
                 <Route path="settings" element={<PlaceholderTab label="Channel Settings" />} />
               </Route>
               <Route path="/search" element={<SearchPage />} />
               <Route path="/graph" element={<GraphExplorer />} />
+              <Route path="/activity" element={<ActivityPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

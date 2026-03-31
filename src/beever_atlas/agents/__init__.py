@@ -1,12 +1,13 @@
-"""ADK agent definitions for Beever Atlas.
+"""Agent catalog for Beever Atlas."""
+from __future__ import annotations
 
-Exports `root_agent` which is the entry point for the ADK Runner.
-Currently uses the echo agent for pipeline validation (M2).
-Will be replaced by the real query_router_agent in M3/M4.
-"""
+_root_agent = None
 
-from beever_atlas.agents.echo import echo_agent
 
-# The root agent is what the ADK Runner invokes.
-# Swap this import to switch from echo to real agent.
-root_agent = echo_agent
+def get_root_agent():
+    """Lazy-create the root agent (defers LLM provider access to runtime)."""
+    global _root_agent
+    if _root_agent is None:
+        from beever_atlas.agents.query.echo import create_echo_agent
+        _root_agent = create_echo_agent()
+    return _root_agent

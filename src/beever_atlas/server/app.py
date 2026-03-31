@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -10,25 +12,74 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from beever_atlas.adapters import close_adapter
 from beever_atlas.api.ask import router as ask_router
 from beever_atlas.api.channels import router as channels_router
+from beever_atlas.api.sync import shutdown_sync_runner
+from beever_atlas.api.sync import router as sync_router
+from beever_atlas.api.memories import router as memories_router
+from beever_atlas.api.graph import router as graph_router
+from beever_atlas.api.stats import router as stats_router
 from beever_atlas.infra.config import get_settings
-from beever_atlas.infra.health import DependencyHealth
-from beever_atlas.server.models import ComponentHealth, HealthResponse
+from beever_atlas.infra.health import health_registry, register_health_checks
+from beever_atlas.llm.provider import init_llm_provider
+from beever_atlas.models import ComponentHealth, HealthResponse
+from beever_atlas.stores import StoreClients, init_stores
+
+# Configure app logger with structured JSON handler so ingestion/pipeline logs
+# always appear regardless of uvicorn handler state or level filtering.
+from beever_atlas.infra.logging import StructuredFormatter
+
+_app_logger = logging.getLogger("beever_atlas")
+_app_logger.setLevel(logging.INFO)
+_json_handler = logging.StreamHandler()
+_json_handler.setLevel(logging.INFO)
+_json_handler.setFormatter(StructuredFormatter())
+_app_logger.handlers = [_json_handler]
+_app_logger.propagate = False
+
+
+# Suppress noisy uvicorn access logs for polling endpoints (sync/status, health, OPTIONS).
+class _QuietPollFilter(logging.Filter):
+    """Drop access log lines for high-frequency polling routes."""
+
+    _QUIET_FRAGMENTS = ("/sync/status ", "/api/health ", "OPTIONS /api/")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(frag in msg for frag in self._QUIET_FRAGMENTS)
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage store connections and background tasks."""
+    settings = get_settings()
+    stores = StoreClients.from_settings(settings)
+    await stores.startup()
+    init_stores(stores)
+    init_llm_provider(settings)
+    try:
+        yield
+    finally:
+        await shutdown_sync_runner()
+        await close_adapter()
+        await stores.shutdown()
+
 
 app = FastAPI(
     title="Beever Atlas",
     description="Wiki-first RAG system with dual semantic + graph memory",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS for React dev server and production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=get_settings().cors_origins.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,59 +88,12 @@ app.add_middleware(
 # Include API routers
 app.include_router(ask_router)
 app.include_router(channels_router)
+app.include_router(sync_router)
+app.include_router(memories_router)
+app.include_router(graph_router)
+app.include_router(stats_router)
 
-# Health check registry
-health_registry = DependencyHealth()
-
-
-def _register_health_checks() -> None:
-    """Register health check functions for all dependencies."""
-    settings = get_settings()
-
-    async def check_weaviate() -> None:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(f"{settings.weaviate_url}/v1/.well-known/ready")
-            r.raise_for_status()
-
-    async def check_neo4j() -> None:
-        from neo4j import AsyncGraphDatabase
-
-        driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
-        )
-        try:
-            await driver.verify_connectivity()
-        finally:
-            await driver.close()
-
-    async def check_mongodb() -> None:
-        from pymongo import AsyncMongoClient
-
-        client = AsyncMongoClient(settings.mongodb_uri, serverSelectionTimeoutMS=5000)
-        try:
-            await client.admin.command("ping")
-        finally:
-            await client.close()
-
-    async def check_redis() -> None:
-        import redis.asyncio as aioredis
-
-        client = aioredis.from_url(settings.redis_url, socket_timeout=5.0)
-        try:
-            await client.ping()
-        finally:
-            await client.aclose()
-
-    health_registry.register("weaviate", check_weaviate, timeout=5.0, critical=True)
-    health_registry.register("neo4j", check_neo4j, timeout=5.0, critical=False)
-    health_registry.register("mongodb", check_mongodb, timeout=5.0, critical=True)
-    health_registry.register("redis", check_redis, timeout=2.0, critical=False)
-
-
-_register_health_checks()
+register_health_checks()
 
 
 @app.get("/api/health", response_model=HealthResponse)

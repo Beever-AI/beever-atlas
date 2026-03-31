@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useParams, useOutletContext } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertCircle, MessageSquare, ChevronDown, ChevronUp, ImageIcon, Play, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { SyncState } from "@/hooks/useSync";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -24,6 +25,11 @@ interface Message {
   reply_count: number;
   is_bot: boolean;
   links: Array<{ url: string; title?: string; description?: string; imageUrl?: string; siteName?: string }>;
+}
+
+interface ChannelSyncContext {
+  syncState?: SyncState;
+  isSyncing?: boolean;
 }
 
 // Deterministic color from string — light/dark variants paired
@@ -153,11 +159,13 @@ function MessageSkeleton() {
 
 export function MessagesTab() {
   const { id: channelId } = useParams<{ id: string }>();
+  const { syncState, isSyncing } = useOutletContext<ChannelSyncContext>();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const wasSyncingRef = useRef(false);
 
-  useEffect(() => {
+  const fetchMessages = useCallback(() => {
     if (!channelId) return;
     setLoading(true);
     setError(null);
@@ -167,6 +175,18 @@ export function MessagesTab() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [channelId]);
+
+  useEffect(() => {
+    fetchMessages();
+  }, [fetchMessages]);
+
+  useEffect(() => {
+    const currentlySyncing = isSyncing || syncState?.state === "syncing";
+    if (wasSyncingRef.current && !currentlySyncing) {
+      fetchMessages();
+    }
+    wasSyncingRef.current = currentlySyncing;
+  }, [fetchMessages, isSyncing, syncState?.state, syncState?.job_id]);
 
   if (loading) {
     return (

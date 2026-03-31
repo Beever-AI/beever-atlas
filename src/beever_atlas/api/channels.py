@@ -118,10 +118,12 @@ async def proxy_file(url: str = Query(..., description="Slack file URL to proxy"
     if not hasattr(adapter, '_client'):
         raise HTTPException(status_code=501, detail="File proxy not available in mock mode")
 
-    bridge_url = f"{adapter._bridge_url}/bridge/files?url={url}"
+    from beever_atlas.infra.config import get_settings
+    _settings = get_settings()
+    bridge_url = f"{_settings.bridge_url}/bridge/files?url={url}"
     headers = {}
-    if adapter._api_key:
-        headers["Authorization"] = f"Bearer {adapter._api_key}"
+    if _settings.bridge_api_key:
+        headers["Authorization"] = f"Bearer {_settings.bridge_api_key}"
 
     async with _httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(bridge_url, headers=headers)

@@ -13,7 +13,7 @@ from starlette.responses import StreamingResponse
 
 from google.genai import types as genai_types
 
-from beever_atlas.agents import root_agent
+from beever_atlas.agents import get_root_agent
 from beever_atlas.agents.runner import create_runner, create_session
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ async def _run_agent_stream(
     request: Request,
 ) -> AsyncGenerator[str, None]:
     """Run the ADK agent and yield SSE events."""
-    runner = create_runner(root_agent)
+    runner = create_runner(get_root_agent())
     session = await create_session(user_id="api_user")
 
     new_message = genai_types.Content(

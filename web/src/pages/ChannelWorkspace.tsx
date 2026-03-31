@@ -5,6 +5,9 @@ import { ArrowLeft, ShieldAlert, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
+import { SyncButton } from "@/components/channel/SyncButton";
+import { SyncProgress } from "@/components/channel/SyncProgress";
+import { useSync } from "@/hooks/useSync";
 
 interface ChannelInfo {
   channel_id: string;
@@ -89,6 +92,11 @@ export function ChannelWorkspace() {
   }
 
   const isMember = channel?.is_member !== false;
+  const { syncState, triggerSync, isSyncing, error: syncError } = useSync(id ?? "");
+  const syncFailureMessage =
+    syncError || (syncState.state === "error" ? syncState.errors?.filter(Boolean).join("; ") : null);
+  const syncCompletedWithNoNew =
+    syncState.state === "idle" && !!syncState.job_id && (syncState.total_messages ?? 0) === 0;
 
   function handleRefreshStatus() {
     if (!id) return;
@@ -163,13 +171,26 @@ export function ChannelWorkspace() {
               </span>
             )}
             {channel?.member_count != null && (
-              <span className="text-sm text-muted-foreground ml-auto shrink-0 hidden sm:inline">
+              <span className="text-sm text-muted-foreground hidden sm:inline">
                 {channel.member_count.toLocaleString()} members
               </span>
             )}
+            <div className="ml-auto shrink-0">
+              {id && <SyncButton syncState={syncState} isSyncing={isSyncing} error={syncError} onSync={triggerSync} />}
+            </div>
           </div>
           {isMember && (
             <>
+              {syncFailureMessage && (
+                <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+                  Sync failed: {syncFailureMessage}
+                </div>
+              )}
+              {syncCompletedWithNoNew && (
+                <div className="rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/30 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
+                  Sync completed. No new messages were found since the last sync.
+                </div>
+              )}
               <div className="sm:hidden">
                 <label className="sr-only" htmlFor="channel-tab-select">
                   Select tab
@@ -210,10 +231,13 @@ export function ChannelWorkspace() {
         </div>
       </div>
 
+      {/* Sync progress bar — always visible when syncing */}
+      {id && <SyncProgress syncState={syncState} isSyncing={isSyncing} />}
+
       {/* Content */}
       {isMember ? (
-        <div className="overflow-auto flex-1 min-h-0" key={activeTab}>
-          <Outlet />
+        <div className="overflow-auto flex-1 min-h-0 relative" key={activeTab}>
+          <Outlet context={{ syncState, isSyncing }} />
         </div>
       ) : (
         <div className="flex items-center justify-center flex-1 min-h-0 p-6">

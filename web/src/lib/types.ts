@@ -41,19 +41,22 @@ export interface WikiResponse {
 }
 
 export interface SyncResponse {
-  status: "started" | "already_running" | "queued";
-  channel_id: string;
-  estimated_messages: number;
   job_id: string;
+  status: "started";
 }
 
 export interface SyncStatusResponse {
-  channel_id: string;
   state: "idle" | "syncing" | "error";
-  progress_pct: number;
-  messages_processed: number;
-  last_sync_at: string | null;
-  error_message: string | null;
+  job_id?: string;
+  total_messages?: number;
+  processed_messages?: number;
+  current_batch?: number;
+  current_stage?: string | null;
+  stage_timings?: Record<string, number>;
+  stage_details?: Record<string, Record<string, unknown>>;
+  errors?: string[];
+  started_at?: string | null;
+  completed_at?: string | null;
 }
 
 export interface ChannelInfo {
@@ -107,13 +110,22 @@ export interface MemoryTier1 {
 
 export interface MemoryTier2 {
   id: string;
-  memory: string;
+  memory_text: string;
   quality_score: number;
-  timestamp: string;
-  user_name: string;
+  tier: string;
+  cluster_id: string | null;
+  channel_id: string;
+  platform: string;
+  author_id: string;
+  author_name: string;
+  message_ts: string;
+  thread_ts: string | null;
+  source_message_id: string;
   topic_tags: string[];
   entity_tags: string[];
+  action_tags: string[];
   importance: string;
-  permalink: string;
-  cluster_id: string;
+  graph_entity_ids: string[];
+  valid_at: string | null;
+  invalid_at: string | null;
 }

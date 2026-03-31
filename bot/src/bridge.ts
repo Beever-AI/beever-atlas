@@ -77,6 +77,7 @@ function detectPlatform(bot: Chat): string {
 // ── User profile cache (module-level, persists across requests) ─────────────
 
 const userProfileCache = new Map<string, { name: string; image: string | null }>();
+const USER_LOOKUP_CONCURRENCY = 8;
 
 async function resolveUser(
   slackAdapter: SlackAdapter,
@@ -190,7 +191,13 @@ async function handleGetMessages(
     const channel = bot.channel(`${platform}:${channelId}`);
     const channelName = (await channel.fetchMetadata()).name || "";
 
-    const messages: NormalizedMessage[] = [];
+    const rawMessages: Array<{
+      msg: any;
+      dateSent: Date | undefined;
+      authorId: string;
+      isBot: boolean;
+      authorNameHint: string | null;
+    }> = [];
     let count = 0;
 
     for await (const msg of channel.messages) {
@@ -202,37 +209,65 @@ async function handleGetMessages(
         break;
       }
 
-      const userInfo = await resolveUser(slackAdapter, msg.author?.userId || "unknown");
-
-      messages.push({
-        content: msg.text || "",
-        author: msg.author?.userId || "unknown",
-        author_name: userInfo.name,
-        author_image: userInfo.image,
-        platform,
-        channel_id: channelId,
-        channel_name: channelName,
-        message_id: msg.id || "",
-        timestamp: dateSent?.toISOString() || new Date().toISOString(),
-        thread_id: null, // top-level channel messages
-        attachments: (msg.attachments || []).map((a) => ({
-          type: a.type || "file",
-          url: a.url,
-          name: a.name,
-        })),
-        reactions: [], // Chat SDK doesn't expose reactions on fetched messages
-        reply_count: 0,
-        is_bot: msg.author?.isBot === true,
-        links: (msg.links || []).map((l) => ({
-          url: l.url,
-          title: l.title,
-          description: l.description,
-          imageUrl: l.imageUrl,
-          siteName: l.siteName,
-        })),
+      rawMessages.push({
+        msg,
+        dateSent,
+        authorId: msg.author?.userId || "unknown",
+        isBot: msg.author?.isBot === true,
+        authorNameHint: msg.author?.userName || msg.author?.fullName || null,
       });
       count++;
     }
+
+    const userIds = [...new Set(
+      rawMessages
+        .filter((entry) => !entry.isBot && entry.authorId !== "unknown")
+        .map((entry) => entry.authorId),
+    )];
+
+    const userMap = new Map<string, { name: string; image: string | null }>();
+    for (let i = 0; i < userIds.length; i += USER_LOOKUP_CONCURRENCY) {
+      const chunk = userIds.slice(i, i + USER_LOOKUP_CONCURRENCY);
+      const resolved = await Promise.all(
+        chunk.map(async (uid) => [uid, await resolveUser(slackAdapter, uid)] as const),
+      );
+      for (const [uid, profile] of resolved) {
+        userMap.set(uid, profile);
+      }
+    }
+
+    const messages: NormalizedMessage[] = rawMessages.map(
+      ({ msg, dateSent, authorId, isBot, authorNameHint }) => {
+        const userInfo = userMap.get(authorId);
+        return {
+          content: msg.text || "",
+          author: authorId,
+          author_name: authorNameHint || userInfo?.name || authorId,
+          author_image: userInfo?.image || null,
+          platform,
+          channel_id: channelId,
+          channel_name: channelName,
+          message_id: msg.id || "",
+          timestamp: dateSent?.toISOString() || new Date().toISOString(),
+          thread_id: null, // top-level channel messages
+          attachments: (msg.attachments || []).map((a: any) => ({
+            type: a.type || "file",
+            url: a.url,
+            name: a.name,
+          })),
+          reactions: [], // Chat SDK doesn't expose reactions on fetched messages
+          reply_count: 0,
+          is_bot: isBot,
+          links: (msg.links || []).map((l: any) => ({
+            url: l.url,
+            title: l.title,
+            description: l.description,
+            imageUrl: l.imageUrl,
+            siteName: l.siteName,
+          })),
+        };
+      },
+    );
 
     // Reverse to chronological order (oldest first)
     messages.reverse();

@@ -106,8 +106,8 @@ REDIS_URL=redis://localhost:6379
 BACKEND_URL=http://localhost:8000
 
 # LLM (ADK agent)
-LLM_FAST_MODEL=gemini-2.0-flash-lite
-LLM_QUALITY_MODEL=gemini-2.0-flash
+LLM_FAST_MODEL=gemini-2.5-flash
+LLM_QUALITY_MODEL=gemini-2.5-pro
 GOOGLE_API_KEY=your-google-api-key
 ```
 
