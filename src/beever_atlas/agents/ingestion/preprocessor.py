@@ -92,18 +92,15 @@ def _clean_slack_text(text: str) -> str:
     return cleaned
 
 
-def _is_skippable(msg: dict[str, Any]) -> bool:
-    """Return True if the message should be excluded from preprocessing.
+# Word-boundary pattern for bot-like usernames. Matches "deploy-bot", "ci_bot",
+# "bot-notifier" but NOT "abbott", "robotics", "appleton".
+_BOT_USERNAME_RE = re.compile(
+    r"(?:^|[-_])bot(?:[-_]|$)|^webhook$|^integration$", re.IGNORECASE
+)
 
-    Skipped if:
-    - No ``text`` content (or text is purely whitespace).
-    - Sent by a bot (``is_bot`` flag, ``bot_id`` present, or username matches known bot patterns).
-    - Is a Slack join/leave or other system subtype.
-    """
-    text: str = (msg.get("text") or msg.get("content") or "").strip()
-    if not text:
-        return True
 
+def _is_bot_message(msg: dict[str, Any]) -> bool:
+    """Return True if the message appears to be from a bot."""
     raw_meta = msg.get("raw_metadata") if isinstance(msg.get("raw_metadata"), dict) else {}
 
     if (
@@ -114,15 +111,38 @@ def _is_skippable(msg: dict[str, Any]) -> bool:
     ):
         return True
 
-    # Catch bots that don't set is_bot flag (common with webhook-based bots).
     username = (
         msg.get("username") or msg.get("author_name") or msg.get("author") or ""
-    ).lower()
-    if username and any(
-        pattern in username
-        for pattern in ("bot", "helper", "webhook", "integration", "app")
-    ):
+    )
+    if username and _BOT_USERNAME_RE.search(username):
         return True
+
+    return False
+
+
+def _is_skippable(msg: dict[str, Any]) -> bool:
+    """Return True if the message should be excluded from preprocessing.
+
+    Skipped if:
+    - No ``text`` content (or text is purely whitespace).
+    - Sent by a bot — UNLESS it's a thread reply with substantive content (>20 chars).
+    - Is a Slack join/leave or other system subtype.
+    """
+    text: str = (msg.get("text") or msg.get("content") or "").strip()
+    if not text:
+        return True
+
+    raw_meta = msg.get("raw_metadata") if isinstance(msg.get("raw_metadata"), dict) else {}
+
+    if _is_bot_message(msg):
+        # Keep bot thread replies with substantive content (CI results, deploy notices, etc.)
+        thread_id = msg.get("thread_ts") or msg.get("thread_id")
+        msg_id = msg.get("ts") or msg.get("message_id")
+        is_thread_reply = thread_id and thread_id != msg_id
+        if is_thread_reply and len(text) > 20:
+            pass  # Keep this bot reply — it has substance
+        else:
+            return True
 
     subtype: str = msg.get("subtype") or raw_meta.get("subtype") or ""
     if subtype in _SYSTEM_SUBTYPES:

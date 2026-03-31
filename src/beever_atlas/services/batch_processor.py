@@ -38,6 +38,51 @@ _STAGE_LABELS: dict[str, str] = {
 }
 
 
+def _thread_aware_batches(messages: list[Any], batch_size: int) -> list[list[Any]]:
+    """Split messages into batches, keeping thread groups (parent + replies) intact.
+
+    Messages are expected to have replies inserted adjacent to their parent
+    by ``SyncRunner._fetch_thread_replies``. This function never splits a
+    parent from its replies across batches. Batches may slightly exceed
+    ``batch_size`` to keep a thread group together.
+    """
+    if not messages:
+        return []
+
+    batches: list[list[Any]] = []
+    current_batch: list[Any] = []
+
+    for msg in messages:
+        thread_id = getattr(msg, "thread_id", None)
+        if isinstance(msg, dict):
+            thread_id = msg.get("thread_id")
+
+        is_reply = bool(thread_id)
+
+        if not is_reply and len(current_batch) >= batch_size:
+            # Start a new batch at a top-level message boundary
+            batches.append(current_batch)
+            current_batch = []
+
+        current_batch.append(msg)
+
+    if current_batch:
+        batches.append(current_batch)
+
+    # Log warning for oversized batches
+    for i, batch in enumerate(batches):
+        if len(batch) > 2 * batch_size:
+            logger.warning(
+                "BatchProcessor: batch %d has %d messages (>2x batch_size=%d) "
+                "due to large thread group",
+                i + 1,
+                len(batch),
+                batch_size,
+            )
+
+    return batches
+
+
 def _summarize_exception(exc: Exception) -> str:
     """Create a compact, actionable error message for logs and sync status."""
     if isinstance(exc, ExceptionGroup):
@@ -104,7 +149,7 @@ class BatchProcessor:
         batch_size = settings.sync_batch_size
         batch_timeout = settings.sync_batch_timeout_seconds
         total = len(messages)
-        batches = [messages[i : i + batch_size] for i in range(0, total, batch_size)]
+        batches = _thread_aware_batches(messages, batch_size)
         max_batches = len(batches)
         logger.info(
             "BatchProcessor: start job_id=%s channel=%s (%s) total_messages=%d batch_size=%d total_batches=%d",

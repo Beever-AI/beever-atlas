@@ -85,6 +85,15 @@ self-contained. A reply saying "yes, let's do that" to a question "should we use
 should become: "The team agreed to use Redis [for the purpose discussed in thread]."
 Never leave a fact dependent on an implicit referent that isn't named.
 
+### Orphaned replies
+If a message appears to be a reply (has a `thread_ts` or `thread_id`) but no `thread_context`
+is provided, do NOT guess or hallucinate what the parent message was about. Instead,
+extract facts only from what is explicitly stated in the reply itself. If the reply
+content is too vague without context (e.g., "yes, let's do that", "agreed", "+1",
+"sounds good", "let's go with that"), return an empty facts array for that message.
+Only extract a fact from a context-less reply if it is self-contained (e.g.,
+"I deployed the hotfix to prod at 3pm").
+
 ### Multi-fact messages
 - If a message contains multiple distinct claims, extract each separately.
 - If a single claim has supporting detail, extract one unified fact incorporating the detail.

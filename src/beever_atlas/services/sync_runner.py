@@ -332,7 +332,22 @@ class SyncRunner:
             channel_id,
         )
 
-        return merged
+        # Deduplicate by message_id (conversations.replies may include the parent)
+        seen_ids: set[str] = set()
+        deduped: list[Any] = []
+        for m in merged:
+            mid = getattr(m, "message_id", "") or getattr(m, "ts", "")
+            if mid and mid in seen_ids:
+                continue
+            if mid:
+                seen_ids.add(mid)
+            deduped.append(m)
+
+        removed = len(merged) - len(deduped)
+        if removed:
+            logger.info("SyncRunner: removed %d duplicate messages after thread merge", removed)
+
+        return deduped
 
     async def _run_sync(
         self,
@@ -362,13 +377,23 @@ class SyncRunner:
                 sync_job_id=job_id,
             )
 
-            # Determine last_sync_ts from the final message processed.
+            # Determine last_sync_ts from the latest TOP-LEVEL message only.
+            # Thread replies may have older timestamps that would cause cursor drift.
             last_ts: str | None = None
             if messages:
-                last_msg = messages[-1]
-                ts = getattr(last_msg, "timestamp", None)
-                if ts is not None:
-                    last_ts = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                top_level = [
+                    m for m in messages
+                    if not getattr(m, "thread_id", None)
+                    or getattr(m, "thread_id", None) == getattr(m, "message_id", "")
+                ]
+                if top_level:
+                    timestamps = [
+                        getattr(m, "timestamp", None) for m in top_level
+                        if getattr(m, "timestamp", None) is not None
+                    ]
+                    if timestamps:
+                        max_ts = max(timestamps)
+                        last_ts = max_ts.isoformat() if hasattr(max_ts, "isoformat") else str(max_ts)
 
             # Mark job complete.
             sync_status = "failed" if result.errors else "completed"
