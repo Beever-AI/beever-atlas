@@ -74,13 +74,15 @@ function relativeTime(iso: string): string {
 }
 
 function reactionEmoji(name: string): string {
-  const map: Record<string, string> = {
-    thumbsup: "👍", thumbsdown: "👎", heart: "❤️", fire: "🔥",
-    eyes: "👀", tada: "🎉", rocket: "🚀", check: "✅",
-    "white_check_mark": "✅", plus1: "👍", minus1: "👎",
-    laugh: "😄", joy: "😂", clap: "👏", thinking_face: "🤔",
+  // Use node-emoji for comprehensive shortcode→Unicode conversion
+  const result = emojify(`:${name}:`, { fallback: () => "" });
+  if (result && result !== `:${name}:`) return result;
+  // Fallback for Slack-specific shortcodes not in node-emoji
+  const slackMap: Record<string, string> = {
+    thumbsup: "👍", thumbsdown: "👎", plus1: "👍", minus1: "👎",
+    "white_check_mark": "✅", check: "✅",
   };
-  return map[name] ?? `:${name}:`;
+  return slackMap[name] ?? `:${name}:`;
 }
 
 /**

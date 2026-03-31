@@ -264,14 +264,32 @@ async function handleGetMessages(
           message_id: msg.id || "",
           timestamp: dateSent?.toISOString() || new Date().toISOString(),
           thread_id: threadTs && threadTs !== msg.id ? threadTs : null,
-          // Use raw.files for uploaded files (Chat SDK msg.attachments may be empty)
-          attachments: (raw.files || msg.attachments || []).map((f: any) => ({
-            type: f.mimetype?.startsWith("image/") ? "image"
-                : f.mimetype?.startsWith("video/") ? "video"
-                : f.type || "file",
-            url: f.url_private || f.url,
-            name: f.name || f.title,
-          })),
+          // Combine file uploads (raw.files) with Chat SDK attachments
+          attachments: [
+            ...(raw.files || []).map((f: any) => ({
+              type: f.mimetype?.startsWith("image/") ? "image"
+                  : f.mimetype?.startsWith("video/") ? "video"
+                  : "file",
+              url: f.url_private || f.permalink,
+              name: f.name || f.title,
+            })),
+            // Slack attachment images (unfurled previews with image_url)
+            ...(raw.attachments || [])
+              .filter((a: any) => a.image_url && !a.from_url)
+              .map((a: any) => ({
+                type: "image" as const,
+                url: a.image_url,
+                name: a.title || a.fallback || "Image",
+              })),
+            // Fallback to Chat SDK attachments if raw sources are empty
+            ...(!raw.files?.length && !raw.attachments?.length
+              ? (msg.attachments || []).map((a: any) => ({
+                  type: a.type || "file",
+                  url: a.url,
+                  name: a.name,
+                }))
+              : []),
+          ],
           reactions: (raw.reactions || []).map((r: any) => ({
             name: r.name,
             count: r.count,
@@ -281,13 +299,6 @@ async function handleGetMessages(
           subtype: subtype || null,
           // Merge Chat SDK links with Slack attachment unfurls (link previews)
           links: [
-            ...(msg.links || []).map((l: any) => ({
-              url: l.url,
-              title: l.title,
-              description: l.description,
-              imageUrl: l.imageUrl,
-              siteName: l.siteName,
-            })),
             ...(raw.attachments || [])
               .filter((a: any) => a.from_url || a.original_url)
               .map((a: any) => ({
@@ -297,6 +308,13 @@ async function handleGetMessages(
                 imageUrl: a.image_url || a.thumb_url,
                 siteName: a.service_name,
               })),
+            ...(msg.links || []).map((l: any) => ({
+              url: l.url || "",
+              title: l.title,
+              description: l.description,
+              imageUrl: l.imageUrl,
+              siteName: l.siteName,
+            })),
           ],
         };
       },
