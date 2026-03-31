@@ -179,7 +179,7 @@ async function handleGetChannel(
 async function handleGetMessages(
   req: IncomingMessage,
   res: ServerResponse,
-  bot: Chat,
+  _bot: Chat,
   channelId: string,
   slackAdapter: SlackAdapter,
 ): Promise<void> {
@@ -187,140 +187,105 @@ async function handleGetMessages(
     const query = parseQuery(req.url || "");
     const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
     const sinceStr = query.get("since");
-    const sinceDate = sinceStr ? new Date(sinceStr) : null;
 
-    const platform = detectPlatform(bot);
-    const channel = bot.channel(`${platform}:${channelId}`);
-    const channelName = (await channel.fetchMetadata()).name || "";
-
-    const rawMessages: Array<{
-      msg: any;
-      dateSent: Date | undefined;
-      authorId: string;
-      isBot: boolean;
-      authorNameHint: string | null;
-    }> = [];
-    let count = 0;
-
-    for await (const msg of channel.messages) {
-      if (count >= limit) break;
-
-      const dateSent = msg.metadata?.dateSent;
-      if (sinceDate && dateSent && dateSent < sinceDate) {
-        // channel.messages is newest-first, so once we hit a message older than `since`, stop
-        break;
-      }
-
-      rawMessages.push({
-        msg,
-        dateSent,
-        authorId: msg.author?.userId || "unknown",
-        isBot: msg.author?.isBot === true,
-        authorNameHint: msg.author?.userName || msg.author?.fullName || null,
-      });
-      count++;
+    // Use raw Slack API directly instead of Chat SDK's channel.messages iterator.
+    // The Chat SDK strips files, attachments, and reactions from the raw event.
+    const historyParams: Record<string, unknown> = {
+      channel: channelId,
+      limit,
+    };
+    if (sinceStr) {
+      // Convert ISO date to Slack epoch timestamp
+      const sinceEpoch = new Date(sinceStr).getTime() / 1000;
+      historyParams.oldest = String(sinceEpoch);
     }
 
-    const userIds = [...new Set(
-      rawMessages
-        .filter((entry) => !entry.isBot && entry.authorId !== "unknown")
-        .map((entry) => entry.authorId),
-    )];
+    const result = await (slackAdapter as any).client.conversations.history(historyParams);
+    const rawSlackMessages = result.messages || [];
 
+    // Get channel name via Slack API
+    let channelName = "";
+    try {
+      const chInfo = await (slackAdapter as any).client.conversations.info({ channel: channelId });
+      channelName = chInfo.channel?.name || "";
+    } catch { /* ignore */ }
+
+    // Resolve user profiles
+    const userIds: string[] = [...new Set<string>(
+      rawSlackMessages
+        .filter((m: any) => m.user && !m.bot_id)
+        .map((m: any) => m.user as string),
+    )];
     const userMap = new Map<string, { name: string; image: string | null }>();
     for (let i = 0; i < userIds.length; i += USER_LOOKUP_CONCURRENCY) {
       const chunk = userIds.slice(i, i + USER_LOOKUP_CONCURRENCY);
       const resolved = await Promise.all(
-        chunk.map(async (uid) => [uid, await resolveUser(slackAdapter, uid)] as const),
+        chunk.map(async (uid: string) => [uid, await resolveUser(slackAdapter, uid)] as const),
       );
       for (const [uid, profile] of resolved) {
         userMap.set(uid, profile);
       }
     }
 
-    const messages: NormalizedMessage[] = rawMessages.map(
-      ({ msg, dateSent, authorId, isBot, authorNameHint }) => {
-        const userInfo = userMap.get(authorId);
-        // Use raw Slack event text (preserves \n) instead of Chat SDK's
-        // extractPlainText() which strips newlines.
-        const raw = (msg as any).raw || {};
-        const rawText: string = raw.text || msg.text || "";
-        const subtype: string | undefined = raw.subtype;
-        const botId: string | undefined = raw.bot_id;
-        const threadTs: string | undefined = raw.thread_ts;
-        const rawReplyCount: number = raw.reply_count || 0;
-        // A message is a bot if Chat SDK says so, or raw event has bot_id,
-        // or subtype is "bot_message".
-        const detectedBot = isBot || !!botId || subtype === "bot_message";
+    // Map raw Slack messages to NormalizedMessage
+    const messages: NormalizedMessage[] = rawSlackMessages.map((msg: any) => {
+      const authorId: string = msg.user || msg.bot_id || "unknown";
+      const userInfo = userMap.get(authorId);
+      const subtype: string | undefined = msg.subtype;
+      const detectedBot = !!msg.bot_id || subtype === "bot_message";
+      const rawText: string = msg.text || "";
+      const threadTs: string | undefined = msg.thread_ts;
 
-        return {
-          content: cleanSlackMrkdwn(rawText, userMap),
-          author: authorId,
-          author_name: authorNameHint || userInfo?.name || authorId,
-          author_image: userInfo?.image || null,
-          platform,
-          channel_id: channelId,
-          channel_name: channelName,
-          message_id: msg.id || "",
-          timestamp: dateSent?.toISOString() || new Date().toISOString(),
-          thread_id: threadTs && threadTs !== msg.id ? threadTs : null,
-          // Combine file uploads (raw.files) with Chat SDK attachments
-          attachments: [
-            ...(raw.files || []).map((f: any) => ({
-              type: f.mimetype?.startsWith("image/") ? "image"
-                  : f.mimetype?.startsWith("video/") ? "video"
-                  : "file",
-              url: f.url_private || f.permalink,
-              name: f.name || f.title,
-            })),
-            // Slack attachment images (unfurled previews with image_url)
-            ...(raw.attachments || [])
-              .filter((a: any) => a.image_url && !a.from_url)
-              .map((a: any) => ({
-                type: "image" as const,
-                url: a.image_url,
-                name: a.title || a.fallback || "Image",
-              })),
-            // Fallback to Chat SDK attachments if raw sources are empty
-            ...(!raw.files?.length && !raw.attachments?.length
-              ? (msg.attachments || []).map((a: any) => ({
-                  type: a.type || "file",
-                  url: a.url,
-                  name: a.name,
-                }))
-              : []),
-          ],
-          reactions: (raw.reactions || []).map((r: any) => ({
-            name: r.name,
-            count: r.count,
+      return {
+        content: cleanSlackMrkdwn(rawText, userMap),
+        author: authorId,
+        author_name: msg.username || userInfo?.name || authorId,
+        author_image: userInfo?.image || null,
+        platform: "slack",
+        channel_id: channelId,
+        channel_name: channelName ? `#${channelName}` : "",
+        message_id: msg.ts || "",
+        timestamp: new Date(Number.parseFloat(msg.ts || "0") * 1000).toISOString(),
+        thread_id: threadTs && threadTs !== msg.ts ? threadTs : null,
+        // File uploads from Slack
+        attachments: [
+          ...(msg.files || []).map((f: any) => ({
+            type: f.mimetype?.startsWith("image/") ? "image"
+                : f.mimetype?.startsWith("video/") ? "video"
+                : "file",
+            url: f.url_private || f.permalink,
+            name: f.name || f.title,
           })),
-          reply_count: rawReplyCount,
-          is_bot: detectedBot,
-          subtype: subtype || null,
-          // Merge Chat SDK links with Slack attachment unfurls (link previews)
-          links: [
-            ...(raw.attachments || [])
-              .filter((a: any) => a.from_url || a.original_url)
-              .map((a: any) => ({
-                url: a.from_url || a.original_url,
-                title: a.title,
-                description: a.text || a.fallback,
-                imageUrl: a.image_url || a.thumb_url,
-                siteName: a.service_name,
-              })),
-            ...(msg.links || []).map((l: any) => ({
-              url: l.url || "",
-              title: l.title,
-              description: l.description,
-              imageUrl: l.imageUrl,
-              siteName: l.siteName,
+          // Slack attachment unfurls with standalone images (not link previews)
+          ...(msg.attachments || [])
+            .filter((a: any) => a.image_url && !a.from_url && !a.original_url)
+            .map((a: any) => ({
+              type: "image" as const,
+              url: a.image_url,
+              name: a.title || a.fallback || "Image",
             })),
-          ],
-        };
-      },
-    );
+        ],
+        reactions: (msg.reactions || []).map((r: any) => ({
+          name: r.name,
+          count: r.count,
+        })),
+        reply_count: msg.reply_count || 0,
+        is_bot: detectedBot,
+        subtype: subtype || null,
+        // Link unfurls from Slack attachments
+        links: (msg.attachments || [])
+          .filter((a: any) => a.from_url || a.original_url)
+          .map((a: any) => ({
+            url: a.from_url || a.original_url,
+            title: a.title,
+            description: a.text || a.fallback,
+            imageUrl: a.image_url || a.thumb_url,
+            siteName: a.service_name,
+          })),
+      };
+    });
 
-    // Reverse to chronological order (oldest first)
+    // Slack returns newest-first; reverse to chronological order
     messages.reverse();
 
     jsonResponse(res, 200, { messages });
