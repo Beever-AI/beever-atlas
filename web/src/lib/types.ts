@@ -126,6 +126,8 @@ export interface MemoryTier2 {
   action_tags: string[];
   importance: string;
   graph_entity_ids: string[];
+  source_media_url: string;
+  source_media_type: string; // "image" | "pdf" | "doc" | "video" | ""
   valid_at: string | null;
   invalid_at: string | null;
 }

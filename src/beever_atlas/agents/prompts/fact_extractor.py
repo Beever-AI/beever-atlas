@@ -94,6 +94,18 @@ content is too vague without context (e.g., "yes, let's do that", "agreed", "+1"
 Only extract a fact from a context-less reply if it is self-contained (e.g.,
 "I deployed the hotfix to prod at 3pm").
 
+### Media attachments
+Messages may contain bracketed media descriptions appended by the preprocessing system:
+- `[Attachment: filename (type, size)]` — metadata about an attached file
+- `[Image description: ...]` — AI-generated description of an image attachment
+- `[Document text: ...]` — extracted text content from a PDF or document
+
+Treat these as factual content from the message. Extract facts from media descriptions
+just as you would from regular message text. When a media description contains specific
+data points (revenue numbers, chart values, dates, names), extract those as facts.
+Include the media type in entity_tags when relevant (e.g., "dashboard", "screenshot",
+"report", "document").
+
 ### Multi-fact messages
 - If a message contains multiple distinct claims, extract each separately.
 - If a single claim has supporting detail, extract one unified fact incorporating the detail.

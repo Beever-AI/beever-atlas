@@ -128,6 +128,14 @@ function renderContent(text: string): React.ReactNode {
 
 function ImageAttachment({ url, name }: { url: string; name: string }) {
   const [failed, setFailed] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLightbox(false); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [lightbox]);
 
   if (failed) {
     return (
@@ -140,14 +148,28 @@ function ImageAttachment({ url, name }: { url: string; name: string }) {
   }
 
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer">
+    <>
       <img
         src={url}
         alt={name}
         className="max-w-sm max-h-64 rounded-lg border border-border object-contain cursor-pointer hover:opacity-90 transition-opacity"
+        onClick={() => setLightbox(true)}
         onError={() => setFailed(true)}
       />
-    </a>
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightbox(false)}
+        >
+          <img
+            src={url}
+            alt={name}
+            className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
   );
 }
 

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     beever_api_url: str = Field(default="http://localhost:8000")
     cors_origins: str = Field(default="http://localhost:5173,http://localhost:3000")
 
+    # Media processing
+    media_max_file_size_mb: int = Field(default=20)
+    media_vision_timeout_seconds: int = Field(default=5)
+    media_vision_model: str = Field(default="gemini-2.5-flash")
+    media_supported_image_types: str = Field(default="png,jpg,jpeg,gif,webp")
+    media_supported_doc_types: str = Field(default="pdf")
+
     # Bridge (bot service)
     bridge_url: str = Field(default="http://localhost:3001")
     bridge_api_key: str = Field(default="")

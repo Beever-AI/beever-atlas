@@ -58,36 +58,57 @@ class WeaviateStore:
             await asyncio.to_thread(self._client.close)
             self._client = None
 
+    # All expected properties for the MemoryFact collection.
+    _EXPECTED_PROPERTIES: list[tuple[str, DataType]] = [
+        ("memory_text", DataType.TEXT),
+        ("quality_score", DataType.NUMBER),
+        ("tier", DataType.TEXT),
+        ("cluster_id", DataType.TEXT),
+        ("channel_id", DataType.TEXT),
+        ("platform", DataType.TEXT),
+        ("author_id", DataType.TEXT),
+        ("author_name", DataType.TEXT),
+        ("message_ts", DataType.TEXT),
+        ("thread_ts", DataType.TEXT),
+        ("source_message_id", DataType.TEXT),
+        ("topic_tags", DataType.TEXT_ARRAY),
+        ("entity_tags", DataType.TEXT_ARRAY),
+        ("action_tags", DataType.TEXT_ARRAY),
+        ("importance", DataType.TEXT),
+        ("graph_entity_ids", DataType.TEXT_ARRAY),
+        ("source_media_url", DataType.TEXT),
+        ("source_media_type", DataType.TEXT),
+        ("valid_at", DataType.DATE),
+        ("invalid_at", DataType.DATE),
+    ]
+
     async def ensure_schema(self) -> None:
-        """Create the MemoryFact collection if it does not already exist."""
+        """Create or migrate the MemoryFact collection."""
 
         def _ensure() -> None:
             assert self._client is not None
             if self._client.collections.exists(COLLECTION_NAME):
+                # Auto-migrate: add any missing properties to existing collections.
+                collection = self._client.collections.get(COLLECTION_NAME)
+                existing_names = {p.name for p in collection.config.get().properties}
+                for prop_name, prop_type in self._EXPECTED_PROPERTIES:
+                    if prop_name not in existing_names:
+                        collection.config.add_property(
+                            Property(name=prop_name, data_type=prop_type)
+                        )
+                        logger.info(
+                            "WeaviateStore: added missing property '%s' to %s",
+                            prop_name,
+                            COLLECTION_NAME,
+                        )
                 return
             self._client.collections.create(
                 name=COLLECTION_NAME,
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=Configure.VectorIndex.hnsw(),
                 properties=[
-                    Property(name="memory_text", data_type=DataType.TEXT),
-                    Property(name="quality_score", data_type=DataType.NUMBER),
-                    Property(name="tier", data_type=DataType.TEXT),
-                    Property(name="cluster_id", data_type=DataType.TEXT),
-                    Property(name="channel_id", data_type=DataType.TEXT),
-                    Property(name="platform", data_type=DataType.TEXT),
-                    Property(name="author_id", data_type=DataType.TEXT),
-                    Property(name="author_name", data_type=DataType.TEXT),
-                    Property(name="message_ts", data_type=DataType.TEXT),
-                    Property(name="thread_ts", data_type=DataType.TEXT),
-                    Property(name="source_message_id", data_type=DataType.TEXT),
-                    Property(name="topic_tags", data_type=DataType.TEXT_ARRAY),
-                    Property(name="entity_tags", data_type=DataType.TEXT_ARRAY),
-                    Property(name="action_tags", data_type=DataType.TEXT_ARRAY),
-                    Property(name="importance", data_type=DataType.TEXT),
-                    Property(name="graph_entity_ids", data_type=DataType.TEXT_ARRAY),
-                    Property(name="valid_at", data_type=DataType.DATE),
-                    Property(name="invalid_at", data_type=DataType.DATE),
+                    Property(name=name, data_type=dtype)
+                    for name, dtype in self._EXPECTED_PROPERTIES
                 ],
             )
 
@@ -181,6 +202,8 @@ class WeaviateStore:
             "action_tags": fact.action_tags,
             "importance": fact.importance,
             "graph_entity_ids": fact.graph_entity_ids,
+            "source_media_url": fact.source_media_url,
+            "source_media_type": fact.source_media_type,
         }
         # Weaviate DATE fields require proper datetime objects or must be omitted.
         valid_at = WeaviateStore._coerce_date(fact.valid_at)
@@ -213,6 +236,8 @@ class WeaviateStore:
             action_tags=props.get("action_tags") or [],
             importance=props.get("importance", "medium"),
             graph_entity_ids=props.get("graph_entity_ids") or [],
+            source_media_url=props.get("source_media_url", ""),
+            source_media_type=props.get("source_media_type", ""),
             valid_at=props.get("valid_at"),
             invalid_at=props.get("invalid_at"),
         )

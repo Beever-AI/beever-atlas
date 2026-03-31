@@ -78,6 +78,7 @@ class ExtractedEntity(BaseModel):
         rationale: str | None = None
         alternatives_considered: str | None = None
         decided_by: str | None = None
+        visual_description: str | None = None
 
     properties: EntityProperties = Field(default_factory=EntityProperties)
     """Structured properties for supported entity metadata keys."""

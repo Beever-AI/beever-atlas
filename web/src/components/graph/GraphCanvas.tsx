@@ -52,6 +52,7 @@ export function GraphCanvas({
       const conns = connectionCount.get(e.id) ?? 0;
       const size = Math.min(116, 58 + conns * 9);
       const cached = positionCache.get(e.id);
+      const visualDesc = (e.properties as Record<string, unknown>)?.visual_description as string | undefined;
       return {
         data: {
           id: e.id,
@@ -61,6 +62,8 @@ export function GraphCanvas({
           borderColor: colors.nodeBorder,
           nodeSize: size,
           fontSize: Math.max(10, Math.min(14, 10 + conns)),
+          hasMedia: !!visualDesc,
+          visualDesc: visualDesc || "",
         },
         ...(cached ? { position: cached } : {}),
       };
@@ -123,6 +126,13 @@ export function GraphCanvas({
             "border-color": "#ffffff",
             "overlay-color": "#0B4F6C",
             "overlay-opacity": 0.1,
+          },
+        },
+        {
+          selector: "node[?hasMedia]",
+          style: {
+            "border-style": "double" as const,
+            "border-width": 4,
           },
         },
         {
@@ -261,7 +271,16 @@ export function GraphCanvas({
           "background:rgba(15,23,42,0.9);color:#f1f5f9;box-shadow:0 2px 8px rgba(0,0,0,0.15);";
         containerRef.current?.appendChild(tooltip);
       }
-      tooltip.textContent = `${label} · ${type}`;
+      const visualDesc = node.data("visualDesc") as string | undefined;
+      if (visualDesc) {
+        tooltip.textContent = `${label} · ${type}\n${visualDesc.slice(0, 100)}`;
+        tooltip.style.whiteSpace = "pre-wrap";
+        tooltip.style.maxWidth = "300px";
+      } else {
+        tooltip.textContent = `${label} · ${type}`;
+        tooltip.style.whiteSpace = "nowrap";
+        tooltip.style.maxWidth = "";
+      }
       tooltip.style.display = "block";
     });
 

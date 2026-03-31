@@ -293,14 +293,38 @@ class PreprocessorAgent(BaseAgent):
             enriched["preprocessed"] = True
             preprocessed.append(enriched)
 
+        # Process media attachments for mixed-modality messages (bounded-async).
+        media_enriched = 0
+        for enriched_msg in preprocessed:
+            if enriched_msg.get("modality") != "mixed":
+                continue
+            try:
+                from beever_atlas.services.media_processor import MediaProcessor
+
+                media_processor = MediaProcessor()
+                media_result = await media_processor.process_message_media(enriched_msg)
+                if media_result["description"]:
+                    enriched_msg["text"] += "\n\n" + media_result["description"]
+                    media_enriched += 1
+                if media_result["media_urls"]:
+                    enriched_msg["source_media_urls"] = media_result["media_urls"]
+                    enriched_msg["source_media_type"] = media_result["media_type"]
+            except Exception:
+                logger.warning(
+                    "PreprocessorAgent: media processing failed for message %s",
+                    enriched_msg.get("ts"),
+                    exc_info=True,
+                )
+
         logger.info(
-            "PreprocessorAgent: done job_id=%s channel=%s batch=%s in=%d skipped=%d retained=%d",
+            "PreprocessorAgent: done job_id=%s channel=%s batch=%s in=%d skipped=%d retained=%d media_enriched=%d",
             sync_job_id,
             channel_id,
             batch_num,
             len(messages),
             skipped,
             len(preprocessed),
+            media_enriched,
         )
 
         # Use state_delta so the change persists through InMemorySessionService

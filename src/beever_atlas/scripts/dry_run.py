@@ -175,7 +175,16 @@ async def main() -> None:
                 imp = f.get("importance", "?")
                 text = f.get("memory_text", "")
                 emoji = "🟢" if score >= 0.7 else "🟡" if score >= 0.5 else "🔴"
-                print(f"    {emoji} [{score:.2f}|{imp}] {text}")
+                # Show media source badge if the fact came from a media-enriched message
+                media_badge = ""
+                src_msg_id = f.get("source_message_id") or f.get("message_ts", "")
+                for pm in batch:
+                    pm_id = pm.get("ts") or pm.get("message_id", "")
+                    if pm_id == src_msg_id and pm.get("source_media_type"):
+                        media_type = pm["source_media_type"]
+                        media_badge = f" 🖼️[from {media_type}]" if media_type == "image" else f" 📄[from {media_type}]"
+                        break
+                print(f"    {emoji} [{score:.2f}|{imp}]{media_badge} {text}")
             all_facts.extend(facts)
             print()
 
@@ -237,6 +246,9 @@ async def main() -> None:
     if all_facts:
         avg_score = sum(f.get("quality_score", 0) for f in all_facts) / len(all_facts)
         print(f"  Avg quality score:  {avg_score:.2f}")
+    media_msgs = sum(1 for m in preprocessed if m.get("modality") == "mixed")
+    if media_msgs:
+        print(f"  Media-enriched msgs: {media_msgs}")
     print()
 
     # Save results for inspection

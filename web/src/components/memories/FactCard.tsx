@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, ImageIcon, FileText, Film } from "lucide-react";
 import type { MemoryTier2 } from "@/lib/types";
 
 interface FactCardProps {
@@ -64,6 +64,15 @@ export function FactCard({ fact }: FactCardProps) {
             >
               {fact.importance}
             </span>
+            {fact.source_media_type && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+                {fact.source_media_type === "image" && <ImageIcon size={10} />}
+                {fact.source_media_type === "pdf" && <FileText size={10} />}
+                {fact.source_media_type === "video" && <Film size={10} />}
+                {!["image", "pdf", "video"].includes(fact.source_media_type) && <FileText size={10} />}
+                From {fact.source_media_type}
+              </span>
+            )}
             {fact.author_name && (
               <span className="text-xs text-muted-foreground">
                 {fact.author_name}
@@ -106,6 +115,14 @@ export function FactCard({ fact }: FactCardProps) {
               </span>
             ))}
           </div>
+          {fact.source_media_url && fact.source_media_type === "image" && (
+            <img
+              src={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/files/proxy?url=${encodeURIComponent(fact.source_media_url)}`}
+              alt="Source media"
+              className="w-20 h-20 rounded-lg border border-border object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+          )}
           {fact.source_message_id && (
             <div className="text-xs text-muted-foreground">
               <ExternalLink size={14} className="inline mr-1" />

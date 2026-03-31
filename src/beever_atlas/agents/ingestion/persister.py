@@ -75,7 +75,20 @@ class PersisterAgent(BaseAgent):
             len(relationship_dicts),
         )
 
-        # --- 2. Convert dicts to Pydantic models ---
+        # --- 2. Build media lookup from preprocessed messages ---
+        # The preprocessor sets source_media_urls/source_media_type on enriched messages.
+        # The LLM doesn't pass these through, so we join by source_message_id.
+        preprocessed_messages: list[dict[str, Any]] = (
+            ctx.session.state.get("preprocessed_messages") or []
+        )
+        media_lookup: dict[str, dict[str, Any]] = {}
+        for pm in preprocessed_messages:
+            for key in ("ts", "message_id", "source_message_id"):
+                val = pm.get(key)
+                if val and val not in media_lookup:
+                    media_lookup[val] = pm
+
+        # --- 3. Convert dicts to Pydantic models ---
         facts: list[AtomicFact] = []
         for idx, fd in enumerate(embedded_facts):
             platform = fd.get("platform", "slack")
@@ -85,6 +98,17 @@ class PersisterAgent(BaseAgent):
             fact_id = AtomicFact.deterministic_id(platform, fact_channel_id, message_ts, idx)
             fact_data = {k: v for k, v in fd.items() if k != "id"}
             fact_data["channel_id"] = fact_channel_id
+
+            # Join media provenance from preprocessed message
+            source_msg = (
+                media_lookup.get(fd.get("source_message_id", ""))
+                or media_lookup.get(fd.get("message_ts", ""))
+            )
+            if source_msg:
+                media_urls = source_msg.get("source_media_urls") or []
+                fact_data["source_media_url"] = media_urls[0] if media_urls else ""
+                fact_data["source_media_type"] = source_msg.get("source_media_type", "")
+
             fact = AtomicFact(id=fact_id, **fact_data)
             facts.append(fact)
 

@@ -114,6 +114,15 @@ Why good: specific named technology, connected to a named actor, with stated pur
 - **Technology**: `version`, `category` (database / framework / tool / cloud)
 - **Project**: `status` (active / paused / completed), `repo`, `owner`
 - **Decision**: `rationale`, `decided_by`
+- **Any entity with visual context**: `visual_description`
+
+### Visual context
+When a message contains `[Image description: ...]` or `[Attachment: ...]` blocks,
+extract a `visual_description` property summarizing the visual context relevant to
+the entity. For example, if a dashboard screenshot shows Q4 pipeline data, an entity
+might have `visual_description: "Dashboard showing Q4 pipeline at $4.7M (94% of target)"`.
+Only include `visual_description` when the image description adds information not already
+captured in other properties.
 
 ---
 
