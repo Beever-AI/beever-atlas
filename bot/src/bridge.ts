@@ -888,6 +888,31 @@ async function handleValidateAdapter(
       } else {
         jsonResponse(res, 200, { valid: true }); // Adapter created without error
       }
+    } else if (platform === "teams") {
+      const { createTeamsAdapter } = await import("@chat-adapter/teams" as any);
+      const tempAdapter = createTeamsAdapter({
+        appId: credentials.appId,
+        appPassword: credentials.appPassword,
+        appTenantId: credentials.appTenantId,
+        appType: credentials.appType || "MultiTenant",
+      });
+      // Teams adapter creation validates credentials format; no simple ping API
+      jsonResponse(res, 200, { valid: true, message: "Adapter created successfully. Verify messaging endpoint is configured in Azure." });
+    } else if (platform === "telegram") {
+      const { createTelegramAdapter } = await import("@chat-adapter/telegram" as any);
+      // Verify adapter can be constructed (validates config shape)
+      createTelegramAdapter({
+        botToken: credentials.botToken,
+        secretToken: credentials.secretToken,
+      });
+      // Validate token by calling Telegram getMe API
+      const resp = await fetch(`https://api.telegram.org/bot${credentials.botToken}/getMe`);
+      const data = await resp.json() as { ok: boolean; description?: string };
+      if (data.ok) {
+        jsonResponse(res, 200, { valid: true });
+      } else {
+        jsonResponse(res, 200, { valid: false, error: data.description || "Invalid bot token" });
+      }
     } else {
       jsonResponse(res, 400, { valid: false, error: `Unknown platform: ${platform}` });
     }

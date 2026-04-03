@@ -147,7 +147,7 @@ export class ChatManager {
           const { createTelegramAdapter } = require("@chat-adapter/telegram");
           adapterInstances[key] = createTelegramAdapter({
             botToken: entry.config.botToken,
-            webhookSecretToken: entry.config.webhookSecretToken,
+            secretToken: entry.config.secretToken,
           });
         } else {
           console.warn(`ChatManager: unknown platform "${entry.platform}", skipping`);

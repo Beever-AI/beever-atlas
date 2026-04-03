@@ -38,11 +38,12 @@ const DISCORD_INSTRUCTIONS = [
 
 const TEAMS_INSTRUCTIONS = [
   { text: "Go to", link: "https://portal.azure.com/#create/Microsoft.AzureBot", linkText: "Azure Portal" },
-  { text: "Create a new Azure Bot resource and choose a handle name" },
+  { text: "Create a new Azure Bot resource — choose SingleTenant or MultiTenant" },
   { text: "Under Configuration, copy the Microsoft App ID" },
   { text: "Click Manage Password → New client secret and copy the value" },
-  { text: "Note your Azure AD Tenant ID from the Azure Active Directory overview" },
+  { text: "Note your Azure AD Tenant ID from the Azure Active Directory overview (required for SingleTenant)" },
   { text: "Under Channels, add the Microsoft Teams channel and save" },
+  { text: "Set the messaging endpoint to your bot's webhook URL" },
 ];
 
 const TELEGRAM_INSTRUCTIONS = [
@@ -68,10 +69,11 @@ const CREDENTIAL_FIELDS: Record<Platform, { key: string; label: string; placehol
     { key: "app_id", label: "Microsoft App ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
     { key: "app_password", label: "App Password (Client Secret)", placeholder: "Your Azure app client secret", type: "password" },
     { key: "app_tenant_id", label: "Azure AD Tenant ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+    { key: "app_type", label: "App Type", placeholder: "MultiTenant" },
   ],
   telegram: [
     { key: "bot_token", label: "Bot Token", placeholder: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11", type: "password" },
-    { key: "webhook_secret_token", label: "Webhook Secret Token", placeholder: "Optional verification secret" },
+    { key: "secret_token", label: "Webhook Secret Token (optional)", placeholder: "Optional verification secret for webhook requests" },
   ],
 };
 
