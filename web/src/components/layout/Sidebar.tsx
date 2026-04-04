@@ -16,7 +16,6 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { HealthBadge } from "./HealthBadge";
 import { ChannelList } from "@/components/channel/ChannelList";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { useTheme } from "@/hooks/useTheme";
 import { useState } from "react";
 
@@ -51,7 +50,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r border-border bg-background shrink-0 transition-all duration-200 ease-in-out",
+        "flex flex-col h-screen border-r border-border bg-background shrink-0 transition-all duration-200 ease-in-out overflow-hidden",
         "hidden lg:flex",
         collapsed ? "w-14" : "w-56",
         open && "flex fixed inset-y-0 left-0 z-30 w-56 lg:relative lg:z-auto"
@@ -63,14 +62,14 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         collapsed ? "justify-center" : "justify-between"
       )}>
         {!collapsed && (
-          <div className="flex items-center gap-2 min-w-0">
+          <NavLink to="/" className="flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-border/50">
               <img src="/logo.png" alt="Beever Atlas Logo" className="w-full h-full object-cover" />
             </div>
             <span className="font-heading text-xl font-medium text-foreground tracking-tight truncate">
               Beever Atlas
             </span>
-          </div>
+          </NavLink>
         )}
         <button
           onClick={() => {
@@ -95,10 +94,10 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               onClick={() => { if (open) onClose(); }}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-2.5 px-3 py-2 text-[15px] transition-all duration-150 rounded-xl relative mx-1",
+                  "flex items-center gap-2.5 px-3 py-1.5 text-[14px] transition-all duration-150 rounded-lg relative mx-1",
                   isActive
                     ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl",
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
                   collapsed && "justify-center px-0 mx-0"
                 )
               }
@@ -122,8 +121,12 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
       {!collapsed && (
         <>
-          <Separator />
-          <ScrollArea className="flex-1 py-2">
+          <div className="px-3 pt-3 pb-1">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+              Workspaces
+            </p>
+          </div>
+          <ScrollArea className="flex-1 min-h-0 bg-muted/20 dark:bg-muted/10 border-t border-border/50">
             <ChannelList />
           </ScrollArea>
         </>

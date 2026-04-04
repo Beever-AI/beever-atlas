@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -14,9 +15,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from beever_atlas.adapters import ChannelInfo, get_adapter
-from beever_atlas.adapters.bridge import ChatBridgeAdapter
+from beever_atlas.adapters.bridge import BridgeError, ChatBridgeAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _detect_platform_from_channel_id(channel_id: str) -> str | None:
+    """Infer platform from channel ID format to avoid cross-platform API calls."""
+    if re.match(r"^[CDG][A-Z0-9]{8,}$", channel_id):
+        return "slack"
+    if re.match(r"^\d{17,20}$", channel_id):
+        return "discord"
+    return None
 
 router = APIRouter()
 
@@ -46,7 +56,7 @@ class MessageResponse(BaseModel):
     content: str
     author: str
     author_name: str = ""
-    author_image: str = ""
+    author_image: str | None = None
     platform: str
     channel_id: str
     channel_name: str
@@ -73,17 +83,44 @@ def _channel_to_response(info: ChannelInfo) -> ChannelResponse:
     )
 
 
+_PER_CONNECTION_TIMEOUT = 10.0  # seconds — prevent one slow platform from blocking all
+
+# Simple in-memory cache for channel lists to avoid hammering platform APIs
+# on every page navigation. Cache is per-connection with a 60s TTL.
+import time as _time
+
+_channel_cache: dict[str, tuple[float, list[ChannelInfo]]] = {}
+_CHANNEL_CACHE_TTL = 60.0  # seconds
+
+
 async def _fetch_connection_channels(
     conn_id: str, selected: list[str],
 ) -> list[ChannelInfo]:
     """Fetch channels for a single connection, filtering by selected_channels.
 
     Each call creates a short-lived adapter that is closed after use to avoid
-    leaking httpx connections.
+    leaking httpx connections.  A per-connection timeout prevents one slow
+    platform (e.g. Discord rate limits) from blocking the entire response.
     """
+    # Check cache first
+    cache_key = conn_id
+    cached = _channel_cache.get(cache_key)
+    if cached:
+        cached_at, cached_channels = cached
+        if _time.monotonic() - cached_at < _CHANNEL_CACHE_TTL:
+            if selected:
+                selected_set = set(selected)
+                return [ch for ch in cached_channels if ch.channel_id in selected_set]
+            return cached_channels
+
     adapter = ChatBridgeAdapter(connection_id=conn_id)
     try:
-        channels = await adapter.list_channels()
+        channels = await asyncio.wait_for(
+            adapter.list_channels(),
+            timeout=_PER_CONNECTION_TIMEOUT,
+        )
+        # Cache the unfiltered result
+        _channel_cache[cache_key] = (_time.monotonic(), channels)
         # If selected_channels configured, filter to only those
         if selected:
             selected_set = set(selected)
@@ -151,19 +188,33 @@ async def get_channel(
             await adapter.close()
         return _channel_to_response(info)
 
-    # No connection_id — search across all connected connections
+    # No connection_id — search across connections.
+    # Detect likely platform from channel ID format to skip wrong platforms
+    # and avoid wasting API calls / rate limit budget.
     from beever_atlas.stores import get_stores
+
+    likely_platform = _detect_platform_from_channel_id(channel_id)
 
     stores = get_stores()
     connections = await stores.platform.list_connections()
     connected = [c for c in connections if c.status == "connected"]
 
-    for conn in connected:
+    # If we know the platform, only try matching connections
+    if likely_platform:
+        candidates = [c for c in connected if c.platform == likely_platform]
+        if not candidates:
+            candidates = connected  # fallback to all if no match
+    else:
+        candidates = connected
+
+    for conn in candidates:
         adapter = ChatBridgeAdapter(connection_id=conn.id)
         try:
             info = await adapter.get_channel_info(channel_id)
             return _channel_to_response(info)
-        except (KeyError, Exception):
+        except (KeyError, BridgeError):
+            continue
+        except Exception:
             continue
         finally:
             await adapter.close()
@@ -176,6 +227,8 @@ async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=500),
     since: str | None = Query(default=None, description="ISO 8601 datetime filter"),
+    before: str | None = Query(default=None, description="Message ID cursor - fetch messages before this ID"),
+    order: str = Query(default="desc", description="Sort order: desc (newest first) or asc (oldest first)"),
     connection_id: str | None = Query(default=None),
 ) -> list[MessageResponse]:
     """Get paginated messages for a channel."""
@@ -185,7 +238,12 @@ async def get_channel_messages(
     if since:
         since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
 
-    messages = await adapter.fetch_history(channel_id, since=since_dt, limit=limit)
+    try:
+        messages = await adapter.fetch_history(channel_id, since=since_dt, limit=limit, before=before, order=order)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found") from e
+    except BridgeError as e:
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
 
     return [
         MessageResponse(
@@ -222,9 +280,13 @@ async def get_thread_messages(
     adapter = _get_adapter_for_connection(connection_id)
     try:
         messages = await adapter.fetch_thread(channel_id, thread_id)
-    except (KeyError, Exception) as e:
+    except KeyError as e:
         raise HTTPException(
             status_code=404, detail=f"Thread {thread_id} not found"
+        ) from e
+    except BridgeError as e:
+        raise HTTPException(
+            status_code=e.status_code or 502, detail=str(e)
         ) from e
 
     return [

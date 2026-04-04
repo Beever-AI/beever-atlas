@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { HealthResponse } from "@/lib/types";
 import { api } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -91,11 +90,8 @@ export function HealthBadge({ collapsed = false }: HealthBadgeProps) {
       <TooltipTrigger
         render={
           <button className="flex items-center gap-2 w-full text-left">
-            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", config.dot)} />
+            <span className={cn("w-2 h-2 rounded-full shrink-0", config.dot)} />
             <span className="text-xs text-muted-foreground truncate">{config.label}</span>
-            <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5 hidden sm:inline-flex">
-              {status === "healthy" ? "v2" : status}
-            </Badge>
           </button>
         }
       />
