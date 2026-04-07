@@ -61,17 +61,29 @@ Drop any fact with quality_score < 0.5. Scores MUST vary — not every fact is 0
 
 ### Calibration examples
 
-**HIGH (0.87)** — precise decision with named alternatives:
-  "Alice decided to use Redis for session caching after evaluating Memcached"
-  — Specificity 0.9, Actionability 0.85, Verifiability 0.85 → (0.9+0.85+0.85)/3 = 0.87
+**HIGH (0.90)** — decision with rationale and alternatives:
+  "Alice decided to use Redis for session caching after evaluating Memcached, citing pub/sub support for real-time invalidation and built-in persistence for session recovery"
+  — Specificity 0.95, Actionability 0.9, Verifiability 0.85 → 0.90
 
-**MEDIUM (0.63)** — useful context but less actionable:
-  "The team discussed improving CI pipeline speed during standup"
-  — Specificity 0.6, Actionability 0.5, Verifiability 0.8 → (0.6+0.5+0.8)/3 = 0.63
+**HIGH (0.85)** — observation with significance and impact:
+  "API latency on the /search endpoint reached 200ms, exceeding the 150ms SLA threshold and triggering discussion about adding a caching layer"
+  — Specificity 0.9, Actionability 0.8, Verifiability 0.85 → 0.85
 
-**LOW-MEDIUM (0.53)** — vague plan, hard to verify:
-  "Bob mentioned wanting to refactor the auth module eventually"
-  — Specificity 0.5, Actionability 0.6, Verifiability 0.5 → (0.5+0.6+0.5)/3 = 0.53
+**MEDIUM (0.70)** — action item with motivation and deadline:
+  "Bob needs to update the API docs before the v2.1 release on Friday to unblock the partner integration team"
+  — Specificity 0.75, Actionability 0.8, Verifiability 0.55 → 0.70
+
+**MEDIUM (0.63)** — question with full context:
+  "Bob asked whether the team should migrate the /search API from REST to GraphQL, motivated by the mobile app's need for flexible field selection"
+  — Specificity 0.7, Actionability 0.6, Verifiability 0.6 → 0.63
+
+**TOO THIN (0.40)** — decision without rationale (lacks the *why*):
+  "Alice decided to use Redis"
+  — Missing: why Redis, what alternatives were considered, what it's used for. REWRITE to include context.
+
+**TOO THIN (0.35)** — vague discussion with no substance:
+  "The team discussed Redis"
+  — Missing: what about Redis, what was decided, why it matters. Either extract the actual substance or skip.
 
 **BAD (0.23)** — database entry style, raw IDs, no insight:
   "User U012345 stated something as of 1711234567.000100"
@@ -135,6 +147,29 @@ Classify each fact as one of:
 - "observation": A factual observation or status update ("the build is broken", "latency is at 200ms", "v2.1 was released yesterday")
 
 When in doubt, default to "observation" — it is the safest classification.
+
+### Context enrichment by fact type
+Each fact should be dense — capture not just *what* but *why* and *context*. Follow these
+type-specific guidelines to include the right context in the memory_text:
+
+- **decision**: Include what was decided, WHY it was chosen, and what alternatives were
+  considered or rejected if mentioned. E.g. "Alice decided to use Redis for session caching
+  after evaluating Memcached, citing pub/sub support for real-time invalidation."
+- **action_item**: Include what needs to be done, WHY (the motivation), WHO is responsible,
+  and the deadline if mentioned. E.g. "Bob needs to update the API docs before the v2.1
+  release on Friday to unblock the partner integration team."
+- **question**: Include the full question, WHAT context it relates to, and WHY it matters.
+  E.g. "Bob asked whether the team should migrate from REST to GraphQL, motivated by the
+  mobile app's need for flexible field selection."
+- **opinion**: Include the opinion, the REASONING behind it, and what it responds to.
+  E.g. "Alice thinks the team should adopt TypeScript for the frontend rewrite because the
+  current JavaScript codebase has too many type-related bugs in production."
+- **observation**: Include the observation, its SIGNIFICANCE or impact, and what it implies.
+  E.g. "API latency on /search reached 200ms, exceeding the 150ms SLA threshold and
+  triggering discussion about adding a caching layer."
+
+A fact that captures only *what* (e.g. "Alice decided to use Redis") is TOO THIN.
+A fact that captures *what + why + context* in 1-2 sentences is the target quality.
 
 ### Per-message metadata
 For each fact, copy from the source message:

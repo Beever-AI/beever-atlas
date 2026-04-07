@@ -818,6 +818,17 @@ class WeaviateStore:
                 "staleness_score": cluster.staleness_score,
                 "status": cluster.status,
                 "fact_type_counts_json": json.dumps(cluster.fact_type_counts),
+                # Wiki-ready enrichment fields
+                "title": cluster.title,
+                "current_state": cluster.current_state,
+                "open_questions": cluster.open_questions,
+                "impact_note": cluster.impact_note,
+                "key_facts_json": json.dumps(cluster.key_facts),
+                "decisions_json": json.dumps(cluster.decisions),
+                "people_json": json.dumps(cluster.people),
+                "technologies_json": json.dumps(cluster.technologies),
+                "projects_json": json.dumps(cluster.projects),
+                "faq_candidates_json": json.dumps(cluster.faq_candidates),
             }
             try:
                 collection.data.insert(
@@ -859,7 +870,11 @@ class WeaviateStore:
                 clusters.append(TopicCluster(
                     id=str(obj.uuid),
                     channel_id=props.get("channel_id", ""),
+                    title=props.get("title", ""),
                     summary=props.get("memory_text", ""),
+                    current_state=props.get("current_state", ""),
+                    open_questions=props.get("open_questions", ""),
+                    impact_note=props.get("impact_note", ""),
                     topic_tags=props.get("topic_tags") or [],
                     member_ids=props.get("member_ids") or [],
                     member_count=int(props.get("member_count", 0)),
@@ -877,6 +892,12 @@ class WeaviateStore:
                     staleness_score=float(props.get("staleness_score", 0.0)),
                     status=props.get("status", "active"),
                     fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                    key_facts=json.loads(props.get("key_facts_json") or "[]"),
+                    decisions=json.loads(props.get("decisions_json") or "[]"),
+                    people=json.loads(props.get("people_json") or "[]"),
+                    technologies=json.loads(props.get("technologies_json") or "[]"),
+                    projects=json.loads(props.get("projects_json") or "[]"),
+                    faq_candidates=json.loads(props.get("faq_candidates_json") or "[]"),
                 ))
             return clusters
 
@@ -903,7 +924,11 @@ class WeaviateStore:
             return TopicCluster(
                 id=str(obj.uuid),
                 channel_id=props.get("channel_id", ""),
+                title=props.get("title", ""),
                 summary=props.get("memory_text", ""),
+                current_state=props.get("current_state", ""),
+                open_questions=props.get("open_questions", ""),
+                impact_note=props.get("impact_note", ""),
                 topic_tags=props.get("topic_tags") or [],
                 member_ids=props.get("member_ids") or [],
                 member_count=int(props.get("member_count", 0)),
@@ -921,6 +946,12 @@ class WeaviateStore:
                 staleness_score=float(props.get("staleness_score", 0.0)),
                 status=props.get("status", "active"),
                 fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                key_facts=json.loads(props.get("key_facts_json") or "[]"),
+                decisions=json.loads(props.get("decisions_json") or "[]"),
+                people=json.loads(props.get("people_json") or "[]"),
+                technologies=json.loads(props.get("technologies_json") or "[]"),
+                projects=json.loads(props.get("projects_json") or "[]"),
+                faq_candidates=json.loads(props.get("faq_candidates_json") or "[]"),
             )
 
         return await asyncio.to_thread(_get)
@@ -988,6 +1019,19 @@ class WeaviateStore:
                 "author_count": summary.author_count,
                 "worst_staleness": summary.worst_staleness,
                 "fact_count": summary.fact_count,
+                # Wiki-ready enrichment fields
+                "channel_name": summary.channel_name,
+                "description": summary.description,
+                "themes": summary.themes,
+                "momentum": summary.momentum,
+                "team_dynamics": summary.team_dynamics,
+                "top_decisions_json": json.dumps(summary.top_decisions),
+                "top_people_json": json.dumps(summary.top_people),
+                "tech_stack_json": json.dumps(summary.tech_stack),
+                "active_projects_json": json.dumps(summary.active_projects),
+                "glossary_terms_json": json.dumps(summary.glossary_terms),
+                "recent_activity_json": json.dumps(summary.recent_activity_summary),
+                "topic_graph_edges_json": json.dumps(summary.topic_graph_edges),
             }
             try:
                 collection.data.insert(
@@ -1023,7 +1067,12 @@ class WeaviateStore:
             return ChannelSummary(
                 id=str(obj.uuid),
                 channel_id=props.get("channel_id", ""),
+                channel_name=props.get("channel_name", ""),
                 text=props.get("memory_text", ""),
+                description=props.get("description", ""),
+                themes=props.get("themes", ""),
+                momentum=props.get("momentum", ""),
+                team_dynamics=props.get("team_dynamics", ""),
                 cluster_count=int(props.get("member_count", 0)),
                 fact_count=int(props.get("fact_count", 0)),
                 key_decisions=json.loads(props.get("key_decisions_json") or "[]"),
@@ -1034,6 +1083,13 @@ class WeaviateStore:
                 media_count=int(props.get("media_count", 0)),
                 author_count=int(props.get("author_count", 0)),
                 worst_staleness=float(props.get("worst_staleness", 0.0)),
+                top_decisions=json.loads(props.get("top_decisions_json") or "[]"),
+                top_people=json.loads(props.get("top_people_json") or "[]"),
+                tech_stack=json.loads(props.get("tech_stack_json") or "[]"),
+                active_projects=json.loads(props.get("active_projects_json") or "[]"),
+                glossary_terms=json.loads(props.get("glossary_terms_json") or "[]"),
+                recent_activity_summary=json.loads(props.get("recent_activity_json") or "{}"),
+                topic_graph_edges=json.loads(props.get("topic_graph_edges_json") or "[]"),
             )
 
         return await asyncio.to_thread(_get)

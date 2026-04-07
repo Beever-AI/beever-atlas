@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from beever_atlas.infra.config import Settings
 from beever_atlas.models.domain import AtomicFact, ChannelSummary, TopicCluster
@@ -38,6 +39,7 @@ class ClusterContext:
     facts: list[AtomicFact]  # filtered + sorted, top 20
     aggregated_entity_tags: list[str]
     aggregated_action_tags: list[str]
+    all_topic_tags: list[str]  # union of all member topic_tags for LLM selection
     authors: list[str]
     date_range_start: str
     date_range_end: str
@@ -101,7 +103,9 @@ class ConsolidationService:
     # Public API
     # ------------------------------------------------------------------
 
-    async def on_sync_complete(self, channel_id: str) -> ConsolidationResult:
+    async def on_sync_complete(
+        self, channel_id: str, channel_name: str = "",
+    ) -> ConsolidationResult:
         """Run incremental consolidation after a channel sync."""
         result = ConsolidationResult(channel_id=channel_id)
 
@@ -110,7 +114,9 @@ class ConsolidationService:
             touched = created + updated
             if touched:
                 await self._generate_summaries(channel_id, touched, result)
-                await self._generate_channel_summary(channel_id, result)
+                await self._generate_channel_summary(
+                    channel_id, result, channel_name=channel_name,
+                )
                 await self._apply_cross_cluster_links(channel_id)
             await self._health_check(channel_id, result)
         except Exception as exc:
@@ -119,7 +125,9 @@ class ConsolidationService:
 
         return result
 
-    async def full_reconsolidate(self, channel_id: str) -> ConsolidationResult:
+    async def full_reconsolidate(
+        self, channel_id: str, channel_name: str = "",
+    ) -> ConsolidationResult:
         """Full rebuild: reset all clusters and re-cluster from scratch."""
         from beever_atlas.models.api import MemoryFilters
 
@@ -151,7 +159,9 @@ class ConsolidationService:
             touched = created + updated
             if touched:
                 await self._generate_summaries(channel_id, touched, result)
-                await self._generate_channel_summary(channel_id, result)
+                await self._generate_channel_summary(
+                    channel_id, result, channel_name=channel_name,
+                )
                 await self._apply_cross_cluster_links(channel_id)
         except Exception as exc:
             logger.error("Full reconsolidation error for %s: %s", channel_id, exc, exc_info=True)
@@ -285,6 +295,7 @@ class ConsolidationService:
         # Aggregate tags
         all_entity_tags: set[str] = set()
         all_action_tags: set[str] = set()
+        all_topic_tags: set[str] = set()
         authors: set[str] = set()
         media_refs: list[str] = []
         media_names: list[str] = []
@@ -296,6 +307,7 @@ class ConsolidationService:
         for f in active:
             all_entity_tags.update(f.entity_tags)
             all_action_tags.update(f.action_tags)
+            all_topic_tags.update(f.topic_tags)
             if f.author_name:
                 authors.add(f.author_name)
             media_refs.extend(f.source_media_urls)
@@ -358,6 +370,7 @@ class ConsolidationService:
             facts=top_facts,
             aggregated_entity_tags=sorted(all_entity_tags),
             aggregated_action_tags=sorted(all_action_tags),
+            all_topic_tags=sorted(all_topic_tags),
             authors=sorted(authors),
             date_range_start=date_start,
             date_range_end=date_end,
@@ -372,10 +385,36 @@ class ConsolidationService:
 
     @staticmethod
     def _format_topic_prompt(ctx: ClusterContext) -> str:
-        """Format an LLM prompt for topic cluster summarization."""
+        """Format an LLM prompt for topic cluster summarization.
+
+        Requests structured JSON output matching TopicSummaryResult:
+        title, summary_text, current_state, open_questions, impact_note,
+        topic_tags (3 most representative), faq_candidates.
+        """
         parts: list[str] = [
-            "Summarize this topic from a team channel (2-3 sentences). "
-            "Include key decisions, actions, and who was involved.",
+            "You are summarizing a topic cluster from a team channel. "
+            "Return structured JSON with the following fields:\n"
+            "\n"
+            "- **title**: A short descriptive name for this topic (5-10 words, e.g. "
+            "'JWT Migration to RS256', 'CI/CD Pipeline Redesign'). "
+            "Do NOT use the first sentence of the summary as the title.\n"
+            "- **summary_text**: A 2-3 sentence narrative of what happened chronologically. "
+            "Include key decisions, actions, and who was involved.\n"
+            "- **current_state**: 1-2 sentences on where things stand NOW — "
+            "what's done, what's in progress, what's pending. "
+            "Reflect the most recent facts, not a blend of old and new.\n"
+            "- **open_questions**: 1-2 sentences on unresolved tensions, pending debates, "
+            "or blocked items. Leave as empty string if everything is resolved.\n"
+            "- **impact_note**: 1 sentence on scope and significance — "
+            "what depends on this, how many people or services are affected.\n"
+            "- **topic_tags**: Select exactly 3 most representative thematic tags "
+            "from the available tags listed below. If fewer than 3 distinct themes exist, "
+            "use fewer.\n"
+            "- **faq_candidates**: 0-3 Q&A pairs based on question-type facts and "
+            "common themes. Each has 'question' and 'answer' fields.\n"
+            "\n"
+            "IMPORTANT: Each text field must contain DISTINCT, non-overlapping information. "
+            "Do not repeat content across fields.",
         ]
 
         if ctx.date_range_start or ctx.date_range_end:
@@ -399,17 +438,30 @@ class ConsolidationService:
             type_strs = [f"{v} {k}s" for k, v in sorted(ctx.fact_type_counts.items())]
             parts.append(f"Fact types: {', '.join(type_strs)}")
 
+        # Available topic tags for selection
+        if ctx.all_topic_tags:
+            parts.append(f"\nAvailable topic tags (select 3 most representative): "
+                         f"{', '.join(ctx.all_topic_tags)}")
+
         # Facts section
         fact_lines: list[str] = []
         for f in ctx.facts:
             label = f.importance.upper() if f.importance else "MEDIUM"
-            text = f.memory_text[:120]
+            ft = f.fact_type or "observation"
+            text = f.memory_text[:200]
             author_part = f" (by {f.author_name})" if f.author_name else ""
-            fact_lines.append(f"- [{label}] {text}{author_part}")
+            fact_lines.append(f"- [{label}/{ft}] {text}{author_part}")
 
         if fact_lines:
-            parts.append("\nFacts (ranked by importance):")
+            parts.append("\nFacts (ranked by quality):")
             parts.extend(fact_lines)
+
+        # Question-type facts for FAQ generation
+        question_facts = [f for f in ctx.facts if f.fact_type == "question"]
+        if question_facts:
+            parts.append("\nQuestion-type facts (use for faq_candidates):")
+            for qf in question_facts:
+                parts.append(f"- Q: {qf.memory_text[:200]}")
 
         media_count = len(ctx.media_refs)
         link_count = len(ctx.link_refs)
@@ -475,10 +527,36 @@ class ConsolidationService:
 
     @staticmethod
     def _format_channel_prompt(ctx: ChannelContext) -> str:
-        """Format an LLM prompt for channel-level summarization."""
+        """Format an LLM prompt for channel-level summarization.
+
+        Requests structured JSON output matching ChannelSummaryResult:
+        summary_text, description, themes, momentum, team_dynamics, glossary_terms.
+        """
         parts: list[str] = [
-            "Generate a brief channel overview (3-5 sentences) from these topic summaries. "
-            "Highlight the main themes and key information.",
+            "You are generating a channel-level knowledge summary. "
+            "Return structured JSON with the following fields:\n"
+            "\n"
+            "- **summary_text**: 3-5 sentence overview narrative of what this channel "
+            "is about and what the team has been working on.\n"
+            "- **description**: One-line channel purpose statement, max 200 chars "
+            "(e.g. 'Backend architecture decisions, deployment workflows, and "
+            "infrastructure discussions').\n"
+            "- **themes**: 2-3 sentences on the main knowledge areas and how they "
+            "interrelate. Don't just list topics — explain how they connect "
+            "(e.g. 'Authentication and API design are closely linked, with most auth "
+            "decisions driving API changes.').\n"
+            "- **momentum**: 1-2 sentences on what's active vs. completed vs. stale. "
+            "Include concrete numbers from the data below (active topics, recent facts).\n"
+            "- **team_dynamics**: 1-2 sentences on who drives decisions, collaboration "
+            "patterns, and expertise distribution.\n"
+            "- **glossary_terms**: 0-10 channel-specific jargon, acronyms, or technical "
+            "terms with definitions. Each entry has 'term', 'definition' (1-2 sentences), "
+            "'first_mentioned_by' (author name or empty string), and 'related_topics' "
+            "(list of topic names). Exclude common terms (API, database, server) — only "
+            "include terms specific to this channel's domain.\n"
+            "\n"
+            "IMPORTANT: Each text field must contain DISTINCT, non-overlapping information. "
+            "Do not repeat content across fields.",
         ]
 
         if ctx.date_range_start or ctx.date_range_end:
@@ -500,17 +578,40 @@ class ConsolidationService:
             ]
             parts.append(f"Key relationships: {', '.join(rel_strs)}")
 
-        # Topics sorted by member_count descending
+        # Topics sorted by member_count descending — include multi-angle data
         sorted_clusters = sorted(ctx.clusters, key=lambda c: c.member_count, reverse=True)
         topic_lines: list[str] = []
         for c in sorted_clusters:
+            title = c.title or ", ".join(c.topic_tags) or "General"
+            line = f"- **{title}** ({c.member_count} facts, status: {c.status})"
             if c.summary:
-                tags = ", ".join(c.topic_tags) or "General"
-                topic_lines.append(f"- **{tags}** ({c.member_count} facts): {c.summary}")
+                line += f": {c.summary}"
+            if c.current_state:
+                line += f" | Current: {c.current_state}"
+            if c.authors:
+                line += f" | Contributors: {', '.join(c.authors[:5])}"
+            topic_lines.append(line)
 
         if topic_lines:
             parts.append("\nTopics:")
             parts.extend(topic_lines)
+
+        # People data for team_dynamics
+        all_people: list[str] = []
+        for c in sorted_clusters:
+            for p in c.people:
+                role_str = f"{p.get('name', '')} ({p.get('role', 'mentioned')})"
+                if role_str not in all_people:
+                    all_people.append(role_str)
+        if all_people:
+            parts.append(f"\nPeople & roles: {', '.join(all_people[:15])}")
+
+        # Activity counts for momentum
+        active_count = sum(1 for c in ctx.clusters if c.status == "active")
+        completed_count = sum(1 for c in ctx.clusters if c.status == "completed")
+        stale_count = sum(1 for c in ctx.clusters if c.status == "stale")
+        parts.append(f"\nTopic status: {active_count} active, {completed_count} completed, "
+                     f"{stale_count} stale")
 
         return "\n".join(parts)
 
@@ -579,6 +680,271 @@ class ConsolidationService:
         return "active"
 
     # ------------------------------------------------------------------
+    # Wiki-ready enrichment (graph-derived structured data)
+    # ------------------------------------------------------------------
+
+    async def _enrich_decisions(
+        self, entity_tags: list[str], channel_id: str,
+    ) -> list[dict[str, Any]]:
+        """Query Neo4j for Decision-type entities and resolve SUPERSEDES chains."""
+        if not self._graph:
+            return []
+
+        decisions: list[dict[str, Any]] = []
+        try:
+            decision_entities = await self._graph.get_decisions(
+                channel_id=channel_id, limit=50,
+            )
+            if not decision_entities:
+                return []
+
+            # Filter to decisions matching cluster entity_tags
+            tag_lower = {t.lower() for t in entity_tags}
+            relevant = [
+                e for e in decision_entities
+                if e.name.lower() in tag_lower
+                or any(a.lower() in tag_lower for a in e.aliases)
+            ]
+            # If no tag match, include all channel decisions
+            if not relevant:
+                relevant = decision_entities
+
+            # Build supersede map via relationships
+            rels = await self._graph.list_relationships(
+                channel_id=channel_id, limit=200,
+            )
+            # SUPERSEDES: source supersedes target
+            supersedes_map: dict[str, str] = {}  # target_name -> source_name
+            for r in rels:
+                if r.type == "SUPERSEDES":
+                    supersedes_map[r.target.lower()] = r.source
+
+            for e in relevant:
+                decided_by = ""
+                if e.properties:
+                    decided_by = (
+                        e.properties.get("decided_by", "")
+                        or e.properties.get("owner", "")
+                        or ""
+                    )
+
+                superseded_by = supersedes_map.get(e.name.lower())
+                status = "superseded" if superseded_by else "active"
+
+                decisions.append({
+                    "name": e.name,
+                    "decided_by": decided_by,
+                    "status": status,
+                    "superseded_by": superseded_by or "",
+                    "date": e.message_ts or e.created_at.isoformat() if e.created_at else "",
+                    "context": "",
+                })
+        except Exception:
+            logger.debug("Decision enrichment failed for channel %s", channel_id)
+
+        return decisions
+
+    async def _enrich_people(
+        self, entity_tags: list[str], authors: list[str], channel_id: str,
+    ) -> list[dict[str, str]]:
+        """Derive people with roles from Neo4j graph edges.
+
+        Roles: decision_maker > expert > contributor > mentioned.
+        Falls back to authors list with role 'mentioned' when graph unavailable.
+        """
+        if not self._graph:
+            return [{"name": a, "role": "mentioned", "entity_id": ""} for a in authors]
+
+        people: dict[str, dict[str, str]] = {}  # name -> {"role", "entity_id"}
+        role_priority = {"decision_maker": 4, "expert": 3, "contributor": 2, "mentioned": 1}
+
+        try:
+            entities = await self._graph.list_entities(
+                channel_id=channel_id, entity_type="Person", limit=100,
+            )
+            rels = await self._graph.list_relationships(
+                channel_id=channel_id, limit=300,
+            )
+
+            tag_lower = {t.lower() for t in entity_tags}
+
+            # Count connections per person to cluster entities
+            person_connections: dict[str, int] = {}
+            person_roles: dict[str, str] = {}
+
+            for r in rels:
+                src_lower = r.source.lower()
+                tgt_lower = r.target.lower()
+
+                # Check if this person is connected to cluster entities
+                for person_name in [r.source, r.target]:
+                    pn_lower = person_name.lower()
+                    other = tgt_lower if pn_lower == src_lower else src_lower
+
+                    # Is the other side a cluster entity?
+                    if other not in tag_lower:
+                        continue
+
+                    # Is this a Person?
+                    is_person = any(
+                        e.name.lower() == pn_lower and e.type == "Person"
+                        for e in entities
+                    )
+                    if not is_person:
+                        continue
+
+                    person_connections[person_name] = (
+                        person_connections.get(person_name, 0) + 1
+                    )
+
+                    if r.type == "DECIDED":
+                        current = person_roles.get(person_name, "mentioned")
+                        if role_priority.get("decision_maker", 0) > role_priority.get(current, 0):
+                            person_roles[person_name] = "decision_maker"
+                    elif r.type in ("WORKS_ON", "USES"):
+                        current = person_roles.get(person_name, "mentioned")
+                        if role_priority.get("contributor", 0) > role_priority.get(current, 0):
+                            person_roles[person_name] = "contributor"
+
+            # Assign expert role for 3+ connections
+            for name, count in person_connections.items():
+                if count >= 3:
+                    current = person_roles.get(name, "mentioned")
+                    if role_priority.get("expert", 0) > role_priority.get(current, 0):
+                        person_roles[name] = "expert"
+
+            # Build result from graph-derived people
+            for name, role in person_roles.items():
+                entity = next(
+                    (e for e in entities if e.name.lower() == name.lower()), None,
+                )
+                people[name] = {
+                    "name": name,
+                    "role": role,
+                    "entity_id": entity.id if entity else "",
+                }
+
+            # Add authors not found in graph as "mentioned"
+            for author in authors:
+                if author not in people:
+                    people[author] = {
+                        "name": author,
+                        "role": "mentioned",
+                        "entity_id": "",
+                    }
+
+        except Exception:
+            logger.debug("People enrichment failed for channel %s", channel_id)
+            return [{"name": a, "role": "mentioned", "entity_id": ""} for a in authors]
+
+        return list(people.values())
+
+    async def _enrich_technologies(
+        self, entity_tags: list[str], channel_id: str,
+    ) -> list[dict[str, str]]:
+        """Query Neo4j for Technology-type entities with category and champion."""
+        if not self._graph:
+            return []
+
+        technologies: list[dict[str, str]] = []
+        try:
+            entities = await self._graph.list_entities(
+                channel_id=channel_id, entity_type="Technology", limit=100,
+            )
+            tag_lower = {t.lower() for t in entity_tags}
+            relevant = [
+                e for e in entities
+                if e.name.lower() in tag_lower
+                or any(a.lower() in tag_lower for a in e.aliases)
+            ]
+
+            if not relevant:
+                return []
+
+            # Find champions via USES/WORKS_ON relationships
+            rels = await self._graph.list_relationships(
+                channel_id=channel_id, limit=200,
+            )
+            tech_champions: dict[str, str] = {}
+            for r in rels:
+                if r.type in ("USES", "WORKS_ON"):
+                    for tech in relevant:
+                        if r.target.lower() == tech.name.lower():
+                            # First person found becomes champion
+                            if tech.name not in tech_champions:
+                                tech_champions[tech.name] = r.source
+
+            for e in relevant:
+                category = ""
+                if e.properties:
+                    category = (
+                        e.properties.get("category", "")
+                        or e.properties.get("language", "")
+                        or ""
+                    )
+                technologies.append({
+                    "name": e.name,
+                    "category": category,
+                    "champion": tech_champions.get(e.name, ""),
+                })
+        except Exception:
+            logger.debug("Technology enrichment failed for channel %s", channel_id)
+
+        return technologies
+
+    async def _enrich_projects(
+        self, entity_tags: list[str], channel_id: str,
+    ) -> list[dict[str, Any]]:
+        """Query Neo4j for Project-type entities with status, owner, and blockers."""
+        if not self._graph:
+            return []
+
+        projects: list[dict[str, Any]] = []
+        try:
+            entities = await self._graph.list_entities(
+                channel_id=channel_id, entity_type="Project", limit=100,
+            )
+            tag_lower = {t.lower() for t in entity_tags}
+            relevant = [
+                e for e in entities
+                if e.name.lower() in tag_lower
+                or any(a.lower() in tag_lower for a in e.aliases)
+            ]
+
+            if not relevant:
+                return []
+
+            # Find owners and blockers via relationships
+            rels = await self._graph.list_relationships(
+                channel_id=channel_id, limit=200,
+            )
+            project_owners: dict[str, str] = {}
+            project_blockers: dict[str, list[str]] = {}
+            for r in rels:
+                for proj in relevant:
+                    proj_lower = proj.name.lower()
+                    if r.type in ("WORKS_ON", "OWNS") and r.target.lower() == proj_lower:
+                        if proj.name not in project_owners:
+                            project_owners[proj.name] = r.source
+                    elif r.type == "BLOCKED_BY" and r.source.lower() == proj_lower:
+                        project_blockers.setdefault(proj.name, []).append(r.target)
+
+            for e in relevant:
+                status = ""
+                if e.properties:
+                    status = e.properties.get("status", "") or ""
+                projects.append({
+                    "name": e.name,
+                    "status": status or e.status,
+                    "owner": project_owners.get(e.name, ""),
+                    "blockers": project_blockers.get(e.name, []),
+                })
+        except Exception:
+            logger.debug("Project enrichment failed for channel %s", channel_id)
+
+        return projects
+
+    # ------------------------------------------------------------------
     # Cross-cluster links
     # ------------------------------------------------------------------
 
@@ -617,8 +983,38 @@ class ConsolidationService:
 
         return links
 
+    @staticmethod
+    def _compute_cross_cluster_shared_entities(
+        clusters: list[TopicCluster],
+        all_members: dict[str, list[AtomicFact]],
+    ) -> list[dict[str, Any]]:
+        """Compute topic_graph_edges with shared entity names between clusters."""
+        # Build {cluster_id: set[normalized entity tags]} from ALL members
+        cluster_tags: dict[str, set[str]] = {}
+        for cluster in clusters:
+            tags: set[str] = set()
+            for fact in all_members.get(cluster.id, []):
+                for tag in fact.entity_tags:
+                    tags.add(tag.lower().strip())
+            cluster_tags[cluster.id] = tags
+
+        edges: list[dict[str, Any]] = []
+        cluster_list = list(clusters)
+        for i, a in enumerate(cluster_list):
+            for b in cluster_list[i + 1:]:
+                overlap = cluster_tags.get(a.id, set()) & cluster_tags.get(b.id, set())
+                if len(overlap) >= 2:
+                    edges.append({
+                        "source_cluster_id": a.id,
+                        "target_cluster_id": b.id,
+                        "source_title": a.title or ", ".join(a.topic_tags[:3]) or "General",
+                        "target_title": b.title or ", ".join(b.topic_tags[:3]) or "General",
+                        "shared_entities": sorted(overlap),
+                    })
+        return edges
+
     async def _apply_cross_cluster_links(self, channel_id: str) -> None:
-        """Fetch all clusters and members, compute links, and update."""
+        """Fetch all clusters and members, compute links, update clusters and channel summary."""
         clusters = await self._weaviate.list_clusters(channel_id)
         if len(clusters) < 2:
             return
@@ -630,14 +1026,23 @@ class ConsolidationService:
             all_members[cluster.id] = members
 
         links = self._compute_cross_cluster_links(clusters, all_members)
-        if not links:
-            return
 
+        # Update cluster related_cluster_ids
         for cluster in clusters:
             new_related = links.get(cluster.id, [])
             if sorted(new_related) != sorted(cluster.related_cluster_ids):
                 cluster.related_cluster_ids = new_related
                 await self._weaviate.upsert_cluster(cluster)
+
+        # Compute and store topic_graph_edges on ChannelSummary
+        edges = self._compute_cross_cluster_shared_entities(clusters, all_members)
+        try:
+            existing_summary = await self._weaviate.get_channel_summary(channel_id)
+            if existing_summary:
+                existing_summary.topic_graph_edges = edges
+                await self._weaviate.upsert_channel_summary(existing_summary)
+        except Exception:
+            logger.debug("Failed to update topic_graph_edges for %s", channel_id)
 
     # ------------------------------------------------------------------
     # Summary generation
@@ -674,16 +1079,66 @@ class ConsolidationService:
             async with sem:
                 try:
                     prompt = self._format_topic_prompt(ctx)
-                    summary_text = await self._call_llm(prompt)
-                    cluster.summary = summary_text
+                    llm_result = await self._call_topic_llm(prompt)
 
-                    # Merge topic tags from all members
-                    all_tags: set[str] = set()
-                    for m in members:
-                        all_tags.update(m.topic_tags)
-                    cluster.topic_tags = sorted(all_tags)
+                    # Populate multi-angle summary fields from structured LLM output
+                    cluster.title = llm_result.get("title", "")
+                    cluster.summary = llm_result.get("summary_text", "")
+                    cluster.current_state = llm_result.get("current_state", "")
+                    cluster.open_questions = llm_result.get("open_questions", "")
+                    cluster.impact_note = llm_result.get("impact_note", "")
 
-                    # Populate enrichment fields from context
+                    # Use LLM-selected focused topic tags (max 3)
+                    llm_tags = llm_result.get("topic_tags", [])
+                    if llm_tags and isinstance(llm_tags, list):
+                        cluster.topic_tags = llm_tags[:3]
+                    else:
+                        # Fallback: merge all member tags
+                        all_tags: set[str] = set()
+                        for m in members:
+                            all_tags.update(m.topic_tags)
+                        cluster.topic_tags = sorted(all_tags)[:3]
+
+                    # FAQ candidates from LLM
+                    raw_faqs = llm_result.get("faq_candidates", [])
+                    cluster.faq_candidates = [
+                        {"question": faq.get("question", ""), "answer": faq.get("answer", "")}
+                        for faq in raw_faqs
+                        if isinstance(faq, dict) and faq.get("question")
+                    ]
+
+                    # Key facts: top 5 by quality_score from active members
+                    active_members = [f for f in members if f.superseded_by is None]
+                    active_members.sort(key=lambda f: f.quality_score, reverse=True)
+                    cluster.key_facts = [
+                        {
+                            "fact_id": f.id,
+                            "memory_text": f.memory_text,
+                            "author_name": f.author_name,
+                            "message_ts": f.message_ts,
+                            "fact_type": f.fact_type,
+                            "importance": f.importance,
+                            "quality_score": f.quality_score,
+                            "source_message_id": f.source_message_id,
+                        }
+                        for f in active_members[:5]
+                    ]
+
+                    # Graph-derived enrichment
+                    cluster.decisions = await self._enrich_decisions(
+                        ctx.aggregated_entity_tags, channel_id,
+                    )
+                    cluster.people = await self._enrich_people(
+                        ctx.aggregated_entity_tags, ctx.authors, channel_id,
+                    )
+                    cluster.technologies = await self._enrich_technologies(
+                        ctx.aggregated_entity_tags, channel_id,
+                    )
+                    cluster.projects = await self._enrich_projects(
+                        ctx.aggregated_entity_tags, channel_id,
+                    )
+
+                    # Populate existing enrichment fields from context
                     cluster.key_entities = ctx.graph_entities
                     cluster.key_relationships = ctx.graph_relationships
                     cluster.date_range_start = ctx.date_range_start
@@ -722,7 +1177,10 @@ class ConsolidationService:
         ])
 
     async def _generate_channel_summary(
-        self, channel_id: str, result: ConsolidationResult,
+        self,
+        channel_id: str,
+        result: ConsolidationResult,
+        channel_name: str = "",
     ) -> None:
         """Generate a Tier 0 channel overview from cluster summaries."""
         clusters = await self._weaviate.list_clusters(channel_id)
@@ -732,23 +1190,124 @@ class ConsolidationService:
         ctx = await self._build_channel_context(clusters, channel_id)
         prompt = self._format_channel_prompt(ctx)
 
-        summary_text = await self._call_llm(prompt)
+        llm_result = await self._call_channel_llm(prompt)
 
         total_facts = sum(c.member_count for c in clusters)
         worst_staleness = max(
             (c.staleness_score for c in clusters), default=0.0,
         )
 
+        # Aggregate top_decisions from all clusters
+        all_decisions: list[dict[str, Any]] = []
+        for c in clusters:
+            for d in c.decisions:
+                entry = dict(d)
+                entry["topic_cluster_id"] = c.id
+                all_decisions.append(entry)
+        # Deduplicate by name, keep first occurrence
+        seen_decisions: set[str] = set()
+        top_decisions: list[dict[str, Any]] = []
+        for d in all_decisions:
+            name = d.get("name", "")
+            if name and name not in seen_decisions:
+                seen_decisions.add(name)
+                top_decisions.append(d)
+
+        # Aggregate top_people from all clusters (highest role wins)
+        role_priority = {"decision_maker": 4, "expert": 3, "contributor": 2, "mentioned": 1}
+        people_map: dict[str, dict[str, Any]] = {}  # name -> {role, topic_count, expertise_topics}
+        for c in clusters:
+            cluster_title = c.title or ", ".join(c.topic_tags[:3]) or "General"
+            for p in c.people:
+                name = p.get("name", "")
+                if not name:
+                    continue
+                if name not in people_map:
+                    people_map[name] = {
+                        "name": name,
+                        "role": p.get("role", "mentioned"),
+                        "topic_count": 1,
+                        "expertise_topics": [cluster_title],
+                    }
+                else:
+                    existing = people_map[name]
+                    existing["topic_count"] += 1
+                    existing["expertise_topics"].append(cluster_title)
+                    # Keep highest role
+                    new_role = p.get("role", "mentioned")
+                    if role_priority.get(new_role, 0) > role_priority.get(existing["role"], 0):
+                        existing["role"] = new_role
+        # Sort by role priority desc, then topic_count desc
+        top_people = sorted(
+            people_map.values(),
+            key=lambda p: (role_priority.get(p["role"], 0), p["topic_count"]),
+            reverse=True,
+        )
+
+        # Aggregate tech_stack (deduplicate by name)
+        tech_map: dict[str, dict[str, Any]] = {}
+        for c in clusters:
+            for t in c.technologies:
+                name = t.get("name", "")
+                if not name:
+                    continue
+                if name not in tech_map:
+                    tech_map[name] = {
+                        "name": name,
+                        "category": t.get("category", ""),
+                        "champion": t.get("champion", ""),
+                        "topic_count": 1,
+                    }
+                else:
+                    tech_map[name]["topic_count"] += 1
+
+        # Aggregate active_projects (deduplicate by name, keep most recent)
+        project_map: dict[str, dict[str, Any]] = {}
+        for c in clusters:
+            for p in c.projects:
+                name = p.get("name", "")
+                if not name:
+                    continue
+                entry = dict(p)
+                entry["topic_cluster_id"] = c.id
+                project_map[name] = entry  # last one wins (most recent cluster)
+
+        # Compute recent_activity_summary (last 7 days)
+        recent_activity = await self._compute_recent_activity(channel_id, clusters)
+
+        # Glossary terms from LLM
+        raw_glossary = llm_result.get("glossary_terms", [])
+        glossary_terms = [
+            {
+                "term": g.get("term", ""),
+                "definition": g.get("definition", ""),
+                "first_mentioned_by": g.get("first_mentioned_by", ""),
+                "related_topics": g.get("related_topics", []),
+            }
+            for g in raw_glossary
+            if isinstance(g, dict) and g.get("term")
+        ]
+
         channel_summary = ChannelSummary(
             channel_id=channel_id,
-            text=summary_text,
+            channel_name=channel_name,
+            text=llm_result.get("summary_text", ""),
+            description=llm_result.get("description", ""),
+            themes=llm_result.get("themes", ""),
+            momentum=llm_result.get("momentum", ""),
+            team_dynamics=llm_result.get("team_dynamics", ""),
             cluster_count=len(clusters),
             fact_count=total_facts,
-            # Enrichment fields
+            # Existing enrichment fields
             key_decisions=ctx.graph_decisions,
             key_entities=ctx.graph_entities,
             key_topics=[
-                {"tags": c.topic_tags, "member_count": c.member_count, "status": c.status}
+                {
+                    "tags": c.topic_tags,
+                    "title": c.title,
+                    "member_count": c.member_count,
+                    "status": c.status,
+                }
                 for c in sorted(clusters, key=lambda c: c.member_count, reverse=True)
             ],
             date_range_start=ctx.date_range_start,
@@ -756,19 +1315,116 @@ class ConsolidationService:
             media_count=ctx.total_media,
             author_count=ctx.total_authors,
             worst_staleness=worst_staleness,
+            # Wiki-ready enrichment fields
+            top_decisions=top_decisions,
+            top_people=list(top_people),
+            tech_stack=list(tech_map.values()),
+            active_projects=list(project_map.values()),
+            glossary_terms=glossary_terms,
+            recent_activity_summary=recent_activity,
+            # topic_graph_edges computed in _apply_cross_cluster_links
         )
         await self._weaviate.upsert_channel_summary(channel_summary)
 
+    async def _compute_recent_activity(
+        self, channel_id: str, clusters: list[TopicCluster],
+    ) -> dict[str, Any]:
+        """Compute recent activity summary for the last 7 days."""
+        from beever_atlas.models.api import MemoryFilters
+
+        now = datetime.now(tz=UTC)
+        seven_days_ago = now.timestamp() - (7 * 24 * 3600)
+        seven_days_ago_str = str(seven_days_ago)
+
+        activity: dict[str, Any] = {
+            "facts_added_7d": 0,
+            "decisions_added_7d": 0,
+            "entities_added_7d": 0,
+            "new_topics": [],
+            "updated_topics": [],
+            "highlights": [],
+        }
+
+        try:
+            recent_page = await self._weaviate.list_facts(
+                channel_id=channel_id,
+                filters=MemoryFilters(since=seven_days_ago_str),
+                page=1,
+                limit=200,
+            )
+            recent_facts = recent_page.memories
+
+            activity["facts_added_7d"] = len(recent_facts)
+            activity["decisions_added_7d"] = sum(
+                1 for f in recent_facts if f.fact_type == "decision"
+            )
+
+            # Top 3 high-importance highlights
+            highlights = sorted(
+                [f for f in recent_facts if f.importance in ("high", "critical")],
+                key=lambda f: f.quality_score,
+                reverse=True,
+            )[:3]
+            activity["highlights"] = [
+                {
+                    "memory_text": f.memory_text,
+                    "author_name": f.author_name,
+                    "fact_type": f.fact_type,
+                    "message_ts": f.message_ts,
+                }
+                for f in highlights
+            ]
+        except Exception:
+            logger.debug("Recent activity computation failed for %s", channel_id)
+
+        # New/updated topics in last 7 days
+        for c in clusters:
+            title = c.title or ", ".join(c.topic_tags[:3]) or "General"
+            if c.created_at and c.created_at.timestamp() > seven_days_ago:
+                activity["new_topics"].append(title)
+            elif c.updated_at and c.updated_at.timestamp() > seven_days_ago:
+                activity["updated_topics"].append(title)
+
+        return activity
+
+    async def _call_topic_llm(self, prompt: str) -> dict[str, Any]:
+        """Call LLM for topic summary with structured TopicSummaryResult output."""
+        from beever_atlas.agents.consolidation.summarizer import create_topic_summarizer
+        from beever_atlas.agents.runner import run_agent
+
+        agent = create_topic_summarizer(instruction=prompt)
+        state = await run_agent(agent)
+
+        result = state.get("summary_result") or {}
+        if isinstance(result, dict):
+            return result
+        # Fallback: treat as flat text
+        return {"summary_text": str(result)} if result else {}
+
+    async def _call_channel_llm(self, prompt: str) -> dict[str, Any]:
+        """Call LLM for channel summary with structured ChannelSummaryResult output."""
+        from beever_atlas.agents.consolidation.summarizer import create_channel_summarizer
+        from beever_atlas.agents.runner import run_agent
+
+        agent = create_channel_summarizer(instruction=prompt)
+        state = await run_agent(agent)
+
+        result = state.get("summary_result") or {}
+        if isinstance(result, dict):
+            return result
+        # Fallback: treat as flat text
+        return {"summary_text": str(result)} if result else {}
+
     async def _call_llm(self, prompt: str) -> str:
-        """Call LLM for summary generation via ADK summarizer agent."""
+        """Legacy: Call LLM for summary generation via ADK summarizer agent."""
         from beever_atlas.agents.consolidation.summarizer import create_summarizer
         from beever_atlas.agents.runner import run_agent
 
         agent = create_summarizer(instruction=prompt)
         state = await run_agent(agent)
 
-        result = state.get("summary_result") or {}
-        return result.get("summary_text", "") if isinstance(result, dict) else ""
+        raw = state.get("summary_result") or {}
+        return raw.get("summary_text", "") if isinstance(raw, dict) else ""
 
     # ------------------------------------------------------------------
     # Health checks (UNCHANGED)

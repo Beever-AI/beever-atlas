@@ -119,9 +119,47 @@ export interface ChannelInfo {
 
 export interface TopicCluster {
   id: string;
+  title: string;
   summary: string;
+  current_state: string;
+  open_questions: string;
+  impact_note: string;
   topic_tags: string[];
   member_count: number;
+  key_entities: Array<{ id: string; name: string; type: string }>;
+  key_relationships: Array<{ source: string; type: string; target: string; confidence: string }>;
+  date_range_start: string;
+  date_range_end: string;
+  authors: string[];
+  media_refs: string[];
+  link_refs: string[];
+  high_importance_count: number;
+  related_cluster_ids: string[];
+  staleness_score: number;
+  status: string;
+  fact_type_counts: Record<string, number>;
+  key_facts: Array<{
+    fact_id: string;
+    memory_text: string;
+    author_name: string;
+    message_ts: string;
+    fact_type: string;
+    importance: string;
+    quality_score: number;
+    source_message_id: string;
+  }>;
+  decisions: Array<{
+    name: string;
+    decided_by: string;
+    status: string;
+    superseded_by: string;
+    date: string;
+    context: string;
+  }>;
+  people: Array<{ name: string; role: string; entity_id: string }>;
+  technologies: Array<{ name: string; category: string; champion: string }>;
+  projects: Array<{ name: string; status: string; owner: string; blockers: string[] }>;
+  faq_candidates: Array<{ question: string; answer: string }>;
 }
 
 export interface AtomicFact {
@@ -140,17 +178,56 @@ export interface MemoryTier0 {
   channel_id: string;
   channel_name: string;
   summary: string;
+  description: string;
+  themes: string;
+  momentum: string;
+  team_dynamics: string;
   updated_at: string;
   message_count: number;
+  cluster_count: number;
+  author_count: number;
+  media_count: number;
+  worst_staleness: number;
+  top_people: Array<{ name: string; role: string; topic_count: number; expertise_topics: string[] }>;
+  tech_stack: Array<{ name: string; category: string; champion: string; topic_count: number }>;
+  glossary_terms: Array<{ term: string; definition: string; first_mentioned_by: string; related_topics: string[] }>;
+  recent_activity_summary: {
+    facts_added_7d: number;
+    decisions_added_7d: number;
+    new_topics: string[];
+    updated_topics: string[];
+    highlights: Array<{ memory_text: string; author_name: string; fact_type: string }>;
+  } | null;
 }
 
 export interface MemoryTier1 {
   id: string;
+  title: string;
   topic: string;
   summary: string;
+  current_state: string;
+  open_questions: string;
+  impact_note: string;
   fact_count: number;
   date_range: { start: string; end: string };
   topic_tags: string[];
+  authors: string[];
+  status: string;
+  staleness_score: number;
+  key_facts: Array<{
+    fact_id: string;
+    memory_text: string;
+    author_name: string;
+    message_ts: string;
+    fact_type: string;
+    importance: string;
+    quality_score: number;
+  }>;
+  people: Array<{ name: string; role: string }>;
+  decisions: Array<{ name: string; decided_by: string; status: string; superseded_by: string }>;
+  technologies: Array<{ name: string; category: string; champion: string }>;
+  faq_candidates: Array<{ question: string; answer: string }>;
+  fact_type_counts: Record<string, number>;
 }
 
 export interface PlatformConnection {
@@ -218,12 +295,43 @@ export interface MemoryTier2 {
   source_link_descriptions: string[];
   valid_at: string | null;
   invalid_at: string | null;
+  fact_type: string;
+  superseded_by: string | null;
+  thread_context_summary: string;
+  source_media_names: string[];
 }
 
 export interface ChannelSummaryResponse {
   text: string;
   cluster_count: number;
   fact_count: number;
+  channel_name: string;
+  description: string;
+  themes: string;
+  momentum: string;
+  team_dynamics: string;
+  key_decisions: Array<Record<string, unknown>>;
+  key_entities: Array<Record<string, unknown>>;
+  key_topics: Array<Record<string, unknown>>;
+  date_range_start: string;
+  date_range_end: string;
+  media_count: number;
+  author_count: number;
+  worst_staleness: number;
+  top_decisions: Array<Record<string, unknown>>;
+  top_people: Array<{ name: string; role: string; topic_count: number; expertise_topics: string[] }>;
+  tech_stack: Array<{ name: string; category: string; champion: string; topic_count: number }>;
+  active_projects: Array<{ name: string; status: string; owner: string; blockers: string[] }>;
+  glossary_terms: Array<{ term: string; definition: string; first_mentioned_by: string; related_topics: string[] }>;
+  recent_activity_summary: {
+    facts_added_7d: number;
+    decisions_added_7d: number;
+    entities_added_7d: number;
+    new_topics: string[];
+    updated_topics: string[];
+    highlights: Array<{ memory_text: string; author_name: string; fact_type: string; message_ts: string }>;
+  };
+  topic_graph_edges: Array<{ source_cluster_id: string; target_cluster_id: string; source_title: string; target_title: string; shared_entities: string[] }>;
 }
 
 export interface ConsolidateResponse {

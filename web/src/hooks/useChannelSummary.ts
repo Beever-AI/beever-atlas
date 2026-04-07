@@ -25,10 +25,22 @@ export function useChannelSummary(channelId: string) {
       .then((res) => {
         setSummary({
           channel_id: channelId,
-          channel_name: channelId, // TODO: resolve channel name from ChannelInfo or route context
+          channel_name: res.channel_name || channelId,
           summary: res.text,
+          description: res.description || "",
+          themes: res.themes || "",
+          momentum: res.momentum || "",
+          team_dynamics: res.team_dynamics || "",
           updated_at: "",
           message_count: res.fact_count,
+          cluster_count: res.cluster_count,
+          author_count: res.author_count || 0,
+          media_count: res.media_count || 0,
+          worst_staleness: res.worst_staleness || 0,
+          top_people: res.top_people || [],
+          tech_stack: res.tech_stack || [],
+          glossary_terms: res.glossary_terms || [],
+          recent_activity_summary: res.recent_activity_summary || null,
         });
         setClusterCount(res.cluster_count);
         setFactCount(res.fact_count);

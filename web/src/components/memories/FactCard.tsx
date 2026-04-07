@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, ImageIcon, FileText, Film } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, ImageIcon, FileText, Film, ArrowRight } from "lucide-react";
 import type { MemoryTier2 } from "@/lib/types";
 import { MediaModal } from "@/components/graph/MediaModal";
 
@@ -52,10 +52,26 @@ export function FactCard({ fact }: FactCardProps) {
           <ChevronRight size={14} className="text-muted-foreground mt-0.5 shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm sm:text-[15px] text-foreground leading-relaxed">
+          <p className={`text-sm sm:text-[15px] leading-relaxed ${fact.superseded_by ? "text-muted-foreground line-through" : "text-foreground"}`}>
             {fact.memory_text}
           </p>
+          {fact.superseded_by && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+              <ArrowRight size={10} />
+              Superseded by a newer fact
+            </p>
+          )}
+          {fact.thread_context_summary && (
+            <p className="text-xs text-muted-foreground mt-1 italic">
+              Thread: {fact.thread_context_summary}
+            </p>
+          )}
           <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+            {fact.fact_type && fact.fact_type !== "observation" && (
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 capitalize">
+                {fact.fact_type.replace("_", " ")}
+              </span>
+            )}
             <span
               className={`px-2 py-0.5 text-xs font-semibold rounded-full ${qualityBadgeColor(fact.quality_score)}`}
             >

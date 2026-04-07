@@ -101,7 +101,12 @@ class TopicCluster(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tier: str = "topic"
     channel_id: str
-    summary: str = ""
+    # Multi-angle summary fields
+    title: str = ""  # Short descriptive name (5-10 words)
+    summary: str = ""  # Narrative of what happened (2-3 sentences)
+    current_state: str = ""  # Where things stand now (1-2 sentences)
+    open_questions: str = ""  # Unresolved tensions/debates (1-2 sentences, or empty)
+    impact_note: str = ""  # Scope and significance (1 sentence)
     topic_tags: list[str] = Field(default_factory=list)
     member_ids: list[str] = Field(default_factory=list)
     member_count: int = 0
@@ -122,6 +127,19 @@ class TopicCluster(BaseModel):
     staleness_score: float = 0.0  # 0.0=fresh, 1.0=very stale
     status: str = "active"  # "active", "completed", "stale"
     fact_type_counts: dict[str, int] = Field(default_factory=dict)  # {"decision": N, ...}
+    # Wiki-ready enrichment fields
+    key_facts: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"fact_id", "memory_text", "author_name", "message_ts", "fact_type", "importance", "quality_score", "source_message_id"}]
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "decided_by", "status", "superseded_by", "date", "context"}]
+    people: list[dict[str, str]] = Field(default_factory=list)
+    # [{"name", "role", "entity_id"}]  role: decision_maker|contributor|expert|mentioned
+    technologies: list[dict[str, str]] = Field(default_factory=list)
+    # [{"name", "category", "champion"}]
+    projects: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "status", "owner", "blockers"}]
+    faq_candidates: list[dict[str, str]] = Field(default_factory=list)
+    # [{"question", "answer"}]
 
 
 class ChannelSummary(BaseModel):
@@ -130,7 +148,13 @@ class ChannelSummary(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tier: str = "summary"
     channel_id: str
-    text: str = ""
+    # Multi-angle summary fields
+    channel_name: str = ""  # Resolved display name (e.g. "#backend-engineering")
+    text: str = ""  # Overall narrative overview (3-5 sentences)
+    description: str = ""  # One-line channel purpose (max 200 chars)
+    themes: str = ""  # Main knowledge areas and how they interrelate (2-3 sentences)
+    momentum: str = ""  # What's active vs. completed vs. stale (1-2 sentences)
+    team_dynamics: str = ""  # Who drives decisions, collaboration patterns (1-2 sentences)
     cluster_count: int = 0
     fact_count: int = 0
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
@@ -143,6 +167,21 @@ class ChannelSummary(BaseModel):
     media_count: int = 0
     author_count: int = 0
     worst_staleness: float = 0.0
+    # Wiki-ready enrichment fields
+    top_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "decided_by", "status", "superseded_by", "date", "topic_cluster_id", "context"}]
+    top_people: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "role", "topic_count", "expertise_topics"}]
+    tech_stack: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "category", "champion", "topic_count"}]
+    active_projects: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"name", "status", "owner", "blockers", "topic_cluster_id"}]
+    glossary_terms: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"term": str, "definition": str, "first_mentioned_by": str, "related_topics": list[str]}]
+    recent_activity_summary: dict[str, Any] = Field(default_factory=dict)
+    # {"facts_added_7d", "decisions_added_7d", "entities_added_7d", "new_topics", "updated_topics", "highlights"}
+    topic_graph_edges: list[dict[str, Any]] = Field(default_factory=list)
+    # [{"source_cluster_id", "target_cluster_id", "source_title", "target_title", "shared_entities"}]
 
 
 class EntityKnowledgeCard(BaseModel):

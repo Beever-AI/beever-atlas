@@ -33,6 +33,16 @@ class TopicClusterResponse(BaseModel):
     staleness_score: float = 0.0
     status: str = "active"
     fact_type_counts: dict[str, int] = {}
+    title: str = ""
+    current_state: str = ""
+    open_questions: str = ""
+    impact_note: str = ""
+    key_facts: list[dict] = []
+    decisions: list[dict] = []
+    people: list[dict] = []
+    technologies: list[dict] = []
+    projects: list[dict] = []
+    faq_candidates: list[dict] = []
 
 
 class TopicClusterDetailResponse(BaseModel):
@@ -55,6 +65,18 @@ class ChannelSummaryResponse(BaseModel):
     media_count: int = 0
     author_count: int = 0
     worst_staleness: float = 0.0
+    channel_name: str = ""
+    description: str = ""
+    themes: str = ""
+    momentum: str = ""
+    team_dynamics: str = ""
+    top_decisions: list[dict] = []
+    top_people: list[dict] = []
+    tech_stack: list[dict] = []
+    active_projects: list[dict] = []
+    glossary_terms: list[dict] = []
+    recent_activity_summary: dict = {}
+    topic_graph_edges: list[dict] = []
 
 
 class EntityCardResponse(BaseModel):
@@ -100,6 +122,16 @@ async def list_topics(channel_id: str) -> list[TopicClusterResponse]:
             staleness_score=c.staleness_score,
             status=c.status,
             fact_type_counts=c.fact_type_counts,
+            title=c.title,
+            current_state=c.current_state,
+            open_questions=c.open_questions,
+            impact_note=c.impact_note,
+            key_facts=c.key_facts,
+            decisions=c.decisions,
+            people=c.people,
+            technologies=c.technologies,
+            projects=c.projects,
+            faq_candidates=c.faq_candidates,
         )
         for c in clusters
     ]
@@ -147,6 +179,18 @@ async def get_channel_summary(channel_id: str) -> ChannelSummaryResponse:
         media_count=summary.media_count,
         author_count=summary.author_count,
         worst_staleness=summary.worst_staleness,
+        channel_name=summary.channel_name,
+        description=summary.description,
+        themes=summary.themes,
+        momentum=summary.momentum,
+        team_dynamics=summary.team_dynamics,
+        top_decisions=summary.top_decisions,
+        top_people=summary.top_people,
+        tech_stack=summary.tech_stack,
+        active_projects=summary.active_projects,
+        glossary_terms=summary.glossary_terms,
+        recent_activity_summary=summary.recent_activity_summary,
+        topic_graph_edges=summary.topic_graph_edges,
     )
 
 
