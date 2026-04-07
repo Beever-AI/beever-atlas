@@ -63,3 +63,12 @@ web/dist/
 .agents/
 .impeccable.md
 *.pen
+
+# OpenSpec workflow artifacts
+openspec/
+
+# Stray version artifacts
+=3.6.0
+
+# Root package-lock (monorepo uses per-package locks)
+/package-lock.json
