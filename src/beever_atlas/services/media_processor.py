@@ -260,10 +260,12 @@ class MediaProcessor:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
-    async def _download_file(self, url: str, _retries: int = 3) -> bytes | None:
+    async def _download_file(self, url: str, _retries: int = 3, connection_id: str | None = None) -> bytes | None:
         """Download a file via the bridge file proxy with retry on 429."""
         settings = self._settings
         proxy_url = f"{settings.bridge_url}/bridge/files?url={url}"
+        if connection_id:
+            proxy_url += f"&connection_id={connection_id}"
         headers: dict[str, str] = {}
         if settings.bridge_api_key:
             headers["Authorization"] = f"Bearer {settings.bridge_api_key}"

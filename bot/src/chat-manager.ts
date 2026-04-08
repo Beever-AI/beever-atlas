@@ -46,6 +46,9 @@ export class ChatManager {
   private redisUrl: string;
   private transitioning: boolean = false;
   private rebuildListeners: Array<() => void> = [];
+  /** Maps workspace identifiers to connectionId for URL-based routing.
+   *  e.g. Slack team_id "T0APJ2FNUKZ" → connectionId "abc-123" */
+  private workspaceIdMap: Map<string, string> = new Map();
 
   constructor(redisUrl: string, registerHandlers: (bot: Chat) => void) {
     this.redisUrl = redisUrl;
@@ -154,10 +157,21 @@ export class ChatManager {
 
       try {
         if (entry.platform === "slack") {
-          adapterInstances[key] = createSlackAdapter({
+          const slackAdapter = createSlackAdapter({
             botToken: entry.config.botToken,
             signingSecret: entry.config.signingSecret,
           });
+          adapterInstances[key] = slackAdapter;
+          // Cache team_id → connectionId for URL-based file routing
+          try {
+            const authResult = await (slackAdapter as any).client.auth.test();
+            if (authResult?.team_id) {
+              this.workspaceIdMap.set(authResult.team_id, entry.connectionId);
+              console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
+            }
+          } catch (err) {
+            console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, err);
+          }
         } else if (entry.platform === "discord") {
           const discordOpts: Record<string, unknown> = {
             botToken: entry.config.botToken,
@@ -313,5 +327,13 @@ export class ChatManager {
    */
   adapterFingerprint(): string {
     return [...this.adapters.keys()].sort().join(",");
+  }
+
+  /**
+   * Resolve a workspace/team identifier (e.g. Slack team_id) to a connectionId.
+   * Returns null if no mapping is found.
+   */
+  getConnectionForWorkspaceId(workspaceId: string): string | null {
+    return this.workspaceIdMap.get(workspaceId) ?? null;
   }
 }

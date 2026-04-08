@@ -188,13 +188,13 @@ async def get_channel(
         adapter = ChatBridgeAdapter(connection_id=connection_id)
         try:
             info = await adapter.get_channel_info(channel_id)
-        except (KeyError, Exception) as e:
-            raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found") from e
+            return _channel_to_response(info)
+        except Exception:
+            pass  # Fall through to search all connections
         finally:
             await adapter.close()
-        return _channel_to_response(info)
 
-    # No connection_id — search across connections.
+    # No connection_id or provided one didn't match — search across connections.
     # Detect likely platform from channel ID format to skip wrong platforms
     # and avoid wasting API calls / rate limit budget.
     from beever_atlas.stores import get_stores
@@ -365,7 +365,10 @@ async def clear_channel_data(channel_id: str):
 
 
 @router.get("/api/files/proxy")
-async def proxy_file(url: str = Query(..., description="Slack file URL to proxy")):
+async def proxy_file(
+    url: str = Query(..., description="File URL to proxy"),
+    connection_id: str | None = Query(None, description="Connection ID for multi-workspace routing"),
+):
     adapter = get_adapter()
     if not hasattr(adapter, '_client'):
         raise HTTPException(status_code=501, detail="File proxy not available in mock mode")
@@ -373,6 +376,8 @@ async def proxy_file(url: str = Query(..., description="Slack file URL to proxy"
     from beever_atlas.infra.config import get_settings
     _settings = get_settings()
     bridge_url = f"{_settings.bridge_url}/bridge/files?url={url}"
+    if connection_id:
+        bridge_url += f"&connection_id={connection_id}"
     headers = {}
     if _settings.bridge_api_key:
         headers["Authorization"] = f"Bearer {_settings.bridge_api_key}"

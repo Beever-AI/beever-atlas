@@ -948,6 +948,26 @@ function detectPlatformFromUrl(url: string): string | null {
   return null;
 }
 
+/**
+ * Extract a workspace/team identifier from a file URL for multi-workspace routing.
+ * Returns null if no identifier can be extracted.
+ *
+ * - Slack: files-pri/{TEAM_ID}-{FILE_ID}/ → TEAM_ID (e.g. "T0APJ2FNUKZ")
+ * - Telegram: api.telegram.org/file/bot{TOKEN}/... → bot token prefix
+ * - Discord/Teams: not reliably extractable from URL
+ */
+function extractWorkspaceIdFromUrl(url: string): string | null {
+  // Slack: extract team ID from files-pri/TEAM_ID-FILE_ID/
+  const slackMatch = url.match(/files-pri\/([A-Z0-9]+)-[A-Z0-9]+\//);
+  if (slackMatch) return slackMatch[1];
+
+  // Telegram: extract bot token from api.telegram.org/file/bot{TOKEN}/
+  const telegramMatch = url.match(/api\.telegram\.org\/file\/bot([^/]+)\//);
+  if (telegramMatch) return telegramMatch[1];
+
+  return null;
+}
+
 /** Try to detect platform from a channel ID format. */
 function detectPlatformFromChannelId(channelId: string): string | null {
   // Slack: starts with C, D, or G followed by alphanumeric (e.g., C0AMY9QSPB2)
@@ -1137,13 +1157,62 @@ async function handleFileProxy(
   chatManager: ChatManager,
   fileUrl: string,
   platform?: string,
+  connectionId?: string,
 ): Promise<void> {
   try {
     const resolvedPlatform = platform || detectPlatformFromUrl(fileUrl);
+
+    // Layer A: Explicit connectionId (highest priority)
     let bridge: PlatformBridge | null = null;
-    if (resolvedPlatform) {
-      bridge = getBridge(chatManager, resolvedPlatform);
+    if (connectionId && resolvedPlatform) {
+      bridge = getBridge(chatManager, resolvedPlatform, connectionId);
     }
+
+    // Layer B: Extract workspace ID from URL and match to cached adapter identity
+    if (!bridge && resolvedPlatform) {
+      const workspaceId = extractWorkspaceIdFromUrl(fileUrl);
+      if (workspaceId) {
+        const resolvedConnId = chatManager.getConnectionForWorkspaceId(workspaceId);
+        if (resolvedConnId) {
+          bridge = getBridge(chatManager, resolvedPlatform, resolvedConnId);
+        }
+      }
+    }
+
+    // Layer C: Try all adapters for this platform (fallback for multi-workspace)
+    if (!bridge && resolvedPlatform) {
+      const allAdapters = chatManager.getAdaptersByPlatform(resolvedPlatform);
+      if (allAdapters.length === 1) {
+        // Single adapter — use directly (no try-all overhead)
+        bridge = getOrCreateBridge(resolvedPlatform, allAdapters[0].connectionId, allAdapters[0].adapter);
+      } else if (allAdapters.length > 1) {
+        // Multiple adapters — try each until one succeeds
+        let lastErr: unknown = null;
+        for (const entry of allAdapters) {
+          const candidate = getOrCreateBridge(resolvedPlatform, entry.connectionId, entry.adapter);
+          if (!candidate) continue;
+          try {
+            const { contentType, buffer } = await candidate.proxyFile(fileUrl);
+            res.writeHead(200, {
+              "Content-Type": contentType,
+              "Cache-Control": "public, max-age=3600",
+            });
+            res.end(buffer);
+            return; // Success — done
+          } catch (err) {
+            lastErr = err;
+            // Wrong workspace token — try next adapter
+          }
+        }
+        // All adapters failed
+        console.error("Bridge: fileProxy all adapters failed:", lastErr);
+        const classified = classifyPlatformError(lastErr);
+        jsonResponse(res, classified.status, { error: String(lastErr), code: classified.code });
+        return;
+      }
+    }
+
+    // Final fallback: first available bridge of any platform
     if (!bridge) {
       const first = getFirstBridge(chatManager);
       bridge = first?.bridge ?? null;
@@ -1306,8 +1375,13 @@ async function handleConnectionRoute(
     }
     await handler(result.bridge);
   } catch (err) {
-    console.error(`Bridge: connection route error (${connectionId}):`, err);
     const classified = classifyPlatformError(err);
+    // Expected "not found" errors during multi-workspace probing — log briefly, not full stack
+    if (classified.status === 404) {
+      console.warn(`Bridge: connection route (${connectionId}): ${(err as any)?.data?.error || err}`);
+    } else {
+      console.error(`Bridge: connection route error (${connectionId}):`, err);
+    }
     jsonResponse(res, classified.status, { error: String(err), code: classified.code });
   }
 }
@@ -1504,13 +1578,14 @@ export function registerBridgeRoutes(
       return true;
     }
 
-    // GET /bridge/platforms/:platform/files?url=...
+    // GET /bridge/platforms/:platform/files?url=...&connection_id=...
     const platformFilesMatch = url.match(/^\/bridge\/platforms\/([^/]+)\/files/);
     if (req.method === "GET" && platformFilesMatch) {
       const fileQuery = parseQuery(url);
       const fileUrl = fileQuery.get("url");
       if (fileUrl) {
-        await handleFileProxy(req, res, chatManager, fileUrl, platformFilesMatch[1]);
+        const connId = fileQuery.get("connection_id") || undefined;
+        await handleFileProxy(req, res, chatManager, fileUrl, platformFilesMatch[1], connId);
         return true;
       }
     }
@@ -1553,14 +1628,15 @@ export function registerBridgeRoutes(
       return true;
     }
 
-    // GET /bridge/files?url=...
+    // GET /bridge/files?url=...&connection_id=...
     if (req.method === "GET" && url.startsWith("/bridge/files")) {
       console.log("Bridge: /bridge/files route matched, url:", url.slice(0, 80));
       const fileQuery = parseQuery(url);
       const fileUrl = fileQuery.get("url");
-      console.log("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60));
+      const connId = fileQuery.get("connection_id") || undefined;
+      console.log("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60), "connection_id:", connId || "(auto-detect)");
       if (fileUrl) {
-        await handleFileProxy(req, res, chatManager, fileUrl);
+        await handleFileProxy(req, res, chatManager, fileUrl, undefined, connId);
         return true;
       }
     }
