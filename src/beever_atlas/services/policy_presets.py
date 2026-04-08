@@ -8,6 +8,8 @@ from beever_atlas.models.sync_policy import (
     IngestionConfig,
     SyncConfig,
     SyncTriggerMode,
+    WikiConfig,
+    WikiGenerationStrategy,
 )
 
 PRESETS: dict[str, dict] = {
@@ -34,6 +36,13 @@ PRESETS: dict[str, dict] = {
             merge_threshold=0.85,
             min_facts_for_clustering=3,
         ),
+        "wiki": WikiConfig(
+            generation_strategy=WikiGenerationStrategy.AFTER_CONSOLIDATION,
+            enabled=True,
+            auto_regenerate_on_stale=True,
+            min_facts_for_generation=5,
+            topic_subpage_threshold=15,
+        ),
     },
     "daily-digest": {
         "name": "Daily Digest",
@@ -57,6 +66,13 @@ PRESETS: dict[str, dict] = {
             similarity_threshold=0.6,
             merge_threshold=0.85,
             min_facts_for_clustering=5,
+        ),
+        "wiki": WikiConfig(
+            generation_strategy=WikiGenerationStrategy.AFTER_CONSOLIDATION,
+            enabled=True,
+            auto_regenerate_on_stale=True,
+            min_facts_for_generation=10,
+            topic_subpage_threshold=15,
         ),
     },
     "lightweight": {
@@ -82,6 +98,13 @@ PRESETS: dict[str, dict] = {
             merge_threshold=0.8,
             min_facts_for_clustering=10,
         ),
+        "wiki": WikiConfig(
+            generation_strategy=WikiGenerationStrategy.MANUAL,
+            enabled=True,
+            auto_regenerate_on_stale=False,
+            min_facts_for_generation=10,
+            topic_subpage_threshold=20,
+        ),
     },
     "manual": {
         "name": "Manual",
@@ -105,6 +128,13 @@ PRESETS: dict[str, dict] = {
             merge_threshold=0.85,
             min_facts_for_clustering=3,
         ),
+        "wiki": WikiConfig(
+            generation_strategy=WikiGenerationStrategy.MANUAL,
+            enabled=True,
+            auto_regenerate_on_stale=False,
+            min_facts_for_generation=5,
+            topic_subpage_threshold=15,
+        ),
     },
 }
 
@@ -125,5 +155,6 @@ def list_presets() -> list[dict]:
             "sync": preset["sync"].model_dump(mode="json"),
             "ingestion": preset["ingestion"].model_dump(mode="json"),
             "consolidation": preset["consolidation"].model_dump(mode="json"),
+            "wiki": preset["wiki"].model_dump(mode="json"),
         })
     return result

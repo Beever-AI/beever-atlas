@@ -50,7 +50,7 @@ function AppShell() {
   }, [routeKey, shouldAnimateRoute]);
 
   return (
-    <div className="grid grid-cols-[auto_1fr] h-screen bg-background">
+    <div className="grid grid-cols-[auto_1fr] h-dvh min-h-screen bg-background">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {/* Mobile overlay */}
       {sidebarOpen && (
@@ -74,7 +74,7 @@ function AppShell() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/channels" element={<Channels />} />
               <Route path="/channels/:id" element={<ChannelWorkspace />}>
-                <Route index element={<Navigate to="wiki" replace />} />
+                <Route index element={<Navigate to="messages" replace />} />
                 <Route path="wiki" element={<WikiTab />} />
                 <Route path="ask" element={<AskTab />} />
                 <Route path="messages" element={<MessagesTab />} />

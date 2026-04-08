@@ -292,6 +292,15 @@ class MediaProcessor:
                 )
                 return None
 
+            # Detect HTML responses (e.g. Slack login page instead of actual file)
+            ct = resp.headers.get("content-type", "")
+            if "text/html" in ct or resp.content[:15].lstrip().startswith(b"<!DOC"):
+                logger.warning(
+                    "MediaProcessor: got HTML instead of file content url=%s",
+                    url[:80],
+                )
+                return None
+
             if len(resp.content) > self._max_bytes:
                 logger.info(
                     "MediaProcessor: skipping file >%dMB: %s",

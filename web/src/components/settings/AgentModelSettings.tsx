@@ -77,7 +77,7 @@ export function AgentModelSettings() {
     return <div className="text-sm text-muted-foreground py-4">Loading model configuration...</div>;
   }
 
-  const groups = ["ingestion", "media", "post_processing"] as const;
+  const groups = ["ingestion", "media", "post_processing", "wiki"] as const;
 
   return (
     <div className="space-y-4">

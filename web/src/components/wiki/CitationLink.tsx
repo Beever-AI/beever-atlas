@@ -14,7 +14,9 @@ export function CitationLink({ index, citation }: CitationLinkProps) {
       // Brief highlight
       el.classList.add("ring-2", "ring-primary", "ring-offset-2", "ring-offset-background");
       setTimeout(() => el.classList.remove("ring-2", "ring-primary", "ring-offset-2", "ring-offset-background"), 2000);
+      return;
     }
+    window.dispatchEvent(new CustomEvent("wiki:citation-jump", { detail: { index } }));
   };
 
   return (

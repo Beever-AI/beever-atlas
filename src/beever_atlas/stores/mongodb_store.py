@@ -237,9 +237,12 @@ class MongoDBStore:
         channel_id: str,
         last_sync_ts: str,
         increment: int = 0,
+        set_total: int | None = None,
     ) -> None:
         """Upsert the channel sync state, optionally incrementing message count."""
         update: dict[str, Any] = {"$set": {"last_sync_ts": last_sync_ts}}
+        if set_total is not None:
+            update["$set"]["total_synced_messages"] = set_total
         if increment:
             update["$inc"] = {"total_synced_messages": increment}
         await self._channel_sync_state.update_one(

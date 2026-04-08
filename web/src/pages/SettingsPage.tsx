@@ -60,7 +60,7 @@ export function SettingsPage() {
   const connectedCount = connections.filter((c) => c.status === "connected").length;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* Page header */}
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>

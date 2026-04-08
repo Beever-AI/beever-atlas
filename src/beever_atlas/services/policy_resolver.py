@@ -13,6 +13,7 @@ from beever_atlas.models.sync_policy import (
     IngestionConfig,
     ResolvedPolicy,
     SyncConfig,
+    WikiConfig,
 )
 from beever_atlas.stores import get_stores
 
@@ -49,6 +50,7 @@ def resolve_policy(
             sync=defaults.sync,
             ingestion=defaults.ingestion,
             consolidation=defaults.consolidation,
+            wiki=defaults.wiki,
         )
 
     return ResolvedPolicy(
@@ -57,6 +59,7 @@ def resolve_policy(
         consolidation=ConsolidationConfig(
             **_merge_config(channel.consolidation, defaults.consolidation)
         ),
+        wiki=WikiConfig(**_merge_config(channel.wiki, defaults.wiki)),
     )
 
 

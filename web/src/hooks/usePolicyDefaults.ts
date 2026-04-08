@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api";
-import type { GlobalDefaultsResponse, SyncConfig, IngestionConfig, ConsolidationConfig } from "@/lib/types";
+import type { GlobalDefaultsResponse, SyncConfig, IngestionConfig, ConsolidationConfig, WikiConfig } from "@/lib/types";
 
 export function usePolicyDefaults() {
   const [defaults, setDefaults] = useState<GlobalDefaultsResponse | null>(null);
@@ -24,6 +24,7 @@ export function usePolicyDefaults() {
     sync?: SyncConfig;
     ingestion?: IngestionConfig;
     consolidation?: ConsolidationConfig;
+    wiki?: WikiConfig;
     max_concurrent_syncs?: number;
   }) => {
     setError(null);

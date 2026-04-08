@@ -16,8 +16,11 @@
   --color-error: var(--color-red-500);
 }
 
+html,
+body,
 #root {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
 }
 
 @theme inline {
