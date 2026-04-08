@@ -21,7 +21,6 @@ class Settings(BaseSettings):
 
     # LLM providers
     google_api_key: str = Field(default="")
-    anthropic_api_key: str = Field(default="")
 
     # External services
     jina_api_key: str = Field(default="")

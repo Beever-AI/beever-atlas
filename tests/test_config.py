@@ -34,7 +34,6 @@ class TestSettings:
 
         settings = Settings()
         assert hasattr(settings, "google_api_key")
-        assert hasattr(settings, "anthropic_api_key")
         assert hasattr(settings, "jina_api_key")
         assert hasattr(settings, "tavily_api_key")
 

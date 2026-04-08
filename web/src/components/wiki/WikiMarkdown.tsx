@@ -34,10 +34,29 @@ interface WikiMarkdownProps {
 /**
  * Pre-process content: replace [N] citations with markers that survive markdown parsing.
  * Entity chips ($tech, @person) are removed — rendered as plain text for readability.
+ * Also wraps bare chart JSON (emitted by LLM without code fences) into ```chart blocks.
  */
 function preprocessContent(content: string): string {
+  // Split on code fences so we never touch content that is already inside one.
+  // Code fences start with ``` (optionally with a language tag) on their own line.
+  // We alternate between "outside fence" and "inside fence" segments.
+  const segments = content.split(/(^```[^\n]*\n[\s\S]*?^```)/gm);
+
+  const processed = segments.map((seg, i) => {
+    // Even-indexed segments are outside code fences; odd-indexed are inside.
+    if (i % 2 !== 0) return seg; // already inside a fence — leave untouched
+
+    // Wrap any bare chart JSON lines that are NOT already fenced.
+    return seg.replace(
+      /^[ \t]*(\{[^\n]*?"type"\s*:\s*"(?:bar|area|donut|pie)"[^\n]*?\})[ \t]*$/gm,
+      (_, json) => "```chart\n" + json.trim() + "\n```"
+    );
+  });
+
+  let result = processed.join("");
+
   // Replace comma-separated citations like [1, 3, 13] with individual markers
-  let result = content.replace(/\[([\d,\s]+)\]/g, (_match, inner: string) => {
+  result = result.replace(/\[([\d,\s]+)\]/g, (_match, inner: string) => {
     const nums = inner.split(",").map(s => s.trim()).filter(s => /^\d+$/.test(s));
     if (nums.length === 0) return _match;
     return nums.map(n => `\u200Bcite:${n}\u200B`).join(" ");
@@ -219,6 +238,17 @@ export function WikiMarkdown({ content, citations = [], onNavigate: _onNavigate 
 
           if (lang === "mermaid") return <MermaidBlock chart={code} />;
           if (lang === "chart" || lang.startsWith("chart")) return <ChartBlock spec={code} />;
+
+          // LLM sometimes emits chart JSON inside ```json blocks — detect and render as chart
+          if ((lang === "json" || lang === "") && code.trimStart().startsWith("{")) {
+            try {
+              const parsed = JSON.parse(code);
+              const t = parsed?.type;
+              if (t === "bar" || t === "area" || t === "donut" || t === "pie") {
+                return <ChartBlock spec={code} />;
+              }
+            } catch { /* not valid JSON or not a chart */ }
+          }
 
           return (
             <code className={`${className ?? ""} rounded bg-muted px-1 py-0.5 text-sm font-mono text-foreground`} {...props}>

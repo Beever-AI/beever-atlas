@@ -165,7 +165,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 - Use GFM tables, not prose paragraphs, for listing people
 - Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains.
 - Do NOT use @, #, $ prefixes — write names normally
-- Activity chart JSON: {{"type":"bar","title":"Contributor Activity","data":[{{"name":"Alice","contributions":15}}],"xKey":"name","series":["contributions"]}}
+- Activity chart JSON (use ```chart code block, NOT ```json): `{"type":"bar","title":"Contributor Activity","data":[{"name":"Alice","contributions":15}],"xKey":"name","series":["contributions"]}`
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
 - **Maximum 10 edges** in the contributor network mermaid diagram. Show only the most significant collaboration relationships.
 

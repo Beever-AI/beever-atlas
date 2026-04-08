@@ -42,6 +42,48 @@ def _get_adapter_for_connection(connection_id: str | None = None) -> ChatBridgeA
     return ChatBridgeAdapter()
 
 
+async def _resolve_adapter_for_channel(
+    channel_id: str, connection_id: str | None = None
+) -> ChatBridgeAdapter:
+    """Resolve the correct adapter for a channel, with multi-workspace fallback.
+
+    Tries the explicit connection_id first. If that fails (wrong workspace),
+    searches all connections to find the one that owns this channel.
+    """
+    if connection_id:
+        adapter = ChatBridgeAdapter(connection_id=connection_id)
+        try:
+            await adapter.get_channel_info(channel_id)
+            return adapter
+        except Exception:
+            await adapter.close()
+            # Fall through to search
+
+    from beever_atlas.stores import get_stores
+    stores = get_stores()
+    connections = await stores.platform.list_connections()
+    connected = [c for c in connections if c.status == "connected"]
+
+    likely_platform = _detect_platform_from_channel_id(channel_id)
+    candidates = (
+        [c for c in connected if c.platform == likely_platform] or connected
+    ) if likely_platform else connected
+
+    for conn in candidates:
+        if conn.id == connection_id:
+            continue  # Already tried this one
+        adapter = ChatBridgeAdapter(connection_id=conn.id)
+        try:
+            await adapter.get_channel_info(channel_id)
+            return adapter
+        except Exception:
+            await adapter.close()
+            continue
+
+    # Last resort: return default adapter
+    return _get_adapter_for_connection(connection_id)
+
+
 class ChannelResponse(BaseModel):
     channel_id: str
     name: str
@@ -238,7 +280,7 @@ async def get_channel_messages(
     connection_id: str | None = Query(default=None),
 ) -> MessagesListResponse:
     """Get paginated messages for a channel."""
-    adapter = _get_adapter_for_connection(connection_id)
+    adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
 
     since_dt = None
     if since:
@@ -298,7 +340,7 @@ async def get_thread_messages(
     connection_id: str | None = Query(default=None),
 ) -> list[MessageResponse]:
     """Get all messages in a thread (parent + replies)."""
-    adapter = _get_adapter_for_connection(connection_id)
+    adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
     try:
         messages = await adapter.fetch_thread(channel_id, thread_id)
     except KeyError as e:

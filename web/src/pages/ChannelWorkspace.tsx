@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Outlet, useNavigate, useLocation, Link } from "react-router-dom";
+import { useParams, Outlet, useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { ArrowLeft, ShieldAlert, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -81,10 +81,12 @@ export function ChannelWorkspace() {
         connection_id: routeState.connection_id ?? prev?.connection_id ?? null,
       }));
     }
-    const connParam = routeState?.connection_id ? `?connection_id=${routeState.connection_id}` : "";
+    // Don't send route-state connection_id — it may be stale (wrong workspace).
+    // Let the backend resolve the correct connection; the response will contain
+    // the authoritative connection_id for all subsequent requests.
     setLoadingChannel(true);
     api
-      .get<ChannelInfo>(`/api/channels/${id}${connParam}`)
+      .get<ChannelInfo>(`/api/channels/${id}`)
       .then(setChannel)
       .catch(() =>
         setChannel((prev) =>
@@ -101,6 +103,7 @@ export function ChannelWorkspace() {
 
   useEffect(() => {
     if (!id || isMemoryCountLoading) return;
+    // If user navigates directly to wiki tab but channel has no wiki, redirect to messages
     if (!hasMemories && activeTab === "wiki") {
       navigate(`/channels/${id}/messages`, { replace: true });
     }
@@ -331,4 +334,15 @@ export function ChannelWorkspace() {
       )}
     </div>
   );
+}
+
+/**
+ * Index route redirect — wiki if channel has memories, messages otherwise.
+ */
+export function ChannelDefaultRedirect() {
+  const { id } = useParams<{ id: string }>();
+  const { hasMemories, isLoading } = useChannelMemoryCount(id);
+
+  if (isLoading) return null; // brief wait for the check
+  return <Navigate to={hasMemories ? "wiki" : "messages"} replace />;
 }

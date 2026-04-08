@@ -3,7 +3,6 @@ import {
   BrowserRouter,
   Routes,
   Route,
-  Navigate,
   useLocation,
   useNavigationType,
 } from "react-router-dom";
@@ -27,6 +26,7 @@ import { GraphTab } from "@/components/graph/GraphTab";
 import { ChannelSettingsTab } from "@/components/channel/ChannelSettingsTab";
 import { SyncHistoryTab } from "@/components/channel/SyncHistoryTab";
 import { useTheme } from "@/hooks/useTheme";
+import { ChannelDefaultRedirect } from "@/pages/ChannelWorkspace";
 
 function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -74,7 +74,7 @@ function AppShell() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/channels" element={<Channels />} />
               <Route path="/channels/:id" element={<ChannelWorkspace />}>
-                <Route index element={<Navigate to="messages" replace />} />
+                <Route index element={<ChannelDefaultRedirect />} />
                 <Route path="wiki" element={<WikiTab />} />
                 <Route path="ask" element={<AskTab />} />
                 <Route path="messages" element={<MessagesTab />} />
