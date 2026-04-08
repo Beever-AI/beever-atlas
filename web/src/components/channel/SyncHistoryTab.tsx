@@ -1,7 +1,21 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useSyncHistory } from "@/hooks/useSyncHistory";
-import { CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight, RefreshCw, Loader2, Brain, Users, GitBranch } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  Loader2,
+  Brain,
+  Users,
+  GitBranch,
+  BarChart3,
+  Timer,
+  Activity,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SyncHistoryEntry, BatchResultEntry } from "@/lib/types";
 import { AgentSampleRow, ActivityLog, ExpandableText } from "./PipelineActivity";
@@ -129,6 +143,13 @@ function formatDuration(start: string | null, end: string | null): string {
   return `${(ms / 60_000).toFixed(1)}m`;
 }
 
+function getDurationSeconds(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return ms / 1000;
+}
+
 function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
   const [expanded, setExpanded] = useState(false);
   const [detailTab, setDetailTab] = useState<"activity" | "batches">("activity");
@@ -156,14 +177,14 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
 
   return (
     <div className={cn(
-      "rounded-lg border overflow-hidden",
-      isFailed ? "border-red-500/20" : isRunning ? "border-primary/30" : "border-border",
+      "rounded-xl border overflow-hidden bg-card/70",
+      isFailed ? "border-red-500/25" : isRunning ? "border-primary/40" : "border-border",
     )}>
       {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-muted/30 transition-colors"
+        className="w-full px-5 py-4 flex items-center justify-between hover:bg-muted/30 transition-colors"
       >
         <div className="flex items-center gap-3">
           {isFailed ? (
@@ -179,14 +200,14 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
                 {entry.sync_type === "full" ? "Full sync" : "Incremental sync"}
               </span>
               <span className={cn(
-                "text-[9px] px-1.5 py-0.5 rounded-full font-medium uppercase tracking-wider",
+                "text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide",
                 isFailed ? "bg-red-500/10 text-red-500" : isRunning ? "bg-primary/10 text-primary" : "bg-emerald-500/10 text-emerald-500",
               )}>
                 {entry.status}
               </span>
             </div>
-            <span className="text-[11px] text-muted-foreground">
-              {formatDate(entry.started_at)} · {entry.parent_messages} messages · {formatDuration(entry.started_at, entry.completed_at)}
+            <span className="text-xs text-muted-foreground">
+              {formatDate(entry.started_at)} · {entry.parent_messages} msgs · {formatDuration(entry.started_at, entry.completed_at)}
             </span>
           </div>
         </div>
@@ -207,22 +228,24 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
               );
             })}
           </div>
-          {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+          <div className="h-6 w-6 rounded-md border border-border/70 bg-background/40 flex items-center justify-center">
+            {expanded ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+          </div>
         </div>
       </button>
 
       {/* Expanded details */}
       {expanded && (
-        <div className="border-t border-border/50 bg-muted/20">
+        <div className="border-t border-border/50 bg-muted/15">
           {/* Stage timing bar */}
-          <div className="px-4 py-2.5 flex items-center gap-1 overflow-x-auto border-b border-border/30">
+          <div className="px-5 py-3 flex items-center gap-2 overflow-x-auto border-b border-border/30">
             {STAGES.map((s, i) => {
               const timing = (entry.stage_timings ?? {})[s.key];
               const done = timing !== undefined;
               return (
                 <div key={s.key} className="flex items-center shrink-0">
-                  {i > 0 && <div className={`w-3 h-px ${done ? "bg-emerald-500/40" : "bg-border"}`} />}
-                  <div className="flex flex-col items-center gap-0.5">
+                  {i > 0 && <div className={`w-3 h-px ${done ? "bg-emerald-500/40" : "bg-border/70"}`} />}
+                  <div className="flex flex-col items-center gap-0.5 min-w-[72px] rounded-md px-2 py-1 bg-background/40 border border-border/50">
                     <div className="flex items-center gap-1">
                       <div className={`w-1.5 h-1.5 rounded-full ${done ? "bg-emerald-500" : "bg-muted-foreground/20"}`} />
                       <span className={`text-[10px] whitespace-nowrap ${done ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground/40"}`}>
@@ -247,15 +270,15 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
 
           {/* Errors */}
           {isFailed && entry.errors.length > 0 && (
-            <div className="px-4 py-2 border-b border-border/30">
+            <div className="px-5 py-3 border-b border-border/30 space-y-1">
               {entry.errors.filter(Boolean).map((err, i) => (
-                <div key={i} className="text-[11px] text-red-600 dark:text-red-400 truncate">{err}</div>
+                <div key={i} className="text-xs text-red-600 dark:text-red-400 truncate">{err}</div>
               ))}
             </div>
           )}
 
           {/* Tabs */}
-          <div className="flex items-center gap-0 px-4 pt-1 border-b border-border/30">
+          <div className="flex items-center gap-0 px-5 pt-1 border-b border-border/30">
             <button
               type="button"
               onClick={() => setDetailTab("activity")}
@@ -278,7 +301,7 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
             </button>
           </div>
 
-          <div className="px-4 py-2.5">
+          <div className="px-5 py-3">
             {detailTab === "activity" && <ActivityLog details={entry.stage_details} />}
             {detailTab === "batches" && <CompactBatchResults results={entry.batch_results} />}
           </div>
@@ -291,23 +314,73 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
 export function SyncHistoryTab() {
   const { id } = useParams<{ id: string }>();
   const { entries, loading, error, refresh } = useSyncHistory(id ?? "");
+  const completedRuns = entries.filter((e) => e.status === "completed").length;
+  const failedRuns = entries.filter((e) => e.status === "failed").length;
+  const totalMessages = entries.reduce((sum, e) => sum + (e.parent_messages ?? 0), 0);
+  const avgDurationSeconds = (() => {
+    const durations = entries
+      .map((e) => getDurationSeconds(e.started_at, e.completed_at))
+      .filter((n): n is number => typeof n === "number");
+    if (durations.length === 0) return null;
+    return durations.reduce((a, b) => a + b, 0) / durations.length;
+  })();
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-4xl">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-5 max-w-7xl mx-auto w-full">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Sync History</h2>
-          <p className="text-sm text-muted-foreground">Pipeline progress for each sync run</p>
+          <h2 className="text-xl font-semibold text-foreground">Sync History</h2>
+          <p className="text-sm text-muted-foreground">Detailed pipeline progress and outcomes for each channel sync run</p>
         </div>
         <button
           onClick={refresh}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 border border-border/60"
         >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           Refresh
         </button>
       </div>
+
+      {entries.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-border bg-card/70 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Runs</div>
+            <div className="mt-1 flex items-center gap-2">
+              <BarChart3 size={14} className="text-primary" />
+              <span className="text-xl font-semibold text-foreground">{entries.length}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-card/70 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Success / Failed</div>
+            <div className="mt-1 flex items-center gap-2 text-sm">
+              <span className="text-emerald-500 font-semibold">{completedRuns}</span>
+              <span className="text-muted-foreground">/</span>
+              <span className="text-red-500 font-semibold">{failedRuns}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-card/70 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Messages Processed</div>
+            <div className="mt-1 flex items-center gap-2">
+              <Activity size={14} className="text-primary" />
+              <span className="text-xl font-semibold text-foreground">{totalMessages.toLocaleString()}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-card/70 px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg Runtime</div>
+            <div className="mt-1 flex items-center gap-2">
+              <Timer size={14} className="text-primary" />
+              <span className="text-xl font-semibold text-foreground">
+                {avgDurationSeconds == null
+                  ? "—"
+                  : avgDurationSeconds < 60
+                    ? `${avgDurationSeconds.toFixed(1)}s`
+                    : `${(avgDurationSeconds / 60).toFixed(1)}m`}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-sm text-red-700 dark:text-red-300">
@@ -316,15 +389,19 @@ export function SyncHistoryTab() {
       )}
 
       {loading && entries.length === 0 ? (
-        <div className="flex items-center justify-center py-12 text-muted-foreground/50">
-          <Loader2 size={20} className="animate-spin" />
+        <div className="rounded-xl border border-border bg-card/50 py-16 flex items-center justify-center text-muted-foreground/60">
+          <div className="flex items-center gap-2">
+            <Loader2 size={18} className="animate-spin" />
+            <span className="text-sm">Loading sync history…</span>
+          </div>
         </div>
       ) : entries.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground/60 text-sm">
-          No sync records yet. Sync this channel to see pipeline history.
+        <div className="rounded-xl border border-dashed border-border bg-card/30 text-center py-16 text-muted-foreground/70 text-sm">
+          <p className="text-foreground font-medium mb-1">No sync records yet</p>
+          <p>Run sync for this channel to populate pipeline history and stage details.</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {entries.map((entry) => (
             <SyncJobCard key={entry.job_id} entry={entry} />
           ))}

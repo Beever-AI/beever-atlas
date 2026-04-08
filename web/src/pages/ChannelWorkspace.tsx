@@ -9,6 +9,7 @@ import { SyncButton } from "@/components/channel/SyncButton";
 import { SyncProgress } from "@/components/channel/SyncProgress";
 import { NextSyncBadge } from "@/components/channel/NextSyncBadge";
 import { useSync } from "@/hooks/useSync";
+import { useChannelMemoryCount } from "@/hooks/useChannelMemoryCount";
 
 interface ChannelInfo {
   channel_id: string;
@@ -64,6 +65,7 @@ export function ChannelWorkspace() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingChannel, setLoadingChannel] = useState(!routeState?.channel_name);
   const { getWorkspaceName } = useConnectionMap();
+  const { hasMemories, isLoading: isMemoryCountLoading } = useChannelMemoryCount(id);
 
   const activeTab = getCurrentTab(location.pathname);
 
@@ -97,7 +99,18 @@ export function ChannelWorkspace() {
       .finally(() => setLoadingChannel(false));
   }, [id, routeState?.channel_name, routeState?.platform, routeState?.member_count, routeState?.connection_id]);
 
+  useEffect(() => {
+    if (!id || isMemoryCountLoading) return;
+    if (!hasMemories && activeTab === "wiki") {
+      navigate(`/channels/${id}/messages`, { replace: true });
+    }
+  }, [id, hasMemories, isMemoryCountLoading, activeTab, navigate]);
+
   function handleTabChange(value: string) {
+    if (value === "wiki" && !isMemoryCountLoading && !hasMemories) {
+      navigate(`/channels/${id}/messages`);
+      return;
+    }
     navigate(`/channels/${id}/${value}`);
   }
 
@@ -208,7 +221,11 @@ export function ChannelWorkspace() {
                   className="w-full h-9 px-3 rounded-lg border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                 >
                   {TAB_PATHS.map((tab) => (
-                    <option key={tab} value={tab}>
+                    <option
+                      key={tab}
+                      value={tab}
+                      disabled={tab === "wiki" && !isMemoryCountLoading && !hasMemories}
+                    >
                       {TAB_LABELS[tab]}
                     </option>
                   ))}
@@ -220,11 +237,14 @@ export function ChannelWorkspace() {
                     <button
                       key={tab}
                       onClick={() => handleTabChange(tab)}
+                      disabled={tab === "wiki" && !isMemoryCountLoading && !hasMemories}
+                      title={tab === "wiki" && !isMemoryCountLoading && !hasMemories ? "Wiki is available after your first sync creates memories." : undefined}
                       className={cn(
                         "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
                         activeTab === tab
                           ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                        tab === "wiki" && !isMemoryCountLoading && !hasMemories && "opacity-50 cursor-not-allowed hover:text-muted-foreground hover:bg-transparent"
                       )}
                     >
                       {TAB_LABELS[tab]}
@@ -232,6 +252,11 @@ export function ChannelWorkspace() {
                   ))}
                 </div>
               </div>
+              {!isMemoryCountLoading && !hasMemories && (
+                <p className="text-xs text-muted-foreground">
+                  Wiki unlocks after the first synced memories are captured.
+                </p>
+              )}
             </>
           )}
         </div>

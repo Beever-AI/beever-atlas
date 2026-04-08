@@ -55,6 +55,7 @@ interface PlatformBridge {
   listChannels(): Promise<NormalizedChannel[]>;
   getChannel(id: string): Promise<NormalizedChannel>;
   getMessages(id: string, opts: GetMessagesOpts): Promise<NormalizedMessage[]>;
+  getMessageCount(channelId: string): Promise<number>;
   getThreadMessages(channelId: string, threadId: string): Promise<NormalizedMessage[]>;
   proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }>;
   resolveUser(userId: string): Promise<{ name: string; image: string | null }>;
@@ -330,6 +331,19 @@ class SlackBridge implements PlatformBridge {
     return messages;
   }
 
+  async getMessageCount(channelId: string): Promise<number> {
+    let count = 0;
+    let cursor: string | undefined;
+    do {
+      const params: Record<string, unknown> = { channel: channelId, limit: 200 };
+      if (cursor) params.cursor = cursor;
+      const result = await (this.adapter as any).client.conversations.history(params);
+      count += (result.messages || []).length;
+      cursor = result.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    return count;
+  }
+
   async getThreadMessages(channelId: string, threadId: string): Promise<NormalizedMessage[]> {
     const result = await (this.adapter as any).client.conversations.replies({
       channel: channelId,
@@ -456,6 +470,9 @@ class SlackBridge implements PlatformBridge {
     }
 
     const finalContentType = response.headers.get("content-type") || "application/octet-stream";
+    if (finalContentType.includes("text/html")) {
+      throw new Error("File proxy returned HTML instead of file content — file may be deleted or inaccessible");
+    }
     const buffer = Buffer.from(await response.arrayBuffer());
     return { contentType: finalContentType, buffer };
   }
@@ -673,6 +690,22 @@ class DiscordBridge implements PlatformBridge {
     return messages;
   }
 
+  async getMessageCount(channelId: string): Promise<number> {
+    // Discord doesn't have a count API — paginate through all messages
+    let count = 0;
+    let beforeId: string | undefined;
+    while (true) {
+      let url = `/channels/${channelId}/messages?limit=100`;
+      if (beforeId) url += `&before=${beforeId}`;
+      const batch: any[] = await this.discordApi(url);
+      if (batch.length === 0) break;
+      count += batch.length;
+      beforeId = batch[batch.length - 1].id;
+      if (batch.length < 100) break;
+    }
+    return count;
+  }
+
   async getThreadMessages(channelId: string, threadId: string): Promise<NormalizedMessage[]> {
     // Discord threads are channels themselves — fetch the thread channel
     return this.getMessages(threadId, { limit: 100 });
@@ -753,6 +786,13 @@ class TeamsBridge implements PlatformBridge {
     };
   }
 
+  async getMessageCount(_channelId: string): Promise<number> {
+    throw Object.assign(
+      new Error("Teams message count requires Microsoft Graph API setup"),
+      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
+    );
+  }
+
   async getMessages(_channelId: string, _opts: GetMessagesOpts): Promise<NormalizedMessage[]> {
     throw Object.assign(
       new Error("Teams message history requires Microsoft Graph API setup"),
@@ -810,6 +850,13 @@ class TelegramBridge implements PlatformBridge {
       topic: null,
       purpose: null,
     };
+  }
+
+  async getMessageCount(_channelId: string): Promise<number> {
+    throw Object.assign(
+      new Error("Telegram bots cannot count messages"),
+      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
+    );
   }
 
   async getMessages(_channelId: string, _opts: GetMessagesOpts): Promise<NormalizedMessage[]> {
@@ -1014,6 +1061,38 @@ async function handleGetMessages(
     jsonResponse(res, 200, { messages });
   } catch (err) {
     console.error("Bridge: getMessages error:", err);
+    const classified = classifyPlatformError(err);
+    jsonResponse(res, classified.status, { error: String(err), code: classified.code });
+  }
+}
+
+async function handleGetMessageCount(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  chatManager: ChatManager,
+  channelId: string,
+  platform?: string,
+): Promise<void> {
+  try {
+    const resolvedPlatform = platform || detectPlatformFromChannelId(channelId);
+    let bridge: PlatformBridge | null = null;
+    if (resolvedPlatform) {
+      bridge = getBridge(chatManager, resolvedPlatform);
+    }
+    if (!bridge) {
+      const first = getFirstBridge(chatManager);
+      bridge = first?.bridge ?? null;
+    }
+
+    if (!bridge) {
+      jsonResponse(res, 503, { error: "No platform adapters connected", code: "NO_ADAPTER" });
+      return;
+    }
+
+    const count = await bridge.getMessageCount(channelId);
+    jsonResponse(res, 200, { count });
+  } catch (err) {
+    console.error("Bridge: getMessageCount error:", err);
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: String(err), code: classified.code });
   }
@@ -1358,6 +1437,16 @@ export function registerBridgeRoutes(
       return true;
     }
 
+    // GET /bridge/connections/:connId/channels/:id/count
+    const connCountMatch = url.match(/^\/bridge\/connections\/([^/]+)\/channels\/([^/]+)\/count$/);
+    if (req.method === "GET" && connCountMatch) {
+      await handleConnectionRoute(req, res, chatManager, connCountMatch[1], async (bridge) => {
+        const count = await bridge.getMessageCount(connCountMatch[2]);
+        jsonResponse(res, 200, { count });
+      });
+      return true;
+    }
+
     // GET /bridge/connections/:connId/channels/:id/messages
     const connMessagesMatch = url.match(/^\/bridge\/connections\/([^/]+)\/channels\/([^/]+)\/messages/);
     if (req.method === "GET" && connMessagesMatch) {
@@ -1440,6 +1529,13 @@ export function registerBridgeRoutes(
     );
     if (req.method === "GET" && threadMatch) {
       await handleGetThreadMessages(req, res, chatManager, threadMatch[1], threadMatch[2]);
+      return true;
+    }
+
+    // GET /bridge/channels/:id/count
+    const countMatch = url.match(/^\/bridge\/channels\/([^/]+)\/count$/);
+    if (req.method === "GET" && countMatch) {
+      await handleGetMessageCount(req, res, chatManager, countMatch[1]);
       return true;
     }
 

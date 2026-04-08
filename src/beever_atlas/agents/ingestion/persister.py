@@ -272,10 +272,17 @@ class PersisterAgent(BaseAgent):
             persist_errors.append(f"neo4j: {results[1]}")
 
         # --- 4. Reconcile entity_tags: create stub entities for missing names ---
+        # Only create stubs for names that appear in relationships to avoid orphan nodes.
         if not skip_graph:
+            rel_names: set[str] = set()
+            for rel in relationships:
+                rel_names.add(rel.source)
+                rel_names.add(rel.target)
             all_tag_names: set[str] = set()
             for f in facts:
                 all_tag_names.update(f.entity_tags)
+            # Intersect with relationship names — stubs without relationships are orphans
+            all_tag_names &= rel_names
             extracted_names: set[str] = {e.name for e in entities}
             missing_names = all_tag_names - extracted_names
             if missing_names:

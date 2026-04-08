@@ -1,8 +1,39 @@
 import { useEffect, useState, useCallback } from "react";
 import { Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import mermaid from "mermaid";
+import { useTheme } from "@/hooks/useTheme";
 
-mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+function mermaidThemeConfig(theme: "light" | "dark") {
+  if (theme === "dark") {
+    return {
+      startOnLoad: false,
+      securityLevel: "loose" as const,
+      theme: "base" as const,
+      themeVariables: {
+        background: "transparent",
+        primaryColor: "#1f2937",
+        primaryTextColor: "#e5e7eb",
+        primaryBorderColor: "#4b5563",
+        lineColor: "#6b7280",
+        tertiaryColor: "#111827",
+      },
+    };
+  }
+
+  return {
+    startOnLoad: false,
+    securityLevel: "loose" as const,
+    theme: "base" as const,
+    themeVariables: {
+      background: "transparent",
+      primaryColor: "#e2e8f0",
+      primaryTextColor: "#334155",
+      primaryBorderColor: "#94a3b8",
+      lineColor: "#94a3b8",
+      tertiaryColor: "#f1f5f9",
+    },
+  };
+}
 
 interface MermaidBlockProps {
   chart: string;
@@ -10,9 +41,45 @@ interface MermaidBlockProps {
 
 function sanitizeMermaid(raw: string): string {
   let chart = raw.trim();
+
+  // Fix edge labels: A -- label --> B  →  A -->|label| B
   chart = chart.replace(/(\w+)\s+--\s+([^-\n][^>\n]*?)\s+-->\s+(\w+)/g, "$1 -->|$2| $3");
   chart = chart.replace(/(\w+)\s+--\s+([^-\n][^-\n]*?)\s+---\s+(\w+)/g, "$1 ---|$2| $3");
+
+  // Remove parentheses inside square brackets: [foo(bar)baz] → [foobarbaz]
   chart = chart.replace(/\[([^\]]*)\(([^)]*)\)([^\]]*)\]/g, (_, pre, inner, post) => `[${pre}${inner}${post}]`);
+
+  // Remove special characters that break mermaid: quotes, semicolons, backticks inside labels
+  chart = chart.replace(/\[([^\]]*)\]/g, (_match, label: string) => {
+    const clean = label.replace(/["`';]/g, "'").replace(/[<>]/g, "");
+    return `[${clean}]`;
+  });
+
+  // Strip colon-style edge labels: A --> B: label  →  A --> B
+  chart = chart.replace(/(-->)\s+(\w+(?:\[[^\]]*\])?)\s*:\s*[^\n]+/g, "$1 $2");
+  // Strip pipe-style edge labels: A -->|label| B  →  A --> B
+  chart = chart.replace(/-->\|[^|]*\|\s*/g, "--> ");
+  chart = chart.replace(/---\|[^|]*\|\s*/g, "--- ");
+
+  // Fix "graph TD;" → "graph TD" (trailing semicolons)
+  chart = chart.replace(/^(graph\s+\w+)\s*;/gm, "$1");
+  chart = chart.replace(/^(flowchart\s+\w+)\s*;/gm, "$1");
+
+  // Remove style/classDef/class lines that often cause parse errors
+  chart = chart.split("\n").filter(line => {
+    const t = line.trim();
+    return !t.startsWith("style ") && !t.startsWith("classDef ") && !t.startsWith("class ");
+  }).join("\n");
+
+  // Ensure the chart starts with a valid directive
+  const firstLine = chart.split("\n")[0]?.trim() || "";
+  if (!firstLine.startsWith("graph") && !firstLine.startsWith("flowchart") &&
+      !firstLine.startsWith("sequenceDiagram") && !firstLine.startsWith("pie") &&
+      !firstLine.startsWith("gantt") && !firstLine.startsWith("erDiagram") &&
+      !firstLine.startsWith("%%")) {
+    chart = "graph TD\n" + chart;
+  }
+
   return chart;
 }
 
@@ -31,6 +98,7 @@ function simplifyMermaid(chart: string): string {
 }
 
 export function MermaidBlock({ chart }: MermaidBlockProps) {
+  const { resolvedTheme } = useTheme();
   const [error, setError] = useState<string | null>(null);
   const [svg, setSvg] = useState<string>("");
   const [expanded, setExpanded] = useState(false);
@@ -38,6 +106,7 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
 
   useEffect(() => {
     const render = async () => {
+      mermaid.initialize(mermaidThemeConfig(resolvedTheme === "dark" ? "dark" : "light"));
       const sanitized = sanitizeMermaid(chart);
       try {
         const id = `mermaid-${Math.random().toString(36).slice(2)}`;
@@ -56,7 +125,7 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
       }
     };
     render();
-  }, [chart]);
+  }, [chart, resolvedTheme]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z + 0.25, 3)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z - 0.25, 0.5)), []);

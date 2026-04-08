@@ -439,6 +439,17 @@ export interface ConsolidationConfig {
   staleness_refresh_days: number | null;
 }
 
+export type WikiGenerationStrategy = "after_every_sync" | "after_consolidation" | "scheduled" | "manual";
+
+export interface WikiConfig {
+  enabled: boolean | null;
+  generation_strategy: WikiGenerationStrategy | null;
+  cron_expression: string | null;
+  auto_regenerate_on_stale: boolean | null;
+  min_facts_for_generation: number | null;
+  topic_subpage_threshold: number | null;
+}
+
 export interface ChannelPolicyResponse {
   channel_id: string;
   preset: string | null;
@@ -446,11 +457,13 @@ export interface ChannelPolicyResponse {
     sync: SyncConfig;
     ingestion: IngestionConfig;
     consolidation: ConsolidationConfig;
+    wiki: WikiConfig;
   } | null;
   effective: {
     sync: SyncConfig;
     ingestion: IngestionConfig;
     consolidation: ConsolidationConfig;
+    wiki: WikiConfig;
   };
   enabled: boolean;
   syncs_since_last_consolidation: number;
@@ -462,6 +475,7 @@ export interface GlobalDefaultsResponse {
   sync: SyncConfig;
   ingestion: IngestionConfig;
   consolidation: ConsolidationConfig;
+  wiki: WikiConfig;
   max_concurrent_syncs: number;
   updated_at: string;
 }
@@ -473,6 +487,7 @@ export interface PolicyPreset {
   sync: SyncConfig;
   ingestion: IngestionConfig;
   consolidation: ConsolidationConfig;
+  wiki: WikiConfig;
 }
 
 // --- Agent Model Configuration ---

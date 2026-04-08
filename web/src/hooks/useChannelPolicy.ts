@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api";
-import type { ChannelPolicyResponse, SyncConfig, IngestionConfig, ConsolidationConfig, PolicyPreset } from "@/lib/types";
+import type { ChannelPolicyResponse, SyncConfig, IngestionConfig, ConsolidationConfig, WikiConfig, PolicyPreset } from "@/lib/types";
 
 export function useChannelPolicy(channelId: string | undefined) {
   const [policy, setPolicy] = useState<ChannelPolicyResponse | null>(null);
@@ -36,6 +36,7 @@ export function useChannelPolicy(channelId: string | undefined) {
     sync?: SyncConfig;
     ingestion?: IngestionConfig;
     consolidation?: ConsolidationConfig;
+    wiki?: WikiConfig;
     enabled?: boolean;
   }) => {
     if (!channelId) return;

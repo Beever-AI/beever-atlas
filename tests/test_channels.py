@@ -67,13 +67,14 @@ class TestGetMessages:
         response = await client.get("/api/channels/C_MOCK_GENERAL/messages")
         assert response.status_code == 200
         data = response.json()
-        assert len(data) > 0
+        assert len(data["messages"]) > 0
+        assert "total_count" in data
 
     @pytest.mark.asyncio
     async def test_messages_have_required_fields(self, client: AsyncClient):
         response = await client.get("/api/channels/C_MOCK_GENERAL/messages?limit=1")
         data = response.json()
-        msg = data[0]
+        msg = data["messages"][0]
         assert "content" in msg
         assert "author" in msg
         assert "platform" in msg
@@ -84,7 +85,7 @@ class TestGetMessages:
     async def test_limit_parameter(self, client: AsyncClient):
         response = await client.get("/api/channels/C_MOCK_GENERAL/messages?limit=5")
         data = response.json()
-        assert len(data) == 5
+        assert len(data["messages"]) == 5
 
     @pytest.mark.asyncio
     async def test_since_parameter(self, client: AsyncClient):
@@ -93,7 +94,7 @@ class TestGetMessages:
         )
         assert response.status_code == 200
         data = response.json()
-        for msg in data:
+        for msg in data["messages"]:
             assert msg["timestamp"] >= "2026-03-15"
 
     @pytest.mark.asyncio
@@ -101,4 +102,4 @@ class TestGetMessages:
         response = await client.get("/api/channels/C_MOCK_ENGINEERING/messages?limit=10")
         assert response.status_code == 200
         data = response.json()
-        assert len(data) > 0
+        assert len(data["messages"]) > 0

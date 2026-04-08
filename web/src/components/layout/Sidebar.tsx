@@ -52,7 +52,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   return (
     <aside
       className={cn(
-        "flex flex-col h-screen border-r border-border bg-background shrink-0 transition-all duration-200 ease-in-out overflow-hidden",
+        "flex flex-col h-full border-r border-border bg-background shrink-0 transition-all duration-200 ease-in-out overflow-hidden",
         "hidden lg:flex",
         collapsed ? "w-14" : "w-56",
         open && "flex fixed inset-y-0 left-0 z-30 w-56 lg:relative lg:z-auto"

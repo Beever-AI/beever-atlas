@@ -213,6 +213,7 @@ class SyncRunner:
                 channel_name=channel_name,
                 messages=messages,
                 parent_count=parent_count,
+                sync_type=resolved_type,
                 use_batch_api=use_batch_api,
             )
         )
@@ -448,6 +449,7 @@ class SyncRunner:
         channel_name: str,
         messages: list[Any],
         parent_count: int = 0,
+        sync_type: str = "full",
         use_batch_api: bool = False,
     ) -> None:
         """Execute the full sync, update job status, and clean up the task entry.
@@ -518,11 +520,18 @@ class SyncRunner:
             # If any batches failed, keep the old cursor so retry re-fetches the
             # unprocessed messages instead of skipping them forever.
             if last_ts is not None and not result.errors:
-                await stores.mongodb.update_channel_sync_state(
-                    channel_id=channel_id,
-                    last_sync_ts=last_ts,
-                    increment=len(messages),
-                )
+                if sync_type == "incremental":
+                    await stores.mongodb.update_channel_sync_state(
+                        channel_id=channel_id,
+                        last_sync_ts=last_ts,
+                        increment=parent_count,
+                    )
+                else:
+                    await stores.mongodb.update_channel_sync_state(
+                        channel_id=channel_id,
+                        last_sync_ts=last_ts,
+                        set_total=parent_count,
+                    )
 
             # Build per-batch breakdowns for sync history.
             from dataclasses import asdict

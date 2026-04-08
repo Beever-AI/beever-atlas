@@ -206,6 +206,17 @@ class ChatBridgeAdapter(BaseAdapter):
 
         return [self.normalize_message(m) for m in data.get("messages", [])]
 
+    async def fetch_message_count(self, channel_id: str) -> int | None:
+        """Get total message count for a channel via bridge."""
+        try:
+            data = await self._request(
+                "GET",
+                f"{self._channel_path(channel_id)}/count",
+            )
+            return data.get("count")
+        except Exception:
+            return None
+
     async def fetch_thread(
         self,
         channel_id: str,

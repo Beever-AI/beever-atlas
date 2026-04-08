@@ -36,8 +36,15 @@ interface WikiMarkdownProps {
  * Entity chips ($tech, @person) are removed — rendered as plain text for readability.
  */
 function preprocessContent(content: string): string {
-  // Replace [N] citations with zero-width-space delimited markers
-  return content.replace(/\[(\d+)\]/g, "\u200Bcite:$1\u200B");
+  // Replace comma-separated citations like [1, 3, 13] with individual markers
+  let result = content.replace(/\[([\d,\s]+)\]/g, (_match, inner: string) => {
+    const nums = inner.split(",").map(s => s.trim()).filter(s => /^\d+$/.test(s));
+    if (nums.length === 0) return _match;
+    return nums.map(n => `\u200Bcite:${n}\u200B`).join(" ");
+  });
+  // Also catch any remaining single [N] that weren't part of comma lists
+  result = result.replace(/\[(\d+)\]/g, "\u200Bcite:$1\u200B");
+  return result;
 }
 
 /**

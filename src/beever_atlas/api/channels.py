@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from beever_atlas.adapters import ChannelInfo, get_adapter
 from beever_atlas.adapters.bridge import BridgeError, ChatBridgeAdapter
+from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,11 @@ class MessageResponse(BaseModel):
     reply_count: int = 0
     is_bot: bool = False
     links: list[dict[str, Any]] = []
+
+
+class MessagesListResponse(BaseModel):
+    messages: list[MessageResponse]
+    total_count: int | None = None
 
 
 def _channel_to_response(info: ChannelInfo) -> ChannelResponse:
@@ -222,7 +228,7 @@ async def get_channel(
     raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
 
-@router.get("/api/channels/{channel_id}/messages", response_model=list[MessageResponse])
+@router.get("/api/channels/{channel_id}/messages", response_model=MessagesListResponse)
 async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=500),
@@ -230,7 +236,7 @@ async def get_channel_messages(
     before: str | None = Query(default=None, description="Message ID cursor - fetch messages before this ID"),
     order: str = Query(default="desc", description="Sort order: desc (newest first) or asc (oldest first)"),
     connection_id: str | None = Query(default=None),
-) -> list[MessageResponse]:
+) -> MessagesListResponse:
     """Get paginated messages for a channel."""
     adapter = _get_adapter_for_connection(connection_id)
 
@@ -245,7 +251,7 @@ async def get_channel_messages(
     except BridgeError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
 
-    return [
+    response_messages = [
         MessageResponse(
             content=m.content,
             author=m.author,
@@ -265,6 +271,21 @@ async def get_channel_messages(
         )
         for m in messages
     ]
+    total_count = None
+    try:
+        stores = get_stores()
+        sync_state = await stores.mongodb.get_channel_sync_state(channel_id)
+        if sync_state is not None and sync_state.total_synced_messages:
+            total_count = sync_state.total_synced_messages
+    except RuntimeError:
+        pass
+    # Fall back to live count from bridge if no sync data
+    if total_count is None and hasattr(adapter, "fetch_message_count"):
+        total_count = await adapter.fetch_message_count(channel_id)
+    return MessagesListResponse(
+        messages=response_messages,
+        total_count=total_count,
+    )
 
 
 @router.get(

@@ -36,6 +36,11 @@ interface Message {
   links: Array<{ url: string; title?: string; description?: string; imageUrl?: string; siteName?: string }>;
 }
 
+interface MessagesPageResponse {
+  messages: Message[];
+  total_count: number | null;
+}
+
 interface ChannelSyncContext {
   syncState?: SyncState;
   isSyncing?: boolean;
@@ -318,6 +323,7 @@ export function MessagesTab() {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState<number | null>(null);
   const [order, setOrder] = useState<"desc" | "asc">("desc");
 
   // Filters
@@ -359,26 +365,28 @@ export function MessagesTab() {
     if (opts?.since) params.set("since", opts.since);
 
     try {
-      const data = await api.get<Message[]>(`/api/channels/${channelId}/messages?${params}`);
+      const data = await api.get<MessagesPageResponse>(`/api/channels/${channelId}/messages?${params}`);
+      const pageMessages = data.messages ?? [];
+      setTotalCount(data.total_count ?? null);
       if (opts?.replace || (!isLoadMore && !opts?.since)) {
-        setMessages(data);
+        setMessages(pageMessages);
       } else if (isLoadMore) {
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.message_id));
-          const newMsgs = data.filter((m) => !ids.has(m.message_id));
+          const newMsgs = pageMessages.filter((m) => !ids.has(m.message_id));
           return [...prev, ...newMsgs];
         });
       } else if (opts?.since) {
         // Polling: prepend new messages
         setMessages((prev) => {
           const ids = new Set(prev.map((m) => m.message_id));
-          const newMsgs = data.filter((m) => !ids.has(m.message_id));
+          const newMsgs = pageMessages.filter((m) => !ids.has(m.message_id));
           if (newMsgs.length > 0) setNewMessageCount((c) => c + newMsgs.length);
           return [...newMsgs, ...prev];
         });
         return; // Don't update hasMore for poll fetches
       }
-      setHasMore(data.length >= PAGE_SIZE);
+      setHasMore(pageMessages.length >= PAGE_SIZE);
     } catch (err: any) {
       if (!isLoadMore) {
         setError(err.message);
@@ -395,6 +403,7 @@ export function MessagesTab() {
     if (prevChannelIdRef.current !== channelId) {
       setMessages([]);
       setHasMore(true);
+      setTotalCount(null);
       setNewMessageCount(0);
       setError(null);
       setErrorStatus(null);
@@ -514,6 +523,7 @@ export function MessagesTab() {
   const topLevel = useMemo(() => filteredMessages.filter((m) => !m.thread_id), [filteredMessages]);
 
   const hasActiveFilters = searchQuery || authorFilter || dateFrom || dateTo || attachmentsOnly;
+  const displayedTotalCount = totalCount ?? syncState?.parent_messages ?? syncState?.total_messages ?? null;
 
   const clearFilters = () => {
     setSearchQuery("");
@@ -596,7 +606,9 @@ export function MessagesTab() {
           {/* ── Header ─────────────────────────────────────── */}
           <div className="flex flex-wrap items-center gap-3 mb-2">
             <h2 className="text-base font-semibold tracking-tight text-foreground">
-              {messages.length} messages loaded
+              {displayedTotalCount !== null
+                ? `${messages.length} loaded / ${displayedTotalCount} total`
+                : `${messages.length} messages loaded`}
             </h2>
             <Sparkline messages={messages} />
             <div className="flex-1" />

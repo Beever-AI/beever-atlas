@@ -53,6 +53,9 @@ a team Ritual, or a domain Concept), you may create a new type. Rules for new ty
 ### Entity extraction principles
 - Entities must be specific enough to be unambiguously identified. Generic words
   (software, system, tool, code, data) are NOT entities.
+- Generic media filenames (e.g. "image.png", "screenshot.png", "photo.jpg",
+  "document.pdf", "file.zip") are NOT entities. Only extract a media artifact if it
+  has a meaningful, unique name (e.g. "DATABASE_SCHEMA.md", "Q4_roadmap.pdf").
 - Extract at the level of specificity discussed. If the team discusses "S3 bucket
   permissions", extract "AWS S3". If they discuss "AWS" generically, extract "AWS".
 - Do not create multiple entities for the same thing. A project and its codebase are

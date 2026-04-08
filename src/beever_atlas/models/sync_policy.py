@@ -59,6 +59,26 @@ class ConsolidationConfig(BaseModel):
     staleness_refresh_days: int | None = None  # auto-refresh stale clusters
 
 
+class WikiGenerationStrategy(str, Enum):
+    """When to regenerate the wiki."""
+
+    AFTER_EVERY_SYNC = "after_every_sync"
+    AFTER_CONSOLIDATION = "after_consolidation"
+    SCHEDULED = "scheduled"  # independent cron
+    MANUAL = "manual"
+
+
+class WikiConfig(BaseModel):
+    """Wiki generation settings. All fields optional — None = inherit."""
+
+    enabled: bool | None = None  # whether wiki generation is enabled for this channel
+    generation_strategy: WikiGenerationStrategy | None = None
+    cron_expression: str | None = None  # for SCHEDULED strategy
+    auto_regenerate_on_stale: bool | None = None  # auto-regen when wiki marked stale
+    min_facts_for_generation: int | None = None  # minimum facts needed to generate wiki
+    topic_subpage_threshold: int | None = None  # min facts per cluster for sub-pages (default 15)
+
+
 class ChannelPolicy(BaseModel):
     """Per-channel policy document stored in MongoDB."""
 
@@ -69,6 +89,7 @@ class ChannelPolicy(BaseModel):
     sync: SyncConfig = Field(default_factory=SyncConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
+    wiki: WikiConfig = Field(default_factory=WikiConfig)
     enabled: bool = True
     syncs_since_last_consolidation: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
@@ -106,6 +127,15 @@ class GlobalPolicyDefaults(BaseModel):
             staleness_refresh_days=7,
         )
     )
+    wiki: WikiConfig = Field(
+        default_factory=lambda: WikiConfig(
+            enabled=True,
+            generation_strategy=WikiGenerationStrategy.AFTER_CONSOLIDATION,
+            auto_regenerate_on_stale=True,
+            min_facts_for_generation=5,
+            topic_subpage_threshold=15,
+        )
+    )
     max_concurrent_syncs: int = 3
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
@@ -116,3 +146,4 @@ class ResolvedPolicy(BaseModel):
     sync: SyncConfig
     ingestion: IngestionConfig
     consolidation: ConsolidationConfig
+    wiki: WikiConfig
