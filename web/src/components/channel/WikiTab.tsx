@@ -9,6 +9,7 @@ import { WikiLayout } from "@/components/wiki/WikiLayout";
 import { OverviewPage } from "@/components/wiki/OverviewPage";
 import { TopicPage } from "@/components/wiki/TopicPage";
 import { GenericPage } from "@/components/wiki/GenericPage";
+import { FaqPage } from "@/components/wiki/FaqPage";
 import { Button } from "@/components/ui/button";
 import type { WikiPage, WikiPageNode } from "@/lib/types";
 
@@ -366,6 +367,9 @@ function renderPage(
   }
   if (page.page_type === "topic" || page.page_type === "sub-topic") {
     return <TopicPage page={page} onNavigate={onNavigate} />;
+  }
+  if (page.id === "faq" || page.slug === "faq") {
+    return <FaqPage page={page} onNavigate={onNavigate} />;
   }
   return <GenericPage page={page} onNavigate={onNavigate} />;
 }

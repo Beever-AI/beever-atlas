@@ -185,6 +185,9 @@ async def list_channels() -> list[ChannelResponse]:
     Iterates every PlatformConnection with status='connected', fetches
     channels per-connection in parallel, and filters by each connection's
     selected_channels list.  One failing connection does not block the others.
+
+    Also includes channels that were imported via CSV (have sync state in
+    MongoDB but no platform connection), so they appear in the sidebar.
     """
     from beever_atlas.stores import get_stores
 
@@ -192,24 +195,40 @@ async def list_channels() -> list[ChannelResponse]:
     connections = await stores.platform.list_connections()
     connected = [c for c in connections if c.status == "connected"]
 
-    if not connected:
-        return []
-
-    tasks = [
-        _fetch_connection_channels(conn.id, conn.selected_channels)
-        for conn in connected
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
     all_channels: list[ChannelInfo] = []
-    for conn, result in zip(connected, results):
-        if isinstance(result, BaseException):
-            logger.warning(
-                "Failed to fetch channels for connection %s (%s): %s",
-                conn.id, conn.display_name, result,
-            )
-            continue
-        all_channels.extend(result)
+
+    if connected:
+        tasks = [
+            _fetch_connection_channels(conn.id, conn.selected_channels)
+            for conn in connected
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for conn, result in zip(connected, results):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Failed to fetch channels for connection %s (%s): %s",
+                    conn.id, conn.display_name, result,
+                )
+                continue
+            all_channels.extend(result)
+
+    # Include CSV-imported channels (sync state exists but no connection)
+    connected_channel_ids = {ch.channel_id for ch in all_channels}
+    synced_ids = await stores.mongodb.list_synced_channel_ids()
+    orphaned_ids = [cid for cid in synced_ids if cid not in connected_channel_ids]
+    if orphaned_ids:
+        name_results = await asyncio.gather(
+            *[stores.mongodb.get_channel_display_name(cid) for cid in orphaned_ids]
+        )
+        for cid, name in zip(orphaned_ids, name_results):
+            platform = _detect_platform_from_channel_id(cid) or "discord"
+            all_channels.append(ChannelInfo(
+                channel_id=cid,
+                name=name or cid,
+                platform=platform,
+                is_member=True,
+                connection_id=None,
+            ))
 
     return [_channel_to_response(ch) for ch in all_channels]
 
@@ -267,6 +286,19 @@ async def get_channel(
         finally:
             await adapter.close()
 
+    # Fallback: check if this is a CSV-imported channel with sync state
+    synced_ids = await stores.mongodb.list_synced_channel_ids()
+    if channel_id in synced_ids:
+        name = await stores.mongodb.get_channel_display_name(channel_id)
+        platform = _detect_platform_from_channel_id(channel_id) or "discord"
+        return ChannelResponse(
+            channel_id=channel_id,
+            name=name or channel_id,
+            platform=platform,
+            is_member=True,
+            connection_id=None,
+        )
+
     raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
 
@@ -280,6 +312,20 @@ async def get_channel_messages(
     connection_id: str | None = Query(default=None),
 ) -> MessagesListResponse:
     """Get paginated messages for a channel."""
+    # CSV-imported channels have no live bridge — return empty message list
+    stores = get_stores()
+    synced_ids = await stores.mongodb.list_synced_channel_ids()
+    connections = await stores.platform.list_connections()
+    connected_ids = {
+        cid
+        for c in connections if c.status == "connected"
+        for cid in (c.selected_channels or [])
+    }
+    if channel_id in synced_ids and channel_id not in connected_ids:
+        sync_state = await stores.mongodb.get_channel_sync_state(channel_id)
+        total = sync_state.total_synced_messages if sync_state else None
+        return MessagesListResponse(messages=[], total_count=total)
+
     adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
 
     since_dt = None

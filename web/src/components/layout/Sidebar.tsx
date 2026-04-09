@@ -180,24 +180,35 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           </>
         ) : (
           <div className="flex items-center gap-1">
-            {themeButton}
-            <button
-              type="button"
-              onClick={async () => {
-                if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
-                try {
-                  await api.post("/api/dev/reset", {});
-                  window.location.reload();
-                } catch (e) {
-                  alert("Reset failed. Check console.");
-                  console.error(e);
+            <Tooltip>
+              <TooltipTrigger render={themeButton} />
+              <TooltipContent side="top">
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
+                      try {
+                        await api.post("/api/dev/reset", {});
+                        window.location.reload();
+                      } catch (e) {
+                        alert("Reset failed. Check console.");
+                        console.error(e);
+                      }
+                    }}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                  >
+                    <RotateCcw size={16} />
+                  </button>
                 }
-              }}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
-              title="Reset all data (dev)"
-            >
-              <RotateCcw size={16} />
-            </button>
+              />
+              <TooltipContent side="top">Reset all data (dev)</TooltipContent>
+            </Tooltip>
           </div>
         )}
       </div>

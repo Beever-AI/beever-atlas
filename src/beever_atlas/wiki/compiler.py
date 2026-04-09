@@ -72,6 +72,17 @@ def _build_citations(facts: list[AtomicFact]) -> list[WikiCitation]:
     return citations
 
 
+def _facts_fallback_content(facts: list[AtomicFact]) -> str:
+    """Generate minimal fact-based content when LLM compilation fails."""
+    lines = ["_Content generated from source facts — regenerate for full analysis._\n"]
+    for f in facts[:5]:
+        author = f.author_name or "Unknown"
+        text = (f.memory_text or "").strip()
+        if text:
+            lines.append(f"- **{author}**: {text}")
+    return "\n".join(lines) + "\n"
+
+
 def _build_media_data(facts: list[AtomicFact]) -> list[dict]:
     """Extract media references from facts for the LLM prompt."""
     def _truncate_context(text: str, limit: int = 180) -> str:
@@ -202,6 +213,8 @@ class WikiCompiler:
     _MERMAID_BLOCK_RE = re.compile(r"(```mermaid\s*\n)([\s\S]*?)(```)")
     _EDGE_LABEL_RE = re.compile(r"--\s+[^-\n][^>\n]*?\s+-->")
     _BLANK_LINES_RE = re.compile(r"\n{4,}")
+    # Matches 4+ consecutive inline citation markers like [1][2][5][6][8]...
+    _OVERCITATION_RE = re.compile(r"(?:\[\d+\]\s*){4,}")
 
     @staticmethod
     def _postprocess_content(content: str) -> str:
@@ -225,20 +238,25 @@ class WikiCompiler:
                 # Remove forbidden directives
                 if stripped.startswith(("subgraph", "end", "style ", "classDef ", "class ")):
                     continue
-                # Strip edge labels: A -- label --> B  →  A --> B
-                line = re.sub(r"--\s+[^-\n][^>\n]*?\s+-->", "-->", line)
-                line = re.sub(r"--\s+[^-\n][^-\n]*?\s+---", "---", line)
+                # Convert dash-space edge labels to pipe style: A -- label --> B  →  A -->|label| B
+                line = re.sub(r"--\s+([^-\n][^>\n]*?)\s+-->", r"-->|\1|", line)
+                line = re.sub(r"--\s+([^-\n][^-\n]*?)\s+---", r"---|\1|", line)
                 # Strip colon-style labels: A --> B: label  →  A --> B
                 line = re.sub(r"(-->)\s+(\w+(?:\[[^\]]*\])?)\s*:\s*.+$", r"\1 \2", line)
-                # Strip pipe-style labels: A -->|label| B  →  A --> B
-                line = re.sub(r"-->\|[^|]*\|\s*", "--> ", line)
-                line = re.sub(r"---\|[^|]*\|\s*", "--- ", line)
+                # Keep pipe-style labels intact: A -->|label| B is valid mermaid
                 cleaned.append(line)
             return opener + "\n".join(cleaned) + closer
 
         content = WikiCompiler._MERMAID_BLOCK_RE.sub(_clean_mermaid, content)
 
-        # 3. Collapse 3+ consecutive blank lines to 2
+        # 3. Trim over-citation: keep at most 3 consecutive [N] markers per cluster
+        def _trim_citations(m: re.Match) -> str:
+            markers = re.findall(r"\[\d+\]", m.group(0))
+            return "".join(markers[:3])
+
+        content = WikiCompiler._OVERCITATION_RE.sub(_trim_citations, content)
+
+        # 4. Collapse 3+ consecutive blank lines to 2
         content = WikiCompiler._BLANK_LINES_RE.sub("\n\n\n", content)
 
         return content.rstrip() + "\n"
@@ -337,8 +355,8 @@ class WikiCompiler:
                 logger.info("WikiCompiler: empty/short content (attempt %d), retrying...", attempt + 1)
         logger.warning("WikiCompiler: empty content after %d attempts", 1 + max_retries)
         return CompiledPageContent(
-            content=data.get("content", ""),
-            summary=data.get("summary", ""),
+            content=data.get("content", "").strip(),
+            summary=data.get("summary", "").strip(),
         )
 
     async def _compile_overview(self, gathered: dict) -> WikiPage:
@@ -373,6 +391,28 @@ class WikiCompiler:
                     if c_data.get("title") == st["title"]:
                         c_data["brief"] = True
 
+        # Build a stable, indexed citation list that the LLM will reference by [N] number.
+        # Using the same list for both the prompt and the WikiPage.citations ensures inline
+        # citation numbers match what the UI renders in the Sources panel.
+        citation_facts = (gathered["recent_facts"] + gathered["media_facts"])[:20]
+        cited_facts_for_prompt = [
+            {
+                "index": i,
+                "author": f.author_name,
+                "excerpt": f.memory_text[:120],
+                "timestamp": f.message_ts,
+            }
+            for i, f in enumerate(citation_facts, 1)
+        ]
+
+        # Aggregate decisions from cluster-level data as fallback when top-level list is empty
+        gathered_decisions = gathered.get("decisions", [])
+        if not gathered_decisions:
+            gathered_decisions = [
+                d for c in gathered["clusters"]
+                for d in getattr(c, "decisions", [])
+            ]
+
         prompt = OVERVIEW_PROMPT.format(
             channel_name=summary.channel_name,
             description=summary.description,
@@ -380,7 +420,7 @@ class WikiCompiler:
             themes=summary.themes,
             momentum=summary.momentum,
             team_dynamics=summary.team_dynamics,
-            decisions_count=len(gathered.get("decisions", [])),
+            decisions_count=len(gathered_decisions),
             people_count=len(summary.top_people),
             projects_count=len(summary.active_projects),
             tech_count=len(summary.tech_stack),
@@ -397,9 +437,9 @@ class WikiCompiler:
             media_json=json.dumps(media_data, default=str),
             glossary_preview_json=json.dumps(glossary_preview, default=str),
             faq_count=faq_count,
+            cited_facts_json=json.dumps(cited_facts_for_prompt, default=str),
         )
         result = await self._call_llm(prompt)
-        all_facts = gathered["recent_facts"] + gathered["media_facts"]
         return WikiPage(
             id="overview",
             slug="overview",
@@ -409,7 +449,7 @@ class WikiCompiler:
             content=self._postprocess_content(result.content),
             summary=result.summary,
             memory_count=gathered["total_facts"],
-            citations=_build_citations(all_facts[:20]),
+            citations=_build_citations(citation_facts),
         )
 
     async def _analyze_topic(self, cluster, sorted_facts: list[AtomicFact]) -> dict | None:
@@ -463,14 +503,19 @@ class WikiCompiler:
         sub_title = sub_info.get("title", "Untitled")
         sub_slug = _slugify(sub_title)
 
+        fact_count = len(sub_facts)
         prompt = SUBTOPIC_PROMPT.format(
             parent_title=parent_title,
             title=sub_title,
             summary=sub_info.get("summary", ""),
+            fact_count=fact_count,
             member_facts_json=json.dumps(facts_data, default=str),
             media_json=json.dumps(media_data, default=str),
         )
-        result = await self._call_llm(prompt)
+        result = await self._call_llm(prompt, max_retries=2)
+        content = self._postprocess_content(result.content)
+        if not content or len(content.strip()) < 50:
+            content = _facts_fallback_content(sub_facts)
         page_id = f"topic-{parent_slug}--{sub_slug}"
         return WikiPage(
             id=page_id,
@@ -478,9 +523,9 @@ class WikiCompiler:
             title=sub_title,
             page_type="sub-topic",
             parent_id=f"topic-{parent_slug}",
-            content=self._postprocess_content(result.content),
+            content=content,
             summary=result.summary,
-            memory_count=len(sub_facts),
+            memory_count=fact_count,
             citations=_build_citations(sub_facts[:10]),
         )
 
@@ -552,6 +597,7 @@ class WikiCompiler:
                             date_range_start=cluster.date_range_start,
                             date_range_end=cluster.date_range_end,
                             authors=", ".join(cluster.authors),
+                            fact_count=len(member_facts),
                             key_facts_json=json.dumps(cluster.key_facts, default=str),
                             decisions_json=json.dumps(cluster.decisions, default=str),
                             people_json=json.dumps(cluster.people, default=str),
@@ -600,6 +646,7 @@ class WikiCompiler:
             date_range_start=cluster.date_range_start,
             date_range_end=cluster.date_range_end,
             authors=", ".join(cluster.authors),
+            fact_count=len(member_facts),
             key_facts_json=json.dumps(cluster.key_facts, default=str),
             decisions_json=json.dumps(cluster.decisions, default=str),
             people_json=json.dumps(cluster.people, default=str),
@@ -612,12 +659,15 @@ class WikiCompiler:
             related_topics_json=related_topics_json,
         )
         result = await self._call_llm(prompt)
+        content = self._postprocess_content(result.content)
+        if not content or len(content.strip()) < 50:
+            content = _facts_fallback_content(sorted_facts)
         return WikiPage(
             id=f"topic-{slug}",
             slug=slug,
             title=cluster.title,
             page_type="topic",
-            content=self._postprocess_content(result.content),
+            content=content,
             summary=result.summary,
             memory_count=cluster.member_count,
             citations=_build_citations(sorted_facts[:20]),

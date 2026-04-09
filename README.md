@@ -156,10 +156,6 @@ Edit `.env` with your keys (minimum required for Docker):
 GOOGLE_API_KEY=your_gemini_key
 JINA_API_KEY=your_jina_key
 
-# Optional — enables real Slack data. Remove for mock mode.
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_SIGNING_SECRET=...
-
 # Recommended for production
 CREDENTIAL_MASTER_KEY=   # 64-char hex (openssl rand -hex 32)
 BRIDGE_API_KEY=          # any random secret (openssl rand -hex 16)
@@ -242,48 +238,45 @@ The frontend dev server proxies API calls to `http://localhost:8000` by default 
 
 All services read from a single `.env` file in the project root.
 
-### Required
-
-| Variable | Description |
-|---|---|
-| `GOOGLE_API_KEY` | Gemini API key for all LLM operations |
-| `JINA_API_KEY` | Jina v4 embeddings |
-
-### Database (defaults work with Docker Compose)
+### 1. Core Application
 
 | Variable | Default | Description |
 |---|---|---|
-| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate instance URL |
+| `BEEVER_API_URL` | `http://localhost:8000` | Backend API URL |
+| `CORS_ORIGINS` | `http://localhost:5173,...` | Allowed CORS origins |
+| `VITE_API_URL` | `http://localhost:8000` | Frontend API URL target |
+
+### 2. Internal Services & Databases
+
+| Variable | Default | Description |
+|---|---|---|
 | `MONGODB_URI` | `mongodb://localhost:27017/beever_atlas` | MongoDB connection string |
 | `REDIS_URL` | `redis://localhost:6379` | Redis URL |
+| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate instance URL |
+| `WEAVIATE_API_KEY` | — | API key for Weaviate if authenticated |
+| `GRAPH_BACKEND` | `neo4j` | Graph database driver (`neo4j` or `nebula`) |
 | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j Bolt URI |
 | `NEO4J_AUTH` | `neo4j/beever_atlas_dev` | Neo4j `user/password` |
+| `NEBULA_HOSTS` | `127.0.0.1:9669` | NebulaGraph hosts |
+| `NEBULA_USER` | `root` | NebulaGraph user |
+| `NEBULA_PASSWORD` | `nebula` | NebulaGraph password |
+| `NEBULA_SPACE` | `beever_atlas` | NebulaGraph space name |
 
-### Bot & Bridge
+### 3. External API & LLM Providers
 
 | Variable | Default | Description |
 |---|---|---|
-| `BRIDGE_URL` | `http://localhost:3001` | Backend → Bot service URL |
-| `BRIDGE_API_KEY` | — | Shared secret for backend↔bot auth |
-| `BACKEND_URL` | `http://localhost:8000` | Bot → Backend URL |
-| `BOT_PORT` | `3001` | Bot HTTP server port |
+| `GOOGLE_API_KEY` | — | Gemini API key for all LLM operations (Required) |
+| `LLM_FAST_MODEL` | `gemini-2.5-flash` | Model for extraction/classification |
+| `LLM_QUALITY_MODEL`| `gemini-2.5-flash` | Model for wiki synthesis / validation |
+| `OLLAMA_ENABLED` | `false` | Switch for treating the LLM as an Ollama instance |
+| `JINA_API_URL` | `https://api.jina.ai/v1/embeddings` | Jina embedding API URL |
+| `JINA_API_KEY` | — | Jina v4 embeddings (Required) |
+| `JINA_MODEL` | `jina-embeddings-v4` | Jina model to be used |
+| `JINA_DIMENSIONS` | `2048` | Target dimensions for embeddings |
+| `TAVILY_API_KEY` | — | API Key for external web search |
 
-### Credentials & Security
-
-| Variable | Description |
-|---|---|
-| `CREDENTIAL_MASTER_KEY` | 64-char hex key for AES-256-GCM encryption of platform credentials. Required to store Slack/Discord tokens. Generate: `openssl rand -hex 32` |
-| `BRIDGE_API_KEY` | Shared HMAC secret for bot bridge auth. Generate: `openssl rand -hex 16` |
-
-### Platform Credentials (added via UI or env)
-
-| Variable | Description |
-|---|---|
-| `SLACK_BOT_TOKEN` | `xoxb-...` token for Slack workspace |
-| `SLACK_SIGNING_SECRET` | Slack app signing secret |
-| `ADAPTER_MOCK` | `true` = use fixture data, no platform needed |
-
-### Pipeline Tuning
+### 4. Data Pipeline & Quality Gates
 
 | Variable | Default | Description |
 |---|---|---|
@@ -292,8 +285,25 @@ All services read from a single `.env` file in the project root.
 | `QUALITY_THRESHOLD` | `0.5` | Minimum fact quality score (0.0–1.0) |
 | `ENTITY_THRESHOLD` | `0.6` | Minimum entity confidence (0.0–1.0) |
 | `MAX_FACTS_PER_MESSAGE` | `2` | Max atomic facts extracted per message |
-| `LLM_FAST_MODEL` | `gemini-2.5-flash` | Model for extraction/classification |
-| `LLM_QUALITY_MODEL` | `gemini-2.5-flash` | Model for wiki synthesis |
+| `RECONCILER_INTERVAL_MINUTES`| `15` | Background retry interval for failed writes |
+
+### 5. Integrations & Chat Bridge
+
+| Variable | Default | Description |
+|---|---|---|
+| `ADAPTER_MOCK` | `true` | `true` = use fixture data; `false` = enables real platform data |
+| `BOT_PORT` | `3001` | Bot HTTP server port |
+| `BACKEND_URL` | `http://localhost:8000` | Bot → Backend URL |
+| `BRIDGE_URL` | `http://localhost:3001` | Backend → Bot service URL |
+| `BRIDGE_API_KEY` | — | Shared secret for backend↔bot auth |
+
+*Note: Real Platform credentials (like Slack tokens or Discord tokens) are managed securely within the Dashboard UI (Connections tab) and do not need to be set in your `.env` file.*
+
+### 6. Security
+
+| Variable | Default | Description |
+|---|---|---|
+| `CREDENTIAL_MASTER_KEY` | — | 64-char hex key for AES-256-GCM encryption of platform credentials. Generate: `openssl rand -hex 32` |
 
 ### Graph Backend
 
