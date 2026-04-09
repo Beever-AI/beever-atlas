@@ -260,6 +260,23 @@ class MongoDBStore:
         """Return the number of channels that have a sync state record."""
         return await self._channel_sync_state.count_documents({})
 
+    async def list_synced_channel_ids(self) -> list[str]:
+        """Return all channel IDs that have a sync state record."""
+        ids: list[str] = []
+        async for doc in self._channel_sync_state.find({}, {"channel_id": 1}):
+            ids.append(doc["channel_id"])
+        return ids
+
+    async def get_channel_display_name(self, channel_id: str) -> str | None:
+        """Get the display name for a channel from its most recent activity log entry."""
+        doc = await self._activity_events.find_one(
+            {"channel_id": channel_id, "details.channel_name": {"$exists": True}},
+            sort=[("timestamp", -1)],
+        )
+        if doc:
+            return doc.get("details", {}).get("channel_name")
+        return None
+
     async def get_last_sync_timestamp(self) -> str | None:
         """Return the most recent last_sync_ts across all channels, or None."""
         doc = await self._channel_sync_state.find_one(

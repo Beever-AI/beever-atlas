@@ -34,11 +34,11 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Rules
 - Do NOT start with a # heading (title rendered separately)
 - Each numbered section above MUST be a ## heading (e.g. `## Concept Map`, `## Key Highlights`). Use ### for sub-sections within them. This creates a navigable table of contents.
-- Use ```mermaid for diagrams. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `DS[Data Sources]` not just `Data Sources`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels like `-- text -->`, semicolons, chained arrows like `A --> B --> C` (use separate lines: `A --> B` then `B --> C`). Example: `graph TD\n    DS[Data Sources] --> PR[Processing]\n    PR --> ST[Storage]`
+- Use ```mermaid for diagrams. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `DS[Data Sources]` not just `Data Sources`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines: `A --> B` then `B --> C`). USE `-->|label|` pipe-style to label edges (e.g., `A -->|uses| B`). Example: `graph TD\n    DS[Data Sources] -->|feeds| PR[Processing]\n    PR -->|outputs| ST[Storage]`
 - Use ```chart for data charts with exact JSON: {{"type":"donut","title":"...","data":[{{"name":"X","value":N}}],"xKey":"name","series":["value"]}}
 - Use GFM tables for structured data. ALWAYS include the header separator row. Example:\n  | Column A | Column B |\n  |----------|----------|\n  | value 1  | value 2  |
 - Use bullet points over paragraphs when listing facts
-- Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains. (use actual numbers: [1], [2], [3]). **Maximum 3 citation markers per sentence.** If a claim has many sources, pick the 2-3 most relevant — do NOT list long chains like [1, 3, 4, 5, 6, 7, 8, 9, 10]. Long citation chains clutter the text and are unreadable.
+- Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains. (use actual numbers: [1], [2], [3]). **Maximum 3 citation markers per sentence.** If a claim has many sources, pick the 2-3 most relevant — do NOT list long chains like [1, 3, 4, 5, 6, 7, 8, 9, 10] or [1][2][5][6][8][9][10]. Long citation chains clutter the text and are unreadable. **CRITICAL: Key contributors bullets may have at most 3 [N] markers total — pick the most representative citations and stop.**
 - Do NOT use @, #, or $ prefixes for entity names — just write names normally
 - If media (images/PDFs/links) exist, embed important ones with a brief description line BEFORE each embed explaining what it shows: `**Dashboard Overview** — Key metrics for the project.` then `![Dashboard](url)` on the next line. Do NOT use bare bullet points with just a link.
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
@@ -102,7 +102,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Rules
 - Do NOT start with a # heading (title rendered separately)
 - Each numbered section above MUST be a ## heading (e.g. `## Concept Diagram`, `## Key Facts`). Use ### for sub-sections. This creates a navigable table of contents.
-- ALWAYS include at least one ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `AG[AI Agent]` not just `AI Agent`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels like `-- text -->`, semicolons, chained arrows like `A --> B --> C` (use separate lines).
+- ALWAYS include at least one ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `AG[AI Agent]` not just `AI Agent`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines). USE `-->|label|` pipe-style to label edges with relationship type (e.g., `A -->|uses| B`, `A -->|decided| B`, `A -->|depends on| B`).
 - Use ```chart for quantitative data with JSON: {{"type":"bar","title":"...","data":[...],"xKey":"name","series":["value"]}}
 - Prefer tables and bullet points over long paragraphs
 - Add [N] citation markers (actual numbers) on every factual claim. **Maximum 3 citations per sentence** — pick the most relevant, never list long chains like [1, 3, 4, 5, 6, 7].
@@ -112,6 +112,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 - Keep the page focused: maximum 8 rows in Key Facts; avoid duplicate facts across Key Facts and Details.
 - Preserve canonical naming from provided data; do not alternate spellings for the same entity.
 - **Maximum 12 edges** in the concept diagram. Focus on the most important entity relationships.
+- **Thin-data rule**: If `fact_count` ≤ 8, use CONDENSED format instead of the full structure above: (1) TL;DR bold sentence, (2) Key Facts table (max 5 rows), (3) Summary paragraph. SKIP concept diagram, Decisions table, Open Questions, See Also, and Contributors. Do NOT produce placeholder text like "No decisions have been recorded" or "No open questions at this time" — just omit those sections entirely.
 
 ## Topic data
 Title: {title}
@@ -122,6 +123,7 @@ Impact: {impact_note}
 Tags: {topic_tags}
 Period: {date_range_start} – {date_range_end}
 Authors: {authors}
+Fact count: {fact_count}
 
 Key facts: {key_facts_json}
 Decisions: {decisions_json}
@@ -161,9 +163,10 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Rules
 - Do NOT start with a # heading
 - Each numbered section above MUST be a ## heading (e.g. `## Contributor Network`, `## Contributors Table`). Use ### for sub-sections. This creates a navigable table of contents.
-- MUST include a ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `TC[Thomas Chong]` not just `Thomas Chong`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels, semicolons, chained arrows like `A --> B --> C` (use separate lines).
+- MUST include a ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label: `TC[Thomas Chong]` not just `Thomas Chong`. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines). USE `-->|label|` pipe-style to label edges with relationship type (e.g., `A -->|uses| B`, `A -->|decided| B`).
 - Use GFM tables, not prose paragraphs, for listing people
-- Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains.
+- Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains like [1][2][5][6][8][9][10]. Pick the 2-3 most relevant citations only.
+- **CRITICAL: Each bullet point may have at most 3 citation markers total.** A person entry like "Thomas Chong: drives architecture [1][2][3]" is correct. "Thomas Chong: drives architecture [1][2][5][6][8][9][10]..." is FORBIDDEN.
 - Do NOT use @, #, $ prefixes — write names normally
 - Activity chart JSON (use ```chart code block, NOT ```json): `{"type":"bar","title":"Contributor Activity","data":[{"name":"Alice","contributions":15}],"xKey":"name","series":["contributions"]}`
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
@@ -199,7 +202,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Rules
 - Do NOT start with a # heading
 - Each numbered section above MUST be a ## heading (e.g. `## Decision Flow`, `## Decision Timeline`). Use ### for sub-sections. This creates a navigable table of contents.
-- MUST include a ```mermaid flowchart. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels, semicolons, chained arrows like `A --> B --> C` (use separate lines).
+- MUST include a ```mermaid flowchart. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines). USE `-->|label|` pipe-style to label edges with relationship type (e.g., `A -->|uses| B`, `A -->|decided| B`).
 - Status badges: ✅ active, ❌ superseded, ⏳ pending
 - Use tables for the timeline, not paragraphs
 - Add [N] citation markers on factual claims. **Maximum 3 citations per sentence** — never list long chains.
@@ -260,29 +263,36 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 2. **Introduction** — 1 sentence: "Common questions and answers that have emerged from discussions in this channel." (AFTER the chart)
 3. **Q&A sections** — group questions by topic. For each topic group:
    - Use ## heading with topic name
-   - List each Q&A as:
-     - **Q: [question text]**
-     - A: [answer text] [N] (with citation)
+   - List EVERY Q&A from that topic's candidates — do NOT skip or reduce. If the data has 5 questions for a topic, include all 5.
+   - Format each Q&A as a distinct block:
+
+     **Q: [question text]**
+
+     A: [answer text] [N]
+
+   - After the last Q&A in a topic group, add a `---` horizontal rule to visually separate it from the next section.
 4. **Related pages** — bullet list suggesting which wiki pages have more detail on each topic
 
 ## Writing style
 - Each answer MUST be 2-3 sentences providing actionable context, not a restatement of the source. Bad: "MCP is a protocol proposed by Alvin Yu [1]." Good: "MCP (Multi-Agent Communication Protocol) standardizes how AI agents call Beever Atlas capabilities through a unified interface. It separates tool invocation (MCP) from guidance/instructions (Skills), enabling agents to interact with the system without custom integrations [1]."
 - Answers should help someone UNDERSTAND the topic, not just confirm it exists.
+- Each Q&A pair must be visually separated with a blank line before and after the answer — never run Q&A pairs together in a single paragraph.
 - FORBIDDEN: 1-sentence answers that merely restate who said what.
 
 ## Adaptive instructions
 - These Q&A pairs were extracted from actual channel discussions — they represent real questions people asked and answers that emerged
-- Deduplicate similar questions — if two topics generated nearly identical questions, merge them and cite both sources
+- Include ALL provided FAQ candidates. Only deduplicate if two questions from different topics are nearly identical (>90% overlap in meaning) — in that case merge and cite both sources.
 - If no FAQ candidates exist at all, produce: "No frequently asked questions have emerged from channel discussions yet. As more conversations happen, common questions and their answers will appear here."
 - Order questions within each topic by relevance/importance, not chronologically
 
 ## Rules
 - Do NOT start with a # heading (title rendered separately)
-- Each topic group MUST be a ## heading. Individual Q&A pairs use ### or bold formatting. This creates a navigable table of contents.
+- Each topic group MUST be a ## heading. Individual Q&A pairs use bold **Q:** formatting on their own line, with the answer on a separate paragraph. Do NOT use ### subheadings for individual Q&As. This creates a navigable table of contents.
 - Use ```chart for the topic distribution with JSON: {{"type":"donut","title":"FAQ by Topic","data":[{{"name":"Topic A","value":3}}],"xKey":"name","series":["value"]}}
 - Add [N] citation markers on answers to trace back to source discussions. **Maximum 3 citations per answer.**
 - Do NOT use @, #, $ prefixes — write names normally
 - Keep answers concise but complete — 2-3 sentences each
+- Place a `---` horizontal rule after each topic group's last Q&A (before the next ## heading or the Related pages section). Do NOT place `---` between individual Q&A pairs within the same section.
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
 
 ## Data
@@ -315,7 +325,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 - Do NOT start with a # heading (title rendered separately)
 - Each numbered section above MUST be a ## heading (e.g. `## Terms`, `## Relationship Diagram`). Use ### for sub-sections or categories. This creates a navigable table of contents.
 - Use GFM tables for the main term list — this is the primary content
-- Use ```mermaid for the relationship diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels, semicolons, chained arrows like `A --> B --> C` (use separate lines).
+- Use ```mermaid for the relationship diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines). USE `-->|label|` pipe-style to label edges with relationship type (e.g., `A -->|uses| B`, `A -->|decided| B`).
 - Do NOT use @, #, $ prefixes — write names normally
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
 
@@ -408,17 +418,19 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Rules
 - Do NOT start with a # heading (title rendered separately)
 - Each numbered section above MUST be a ## heading. Use ### for sub-sections.
-- ALWAYS include at least one ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, edge labels, semicolons, chained arrows like `A --> B --> C` (use separate lines).
+- ALWAYS include at least one ```mermaid diagram. Keep syntax SIMPLE — use ONLY `graph TD` with `ID[Label] --> ID[Label]` edges. Every node MUST use a short ID with a descriptive label. FORBIDDEN: subgraph, end, style, classDef, parentheses inside brackets, quotes inside labels, `-- text -->` dash-space style labels, semicolons, chained arrows like `A --> B --> C` (use separate lines). USE `-->|label|` pipe-style to label edges with relationship type (e.g., `A -->|uses| B`, `A -->|decided| B`).
 - Use ```chart for quantitative data with JSON: {{"type":"bar","title":"...","data":[...],"xKey":"name","series":["value"]}}
 - Add [N] citation markers on every factual claim. **Maximum 3 citations per sentence.**
 - Do NOT use @, #, $ prefixes — write names normally
 - If media exists, embed: ![desc](url) for images, [name](url) for docs/links
 - Use ONLY inline [N] markers for citations. Do NOT generate any source list, reference section, citation block, or numbered bibliography — the UI renders citations separately. FORBIDDEN at end of content: `## Sources`, `### Sources`, `- [1] @Author...`, `[1]: Author...`.
+- **Thin-data rule**: If `fact_count` ≤ 8, use CONDENSED format: (1) TL;DR bold sentence, (2) Key Facts table (max 5 rows), (3) Summary paragraph. SKIP concept diagram, Details, and Contributors. Do NOT produce placeholder text for empty sections — just omit them.
 
 ## Context
 Parent topic: {parent_title}
 Sub-topic title: {title}
 Sub-topic summary: {summary}
+Fact count: {fact_count}
 
 ## Facts (for this sub-topic only)
 {member_facts_json}

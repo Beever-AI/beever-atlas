@@ -57,9 +57,7 @@ function sanitizeMermaid(raw: string): string {
 
   // Strip colon-style edge labels: A --> B: label  →  A --> B
   chart = chart.replace(/(-->)\s+(\w+(?:\[[^\]]*\])?)\s*:\s*[^\n]+/g, "$1 $2");
-  // Strip pipe-style edge labels: A -->|label| B  →  A --> B
-  chart = chart.replace(/-->\|[^|]*\|\s*/g, "--> ");
-  chart = chart.replace(/---\|[^|]*\|\s*/g, "--- ");
+  // Keep pipe-style labels intact: A -->|label| B is valid mermaid syntax
 
   // Fix "graph TD;" → "graph TD" (trailing semicolons)
   chart = chart.replace(/^(graph\s+\w+)\s*;/gm, "$1");
@@ -108,15 +106,22 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
     const render = async () => {
       mermaid.initialize(mermaidThemeConfig(resolvedTheme === "dark" ? "dark" : "light"));
       const sanitized = sanitizeMermaid(chart);
+      // Mermaid v10+ resolves the promise even on parse errors, but returns a
+      // diagnostic SVG containing the error text. Detect these cases explicitly.
+      const isErrorSvg = (svg: string) =>
+        svg.includes("Syntax error in text") || svg.includes("class=\"error-icon\"");
+
       try {
         const id = `mermaid-${Math.random().toString(36).slice(2)}`;
         const result = await mermaid.render(id, sanitized);
+        if (isErrorSvg(result.svg)) throw new Error("mermaid returned error svg");
         setSvg(result.svg);
         setError(null);
       } catch {
         try {
           const id2 = `mermaid-${Math.random().toString(36).slice(2)}`;
           const result2 = await mermaid.render(id2, simplifyMermaid(sanitized));
+          if (isErrorSvg(result2.svg)) throw new Error("mermaid returned error svg after simplify");
           setSvg(result2.svg);
           setError(null);
         } catch (err2) {
