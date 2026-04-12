@@ -1,20 +1,11 @@
 import { Hash } from "lucide-react";
 import type { Message } from "@/types/askTypes";
+import { useUserProfile } from "@/hooks/useUserProfile";
 
 interface UserMessageProps {
   message: Message;
   /** Map of channel_id → display name, used to render the per-turn channel badge. */
   channelNames?: Record<string, string>;
-}
-
-function getInitials(name?: string): string {
-  if (!name) return "U";
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
 }
 
 function formatTime(date?: Date | string): string {
@@ -29,6 +20,10 @@ function formatTime(date?: Date | string): string {
 }
 
 export function UserMessage({ message, channelNames }: UserMessageProps) {
+  const { profile } = useUserProfile();
+  const emoji = profile.avatarEmoji || "🦫";
+  const avatarColor = profile.avatarColor || "hsl(215, 80%, 55%)";
+
   const channelId = message.channel_id;
   const channelLabel = channelId
     ? (channelNames?.[channelId] ?? channelId)
@@ -36,19 +31,7 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
 
   return (
     <div className="flex justify-end gap-3">
-      <div className="max-w-[70%]">
-        {/* Per-turn channel badge */}
-        {channelLabel && (
-          <div className="flex justify-end mb-1">
-            <span
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/5 text-primary/80 border border-primary/10"
-              title={`Asked in #${channelLabel}`}
-            >
-              <Hash className="w-2.5 h-2.5" />
-              {channelLabel}
-            </span>
-          </div>
-        )}
+      <div className="max-w-[70%] min-w-0">
         <div className="bg-primary/10 rounded-2xl px-4 py-3">
           <p className="text-foreground text-sm whitespace-pre-wrap">{message.content}</p>
           {message.attachments && message.attachments.length > 0 && (
@@ -56,10 +39,10 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
               {message.attachments.map((att) => (
                 <span
                   key={att.file_id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/10 rounded-md text-xs text-blue-300 border border-blue-500/20"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted rounded-md text-xs text-foreground/80 border border-border"
                 >
                   📎 {att.filename}
-                  <span className="text-blue-400/60">
+                  <span className="text-muted-foreground/70">
                     ({(att.size_bytes / 1024).toFixed(0)}KB)
                   </span>
                 </span>
@@ -67,10 +50,28 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
             </div>
           )}
         </div>
-        <p className="text-xs text-muted-foreground/60 mt-1 text-right">{formatTime(new Date())}</p>
+        <div className="mt-1 flex items-center justify-end gap-2 text-[11px] text-muted-foreground/60">
+          {channelLabel && (
+            <>
+              <span
+                className="inline-flex items-center gap-1"
+                title={`Asked in #${channelLabel}`}
+              >
+                <Hash className="size-2.5" />
+                {channelLabel}
+              </span>
+              <span aria-hidden>·</span>
+            </>
+          )}
+          <span>{formatTime(new Date())}</span>
+        </div>
       </div>
-      <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-medium text-white shrink-0">
-        {getInitials()}
+      <div
+        className="size-8 rounded-xl flex items-center justify-center text-white text-xs font-bold shrink-0"
+        style={{ background: avatarColor }}
+        title={profile.displayName || "You"}
+      >
+        {emoji}
       </div>
     </div>
   );

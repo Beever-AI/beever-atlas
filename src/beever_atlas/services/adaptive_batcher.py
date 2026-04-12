@@ -13,6 +13,28 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Projected output-token constants, used for the optional output budget.
+# Tuned from current Pydantic schemas (see agents/schemas/extraction.py) — an
+# ExtractedFact serialises to ~150 tokens, an ExtractedEntity to ~120.
+AVG_TOKENS_PER_FACT = 150
+AVG_TOKENS_PER_ENTITY = 120
+EXPECTED_ENTITIES_PER_MESSAGE = 1  # empirical; most messages contribute ≤1 new entity.
+
+
+def estimate_message_output_tokens(
+    msg: dict[str, Any], max_facts_per_message: int = 2
+) -> int:
+    """Estimate the output tokens a message will produce across both extractors.
+
+    Used by ``token_aware_batches`` when an output-token budget is provided,
+    to prevent batches whose projected response size would exceed the model's
+    output ceiling.
+    """
+    fact_tokens = max_facts_per_message * AVG_TOKENS_PER_FACT
+    entity_tokens = EXPECTED_ENTITIES_PER_MESSAGE * AVG_TOKENS_PER_ENTITY
+    # 20-token overhead per message for JSON structure (brackets, commas, keys).
+    return fact_tokens + entity_tokens + 20
+
 
 def estimate_message_tokens(msg: dict[str, Any]) -> int:
     """Estimate the token count for a message using a 3-chars-per-token heuristic.
@@ -75,19 +97,27 @@ def token_aware_batches(
     messages: list[dict[str, Any]],
     max_tokens: int = 12000,
     time_window_seconds: int = 600,
+    max_output_tokens: int | None = None,
+    max_facts_per_message: int = 2,
 ) -> list[list[dict[str, Any]]]:
     """Split messages into batches respecting a token budget.
 
     Algorithm:
     1. Sort messages by timestamp for chronological coherence
     2. Group into thread groups (parent + replies kept together)
-    3. Accumulate thread groups into batches until token budget is reached
+    3. Accumulate thread groups into batches until budgets are reached
     4. Never split a thread group across batches
 
     Args:
         messages: List of message dicts (raw or preprocessed).
         max_tokens: Maximum estimated prompt tokens per batch.
         time_window_seconds: Preferred time window for grouping (secondary).
+        max_output_tokens: Optional projected-output ceiling per batch. When
+            provided, a batch also closes if adding the next thread group
+            would cause projected response size to exceed this budget.
+            ``None`` (default) preserves pre-existing input-only behavior.
+        max_facts_per_message: Used to project output size. Defaults to 2 to
+            match the balanced policy preset.
 
     Returns:
         List of message batches, each within the token budget.
@@ -120,32 +150,53 @@ def token_aware_batches(
     batches: list[list[dict[str, Any]]] = []
     current_batch: list[dict[str, Any]] = []
     current_tokens = 0
+    current_output_tokens = 0
+
+    def _group_output(g: list[dict[str, Any]]) -> int:
+        return sum(
+            estimate_message_output_tokens(m, max_facts_per_message) for m in g
+        )
 
     for group in thread_groups:
         group_tokens = sum(estimate_message_tokens(m) for m in group)
+        group_output = _group_output(group) if max_output_tokens is not None else 0
 
-        # If this single group exceeds budget, it gets its own batch
-        if group_tokens >= max_tokens:
+        # If this single group exceeds either budget, it gets its own batch.
+        oversized_input = group_tokens >= max_tokens
+        oversized_output = (
+            max_output_tokens is not None and group_output >= max_output_tokens
+        )
+        if oversized_input or oversized_output:
             if current_batch:
                 batches.append(current_batch)
                 current_batch = []
                 current_tokens = 0
+                current_output_tokens = 0
             batches.append(group)
             logger.info(
-                "AdaptiveBatcher: oversized thread group (%d tokens, %d msgs) in own batch",
+                "AdaptiveBatcher: oversized thread group (%d in, %d out, %d msgs) "
+                "in own batch",
                 group_tokens,
+                group_output,
                 len(group),
             )
             continue
 
-        # Would adding this group exceed the budget?
-        if current_tokens + group_tokens > max_tokens and current_batch:
+        # Would adding this group exceed input OR output budget?
+        would_overflow_input = current_tokens + group_tokens > max_tokens
+        would_overflow_output = (
+            max_output_tokens is not None
+            and current_output_tokens + group_output > max_output_tokens
+        )
+        if (would_overflow_input or would_overflow_output) and current_batch:
             batches.append(current_batch)
             current_batch = []
             current_tokens = 0
+            current_output_tokens = 0
 
         current_batch.extend(group)
         current_tokens += group_tokens
+        current_output_tokens += group_output
 
     if current_batch:
         batches.append(current_batch)
@@ -153,12 +204,30 @@ def token_aware_batches(
     if batches:
         sizes = [len(b) for b in batches]
         token_ests = [sum(estimate_message_tokens(m) for m in b) for b in batches]
-        logger.info(
-            "AdaptiveBatcher: %d messages → %d batches (sizes=%s, tokens=%s)",
-            len(messages),
-            len(batches),
-            sizes,
-            token_ests,
-        )
+        if max_output_tokens is not None:
+            output_ests = [
+                sum(
+                    estimate_message_output_tokens(m, max_facts_per_message)
+                    for m in b
+                )
+                for b in batches
+            ]
+            logger.info(
+                "AdaptiveBatcher: %d messages → %d batches "
+                "(sizes=%s, in_tokens=%s, out_tokens=%s)",
+                len(messages),
+                len(batches),
+                sizes,
+                token_ests,
+                output_ests,
+            )
+        else:
+            logger.info(
+                "AdaptiveBatcher: %d messages → %d batches (sizes=%s, tokens=%s)",
+                len(messages),
+                len(batches),
+                sizes,
+                token_ests,
+            )
 
     return batches

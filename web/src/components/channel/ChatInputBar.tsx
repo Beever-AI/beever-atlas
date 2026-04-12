@@ -131,7 +131,7 @@ export function ChatInputBar({
         <div
           className={`flex flex-col bg-card border rounded-2xl transition-all duration-200 ${
             focused
-              ? "border-primary/40 shadow-[0_0_0_4px_oklch(from_var(--primary)_l_c_h_/_0.08)]"
+              ? "border-primary/40 ring-1 ring-primary/30 shadow-sm"
               : "border-border shadow-sm hover:border-border/80 hover:shadow-md"
           }`}
           onDrop={handleDrop}
@@ -166,7 +166,7 @@ export function ChatInputBar({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming || uploading}
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40"
+              className="inline-flex items-center justify-center size-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40"
               title="Attach file"
             >
               <Paperclip className="w-4 h-4" strokeWidth={2} />
@@ -233,7 +233,7 @@ export function ChatInputBar({
             {isStreaming ? (
               <button
                 onClick={onAbort}
-                className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors"
+                className="inline-flex items-center justify-center size-9 rounded-xl bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors"
                 title="Stop generating"
               >
                 <Square className="w-3.5 h-3.5" fill="currentColor" />
@@ -242,7 +242,7 @@ export function ChatInputBar({
               <button
                 onClick={handleSubmit}
                 disabled={!canSubmit}
-                className={`inline-flex items-center justify-center w-9 h-9 rounded-xl transition-all duration-150 ${
+                className={`inline-flex items-center justify-center size-9 rounded-xl transition-all duration-150 ${
                   canSubmit
                     ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
                     : "bg-muted text-muted-foreground/50 cursor-not-allowed"
