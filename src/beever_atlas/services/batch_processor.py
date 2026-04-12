@@ -104,6 +104,28 @@ def _summarize_exception(exc: Exception) -> str:
     return str(exc)
 
 
+def _is_truncation_error(exc: Exception) -> bool:
+    """Return True if ``exc`` indicates an LLM output truncation / malformed JSON.
+
+    Covers: Pydantic ValidationError, json.JSONDecodeError, ijson IncompleteJSONError,
+    httpx RemoteProtocolError, plus string markers from Gemini/ADK (``json_invalid``,
+    ``max_tokens``, ``unexpected eof``). Retry ladder in the main loop uses this
+    predicate as its trigger — existing ladder body (reduce → halve → raise) unchanged.
+    """
+    name = type(exc).__name__
+    msg = str(exc).lower()
+    if name in {
+        "ValidationError",
+        "JSONDecodeError",
+        "IncompleteJSONError",
+        "RemoteProtocolError",
+    }:
+        return True
+    return any(
+        marker in msg for marker in ("json_invalid", "max_tokens", "unexpected eof")
+    )
+
+
 @dataclass
 class BatchBreakdown:
     """Per-batch extraction breakdown with sample data."""
@@ -677,8 +699,7 @@ class BatchProcessor:
                     except Exception as exc:
                         # Catch ValidationError (truncated LLM JSON) and similar parse failures.
                         # Strategy: attempt 1 → reduce max_facts to 1, attempt 2 → halve batch.
-                        err_name = type(exc).__name__
-                        is_validation = "ValidationError" in err_name or "json_invalid" in str(exc).lower()
+                        is_validation = _is_truncation_error(exc)
                         if is_validation and attempt < _LLM_MAX_RETRIES:
                             current_max = initial_state.get("max_facts_per_message", 2)
                             current_msgs = initial_state.get("messages", [])

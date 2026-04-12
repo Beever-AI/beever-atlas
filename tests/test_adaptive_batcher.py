@@ -1,6 +1,10 @@
 """Unit tests for token-aware adaptive batching."""
 
+import time
+
 from beever_atlas.services.adaptive_batcher import (
+    AVG_TOKENS_PER_FACT,
+    estimate_message_output_tokens,
     estimate_message_tokens,
     token_aware_batches,
 )
@@ -92,3 +96,126 @@ class TestTokenAwareBatches:
         batches = token_aware_batches(msgs, max_tokens=2000)
         total_msgs = sum(len(b) for b in batches)
         assert total_msgs == 100  # no messages lost
+
+
+# -----------------------------------------------------------------------------
+# Output-aware batching (new in eliminate-llm-eof-errors change)
+# -----------------------------------------------------------------------------
+
+
+class TestEstimateOutputTokens:
+    def test_scales_with_max_facts(self):
+        m = _msg("any")
+        low = estimate_message_output_tokens(m, max_facts_per_message=1)
+        high = estimate_message_output_tokens(m, max_facts_per_message=3)
+        assert high > low
+        assert high - low == 2 * AVG_TOKENS_PER_FACT
+
+
+class TestOutputBudget:
+    def test_default_preserves_behavior(self):
+        """Without max_output_tokens, behavior is byte-identical to pre-change."""
+        msgs = [_msg(f"m{i}", ts=str(i)) for i in range(20)]
+        baseline = token_aware_batches(msgs, max_tokens=5000)
+        new = token_aware_batches(msgs, max_tokens=5000, max_output_tokens=None)
+        assert [len(b) for b in baseline] == [len(b) for b in new]
+
+    def test_output_budget_forces_more_batches(self):
+        """Tight output budget must split a fact-dense input into more batches."""
+        msgs = [_msg(f"m{i}", ts=str(i)) for i in range(30)]
+        loose = token_aware_batches(msgs, max_tokens=100_000)
+        tight = token_aware_batches(
+            msgs, max_tokens=100_000, max_output_tokens=500, max_facts_per_message=2
+        )
+        assert len(tight) > len(loose)
+        total = sum(len(b) for b in tight)
+        assert total == 30  # no loss
+
+    def test_thread_group_never_split(self):
+        """Parent + replies must land in the same batch even under tight budget."""
+        msgs = [
+            _msg("parent", ts="100"),
+            _msg("reply1", ts="101", thread_ts="100"),
+            _msg("reply2", ts="102", thread_ts="100"),
+            _msg("other", ts="200"),
+        ]
+        batches = token_aware_batches(
+            msgs, max_tokens=100_000, max_output_tokens=200  # extremely tight
+        )
+        # The thread group (ts 100/101/102) must remain together.
+        for b in batches:
+            ids = [m["ts"] for m in b]
+            has_parent = "100" in ids
+            has_any_reply = "101" in ids or "102" in ids
+            if has_parent or has_any_reply:
+                assert "100" in ids and "101" in ids and "102" in ids, (
+                    f"thread group split across batches: {ids}"
+                )
+
+    def test_no_messages_lost_under_any_budget(self):
+        msgs = [_msg(f"m{i}", ts=str(i)) for i in range(50)]
+        for out_budget in (None, 200, 1000, 5000):
+            batches = token_aware_batches(
+                msgs, max_tokens=3000, max_output_tokens=out_budget
+            )
+            assert sum(len(b) for b in batches) == 50
+
+
+# -----------------------------------------------------------------------------
+# Dry-run performance mock — ensures adaptive batcher stays fast on realistic
+# inputs after the two-sided-budget change.
+# -----------------------------------------------------------------------------
+
+
+class TestBatcherPerformance:
+    def _make_messages(self, n: int) -> list:
+        # Mix: 70% standalone, 30% thread replies.
+        msgs = []
+        for i in range(n):
+            if i % 10 >= 7 and i > 0:
+                msgs.append(
+                    _msg(f"reply {i}", ts=str(i), thread_ts=str(i - 1))
+                )
+            else:
+                msgs.append(_msg(f"msg {i} " + ("x" * 400), ts=str(i)))
+        return msgs
+
+    def test_perf_default_1000_messages(self):
+        msgs = self._make_messages(1000)
+        t0 = time.perf_counter()
+        batches = token_aware_batches(msgs, max_tokens=12_000)
+        elapsed = time.perf_counter() - t0
+        assert sum(len(b) for b in batches) == 1000
+        # Adaptive batcher must stay well under 1s for 1k messages on CI hardware.
+        assert elapsed < 1.0, f"default batching too slow: {elapsed:.3f}s"
+
+    def test_perf_with_output_budget_1000_messages(self):
+        msgs = self._make_messages(1000)
+        t0 = time.perf_counter()
+        batches = token_aware_batches(
+            msgs, max_tokens=12_000, max_output_tokens=90_000, max_facts_per_message=2
+        )
+        elapsed = time.perf_counter() - t0
+        assert sum(len(b) for b in batches) == 1000
+        # Output-aware path must not regress materially vs. default.
+        assert elapsed < 1.0, f"output-aware batching too slow: {elapsed:.3f}s"
+
+    def test_perf_parity_default_vs_output_aware(self):
+        """Output-aware path must not be more than 3x slower than default."""
+        msgs = self._make_messages(500)
+        t0 = time.perf_counter()
+        for _ in range(5):
+            token_aware_batches(msgs, max_tokens=12_000)
+        default_t = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        for _ in range(5):
+            token_aware_batches(
+                msgs, max_tokens=12_000, max_output_tokens=90_000
+            )
+        output_t = time.perf_counter() - t0
+
+        # Allow generous slack; output path adds one extra sum per group.
+        assert output_t < default_t * 3.0 + 0.1, (
+            f"output-aware regressed: default={default_t:.3f}s output={output_t:.3f}s"
+        )

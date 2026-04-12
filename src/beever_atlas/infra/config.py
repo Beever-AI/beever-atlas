@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     ollama_enabled: bool = Field(default=False)
     ollama_api_base: str = Field(default="http://localhost:11434")
 
+    # LLM structured output (schema-constrained decoding for fact/entity extractors).
+    # When True, Gemini receives a Pydantic response_schema and cannot emit malformed JSON.
+    # Kill switch: flip to False if SDK/model regression is observed; json_recovery still handles fallback.
+    use_llm_structured_output: bool = Field(default=True, alias="USE_LLM_STRUCTURED_OUTPUT")
+
     # QA agent configuration
     qa_confidence_threshold: float = Field(default=0.4, alias="QA_CONFIDENCE_THRESHOLD")
     external_mcp_servers: str = Field(default="", alias="EXTERNAL_MCP_SERVERS")
