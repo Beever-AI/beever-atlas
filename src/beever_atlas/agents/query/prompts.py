@@ -63,14 +63,77 @@ Include inline citations as [1], [2], etc. At the end of your response, list sou
 Rules:
 - Use the `channel_name` field (e.g., #beever), NOT the raw channel_id (e.g., #C08TXAWFEP5).
 - Use the formatted `timestamp` field (e.g., 2025-04-06), NOT raw epoch numbers.
-- If timestamp is "(unavailable)", write Time: (unavailable).
+- If timestamp is unknown, OMIT the `Time:` field entirely (do not write "(unavailable)").
 - Each citation on its own line."""
+
+
+CITATION_FORMAT_REGISTRY = """\
+## Citation Format
+Every tool result includes a `_cite` tag like `[src:src_9f2a6b1c8d]`.
+Place the tag inline immediately after any claim you draw from that result.
+Copy the tag VERBATIM — do not invent, shorten, or paraphrase tags.
+
+When citing multiple sources for one claim, use SEPARATE brackets —
+never combine them with commas inside one pair of brackets:
+  CORRECT:  "the team chose dark mode [src:src_aaa1111111] [src:src_bbb2222222]"
+  WRONG:    "the team chose dark mode [src:src_aaa1111111, src:src_bbb2222222]"
+  WRONG:    "the team chose dark mode [src:src_aaa1111111 src:src_bbb2222222]"
+
+NEVER write bare numeric markers like `[1]`, `[2]`, `[3]` yourself. ONLY
+write `[src:src_xxxxxxxxxx]` tags copied verbatim from tool results. The
+system converts your tags to user-visible `[1]`, `[2]` numbers
+automatically — if you write bare `[N]` they become orphan references
+that point to nothing.
+  CORRECT:  "Alice decided X [src:src_aaa1111111] and Bob agreed [src:src_bbb2222222]"
+  WRONG:    "Alice decided X [1] and Bob agreed [2]"
+
+When a source's `attachments` field contains an image, PDF, diagram, or
+link preview AND that attachment is the best evidence for the claim,
+use the inline form `[src:src_xxx inline]` immediately after the claim.
+Prefer the plain form; use `inline` only when seeing the media would
+meaningfully help the reader.
+
+Do NOT write a Sources, References, or Citations section at the end.
+Do NOT write the `(unavailable)` placeholder. Do NOT paraphrase author,
+channel, or timestamp metadata in your prose — the system renders
+everything from the tags you place."""
+
+
+FOLLOW_UPS_TOOL_INSTRUCTION = """\
+## Follow-Up Questions
+When you finish your answer, call the `suggest_follow_ups` tool exactly
+once with 2-3 concise, contextual follow-up questions the user might
+want to ask next. Do NOT write a `FOLLOW_UPS:` JSON block in your prose.
+Follow-up suggestions must be plain strings — no bullets, no markdown, no numbering."""
+
+ONBOARDING_LENGTH_HINT = """\
+## Onboarding Response Length
+For orientation or onboarding questions ("what is this channel about", "where do I start", \
+"who is who", "how do I…"), keep responses ≤1200 characters. Count before emitting. \
+If you need more, summarize instead."""
 
 TONE_INSTRUCTIONS = """\
 ## Tone
 Be concise and factual. Distinguish clearly between:
 - "Your team discussed..." / "According to your channel..." (internal knowledge with citations)
-- "According to external sources..." (external/Tavily results, marked [External: url])"""
+- "According to external sources..." (external/Tavily results, marked [External: url])
+If a tool returns a row with `_empty: true`, disclose that the knowledge graph has no edges for that entity; do not silently substitute wiki content."""
+
+
+LANGUAGE_DIRECTIVE = """\
+## Language
+Answer in the SAME LANGUAGE as the user's most recent question.
+- If the user asks in Cantonese / Traditional Chinese / Simplified Chinese /
+  Japanese / Korean, respond in that language. If the user asks in English,
+  respond in English.
+- Preserve proper nouns VERBATIM from the retrieved memory: people names,
+  project codenames, tool/technology names. Do not translate or
+  transliterate them.
+- When a cited fact is in a different language than your answer, translate
+  its meaning into the answer's language while keeping proper nouns
+  verbatim. For a high-salience claim you may include a brief native-
+  language quotation in parentheses.
+- Follow-up question suggestions must also be in the user's language."""
 
 MAX_TOOL_CALLS_INSTRUCTION = """\
 ## Max Tool Calls
@@ -86,13 +149,34 @@ Format them on a new line after a separator:
 FOLLOW_UPS: ["first follow-up question?", "second follow-up question?", "third follow-up question?"]"""
 
 
-def build_qa_system_prompt(*, max_tool_calls: int = 8, include_follow_ups: bool = True) -> str:
+def build_qa_system_prompt(
+    *,
+    max_tool_calls: int = 8,
+    include_follow_ups: bool = True,
+    mode: str = "deep",
+) -> str:
     """Build the full QA system prompt from components.
+
+    When `citation_registry_enabled` is set, the prompt switches to the
+    tag-based `CITATION_FORMAT_REGISTRY` and the `suggest_follow_ups`
+    tool instruction. The legacy prose-tail + FOLLOW_UPS regex flow is
+    used otherwise.
 
     Args:
         max_tool_calls: Maximum tool calls allowed per response.
         include_follow_ups: Whether to include follow-up question instructions.
+        mode: Answer mode ("deep", "quick", "summarize"). The onboarding
+            length hint is omitted for "deep" mode to avoid conflicting with
+            its thoroughness requirement.
     """
+    try:
+        from beever_atlas.infra.config import get_settings
+        registry_on = bool(get_settings().citation_registry_enabled)
+    except Exception:
+        registry_on = False
+
+    citation_block = CITATION_FORMAT_REGISTRY if registry_on else CITATION_FORMAT
+
     parts = [
         IDENTITY_PREAMBLE,
         "",
@@ -100,14 +184,19 @@ def build_qa_system_prompt(*, max_tool_calls: int = 8, include_follow_ups: bool 
         "",
         QUERY_TYPE_TOOL_MAP,
         "",
-        CITATION_FORMAT,
+        citation_block,
         "",
         MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
         "",
         TONE_INSTRUCTIONS,
+        "",
+        LANGUAGE_DIRECTIVE,
     ]
+    if mode != "deep":
+        parts.extend(["", ONBOARDING_LENGTH_HINT])
     if include_follow_ups:
-        parts.extend(["", FOLLOW_UP_INSTRUCTION])
+        follow_up_block = FOLLOW_UPS_TOOL_INSTRUCTION if registry_on else FOLLOW_UP_INSTRUCTION
+        parts.extend(["", follow_up_block])
     return "\n".join(parts)
 
 
