@@ -13,7 +13,18 @@ interface ChatMessageListProps {
   onFeedback?: (messageId: string, rating: "up" | "down", comment?: string) => void;
   feedbackMap?: Record<string, { rating: "up" | "down"; comment?: string }>;
   sessionId?: string;
+  /** Map of channel_id → display name for per-message channel badges (v2 flow). */
+  channelNames?: Record<string, string>;
+  /** Currently selected channel — shown in the empty-state hero (v2 flow). */
+  activeChannelId?: string;
 }
+
+const DEFAULT_SUGGESTIONS = [
+  "What is this channel about?",
+  "Who are the key contributors?",
+  "What decisions were made recently?",
+  "What topics are discussed most?",
+];
 
 export function ChatMessageList({
   messages,
@@ -23,17 +34,16 @@ export function ChatMessageList({
   onFeedback,
   feedbackMap = {},
   sessionId,
+  channelNames,
+  activeChannelId,
 }: ChatMessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [userScrolled, setUserScrolled] = useState(false);
 
-  // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
   useEffect(() => {
-    if (!userScrolled) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    if (!userScrolled) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, userScrolled]);
 
   const handleScroll = () => {
@@ -49,33 +59,52 @@ export function ChatMessageList({
     setUserScrolled(false);
   };
 
+  // Empty state — vertically balanced hero + card grid. Sits in the chat
+  // area above the composer; offset slightly upward for optical balance.
   if (messages.length === 0 && !isLoading) {
+    const channelName = activeChannelId ? channelNames?.[activeChannelId] : null;
+
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
-            <span className="text-2xl">?</span>
-          </div>
-          <h3 className="text-lg font-medium text-foreground mb-2">Ask anything about this channel</h3>
-          <p className="text-sm text-muted-foreground mb-6">
-            I can search through wiki pages, facts, relationships, and more to answer your questions.
-          </p>
-          <div className="grid grid-cols-1 gap-2 text-left">
-            {[
-              "What is this channel about?",
-              "Who are the key contributors?",
-              "What decisions were made recently?",
-              "What topics are discussed most?",
-            ].map((q) => (
+      <div className="flex-1 overflow-y-auto">
+        <div className="min-h-full flex flex-col items-center justify-center px-6 sm:px-8 pb-[10vh] pt-10 motion-safe:animate-rise-in">
+          <section className="flex flex-col items-center gap-4 text-center max-w-xl">
+            <h1 className="font-heading text-[32px] tracking-tight text-foreground">
+              {channelName ? (
+                <>
+                  Ask about{" "}
+                  <span className="text-primary">#{channelName}</span>
+                </>
+              ) : (
+                "What would you like to know?"
+              )}
+            </h1>
+            <p className="text-muted-foreground text-base">
+              {channelName
+                ? `Anything in #${channelName}'s knowledge is fair game.`
+                : "Choose a channel in the composer below to start."}
+            </p>
+          </section>
+
+          <section className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl w-full mt-10">
+            {DEFAULT_SUGGESTIONS.map((q, i) => (
               <button
                 key={q}
                 onClick={() => onFollowUpClick?.(q)}
-                className="px-4 py-2.5 text-sm text-foreground/90 bg-card rounded-xl hover:bg-muted transition-colors text-left border border-border"
+                className="group relative bg-card rounded-2xl border border-border p-5 text-left hover:bg-muted/30 hover:border-primary/40 hover:shadow-sm transition-all duration-200 motion-safe:animate-rise-in"
+                style={{ animationDelay: `${i * 55}ms` }}
               >
-                {q}
+                <p className="text-sm text-foreground leading-relaxed pr-6">
+                  {q}
+                </p>
+                <span
+                  aria-hidden
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground/30 group-hover:text-primary group-hover:translate-x-0.5 transition-all"
+                >
+                  →
+                </span>
               </button>
             ))}
-          </div>
+          </section>
         </div>
       </div>
     );
@@ -86,12 +115,16 @@ export function ChatMessageList({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-4 md:px-8 py-6 space-y-6"
+        className="h-full overflow-y-auto px-4 md:px-8 py-6"
       >
         <div className="max-w-3xl mx-auto w-full space-y-6">
           {messages.map((msg) =>
             msg.role === "user" ? (
-              <UserMessage key={msg.id} message={msg} />
+              <UserMessage
+                key={msg.id}
+                message={msg}
+                channelNames={channelNames}
+              />
             ) : (
               <AssistantMessage
                 key={msg.id}
@@ -102,7 +135,7 @@ export function ChatMessageList({
                 feedback={feedbackMap[msg.id]}
                 sessionId={sessionId}
               />
-            )
+            ),
           )}
           {isLoading && messages[messages.length - 1]?.role === "user" && <MessageSkeleton />}
           <div ref={bottomRef} />
@@ -112,9 +145,10 @@ export function ChatMessageList({
       {showScrollBtn && (
         <button
           onClick={scrollToBottom}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-muted hover:bg-muted/80 text-foreground/90 rounded-full p-2 shadow-lg transition-all border border-border"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-card hover:bg-muted text-foreground border border-border rounded-full p-2 shadow-lg transition-all"
+          title="Scroll to latest"
         >
-          <ChevronDown className="w-5 h-5" />
+          <ChevronDown className="w-4 h-4" />
         </button>
       )}
     </div>

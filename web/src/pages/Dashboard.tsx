@@ -100,7 +100,7 @@ export function Dashboard() {
 
           {/* Ask bar */}
           <Link
-            to="/search"
+            to="/ask"
             className="w-full max-w-4xl flex items-center gap-3 px-5 py-4 bg-card rounded-3xl border border-border shadow-sm hover:border-primary/30 transition-colors cursor-text"
           >
             <Search className="w-5 h-5 text-muted-foreground/60" />
@@ -122,7 +122,7 @@ export function Dashboard() {
             ].map((q) => (
               <button
                 key={q}
-                onClick={() => navigate(`/search?q=${encodeURIComponent(q)}`)}
+                onClick={() => navigate(`/ask?q=${encodeURIComponent(q)}`)}
                 className="px-4 py-1.5 rounded-full bg-card border border-border text-sm text-muted-foreground hover:bg-muted transition-colors"
               >
                 {q}

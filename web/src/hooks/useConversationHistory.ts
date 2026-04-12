@@ -4,7 +4,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export interface ConversationSession {
   session_id: string;
-  title: string;
+  title: string | null;
   first_question: string;
   created_at: string;
   pinned: boolean;

@@ -188,7 +188,8 @@ export function ChannelSettingsTab() {
   }
 
   return (
-    <div className="h-full overflow-auto p-4 sm:p-6 space-y-6 animate-fade-in max-w-2xl">
+    <div className="h-full overflow-auto animate-fade-in">
+      <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 lg:p-8 space-y-6">
       {/* Header */}
       <div>
         <h3 className="font-heading text-[28px] leading-tight text-foreground">Channel Settings</h3>
@@ -483,6 +484,7 @@ export function ChannelSettingsTab() {
           {resetting && <Loader2 size={14} className="animate-spin" />}
           {resetting ? "Resetting..." : "Reset to defaults"}
         </button>
+      </div>
       </div>
     </div>
   );

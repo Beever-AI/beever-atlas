@@ -1,4 +1,4 @@
-import { MessageSquare, XCircle, AlertCircle, Settings, Trash2, RefreshCw, MonitorSmartphone, Send } from "lucide-react";
+import { MessageSquare, XCircle, AlertCircle, Settings, Trash2, RefreshCw, MonitorSmartphone, Send, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
@@ -26,6 +26,7 @@ const PLATFORM_META: Record<
   discord: { label: "Discord", Icon: MessageSquare },
   teams: { label: "Microsoft Teams", Icon: MonitorSmartphone },
   telegram: { label: "Telegram", Icon: Send },
+  file: { label: "Uploaded files (CSV / TSV / JSONL)", Icon: FileText },
 };
 
 export function PlatformCard({ connection, onDisconnect, onManage }: PlatformCardProps) {

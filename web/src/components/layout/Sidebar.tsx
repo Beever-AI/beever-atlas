@@ -1,9 +1,8 @@
 import { NavLink } from "react-router-dom";
 import {
-  LayoutDashboard,
+  Home,
   MessageSquare,
-  Search,
-  Network,
+  MessageCircleQuestion,
   Activity,
   Settings,
   PanelLeftClose,
@@ -16,16 +15,22 @@ import { cn } from "@/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HealthBadge } from "./HealthBadge";
 import { ChannelList } from "@/components/channel/ChannelList";
+import { SidebarConversationList } from "./SidebarConversationList";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTheme } from "@/hooks/useTheme";
+import { useAskSessions } from "@/contexts/AskSessionsContext";
 import { api } from "@/lib/api";
-import { useState } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+
+const MIN_WIDTH = 180;
+const MAX_WIDTH = 480;
+const DEFAULT_WIDTH = 224;
+const WIDTH_KEY = "sidebar:width";
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/", icon: Home, label: "Home" },
   { to: "/channels", icon: MessageSquare, label: "Channels" },
-  { to: "/search", icon: Search, label: "Search" },
-  { to: "/graph", icon: Network, label: "Graph Explorer" },
+  { to: "/ask", icon: MessageCircleQuestion, label: "Ask" },
   { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
@@ -37,7 +42,44 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return DEFAULT_WIDTH;
+    const stored = Number(window.localStorage.getItem(WIDTH_KEY));
+    return stored >= MIN_WIDTH && stored <= MAX_WIDTH ? stored : DEFAULT_WIDTH;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const resizingRef = useRef(false);
   const { resolvedTheme, toggleTheme } = useTheme();
+  const { isActive: isAskActive } = useAskSessions();
+
+  useEffect(() => {
+    window.localStorage.setItem(WIDTH_KEY, String(width));
+  }, [width]);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX));
+      setWidth(next);
+    };
+    const onUp = () => {
+      if (!resizingRef.current) return;
+      resizingRef.current = false;
+      setIsResizing(false);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   const themeButton = (
     <button
@@ -51,11 +93,13 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
   return (
     <aside
+      style={collapsed ? undefined : { width }}
       className={cn(
-        "flex flex-col h-full border-r border-border bg-background shrink-0 transition-all duration-200 ease-in-out overflow-hidden",
+        "relative flex flex-col h-full border-r border-border bg-background shrink-0 overflow-hidden",
+        !isResizing && "transition-[width] duration-200 ease-in-out",
         "hidden lg:flex",
-        collapsed ? "w-14" : "w-56",
-        open && "flex fixed inset-y-0 left-0 z-30 w-56 lg:relative lg:z-auto"
+        collapsed && "w-14",
+        open && "flex fixed inset-y-0 left-0 z-30 lg:relative lg:z-auto"
       )}
     >
       {/* Logo area */}
@@ -123,14 +167,24 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
       {!collapsed && (
         <>
-          <div className="px-3 pt-3 pb-1">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-              Workspaces
-            </p>
-          </div>
-          <ScrollArea className="flex-1 min-h-0 bg-muted/20 dark:bg-muted/10 border-t border-border/50">
-            <ChannelList />
-          </ScrollArea>
+          {isAskActive ? (
+            // SidebarConversationList owns its own section headers and
+            // keyboard-hint footer; it gets the full bottom pane.
+            <div className="flex-1 min-h-0 border-t border-border/50 bg-muted/10 dark:bg-muted/5">
+              <SidebarConversationList />
+            </div>
+          ) : (
+            <>
+              <div className="px-3 pt-3 pb-1">
+                <p className="font-mono text-[9.5px] uppercase tracking-[0.22em] text-muted-foreground/55">
+                  Workspaces
+                </p>
+              </div>
+              <ScrollArea className="flex-1 min-h-0 bg-muted/20 dark:bg-muted/10 border-t border-border/50">
+                <ChannelList />
+              </ScrollArea>
+            </>
+          )}
         </>
       )}
 
@@ -212,6 +266,18 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           </div>
         )}
       </div>
+      {!collapsed && (
+        <div
+          onMouseDown={onMouseDown}
+          role="separator"
+          aria-orientation="vertical"
+          className={cn(
+            "absolute top-0 right-0 h-full w-1 cursor-col-resize z-40 hidden lg:block",
+            "hover:bg-primary/40 transition-colors",
+            isResizing && "bg-primary/60"
+          )}
+        />
+      )}
     </aside>
   );
 }

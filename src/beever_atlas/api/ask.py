@@ -148,6 +148,7 @@ async def _run_agent_stream(
     request: Request,
     mode: str = "deep",
     attachments: list[dict] | None = None,
+    use_v2_schema: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Run the ADK agent and yield SSE events including tool call progress."""
     from beever_atlas.agents.query.qa_agent import get_agent_for_mode
@@ -189,12 +190,17 @@ async def _run_agent_stream(
     )
 
     accumulated_text = ""
+    accumulated_thinking = ""
+    # Persisted trace of tool calls in the order they appeared. Entries are
+    # upgraded in place when the matching FunctionResponse arrives.
+    persisted_tool_calls: list[dict] = []
     # Track active tool calls for latency measurement: tool_name → start_time
     active_tool_calls: dict[str, float] = {}
     done_sent = False
     # Thinking state tracking
     thinking_start: float | None = None
     thinking_ended = False
+    thinking_duration_ms: int | None = None
 
     try:
         async for event in runner.run_async(
@@ -219,9 +225,15 @@ async def _run_agent_stream(
                 tool_name = fc.name or "unknown"
                 tool_input = fc.args or {}
                 active_tool_calls[tool_name] = time.monotonic()
+                normalized_input = tool_input if isinstance(tool_input, dict) else {}
+                persisted_tool_calls.append({
+                    "tool_name": tool_name,
+                    "input": normalized_input,
+                    "status": "running",
+                })
                 yield _sse_event("tool_call_start", {
                     "tool_name": tool_name,
-                    "input": tool_input if isinstance(tool_input, dict) else {},
+                    "input": normalized_input,
                 })
 
             # Tool call end — ADK emits FunctionResponse parts after tool returns
@@ -238,10 +250,21 @@ async def _run_agent_stream(
                     facts_found = 1
                 elif isinstance(result, str):
                     facts_found = result.count('"text"')
+                result_summary = str(result)[:100] if result else ""
+
+                # Upgrade the matching persisted entry (latest running entry
+                # with this tool_name) with the finalized result.
+                for entry in reversed(persisted_tool_calls):
+                    if entry["tool_name"] == tool_name and entry.get("status") == "running":
+                        entry["status"] = "done"
+                        entry["result_summary"] = result_summary
+                        entry["latency_ms"] = latency_ms
+                        entry["facts_found"] = facts_found
+                        break
 
                 yield _sse_event("tool_call_end", {
                     "tool_name": tool_name,
-                    "result_summary": str(result)[:100] if result else "",
+                    "result_summary": result_summary,
                     "latency_ms": latency_ms,
                     "facts_found": facts_found,
                 })
@@ -253,13 +276,14 @@ async def _run_agent_stream(
                         # Thinking token from Gemini via BuiltInPlanner
                         if thinking_start is None:
                             thinking_start = time.monotonic()
+                        accumulated_thinking += part.text
                         yield _sse_event("thinking", {"text": part.text})
                     elif part.text:
                         # Regular response text — emit thinking_done if transitioning
                         if thinking_start is not None and not thinking_ended:
                             thinking_ended = True
-                            duration_ms = int((time.monotonic() - thinking_start) * 1000)
-                            yield _sse_event("thinking_done", {"duration_ms": duration_ms})
+                            thinking_duration_ms = int((time.monotonic() - thinking_start) * 1000)
+                            yield _sse_event("thinking_done", {"duration_ms": thinking_duration_ms})
                         yield _sse_event("response_delta", {"delta": part.text})
                         accumulated_text += part.text
 
@@ -299,6 +323,10 @@ async def _run_agent_stream(
                     channel_id=channel_id,
                     user_id=user_id,
                     session_id=session_id,
+                    use_v2_schema=use_v2_schema,
+                    thinking_text=accumulated_thinking,
+                    thinking_duration_ms=thinking_duration_ms,
+                    tool_calls=persisted_tool_calls,
                 )
                 yield _sse_event("done", {})
                 done_sent = True
@@ -359,8 +387,36 @@ async def _run_agent_stream(
                     channel_id=channel_id,
                     user_id=user_id,
                     session_id=session_id,
+                    use_v2_schema=use_v2_schema,
+                    thinking_text=accumulated_thinking,
+                    thinking_duration_ms=thinking_duration_ms,
+                    tool_calls=persisted_tool_calls,
                 )
             yield _sse_event("done", {})
+
+
+THINKING_MAX_BYTES = 20 * 1024  # Cap persisted reasoning text per message
+
+
+def _build_thinking_doc(
+    thinking_text: str, thinking_duration_ms: int | None
+) -> dict | None:
+    """Return the persisted thinking subdoc, or None if nothing to save.
+
+    Truncates raw reasoning to THINKING_MAX_BYTES so a single message can't
+    blow past MongoDB's 16MB document limit on verbose multi-turn sessions.
+    """
+    if not thinking_text and thinking_duration_ms is None:
+        return None
+    encoded = thinking_text.encode("utf-8")
+    truncated = len(encoded) > THINKING_MAX_BYTES
+    if truncated:
+        thinking_text = encoded[:THINKING_MAX_BYTES].decode("utf-8", errors="ignore")
+    return {
+        "text": thinking_text,
+        "duration_ms": thinking_duration_ms,
+        "truncated": truncated,
+    }
 
 
 async def _persist_qa_history(
@@ -370,11 +426,18 @@ async def _persist_qa_history(
     channel_id: str,
     user_id: str,
     session_id: str,
+    use_v2_schema: bool = False,
+    thinking_text: str = "",
+    thinking_duration_ms: int | None = None,
+    tool_calls: list[dict] | None = None,
 ) -> None:
     """Write Q&A pair to QAHistoryStore and save messages to ChatHistoryStore.
 
     Runs as a background task after the SSE stream completes.
     Failures are logged but do not affect the user experience.
+
+    When `use_v2_schema` is True, session is created without top-level channel_id
+    and channel_id is stored per-message. Otherwise legacy v1 schema is used.
     """
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.qa_history_store import QAHistoryStore
@@ -383,6 +446,7 @@ async def _persist_qa_history(
     settings = get_settings()
 
     # Write to QAHistory Weaviate collection — failures are non-fatal
+    # QAHistory remains channel-scoped per entry regardless of schema version
     try:
         qa_store = QAHistoryStore(settings.weaviate_url, settings.weaviate_api_key)
         await qa_store.startup()
@@ -402,18 +466,42 @@ async def _persist_qa_history(
     try:
         chat_store = ChatHistoryStore(settings.mongodb_uri)
         await chat_store.startup()
-        await chat_store.create_session(
-            session_id=session_id, channel_id=channel_id, user_id=user_id
-        )
-        await chat_store.save_message(
-            session_id=session_id, role="user", content=question
-        )
-        await chat_store.save_message(
-            session_id=session_id,
-            role="assistant",
-            content=answer,
-            citations=citations,
-        )
+        thinking_doc = _build_thinking_doc(thinking_text, thinking_duration_ms)
+        persisted_tool_calls = tool_calls or None
+        if use_v2_schema:
+            await chat_store.create_session_v2(
+                session_id=session_id, user_id=user_id
+            )
+            await chat_store.save_message(
+                session_id=session_id,
+                role="user",
+                content=question,
+                channel_id=channel_id,
+            )
+            await chat_store.save_message(
+                session_id=session_id,
+                role="assistant",
+                content=answer,
+                citations=citations,
+                channel_id=channel_id,
+                thinking=thinking_doc,
+                tool_calls=persisted_tool_calls,
+            )
+        else:
+            await chat_store.create_session(
+                session_id=session_id, channel_id=channel_id, user_id=user_id
+            )
+            await chat_store.save_message(
+                session_id=session_id, role="user", content=question
+            )
+            await chat_store.save_message(
+                session_id=session_id,
+                role="assistant",
+                content=answer,
+                citations=citations,
+                thinking=thinking_doc,
+                tool_calls=persisted_tool_calls,
+            )
         chat_store.close()
     except Exception:
         logger.exception("Failed to persist chat history to MongoDB for session=%s", session_id)
@@ -648,11 +736,16 @@ async def get_session(
     session_id: str,
     request: Request,
 ) -> dict:
-    """Load a full conversation session with all messages."""
+    """Load a full conversation session with all messages.
+
+    Authorization: requester must own the session and the URL's channel_id
+    must match the session's channel_id (so forged cross-channel URLs 404).
+    """
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.chat_history_store import ChatHistoryStore
     from fastapi.responses import JSONResponse
 
+    user_id = _extract_user_id(request)
     settings = get_settings()
     store = ChatHistoryStore(settings.mongodb_uri)
     await store.startup()
@@ -662,7 +755,17 @@ async def get_session(
         store.close()
 
     if not session:
-        return JSONResponse(status_code=404, content={"error": "Session not found"})
+        return JSONResponse(status_code=404, content={"error": "Session not found"})  # type: ignore[return-value]
+
+    # Authorization: requester must own the session
+    if session.get("user_id") and session["user_id"] != user_id:
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})  # type: ignore[return-value]
+
+    # Path validation: URL's channel_id must match the session's channel_id
+    # to prevent enumeration via unrelated channel paths
+    session_channel = session.get("channel_id")
+    if session_channel and session_channel != channel_id:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})  # type: ignore[return-value]
 
     return session
 
@@ -725,3 +828,234 @@ async def delete_session(
         client.close()
 
     return {"status": "ok"}
+
+
+# ===========================================================================
+# v2 session-scoped endpoints — channel is per-message, not per-session.
+# These live alongside the channel-scoped endpoints above for backward compat.
+# ===========================================================================
+
+
+class AskV2Request(BaseModel):
+    question: str = Field(..., min_length=1)
+    channel_id: str = Field(..., min_length=1, description="Channel to retrieve from for this turn")
+    include_citations: bool = Field(default=True)
+    max_results: int = Field(default=10, ge=1, le=50)
+    session_id: str | None = Field(default=None, description="Resume an existing session")
+    mode: str = Field(default="deep", pattern="^(quick|deep|summarize)$")
+    attachments: list[dict] = Field(default_factory=list)
+
+
+class FeedbackV2Request(BaseModel):
+    session_id: str
+    message_id: str
+    rating: str = Field(..., pattern="^(up|down)$")
+    comment: str | None = None
+    channel_id: str | None = None
+
+
+@router.post("/api/ask")
+async def ask_v2(
+    body: AskV2Request,
+    request: Request,
+) -> StreamingResponse:
+    """Session-scoped SSE streaming. `channel_id` scopes retrieval for this turn only.
+
+    Sessions are created without a top-level `channel_id`; each message carries
+    its own `channel_id`. The derived set of channels used in a session is
+    aggregated at read time (see GET /api/ask/sessions/{id}).
+    """
+    user_id = _extract_user_id(request)
+    session_id = body.session_id or str(uuid.uuid4())
+
+    return StreamingResponse(
+        _run_agent_stream(
+            body.question,
+            body.channel_id,
+            session_id,
+            user_id,
+            request,
+            mode=body.mode,
+            attachments=body.attachments,
+            use_v2_schema=True,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/api/ask/sessions")
+async def list_ask_sessions(
+    request: Request,
+    page: int = 1,
+    page_size: int = 20,
+    search: str | None = None,
+) -> dict:
+    """List all ask sessions for the authenticated user across all channels."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+
+    user_id = _extract_user_id(request)
+    settings = get_settings()
+    store = ChatHistoryStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        sessions = await store.list_sessions_global(
+            user_id=user_id,
+            page=page,
+            page_size=page_size,
+            search=search,
+        )
+    finally:
+        store.close()
+
+    return {"sessions": sessions, "page": page, "page_size": page_size}
+
+
+@router.get("/api/ask/sessions/{session_id}")
+async def get_ask_session(
+    session_id: str,
+    request: Request,
+) -> dict:
+    """Load a full session with derived channel_ids (v2) or legacy fallback (v1)."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    from fastapi.responses import JSONResponse
+
+    user_id = _extract_user_id(request)
+    settings = get_settings()
+    store = ChatHistoryStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        session = await store.load_session_with_channels(session_id=session_id)
+    finally:
+        store.close()
+
+    if not session:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})  # type: ignore[return-value]
+
+    # Authorization: user can only load their own sessions
+    if session.get("user_id") and session["user_id"] != user_id:
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})  # type: ignore[return-value]
+
+    return session
+
+
+@router.patch("/api/ask/sessions/{session_id}")
+async def update_ask_session(
+    session_id: str,
+    body: dict,
+    request: Request,
+) -> dict:
+    """Update session metadata (title, pinned)."""
+    from beever_atlas.infra.config import get_settings
+    from motor.motor_asyncio import AsyncIOMotorClient
+
+    user_id = _extract_user_id(request)
+    settings = get_settings()
+    client = AsyncIOMotorClient(settings.mongodb_uri)
+    try:
+        db = client["beever_atlas"]
+        update_fields: dict = {}
+        if "title" in body:
+            update_fields["title"] = body["title"]
+        if "pinned" in body:
+            update_fields["pinned"] = body["pinned"]
+        if update_fields:
+            await db.chat_history.update_one(
+                {"session_id": session_id, "user_id": user_id},
+                {"$set": update_fields},
+            )
+    finally:
+        client.close()
+
+    return {"status": "ok", "updated": update_fields}
+
+
+@router.delete("/api/ask/sessions/{session_id}")
+async def delete_ask_session(
+    session_id: str,
+    request: Request,
+) -> dict:
+    """Soft-delete an ask session."""
+    from beever_atlas.infra.config import get_settings
+    from motor.motor_asyncio import AsyncIOMotorClient
+
+    user_id = _extract_user_id(request)
+    settings = get_settings()
+    client = AsyncIOMotorClient(settings.mongodb_uri)
+    try:
+        db = client["beever_atlas"]
+        await db.chat_history.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            {"$set": {"is_deleted": True}},
+        )
+    finally:
+        client.close()
+
+    return {"status": "ok"}
+
+
+@router.post("/api/ask/upload")
+async def upload_ask_attachment(
+    file: UploadFile = FastAPIFile(...),
+) -> dict:
+    """Upload a file for text extraction (channel-less variant)."""
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size: 10MB")
+
+    mime = file.content_type or ""
+    if mime not in SUPPORTED_MIME_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported file type")
+
+    extracted_text = await _extract_text(content, mime, file.filename or "unknown")
+    if len(extracted_text) > 4000:
+        extracted_text = extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+
+    file_id = str(uuid.uuid4())
+    return {
+        "file_id": file_id,
+        "filename": file.filename,
+        "extracted_text": extracted_text,
+        "mime_type": mime,
+        "size_bytes": len(content),
+    }
+
+
+@router.post("/api/ask/feedback")
+async def submit_ask_feedback(
+    body: FeedbackV2Request,
+    request: Request,
+) -> dict:
+    """Submit thumbs up/down feedback on an assistant response (channel-less)."""
+    from beever_atlas.infra.config import get_settings
+    from motor.motor_asyncio import AsyncIOMotorClient
+
+    user_id = _extract_user_id(request)
+    settings = get_settings()
+    client = AsyncIOMotorClient(settings.mongodb_uri)
+    try:
+        db = client["beever_atlas"]
+        doc = {
+            "session_id": body.session_id,
+            "message_id": body.message_id,
+            "channel_id": body.channel_id,
+            "user_id": user_id,
+            "rating": body.rating,
+            "comment": body.comment,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        await db.qa_feedback.update_one(
+            {"session_id": body.session_id, "message_id": body.message_id},
+            {"$set": doc},
+            upsert=True,
+        )
+    finally:
+        client.close()
+
+    return {"status": "ok", "feedback": doc}

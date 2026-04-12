@@ -80,4 +80,6 @@ export interface Message {
   followUps?: string[];
   thinkingDuration?: number | null;
   mode?: AnswerMode;
+  /** Channel this turn queried (v2 schema). Absent on legacy messages. */
+  channel_id?: string;
 }

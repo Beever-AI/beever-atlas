@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Outlet, useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ArrowLeft, ShieldAlert, RefreshCw } from "lucide-react";
+import { ArrowLeft, ShieldAlert, RefreshCw, MessageCircleQuestion } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
 import { ChannelBreadcrumb } from "@/components/channel/Breadcrumb";
@@ -27,12 +27,11 @@ interface ChannelRouteState {
   connection_id?: string | null;
 }
 
-const TAB_PATHS = ["wiki", "ask", "messages", "memories", "graph", "sync-history", "settings"] as const;
+const TAB_PATHS = ["wiki", "messages", "memories", "graph", "sync-history", "settings"] as const;
 type TabPath = (typeof TAB_PATHS)[number];
 
 const TAB_LABELS: Record<TabPath, string> = {
   wiki: "Wiki",
-  ask: "Ask",
   messages: "Messages",
   memories: "Memories",
   graph: "Graph",
@@ -253,6 +252,31 @@ export function ChannelWorkspace() {
       ) : isMember ? (
         <div className="flex-1 min-h-0 relative bg-muted/10 overflow-hidden" key={activeTab}>
           <Outlet context={{ syncState, isSyncing, connectionId: channel?.connection_id ?? null }} />
+          {/* Floating Ask button — icon FAB that expands on hover */}
+          <button
+            onClick={() => navigate(`/ask?context=${id}`)}
+            aria-label="Ask about this channel"
+            className="group absolute bottom-6 right-6 z-10 h-12 w-12 hover:w-56 focus-visible:w-56
+                       flex items-center rounded-full overflow-hidden
+                       bg-primary text-primary-foreground
+                       shadow-[0_10px_30px_-10px_hsl(var(--primary)/0.55),0_4px_12px_-4px_rgba(0,0,0,0.3)]
+                       ring-1 ring-primary/30
+                       hover:-translate-y-0.5
+                       hover:shadow-[0_18px_40px_-12px_hsl(var(--primary)/0.7),0_6px_18px_-4px_rgba(0,0,0,0.35)]
+                       active:translate-y-0
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background
+                       transition-[width,transform,box-shadow] duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)]
+                       will-change-[width,transform]"
+          >
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center">
+              <MessageCircleQuestion className="w-5 h-5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" />
+            </span>
+            <span className="whitespace-nowrap pr-5 text-sm font-medium tracking-tight
+                             opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0
+                             transition-[opacity,transform] duration-300 ease-out delay-75">
+              Ask about this channel
+            </span>
+          </button>
         </div>
       ) : (
         <div className="flex items-center justify-center flex-1 min-h-0 p-6">

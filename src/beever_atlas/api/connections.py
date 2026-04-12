@@ -244,8 +244,19 @@ async def create_connection(body: CreateConnectionRequest) -> ConnectionResponse
     stores = get_stores()
     platform = body.platform.lower()
 
-    if platform not in ("slack", "discord", "teams", "telegram"):
+    if platform not in ("slack", "discord", "teams", "telegram", "file"):
         raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform!r}")
+
+    # "file" connections are created by POST /api/imports/commit with no
+    # remote credentials. They skip bridge registration entirely.
+    if platform == "file":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "File connections are created via POST /api/imports/commit, "
+                "not the generic connections endpoint."
+            ),
+        )
 
     if not body.display_name.strip():
         raise HTTPException(

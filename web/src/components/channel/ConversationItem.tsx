@@ -15,10 +15,10 @@ function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
-  if (diff < 60000) return "Just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d`;
+  if (diff < 60_000) return "Just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d`;
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -39,6 +39,13 @@ export function ConversationItem({
   const displayTitle =
     session.title || session.first_question || "Untitled conversation";
 
+  // Only show the preview when the title is custom/set, so we don't duplicate
+  // the first_question content on both lines.
+  const preview =
+    session.title && session.title !== session.first_question
+      ? session.first_question
+      : null;
+
   const handleRename = () => {
     if (editTitle.trim()) {
       onRename(editTitle.trim());
@@ -48,13 +55,21 @@ export function ConversationItem({
 
   return (
     <div
-      className={`group relative flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 ${
+      className={`group relative flex items-start gap-2 pl-3 pr-2 py-2 rounded-lg cursor-pointer transition-colors duration-150 ${
         isActive
-          ? "bg-primary/10 text-foreground"
-          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          ? "bg-primary/8 text-foreground"
+          : "text-foreground/80 hover:bg-muted/50"
       }`}
       onClick={() => !editing && onSelect()}
     >
+      {/* Active indicator rail */}
+      <span
+        aria-hidden
+        className={`absolute left-0 top-2 bottom-2 w-[2px] rounded-r transition-all duration-200 ${
+          isActive ? "bg-primary" : "bg-transparent"
+        }`}
+      />
+
       <div className="flex-1 min-w-0">
         {editing ? (
           <input
@@ -67,26 +82,41 @@ export function ConversationItem({
             }}
             onBlur={handleRename}
             autoFocus
-            className="w-full text-sm bg-muted border border-border rounded-lg px-2 py-1 text-foreground outline-none focus:ring-1 focus:ring-primary/30"
+            className="w-full text-[13px] bg-card border border-primary/40 rounded-md px-2 py-1 text-foreground outline-none focus:ring-2 focus:ring-primary/20"
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <div className="flex items-center gap-2">
-            {session.pinned && (
-              <Pin className="w-2.5 h-2.5 text-primary/60 shrink-0" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm truncate leading-snug">{displayTitle}</p>
-              <p className="text-[11px] text-muted-foreground/40 mt-0.5">
-                {formatRelativeTime(session.created_at)}
+          <>
+            <div className="flex items-center gap-1.5 min-w-0">
+              {session.pinned && (
+                <Pin
+                  className="w-2.5 h-2.5 text-primary shrink-0"
+                  fill="currentColor"
+                  strokeWidth={0}
+                />
+              )}
+              <p
+                className={`text-[13px] leading-snug truncate ${
+                  isActive ? "text-foreground font-medium" : "text-foreground/90"
+                }`}
+              >
+                {displayTitle}
               </p>
             </div>
-          </div>
+            {preview && (
+              <p className="text-[11.5px] text-muted-foreground/70 truncate mt-0.5">
+                {preview}
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground/50 mt-1">
+              {formatRelativeTime(session.created_at)}
+            </p>
+          </>
         )}
       </div>
 
       {/* More menu trigger */}
-      <div className="relative shrink-0">
+      <div className="relative shrink-0 pt-0.5">
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -94,8 +124,8 @@ export function ConversationItem({
           }}
           className={`p-1 rounded-md transition-all ${
             showMenu
-              ? "opacity-100 bg-muted"
-              : "opacity-0 group-hover:opacity-100 hover:bg-muted"
+              ? "opacity-100 bg-muted text-foreground"
+              : "opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground"
           }`}
         >
           <MoreHorizontal className="w-3.5 h-3.5" />
@@ -110,7 +140,7 @@ export function ConversationItem({
                 setShowMenu(false);
               }}
             />
-            <div className="absolute right-0 top-7 bg-card border border-border rounded-xl shadow-xl py-1 w-36 z-50">
+            <div className="absolute right-0 top-7 bg-popover border border-border rounded-xl shadow-xl py-1 w-36 z-50 motion-safe:animate-scale-in origin-top-right">
               <button
                 onClick={(e) => {
                   e.stopPropagation();

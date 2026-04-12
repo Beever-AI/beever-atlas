@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     jina_model: str = Field(default="jina-embeddings-v4")
     jina_dimensions: int = Field(default=2048)
 
+    # File import
+    file_import_llm_mapping_enabled: bool = Field(default=True)
+    file_import_staging_dir: str = Field(default=".omc/imports")
+    file_import_staging_ttl_seconds: int = Field(default=3600)
+    file_import_max_rows: int = Field(default=100000)
+
     # Coreference resolution
     coref_enabled: bool = Field(default=True)
     coref_history_limit: int = Field(default=20)

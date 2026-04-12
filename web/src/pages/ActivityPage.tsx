@@ -1,13 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  CheckCircle2,
-  XCircle,
+  HelpCircle,
   ChevronDown,
-  Brain,
-  Users,
-  GitBranch,
   Clock,
-  MessageSquare,
   Layers,
   Activity,
   Filter,
@@ -16,23 +11,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSyncHistory } from "@/hooks/useStats";
 import type { SyncHistoryEvent, BatchBreakdown } from "@/hooks/useStats";
 
-function formatRelativeTime(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-function formatFullTime(timestamp: string): string {
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
+function formatExactTime(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: "numeric",
     minute: "2-digit",
   });
 }
@@ -44,22 +25,46 @@ function formatDuration(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
-function StatPill({
-  icon,
-  value,
-  label,
-  color,
-}: {
-  icon: React.ReactNode;
-  value: number;
-  label: string;
-  color: string;
-}) {
+function startOfDay(ts: string): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function dayLabel(dayTs: number): string {
+  const today = startOfDay(new Date().toISOString());
+  const yesterday = today - 86_400_000;
+  const d = new Date(dayTs);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  const dateStr = d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: sameYear ? undefined : "numeric",
+  });
+  if (dayTs === today) return `Today · ${dateStr}`;
+  if (dayTs === yesterday) return `Yesterday · ${dateStr}`;
+  const diffDays = Math.floor((today - dayTs) / 86_400_000);
+  if (diffDays < 7) {
+    const weekday = d.toLocaleDateString(undefined, { weekday: "long" });
+    return `${weekday} · ${dateStr}`;
+  }
+  return dateStr;
+}
+
+function MetaSeparator() {
+  return <span className="text-muted-foreground/30">·</span>;
+}
+
+function MetricLine({ items }: { items: string[] }) {
+  if (items.length === 0) return null;
   return (
-    <div className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${color}`}>
-      {icon}
-      <span className="tabular-nums">{value}</span>
-      <span className="text-current/60">{label}</span>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2 text-xs text-muted-foreground tabular-nums">
+      {items.map((item, i) => (
+        <span key={i} className="inline-flex items-center">
+          {i > 0 && <span className="mr-2 text-muted-foreground/30">·</span>}
+          {item}
+        </span>
+      ))}
     </div>
   );
 }
@@ -70,16 +75,9 @@ function BatchDetail({ breakdown }: { breakdown: BatchBreakdown }) {
   return (
     <div className={`rounded-lg border bg-background/50 p-4 ${isFailed ? "border-red-500/30" : "border-border/40"}`}>
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-foreground tracking-tight">
-            Batch {breakdown.batch_num}
-          </span>
-          {isFailed && (
-            <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide bg-red-500/10 text-red-500">
-              Failed
-            </span>
-          )}
-        </div>
+        <span className="text-xs font-semibold text-foreground tracking-tight">
+          Batch {breakdown.batch_num}
+        </span>
         {breakdown.duration_seconds > 0 && (
           <span className="flex items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
             <Clock size={10} />
@@ -95,38 +93,25 @@ function BatchDetail({ breakdown }: { breakdown: BatchBreakdown }) {
       )}
 
       {!isFailed && (
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          <StatPill
-            icon={<Brain size={11} />}
-            value={breakdown.facts_count}
-            label="facts"
-            color="bg-violet-500/10 text-violet-400"
-          />
-          <StatPill
-            icon={<Users size={11} />}
-            value={breakdown.entities_count}
-            label="entities"
-            color="bg-blue-500/10 text-blue-400"
-          />
-          <StatPill
-            icon={<GitBranch size={11} />}
-            value={breakdown.relationships_count}
-            label="rels"
-            color="bg-amber-500/10 text-amber-400"
-          />
-        </div>
+        <MetricLine
+          items={[
+            `${breakdown.facts_count} insights`,
+            `${breakdown.entities_count} people & topics`,
+            `${breakdown.relationships_count} connections`,
+          ]}
+        />
       )}
 
       {breakdown.sample_facts.length > 0 && (
-        <div className="mb-3">
+        <div className="mt-3 mb-3">
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">
-            Sample Facts
+            Sample insights
           </span>
           <ul className="mt-1.5 space-y-1.5">
             {breakdown.sample_facts.map((fact, i) => (
               <li
                 key={i}
-                className="text-xs text-foreground/70 leading-relaxed pl-3 border-l-2 border-violet-500/20"
+                className="text-xs text-foreground/70 leading-relaxed pl-3 border-l-2 border-border"
               >
                 {fact}
               </li>
@@ -138,7 +123,7 @@ function BatchDetail({ breakdown }: { breakdown: BatchBreakdown }) {
       {breakdown.sample_entities.length > 0 && (
         <div className="mb-3">
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">
-            Entities
+            People &amp; topics
           </span>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {breakdown.sample_entities.map((e, i) => (
@@ -157,7 +142,7 @@ function BatchDetail({ breakdown }: { breakdown: BatchBreakdown }) {
       {breakdown.sample_relationships.length > 0 && (
         <div>
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">
-            Relationships
+            Connections
           </span>
           <ul className="mt-1.5 space-y-1">
             {breakdown.sample_relationships.map((r, i) => (
@@ -189,49 +174,53 @@ function SyncCard({ event }: { event: SyncHistoryEvent }) {
   const totalDuration = batches.reduce((sum, b) => sum + b.duration_seconds, 0);
   const hasExpandable = batches.length > 0 || (!isSuccess && errorMessage);
 
+  const title = isSuccess
+    ? `Synced #${channelName}`
+    : `Couldn't sync #${channelName}`;
+
+  const metrics: string[] = [];
+  if (isSuccess) {
+    if (totalMessages > 0) metrics.push(`${totalMessages} msgs`);
+    if (totalFacts > 0) metrics.push(`${totalFacts} insights`);
+    if (totalEntities > 0) metrics.push(`${totalEntities} people & topics`);
+    if (totalRels > 0) metrics.push(`${totalRels} connections`);
+  }
+
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden transition-shadow hover:shadow-sm">
-      {/* Header */}
+    <div
+      className={`rounded-xl border bg-card overflow-hidden transition-shadow hover:shadow-sm ${
+        isSuccess ? "border-border" : "border-red-500/30"
+      }`}
+    >
       <div
         className={`flex items-start gap-3 p-4 ${hasExpandable ? "cursor-pointer" : ""}`}
         onClick={() => hasExpandable && setExpanded(!expanded)}
       >
         <div
-          className={`flex h-9 w-9 items-center justify-center rounded-full shrink-0 ${
-            isSuccess ? "bg-emerald-500/10" : "bg-red-500/10"
+          className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${
+            isSuccess ? "bg-emerald-500" : "bg-red-500"
           }`}
-        >
-          {isSuccess ? (
-            <CheckCircle2 size={16} className="text-emerald-500" />
-          ) : (
-            <XCircle size={16} className="text-red-500" />
-          )}
-        </div>
+          aria-hidden
+        />
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-foreground">
-              #{channelName}
-            </h3>
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-                isSuccess
-                  ? "bg-emerald-500/10 text-emerald-500"
-                  : "bg-red-500/10 text-red-500"
-              }`}
-            >
-              {isSuccess ? "Completed" : "Failed"}
-            </span>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+            {!isSuccess && !errorMessage && (
+              <HelpCircle
+                size={13}
+                className="text-muted-foreground/50 shrink-0"
+                aria-label="Reason unavailable — open details for more"
+              />
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground">
-            <span>{formatFullTime(event.timestamp)}</span>
-            <span className="text-muted-foreground/30">&middot;</span>
-            <span>{formatRelativeTime(event.timestamp)}</span>
+          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground tabular-nums">
+            <span>{formatExactTime(event.timestamp)}</span>
             {totalDuration > 0 && (
               <>
-                <span className="text-muted-foreground/30">&middot;</span>
-                <span className="flex items-center gap-0.5">
+                <MetaSeparator />
+                <span className="flex items-center gap-1">
                   <Clock size={10} />
                   {formatDuration(totalDuration)}
                 </span>
@@ -239,38 +228,18 @@ function SyncCard({ event }: { event: SyncHistoryEvent }) {
             )}
           </div>
 
-          {/* Stats row */}
-          <div className="flex flex-wrap items-center gap-3 mt-2.5">
-            {totalMessages > 0 && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <MessageSquare size={12} />
-                {totalMessages} msgs
-              </span>
-            )}
-            {totalFacts > 0 && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Brain size={12} className="text-violet-400" />
-                {totalFacts} facts
-              </span>
-            )}
-            {totalEntities > 0 && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Users size={12} className="text-blue-400" />
-                {totalEntities} entities
-              </span>
-            )}
-            {totalRels > 0 && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <GitBranch size={12} className="text-amber-400" />
-                {totalRels} rels
-              </span>
-            )}
-          </div>
+          {!isSuccess && errorMessage && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400 leading-relaxed">
+              {errorMessage}
+            </p>
+          )}
+
+          <MetricLine items={metrics} />
         </div>
 
         {hasExpandable && (
           <div
-            className={`mt-2 text-muted-foreground/40 transition-transform duration-200 ${
+            className={`mt-1 text-muted-foreground/40 transition-transform duration-200 ${
               expanded ? "rotate-180" : ""
             }`}
           >
@@ -279,7 +248,6 @@ function SyncCard({ event }: { event: SyncHistoryEvent }) {
         )}
       </div>
 
-      {/* Expandable details */}
       {expanded && hasExpandable && (
         <div className="border-t border-border/50 bg-muted/20 p-4">
           {!isSuccess && errorMessage && batches.length === 0 && (
@@ -306,23 +274,62 @@ function SyncCard({ event }: { event: SyncHistoryEvent }) {
   );
 }
 
+type TimeRange = "all" | "today" | "7d" | "30d";
+
+const rangeMs: Record<TimeRange, number | null> = {
+  all: null,
+  today: 0,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
+
 export function ActivityPage() {
   const { entries, loading } = useSyncHistory(50);
   const [filter, setFilter] = useState<"all" | "completed" | "failed">("all");
+  const [range, setRange] = useState<TimeRange>("all");
+
+  const rangeCutoff = useMemo(() => {
+    if (range === "all") return null;
+    if (range === "today") return startOfDay(new Date().toISOString());
+    return Date.now() - (rangeMs[range] as number);
+  }, [range]);
 
   const filtered = entries.filter((e) => {
-    if (filter === "completed") return e.event_type === "sync_completed";
-    if (filter === "failed") return e.event_type === "sync_failed";
+    if (filter === "completed" && e.event_type !== "sync_completed") return false;
+    if (filter === "failed" && e.event_type !== "sync_failed") return false;
+    if (rangeCutoff !== null && new Date(e.timestamp).getTime() < rangeCutoff) return false;
     return true;
   });
 
   const completedCount = entries.filter((e) => e.event_type === "sync_completed").length;
   const failedCount = entries.filter((e) => e.event_type === "sync_failed").length;
 
-  // Aggregate stats across all visible entries
-  const totalFacts = filtered.reduce((s, e) => s + ((e.details.total_facts as number) ?? 0), 0);
-  const totalEntities = filtered.reduce((s, e) => s + ((e.details.total_entities as number) ?? 0), 0);
-  const totalRels = filtered.reduce((s, e) => s + ((e.details.total_relationships as number) ?? 0), 0);
+  // Aggregate totals across completed syncs (humanized summary)
+  const completedEntries = entries.filter((e) => e.event_type === "sync_completed");
+  const summaryInsights = completedEntries.reduce(
+    (s, e) => s + ((e.details.total_facts as number) ?? 0),
+    0,
+  );
+  const summaryChannels = new Set(
+    completedEntries.map((e) => (e.details.channel_name as string) ?? e.channel_id),
+  ).size;
+
+  // Group by day
+  const dayGroups = useMemo(() => {
+    const groups: { dayTs: number; label: string; items: SyncHistoryEvent[] }[] = [];
+    const byDay = new Map<number, SyncHistoryEvent[]>();
+    for (const e of filtered) {
+      const day = startOfDay(e.timestamp);
+      const bucket = byDay.get(day) ?? [];
+      bucket.push(e);
+      byDay.set(day, bucket);
+    }
+    const sortedDays = [...byDay.keys()].sort((a, b) => b - a);
+    for (const dayTs of sortedDays) {
+      groups.push({ dayTs, label: dayLabel(dayTs), items: byDay.get(dayTs)! });
+    }
+    return groups;
+  }, [filtered]);
 
   return (
     <div className="h-full overflow-auto">
@@ -334,69 +341,101 @@ export function ActivityPage() {
           </div>
           <div>
             <h1 className="font-heading text-2xl tracking-tight text-foreground">
-              Sync History
+              Activity
             </h1>
             <p className="text-sm text-muted-foreground">
-              Extraction results from every channel sync
+              What Beever has learned from your channels
             </p>
           </div>
         </div>
 
-        {/* Summary cards */}
+        {/* Human summary */}
         {!loading && entries.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 mb-6">
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <p className="text-2xl font-semibold tabular-nums text-foreground">
+          <div className="mt-6 mb-6 rounded-xl border border-border bg-card px-5 py-4">
+            <p className="text-sm text-foreground/80 leading-relaxed">
+              Beever captured{" "}
+              <span className="font-semibold text-foreground tabular-nums">
+                {summaryInsights.toLocaleString()}
+              </span>{" "}
+              {summaryInsights === 1 ? "insight" : "insights"} across{" "}
+              <span className="font-semibold text-foreground tabular-nums">
+                {summaryChannels}
+              </span>{" "}
+              {summaryChannels === 1 ? "channel" : "channels"} across your last{" "}
+              <span className="font-semibold text-foreground tabular-nums">
                 {entries.length}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Total Syncs</p>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <p className="text-2xl font-semibold tabular-nums text-violet-400">
-                {totalFacts.toLocaleString()}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Facts Extracted</p>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <p className="text-2xl font-semibold tabular-nums text-blue-400">
-                {totalEntities.toLocaleString()}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Entities Found</p>
-            </div>
-            <div className="rounded-xl border border-border bg-card p-3.5">
-              <p className="text-2xl font-semibold tabular-nums text-amber-400">
-                {totalRels.toLocaleString()}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Relationships</p>
-            </div>
+              </span>{" "}
+              {entries.length === 1 ? "sync" : "syncs"}
+              {failedCount > 0 && (
+                <>
+                  {" "}
+                  —{" "}
+                  <button
+                    type="button"
+                    onClick={() => setFilter("failed")}
+                    className="text-red-500 hover:text-red-600 underline decoration-dotted underline-offset-2 transition-colors"
+                  >
+                    {failedCount} failed
+                  </button>
+                </>
+              )}
+              .
+            </p>
           </div>
         )}
 
         {/* Filter tabs */}
-        <div className="flex items-center gap-1 mb-5">
-          <Filter size={13} className="text-muted-foreground/40 mr-1" />
-          {(
-            [
-              { key: "all", label: "All", count: entries.length },
-              { key: "completed", label: "Completed", count: completedCount },
-              { key: "failed", label: "Failed", count: failedCount },
-            ] as const
-          ).map(({ key, label, count }) => (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                filter === key
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              {label}
-              {count > 0 && (
-                <span className="ml-1.5 tabular-nums text-current/60">{count}</span>
-              )}
-            </button>
-          ))}
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-2 mb-5">
+          <div className="flex items-center gap-1">
+            <Filter size={13} className="text-muted-foreground/40 mr-1" />
+            {(
+              [
+                { key: "all", label: "All", count: entries.length },
+                { key: "completed", label: "Completed", count: completedCount },
+                { key: "failed", label: "Failed", count: failedCount },
+              ] as const
+            ).map(({ key, label, count }) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  filter === key
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                {label}
+                {count > 0 && (
+                  <span className="ml-1.5 tabular-nums text-current/60">{count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="h-5 w-px bg-border/60 hidden sm:block" />
+
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { key: "all", label: "All time" },
+                { key: "today", label: "Today" },
+                { key: "7d", label: "7 days" },
+                { key: "30d", label: "30 days" },
+              ] as const
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setRange(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  range === key
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Sync history list */}
@@ -405,15 +444,11 @@ export function ActivityPage() {
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="rounded-xl border border-border bg-card p-4">
                 <div className="flex items-start gap-3">
-                  <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                  <Skeleton className="h-2 w-2 rounded-full mt-1.5 shrink-0" />
                   <div className="flex-1 space-y-2">
                     <Skeleton className="h-4 w-40" />
                     <Skeleton className="h-3 w-56" />
-                    <div className="flex gap-4">
-                      <Skeleton className="h-3 w-20" />
-                      <Skeleton className="h-3 w-20" />
-                      <Skeleton className="h-3 w-20" />
-                    </div>
+                    <Skeleton className="h-3 w-64" />
                   </div>
                 </div>
               </div>
@@ -425,18 +460,33 @@ export function ActivityPage() {
               <Activity size={22} className="text-muted-foreground/40" />
             </div>
             <p className="text-sm font-medium text-foreground/70">
-              {filter === "all" ? "Sync activity" : `No ${filter} syncs`}
+              {filter === "all" ? "No activity yet" : `No ${filter} syncs`}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               {filter === "all"
-                ? "Sync events, knowledge extraction results, and topic organization history will appear here as your channels are processed."
+                ? "Connect a channel to start learning — sync results will appear here."
                 : "Try changing the filter to see other results."}
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {filtered.map((event) => (
-              <SyncCard key={event.id} event={event} />
+          <div className="space-y-6">
+            {dayGroups.map((group) => (
+              <section key={group.dayTs}>
+                <div className="flex items-center gap-3 mb-2.5 px-1">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground/70">
+                    {group.label}
+                  </h2>
+                  <div className="flex-1 h-px bg-border/60" />
+                  <span className="text-[11px] text-muted-foreground/50 tabular-nums">
+                    {group.items.length}
+                  </span>
+                </div>
+                <div className="space-y-2.5">
+                  {group.items.map((event) => (
+                    <SyncCard key={event.id} event={event} />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}

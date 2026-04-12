@@ -155,6 +155,20 @@ class SyncRunner:
 
         # 3. Resolve connection and fetch all messages via cursor-based pagination.
         resolved_connection_id = await self._resolve_connection_id(channel_id, connection_id)
+
+        # File-imported channels: load persisted rows from imported_messages
+        # instead of calling the bridge (there is no upstream platform).
+        if resolved_connection_id is not None:
+            resolved_conn = await stores.platform.get_connection(resolved_connection_id)
+            if resolved_conn is not None and resolved_conn.platform == "file":
+                return await self._start_file_sync(
+                    channel_id=channel_id,
+                    connection_id=resolved_connection_id,
+                    since=since,
+                    use_batch_api=use_batch_api,
+                    resolved_type=resolved_type,
+                )
+
         adapter = ChatBridgeAdapter(connection_id=resolved_connection_id) if resolved_connection_id else get_adapter()
         try:
             logger.info(
@@ -441,6 +455,96 @@ class SyncRunner:
             selected.id,
         )
         return selected.id
+
+    async def _start_file_sync(
+        self,
+        channel_id: str,
+        connection_id: str,
+        since: datetime | str | None,
+        use_batch_api: bool,
+        resolved_type: str,
+    ) -> str:
+        """Start a sync for a file-imported channel.
+
+        Messages live in the ``imported_messages`` MongoDB collection — no
+        bridge involvement. The rest of the pipeline (BatchProcessor,
+        consolidation policy) is reused unchanged so file channels behave
+        identically to platform channels from the downstream POV.
+        """
+        from beever_atlas.adapters.base import NormalizedMessage
+
+        stores = get_stores()
+        settings = get_settings()
+
+        since_dt = _coerce_since_timestamp(since) if since else None
+
+        query: dict[str, Any] = {"channel_id": channel_id}
+        if since_dt is not None:
+            query["timestamp"] = {"$gt": since_dt}
+
+        raw_docs: list[dict[str, Any]] = []
+        cursor = stores.mongodb.db["imported_messages"].find(query).sort("timestamp", 1)
+        async for doc in cursor:
+            raw_docs.append(doc)
+
+        messages: list[NormalizedMessage] = []
+        channel_name = channel_id
+        for doc in raw_docs:
+            ts = doc.get("timestamp")
+            if not isinstance(ts, datetime):
+                try:
+                    ts = datetime.fromisoformat(str(doc.get("timestamp_iso", "")).replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            messages.append(NormalizedMessage(
+                content=doc.get("content", ""),
+                author=doc.get("author", ""),
+                platform="file",
+                channel_id=channel_id,
+                channel_name=doc.get("channel_name", channel_id),
+                message_id=doc.get("message_id", ""),
+                timestamp=ts,
+                thread_id=doc.get("thread_id"),
+                attachments=doc.get("attachments", []),
+                reactions=doc.get("reactions", []),
+                reply_count=doc.get("reply_count", 0),
+                raw_metadata={"source": "file_import"},
+                author_name=doc.get("author_name", ""),
+                author_image=doc.get("author_image", "") or "",
+            ))
+            if doc.get("channel_name"):
+                channel_name = doc["channel_name"]
+
+        parent_count = len(messages)
+        logger.info(
+            "SyncRunner: file sync channel=%s type=%s messages=%d",
+            channel_id, resolved_type, parent_count,
+        )
+
+        job = await stores.mongodb.create_sync_job(
+            channel_id=channel_id,
+            sync_type=resolved_type,
+            total_messages=len(messages),
+            parent_messages=parent_count,
+            batch_size=settings.sync_batch_size,
+        )
+
+        task = asyncio.create_task(
+            self._run_sync(
+                job_id=job.id,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                messages=messages,
+                parent_count=parent_count,
+                sync_type=resolved_type,
+                use_batch_api=use_batch_api,
+            )
+        )
+        self._active_tasks[channel_id] = task
+        _ = connection_id  # kept for symmetry with platform path
+        return job.id
 
     async def _run_sync(
         self,

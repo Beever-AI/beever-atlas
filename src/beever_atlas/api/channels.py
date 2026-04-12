@@ -141,8 +141,89 @@ _channel_cache: dict[str, tuple[float, list[ChannelInfo]]] = {}
 _CHANNEL_CACHE_TTL = 60.0  # seconds
 
 
+async def _fetch_file_messages(
+    channel_id: str,
+    limit: int,
+    since: str | None = None,
+    order: str = "desc",
+) -> "MessagesListResponse":
+    """Read persisted messages for a file-imported channel."""
+    stores = get_stores()
+    query: dict[str, Any] = {"channel_id": channel_id}
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            query["timestamp"] = {"$gte": since_dt}
+        except ValueError:
+            pass
+    sort_dir = -1 if order == "desc" else 1
+    cursor = (
+        stores.mongodb.db["imported_messages"]
+        .find(query)
+        .sort("timestamp", sort_dir)
+        .limit(limit)
+    )
+    messages: list[MessageResponse] = []
+    async for doc in cursor:
+        ts = doc.get("timestamp")
+        ts_iso = doc.get("timestamp_iso") or (
+            ts.isoformat() if isinstance(ts, datetime) else str(ts) if ts else ""
+        )
+        messages.append(
+            MessageResponse(
+                content=doc.get("content", ""),
+                author=doc.get("author", ""),
+                author_name=doc.get("author_name", ""),
+                author_image=doc.get("author_image") or None,
+                platform="file",
+                channel_id=channel_id,
+                channel_name=doc.get("channel_name", channel_id),
+                message_id=doc.get("message_id", ""),
+                timestamp=ts_iso,
+                thread_id=doc.get("thread_id"),
+                attachments=doc.get("attachments", []),
+                reactions=doc.get("reactions", []),
+                reply_count=doc.get("reply_count", 0),
+                is_bot=False,
+                links=[],
+            )
+        )
+    total = await stores.mongodb.db["imported_messages"].count_documents(
+        {"channel_id": channel_id}
+    )
+    return MessagesListResponse(messages=messages, total_count=total)
+
+
+async def _fetch_file_connection_channels(
+    conn_id: str, selected: list[str],
+) -> list[ChannelInfo]:
+    """Synthesize ChannelInfo for file-import channels from MongoDB.
+
+    File connections don't live on the bridge — their channels are the list
+    of ``selected_channels`` the connection tracks, with names pulled from
+    the activity log.
+    """
+    stores = get_stores()
+    if not selected:
+        return []
+    names = await asyncio.gather(
+        *[stores.mongodb.get_channel_display_name(cid) for cid in selected]
+    )
+    return [
+        ChannelInfo(
+            channel_id=cid,
+            name=name or cid,
+            platform="file",
+            is_member=True,
+            connection_id=conn_id,
+        )
+        for cid, name in zip(selected, names)
+    ]
+
+
 async def _fetch_connection_channels(
     conn_id: str, selected: list[str],
+    platform: str = "",
 ) -> list[ChannelInfo]:
     """Fetch channels for a single connection, filtering by selected_channels.
 
@@ -150,6 +231,10 @@ async def _fetch_connection_channels(
     leaking httpx connections.  A per-connection timeout prevents one slow
     platform (e.g. Discord rate limits) from blocking the entire response.
     """
+    # File connections don't go through the bridge — synthesize directly.
+    if platform == "file":
+        return await _fetch_file_connection_channels(conn_id, selected)
+
     # Check cache first
     cache_key = conn_id
     cached = _channel_cache.get(cache_key)
@@ -199,7 +284,7 @@ async def list_channels() -> list[ChannelResponse]:
 
     if connected:
         tasks = [
-            _fetch_connection_channels(conn.id, conn.selected_channels)
+            _fetch_connection_channels(conn.id, conn.selected_channels, conn.platform)
             for conn in connected
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -286,7 +371,19 @@ async def get_channel(
         finally:
             await adapter.close()
 
-    # Fallback: check if this is a CSV-imported channel with sync state
+    # Fallback: check if this is a file-imported channel (tied to the
+    # file connection's selected_channels) or a legacy CSV sync-state entry.
+    file_conn = next((c for c in connected if c.platform == "file"), None)
+    if file_conn is not None and channel_id in file_conn.selected_channels:
+        name = await stores.mongodb.get_channel_display_name(channel_id)
+        return ChannelResponse(
+            channel_id=channel_id,
+            name=name or channel_id,
+            platform="file",
+            is_member=True,
+            connection_id=file_conn.id,
+        )
+
     synced_ids = await stores.mongodb.list_synced_channel_ids()
     if channel_id in synced_ids:
         name = await stores.mongodb.get_channel_display_name(channel_id)
@@ -312,11 +409,27 @@ async def get_channel_messages(
     connection_id: str | None = Query(default=None),
 ) -> MessagesListResponse:
     """Get paginated messages for a channel."""
+    stores = get_stores()
+
+    # File-imported channels: read from the imported_messages collection
+    # instead of calling the bridge (there is no upstream).
+    connections = await stores.platform.list_connections()
+    file_conn = next(
+        (c for c in connections if c.platform == "file" and c.status == "connected"),
+        None,
+    )
+    is_file_channel = (
+        file_conn is not None and channel_id in file_conn.selected_channels
+    ) or (
+        connection_id is not None and file_conn is not None and connection_id == file_conn.id
+    )
+    if is_file_channel:
+        return await _fetch_file_messages(channel_id, limit=limit, since=since, order=order)
+
     # CSV-imported channels have no live bridge connection — detect by ID format.
     # Real platform channels always have a recognisable ID (e.g. Slack C…, Discord snowflake).
     # CSV-imported channels use arbitrary IDs (e.g. "example_chat") that don't match any platform.
     if _detect_platform_from_channel_id(channel_id) is None and not connection_id:
-        stores = get_stores()
         synced_ids = await stores.mongodb.list_synced_channel_ids()
         if channel_id in synced_ids:
             sync_state = await stores.mongodb.get_channel_sync_state(channel_id)

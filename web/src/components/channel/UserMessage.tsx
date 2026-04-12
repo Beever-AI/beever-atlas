@@ -1,7 +1,10 @@
+import { Hash } from "lucide-react";
 import type { Message } from "@/types/askTypes";
 
 interface UserMessageProps {
   message: Message;
+  /** Map of channel_id → display name, used to render the per-turn channel badge. */
+  channelNames?: Record<string, string>;
 }
 
 function getInitials(name?: string): string {
@@ -25,10 +28,27 @@ function formatTime(date?: Date | string): string {
   return d.toLocaleDateString();
 }
 
-export function UserMessage({ message }: UserMessageProps) {
+export function UserMessage({ message, channelNames }: UserMessageProps) {
+  const channelId = message.channel_id;
+  const channelLabel = channelId
+    ? (channelNames?.[channelId] ?? channelId)
+    : null;
+
   return (
     <div className="flex justify-end gap-3">
       <div className="max-w-[70%]">
+        {/* Per-turn channel badge */}
+        {channelLabel && (
+          <div className="flex justify-end mb-1">
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/5 text-primary/80 border border-primary/10"
+              title={`Asked in #${channelLabel}`}
+            >
+              <Hash className="w-2.5 h-2.5" />
+              {channelLabel}
+            </span>
+          </div>
+        )}
         <div className="bg-primary/10 rounded-2xl px-4 py-3">
           <p className="text-foreground text-sm whitespace-pre-wrap">{message.content}</p>
           {message.attachments && message.attachments.length > 0 && (

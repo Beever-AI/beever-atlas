@@ -47,7 +47,12 @@ export function useFileUpload(channelId: string) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch(`${API_BASE}/api/channels/${channelId}/ask/upload`, {
+      // Route to v2 endpoint when no channel (global Ask page), v1 otherwise
+      const url = channelId
+        ? `${API_BASE}/api/channels/${channelId}/ask/upload`
+        : `${API_BASE}/api/ask/upload`;
+
+      const res = await fetch(url, {
         method: "POST",
         body: formData,
       });

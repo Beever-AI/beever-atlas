@@ -26,6 +26,7 @@ AGENT_NAMES: list[str] = [
     "wiki_compiler",
     "qa_agent",
     "qa_router",
+    "csv_mapper",
 ]
 
 # Default model assignments — Flash for complex, Lite for simple, Gemma 4 E4B for media
@@ -44,6 +45,7 @@ DEFAULT_AGENT_MODELS: dict[str, str] = {
     "wiki_compiler": "gemini-2.5-flash",
     "qa_router": "gemini-2.5-flash-lite",
     "qa_agent": "gemini-2.5-flash",
+    "csv_mapper": "gemini-2.5-flash-lite",
 }
 
 # Known Gemini models available via Google AI API

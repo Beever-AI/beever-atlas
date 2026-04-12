@@ -17,8 +17,8 @@ export function FavoriteButton({ isFavorite, onToggle }: FavoriteButtonProps) {
       className={cn(
         "p-0.5 rounded transition-colors shrink-0",
         isFavorite
-          ? "text-amber-400 hover:text-amber-500"
-          : "text-transparent group-hover:text-muted-foreground/40 hover:!text-amber-400"
+          ? "text-muted-foreground/45 hover:text-amber-500/80"
+          : "text-transparent group-hover:text-muted-foreground/40 hover:!text-amber-500/70"
       )}
       aria-label={isFavorite ? "Unpin from favorites" : "Pin to favorites"}
     >

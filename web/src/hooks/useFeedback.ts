@@ -24,8 +24,13 @@ export function useFeedback(channelId: string) {
       [messageId]: { rating, comment },
     }));
 
+    // Route to v2 endpoint when no channel (global Ask page), v1 otherwise
+    const url = channelId
+      ? `${API_BASE}/api/channels/${channelId}/ask/feedback`
+      : `${API_BASE}/api/ask/feedback`;
+
     try {
-      await fetch(`${API_BASE}/api/channels/${channelId}/ask/feedback`, {
+      await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

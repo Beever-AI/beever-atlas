@@ -12,14 +12,13 @@ import { Header } from "@/components/layout/Header";
 import { Dashboard } from "@/pages/Dashboard";
 import { Channels } from "@/pages/Channels";
 import { ChannelWorkspace } from "@/pages/ChannelWorkspace";
-import { SearchPage } from "@/pages/SearchPage";
-import { GraphExplorer } from "@/pages/GraphExplorer";
+import { AskPage } from "@/pages/AskPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ActivityPage } from "@/pages/ActivityPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { NotFound } from "@/pages/NotFound";
+import { AskSessionsProvider } from "@/contexts/AskSessionsContext";
 import { TierBrowser } from "@/components/memories/TierBrowser";
-import { AskTab } from "@/components/channel/AskTab";
 import { WikiTab } from "@/components/channel/WikiTab";
 import { MessagesTab } from "@/components/channel/MessagesTab";
 import { GraphTab } from "@/components/graph/GraphTab";
@@ -50,6 +49,7 @@ function AppShell() {
   }, [routeKey, shouldAnimateRoute]);
 
   return (
+    <AskSessionsProvider>
     <div className="grid grid-cols-[auto_1fr] h-screen h-dvh bg-background">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {/* Mobile overlay */}
@@ -76,15 +76,13 @@ function AppShell() {
               <Route path="/channels/:id" element={<ChannelWorkspace />}>
                 <Route index element={<ChannelDefaultRedirect />} />
                 <Route path="wiki" element={<WikiTab />} />
-                <Route path="ask" element={<AskTab />} />
                 <Route path="messages" element={<MessagesTab />} />
                 <Route path="memories" element={<TierBrowser />} />
                 <Route path="graph" element={<GraphTab />} />
                 <Route path="sync-history" element={<SyncHistoryTab />} />
                 <Route path="settings" element={<ChannelSettingsTab />} />
               </Route>
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/graph" element={<GraphExplorer />} />
+              <Route path="/ask" element={<AskPage />} />
               <Route path="/activity" element={<ActivityPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/profile" element={<ProfilePage />} />
@@ -94,6 +92,7 @@ function AppShell() {
         </main>
       </div>
     </div>
+    </AskSessionsProvider>
   );
 }
 

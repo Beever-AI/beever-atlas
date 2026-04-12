@@ -13,7 +13,7 @@ class PlatformConnection(BaseModel):
     """Persisted record of a connected chat platform."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    platform: Literal["slack", "discord", "teams", "telegram"]
+    platform: Literal["slack", "discord", "teams", "telegram", "file"]
     display_name: str
     encrypted_credentials: bytes
     credential_iv: bytes

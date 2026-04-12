@@ -18,6 +18,7 @@ from beever_atlas.adapters import close_adapter
 from beever_atlas.api.ask import router as ask_router
 from beever_atlas.api.channels import router as channels_router
 from beever_atlas.api.connections import router as connections_router
+from beever_atlas.api.imports import router as imports_router
 from beever_atlas.api.sync import shutdown_sync_runner
 from beever_atlas.api.sync import router as sync_router
 from beever_atlas.api.memories import router as memories_router
@@ -164,6 +165,7 @@ app.add_middleware(
 app.include_router(ask_router)
 app.include_router(channels_router)
 app.include_router(connections_router)
+app.include_router(imports_router)
 app.include_router(sync_router)
 app.include_router(memories_router)
 app.include_router(graph_router)

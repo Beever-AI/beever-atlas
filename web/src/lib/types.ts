@@ -325,7 +325,7 @@ export interface MemoryTier1 {
 
 export interface PlatformConnection {
   id: string;
-  platform: "slack" | "discord" | "teams" | "telegram";
+  platform: "slack" | "discord" | "teams" | "telegram" | "file";
   display_name: string;
   status: "connected" | "disconnected" | "error";
   error_message: string | null;
@@ -339,6 +339,65 @@ export interface PlatformCredentials {
   platform: "slack" | "discord" | "teams" | "telegram";
   credentials: Record<string, string>;
   display_name?: string;
+}
+
+// --- File Import ---
+
+export interface ImportColumnMapping {
+  content: string;
+  author?: string | null;
+  author_name?: string | null;
+  timestamp?: string | null;
+  timestamp_time?: string | null;
+  message_id?: string | null;
+  thread_id?: string | null;
+  attachments?: string | null;
+  reactions?: string | null;
+}
+
+export interface ImportPreviewResponse {
+  file_id: string;
+  filename: string;
+  encoding: string;
+  format: "csv" | "tsv" | "jsonl";
+  row_count_estimate: number;
+  headers: string[];
+  sample_messages: Array<{
+    content: string;
+    author: string;
+    author_name: string;
+    timestamp: string;
+  }>;
+  mapping: ImportColumnMapping;
+  mapping_source: "preset" | "fuzzy" | "llm" | "fuzzy_fallback";
+  preset: string | null;
+  overall_confidence: number;
+  per_field_confidence: Record<string, number>;
+  needs_review: boolean;
+  detected_source: string | null;
+  notes: string;
+  expires_at: string;
+}
+
+export interface ImportCommitRequest {
+  file_id: string;
+  channel_name: string;
+  channel_id?: string;
+  mapping: ImportColumnMapping;
+  skip_empty?: boolean;
+  skip_system?: boolean;
+  skip_deleted?: boolean;
+  dayfirst?: boolean;
+  max_rows?: number;
+}
+
+export interface ImportCommitResponse {
+  job_id: string;
+  channel_id: string;
+  channel_name: string;
+  connection_id: string;
+  total_messages: number;
+  status: string;
 }
 
 export interface AvailableChannel {

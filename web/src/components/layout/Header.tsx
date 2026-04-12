@@ -10,10 +10,9 @@ interface HeaderProps {
 }
 
 const PAGE_TITLES: Record<string, string> = {
-  "/": "Dashboard",
+  "/": "Home",
   "/channels": "Channels",
-  "/search": "Search",
-  "/graph": "Graph Explorer",
+  "/ask": "Ask",
   "/settings": "Settings",
   "/activity": "Activity",
   "/profile": "My Profile",

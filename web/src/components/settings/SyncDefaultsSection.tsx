@@ -108,14 +108,7 @@ export function SyncDefaultsSection() {
   }
 
   return (
-    <div className="mt-8">
-      <div className="mb-4">
-        <h2 className="text-base font-semibold text-foreground">Default Channel Settings</h2>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          These settings apply to all new channels unless you override them per channel.
-        </p>
-      </div>
-
+    <div>
       {isLoading ? (
         <div className="flex items-center gap-2 py-6 text-muted-foreground">
           <Loader2 size={16} className="animate-spin" />
@@ -124,8 +117,11 @@ export function SyncDefaultsSection() {
       ) : (
         <div className="space-y-5">
           {/* Frequency */}
-          <div className="space-y-3">
-            <h4 className="text-sm font-semibold text-foreground">How often should channels update?</h4>
+          <div className="rounded-2xl border border-border bg-card px-5 py-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" />
+              <h4 className="text-sm font-semibold text-foreground">How often should channels update?</h4>
+            </div>
             <div className="grid gap-2">
               {FREQUENCY_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
