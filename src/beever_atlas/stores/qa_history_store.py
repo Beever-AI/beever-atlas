@@ -25,7 +25,30 @@ _QA_HISTORY_PROPERTIES: list[tuple[str, DataType]] = [
     ("session_id", DataType.TEXT),
     ("timestamp", DataType.TEXT),
     ("is_deleted", DataType.BOOL),
+    ("answer_kind", DataType.TEXT),
 ]
+
+_REFUSAL_MARKERS = [
+    "no record",
+    "no information",
+    "I don't have",
+    "not identified",
+    "couldn't find",
+    "no evidence",
+]
+_REFUSAL_LENGTH_THRESHOLD = 400
+
+
+def _classify_answer(answer: str) -> str:
+    """Classify answer as 'refused' if it contains a refusal marker and is short."""
+    try:
+        if len(answer) < _REFUSAL_LENGTH_THRESHOLD and any(
+            marker.lower() in answer.lower() for marker in _REFUSAL_MARKERS
+        ):
+            return "refused"
+        return "answered"
+    except Exception:
+        return "answered"
 
 
 class QAHistoryStore:
@@ -120,22 +143,31 @@ class QAHistoryStore:
         self,
         question: str,
         answer: str,
-        citations: list[dict],
+        citations: list[dict] | dict,
         channel_id: str,
         user_id: str,
         session_id: str,
     ) -> str:
-        """Write a Q&A pair to QAHistory. Returns the Weaviate UUID."""
+        """Write a Q&A pair to QAHistory. Returns the Weaviate UUID.
+
+        `citations` may be either a legacy flat list or the Phase 1
+        envelope dict `{items, sources, refs}`. It is always stored in
+        envelope form; reads flatten back for legacy consumers.
+        """
+        from beever_atlas.agents.citations.persistence import upgrade_envelope
+
         entry_id = str(uuid.uuid4())
+        envelope = upgrade_envelope(citations)
         props = {
             "question": question,
             "answer": answer,
-            "citations_json": json.dumps(citations),
+            "citations_json": json.dumps(envelope),
             "channel_id": channel_id,
             "user_id": user_id,
             "session_id": session_id,
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "is_deleted": False,
+            "answer_kind": _classify_answer(answer),
         }
 
         def _write() -> str:
@@ -170,10 +202,14 @@ class QAHistoryStore:
             entries = []
             for obj in result.objects:
                 props = obj.properties
+                from beever_atlas.agents.citations.persistence import as_legacy_items
                 try:
-                    citations = json.loads(str(props.get("citations_json") or "[]"))
+                    raw = json.loads(str(props.get("citations_json") or "[]"))
                 except (json.JSONDecodeError, TypeError):
-                    citations = []
+                    raw = []
+                # Envelope-aware: collapse `{items,sources,refs}` → items,
+                # passthrough bare lists (legacy rows).
+                citations = as_legacy_items(raw)
                 entries.append({
                     "question": props.get("question", ""),
                     "answer": props.get("answer", ""),
@@ -181,6 +217,8 @@ class QAHistoryStore:
                     "timestamp": props.get("timestamp", ""),
                     "session_id": props.get("session_id", ""),
                     "id": str(obj.uuid),
+                    # NULL on historical rows treated as "answered" (backfill-safe)
+                    "answer_kind": props.get("answer_kind") or "answered",
                 })
             return entries
 
@@ -201,3 +239,81 @@ class QAHistoryStore:
             )
 
         await asyncio.to_thread(_delete)
+
+    #: Maximum Weaviate objects scanned per call. Surfaced on the result
+    #: so callers can tell whether they hit the cap and should narrow
+    #: their query (or introduce pagination in a future phase).
+    FIND_QA_SCAN_CAP: int = 1000
+
+    async def find_qa_entries_citing_source(
+        self, source_id: str, limit: int = 20
+    ) -> dict:
+        """Return past QA entries whose stored envelope cites `source_id`.
+
+        Weaviate can't query nested JSON natively, so we scan entries and
+        filter in Python. This is an ops-query path, not a hot runtime path.
+
+        Returns a dict `{entries, truncated, scanned}`:
+        - `entries`: list of matching entries (`id, question, answer, ...`)
+        - `truncated`: True when the scan hit `FIND_QA_SCAN_CAP`, meaning
+          there may be un-inspected objects that could match.
+        - `scanned`: number of Weaviate objects actually examined.
+        """
+        from beever_atlas.agents.citations.persistence import upgrade_envelope
+
+        cap = self.FIND_QA_SCAN_CAP
+
+        def _scan() -> dict:
+            entries: list[dict] = []
+            scanned = 0
+            collection = self._collection()
+            not_deleted = Filter.by_property("is_deleted").equal(False)
+            result = collection.query.fetch_objects(
+                limit=cap,
+                filters=not_deleted,
+            )
+            for obj in result.objects:
+                scanned += 1
+                if len(entries) >= limit:
+                    continue  # keep counting `scanned` even after we have enough matches
+                props = obj.properties
+                try:
+                    raw = json.loads(str(props.get("citations_json") or "[]"))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                env = upgrade_envelope(raw)
+                if any(
+                    isinstance(s, dict) and s.get("id") == source_id
+                    for s in (env.get("sources") or [])
+                ):
+                    entries.append(
+                        {
+                            "id": str(obj.uuid),
+                            "question": props.get("question", ""),
+                            "answer": props.get("answer", ""),
+                            "timestamp": props.get("timestamp", ""),
+                            "session_id": props.get("session_id", ""),
+                            "channel_id": props.get("channel_id", ""),
+                        }
+                    )
+            truncated = scanned >= cap
+            if truncated:
+                logger.warning(
+                    "find_qa_entries_citing_source hit scan cap (%d) for source_id=%s",
+                    cap,
+                    source_id,
+                )
+            return {
+                "entries": entries,
+                "truncated": truncated,
+                "scanned": scanned,
+            }
+
+        try:
+            return await asyncio.to_thread(_scan)
+        except Exception:
+            logger.exception(
+                "QAHistoryStore.find_qa_entries_citing_source failed for source_id=%s",
+                source_id,
+            )
+            return {"entries": [], "truncated": False, "scanned": 0}

@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     consolidation_max_concurrent_llm: int = Field(default=5)
     consolidation_enabled: bool = Field(default=True)
 
+    # Citation registry — enterprise citation architecture.
+    # Enabled by default: QA tool outputs flow through SourceRegistry and
+    # the LLM emits [src:xxx] tags rewritten to [N] at stream time. Set
+    # CITATION_REGISTRY_ENABLED=false to revert to the legacy regex path.
+    citation_registry_enabled: bool = Field(default=True)
+
     # Application
     beever_api_url: str = Field(default="http://localhost:8000")
     cors_origins: str = Field(default="http://localhost:5173,http://localhost:3000")
@@ -142,6 +148,46 @@ class Settings(BaseSettings):
     # QA agent configuration
     qa_confidence_threshold: float = Field(default=0.4, alias="QA_CONFIDENCE_THRESHOLD")
     external_mcp_servers: str = Field(default="", alias="EXTERNAL_MCP_SERVERS")
+
+    # Onboarding response length monitor.
+    # When ON, a warning is logged if a non-deep response exceeds 1500 chars.
+    # No truncation occurs — warn-only.
+    qa_onboarding_length_monitor: bool = Field(default=True, alias="QA_ONBOARDING_LENGTH_MONITOR")
+
+    # QA history negative-answer filter.
+    # When ON, search_qa_history drops entries classified as "refused" so the
+    # agent cannot recycle hollow non-answers as context. DEFAULT OFF until
+    # false-positive rate is measured against Pass-1 fixtures.
+    qa_history_negative_filter: bool = Field(default=False, alias="QA_HISTORY_NEGATIVE_FILTER")
+
+    # Multilingual memory & wiki/QA rendering (change: multilingual-native-memory).
+    # When ON, ingestion detects BCP-47 source_lang per channel/message,
+    # facts/entities are stored in source language, wiki/QA render in requested
+    # target language. When OFF, everything hardcodes source_lang="en".
+    language_detection_enabled: bool = Field(
+        default=False, alias="LANGUAGE_DETECTION_ENABLED"
+    )
+    default_target_language: str = Field(
+        default="en", alias="DEFAULT_TARGET_LANGUAGE"
+    )
+    supported_languages: str = Field(
+        default=(
+            # CJK + Japanese + Korean (script fast-path)
+            "en,zh-HK,zh-TW,zh-CN,ja,ko,"
+            # Common European languages (langdetect fallback)
+            "es,fr,de,pt,it,nl,sv,da,no,fi,pl,cs,ru,uk,tr,"
+            # Non-Latin common scripts
+            "ar,he,hi,th,el,vi,id"
+        ),
+        alias="SUPPORTED_LANGUAGES",
+    )
+    language_detection_confidence_threshold: float = Field(
+        default=0.6, alias="LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD"
+    )
+
+    @property
+    def supported_languages_list(self) -> list[str]:
+        return [s.strip() for s in self.supported_languages.split(",") if s.strip()]
 
     # Credential encryption
     credential_master_key: str = Field(default="")
