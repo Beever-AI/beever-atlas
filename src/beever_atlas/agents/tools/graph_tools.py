@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
+
+from beever_atlas.agents.tools._citation_decorator import cite_tool_output
 
 logger = logging.getLogger(__name__)
 
 
+@cite_tool_output(kind="graph_relationship")
 async def search_relationships(
     channel_id: str,
     entities: list[str],
@@ -54,9 +58,10 @@ async def search_relationships(
             for node in subgraph.nodes:
                 if node.name not in seen_nodes:
                     seen_nodes.add(node.name)
+                    _n: Any = node
                     all_nodes.append({
-                        "name": node.name,
-                        "type": node.entity_type,
+                        "name": _n.name,
+                        "type": getattr(_n, "entity_type", None) or getattr(_n, "type", None),
                     })
 
             for edge in subgraph.edges:
@@ -71,16 +76,31 @@ async def search_relationships(
                         "context": getattr(edge, "context", ""),
                     })
 
+        if not all_nodes and not all_edges:
+            return [{"_empty": True, "entity": entities[0] if entities else "", "reason": "no_edges"}]
+
+        # Build a human-readable summary for the citation excerpt.
+        edge_summary = "; ".join(
+            f"{e['source']} -{e['type']}-> {e['target']}" for e in all_edges[:5]
+        ) or f"No relationships found for {', '.join(entities)}"
+
         return {
             "entities_searched": entities,
             "nodes": all_nodes[:50],
             "edges": all_edges[:100],
+            # Citation-decorator fields (single-source dict path):
+            "text": edge_summary,
+            "subject_id": entities[0] if entities else "",
+            "predicate": "RELATED_TO",
+            "object_id": channel_id,
+            "channel_id": channel_id,
         }
     except Exception:
         logger.exception("search_relationships failed for entities=%s", entities)
         return {"entities_searched": entities, "nodes": [], "edges": []}
 
 
+@cite_tool_output(kind="decision_record")
 async def trace_decision_history(channel_id: str, topic: str) -> list[dict]:
     """Trace temporal evolution of decisions about a topic via Neo4j SUPERSEDES chain.
 
@@ -118,23 +138,23 @@ async def trace_decision_history(channel_id: str, topic: str) -> list[dict]:
         supersedes_edges = [e for e in subgraph.edges if e.type == "SUPERSEDES"]
 
         for edge in supersedes_edges:
+            ctx_text = getattr(edge, "context", "") or f"{edge.target} superseded by {edge.source}"
             timeline.append({
                 "entity": edge.target,
                 "superseded_by": edge.source,
                 "relationship": "SUPERSEDES",
                 "confidence": edge.confidence,
-                "context": getattr(edge, "context", ""),
+                "context": ctx_text,
+                # Citation-decorator fields:
+                "text": ctx_text,
+                "decision_id": f"{channel_id}:{edge.target}:{edge.source}",
+                "channel_id": channel_id,
+                "topic": topic,
             })
 
-        # If no SUPERSEDES edges, return the root entity as the current state
+        # If no SUPERSEDES edges, return the empty sentinel
         if not timeline:
-            timeline.append({
-                "entity": canonical_name,
-                "superseded_by": None,
-                "relationship": "current",
-                "confidence": 1.0,
-                "context": "",
-            })
+            return [{"_empty": True, "entity": topic, "reason": "no_edges"}]
 
         return timeline
     except Exception:
@@ -142,6 +162,7 @@ async def trace_decision_history(channel_id: str, topic: str) -> list[dict]:
         return []
 
 
+@cite_tool_output(kind="graph_relationship")
 async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list[dict]:
     """Find top contributors for a topic by Neo4j expertise ranking.
 
@@ -179,7 +200,17 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list[dict
                         person_scores[other]["fact_count"] += 1
 
         scored = sorted(person_scores.values(), key=lambda x: x["expertise_score"], reverse=True)
-        return scored[:limit]
+        results = scored[:limit]
+        if not results:
+            return [{"_empty": True, "entity": topic, "reason": "no_edges"}]
+        # Inject citation-decorator fields per item (non-destructive to callers).
+        for item in results:
+            item.setdefault("text", f"{item['handle']} has {item['fact_count']} facts about {topic}")
+            item.setdefault("subject_id", item["handle"])
+            item.setdefault("predicate", "EXPERT_IN")
+            item.setdefault("object_id", topic)
+            item.setdefault("channel_id", channel_id)
+        return results
     except Exception:
         logger.exception("find_experts failed for topic=%s", topic)
         return []

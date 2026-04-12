@@ -156,6 +156,27 @@ async def _run_agent_stream(
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
 
+    # ----- Citation registry (Phase 1, flag-gated) --------------------
+    from beever_atlas.infra.config import get_settings
+    _settings = get_settings()
+    _registry_enabled = bool(getattr(_settings, "citation_registry_enabled", False))
+
+    _registry = None
+    _registry_token = None
+    _follow_ups_collector = None
+    _follow_ups_token = None
+    _rewriter = None
+    if _registry_enabled:
+        from beever_atlas.agents.citations import registry as _citation_registry_mod
+        from beever_atlas.agents.citations.permalink_resolver import default_resolver
+        from beever_atlas.agents.query.follow_ups_tool import bind_collector
+        from beever_atlas.agents.query.stream_rewriter import StreamRewriter
+
+        _registry, _registry_token = _citation_registry_mod.bind(session_id=session_id)
+        _registry.set_permalink_resolver(default_resolver)
+        _follow_ups_collector, _follow_ups_token = bind_collector()
+        _rewriter = StreamRewriter(_registry)
+
     # Task 4.8: Load prior conversation turns so agent has continuity
     history_parts = await _load_chat_history_parts(session_id)
 
@@ -270,43 +291,107 @@ async def _run_agent_stream(
                 })
 
             # Text content streaming (with thinking detection)
+            # INVARIANT: parts with thought=True MUST only yield "thinking" events,
+            # never "response_delta". Do not relax this check without reviewing
+            # downstream citation and history persistence logic.
             if event.content and event.content.parts:
                 for part in event.content.parts:
-                    if getattr(part, "thought", False) and part.text:
-                        # Thinking token from Gemini via BuiltInPlanner
-                        if thinking_start is None:
-                            thinking_start = time.monotonic()
-                        accumulated_thinking += part.text
-                        yield _sse_event("thinking", {"text": part.text})
+                    part_is_thought = getattr(part, "thought", False)
+                    if part_is_thought:
+                        # Thinking token from Gemini via BuiltInPlanner — emit
+                        # only the "thinking" SSE event; never response_delta.
+                        if part.text:
+                            if thinking_start is None:
+                                thinking_start = time.monotonic()
+                            accumulated_thinking += part.text
+                            yield _sse_event("thinking", {"text": part.text})
                     elif part.text:
+                        # Belt-and-suspenders: if thought flag somehow leaks here, drop it.
+                        if getattr(part, "thought", False):
+                            logger.warning(
+                                "Dropping part with thought=True from response_delta path "
+                                "(session=%s)",
+                                session_id,
+                            )
+                            continue
                         # Regular response text — emit thinking_done if transitioning
                         if thinking_start is not None and not thinking_ended:
                             thinking_ended = True
                             thinking_duration_ms = int((time.monotonic() - thinking_start) * 1000)
                             yield _sse_event("thinking_done", {"duration_ms": thinking_duration_ms})
-                        yield _sse_event("response_delta", {"delta": part.text})
-                        accumulated_text += part.text
+                        # When the registry is active, rewrite [src:xxx] tags
+                        # to [N] before the chunk hits the wire. Flag-off path
+                        # emits part.text unchanged (legacy behavior).
+                        if _rewriter is not None:
+                            rewritten = _rewriter.feed(part.text)
+                            if rewritten:
+                                yield _sse_event("response_delta", {"delta": rewritten})
+                                accumulated_text += rewritten
+                        else:
+                            yield _sse_event("response_delta", {"delta": part.text})
+                            accumulated_text += part.text
 
             # Turn complete
             if event.turn_complete:
-                citations = _extract_citations_from_text(accumulated_text)
-                yield _sse_event("citations", {"items": citations})
+                # Flush any buffered text in the rewriter (mid-tag remainders).
+                if _rewriter is not None:
+                    tail = _rewriter.flush()
+                    if tail:
+                        yield _sse_event("response_delta", {"delta": tail})
+                        accumulated_text += tail
 
-                # Extract follow-up suggestions from agent response
-                follow_ups = []
-                follow_up_match = re.search(r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text)
-                if follow_up_match:
-                    try:
-                        follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
-                        # Strip the FOLLOW_UPS line from the visible response
-                        accumulated_text = re.sub(
-                            r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
-                        ).rstrip()
-                    except (json.JSONDecodeError, ValueError):
-                        pass
+                # Build citations: registry-backed envelope (flag on) or
+                # legacy regex-parsed list (flag off).
+                if _registry is not None:
+                    envelope = _registry.finalize(accumulated_text)
+                    citations_payload = envelope.to_dict()
+                    citations = envelope.items  # for persistence back-compat
+                    logger.info(
+                        "citation_registry turn summary: "
+                        "session=%s registered=%d referenced=%d permalink_nulls=%s",
+                        session_id,
+                        _registry.registered_count,
+                        _registry.referenced_count,
+                        _registry.permalink_null_by_kind(),
+                    )
+                    yield _sse_event("citations", citations_payload)
+                else:
+                    citations = _extract_citations_from_text(accumulated_text)
+                    yield _sse_event("citations", {"items": citations})
+
+                # Follow-ups: prefer the tool-collector (Phase 1 path). If
+                # the LLM didn't call the tool (or the tool isn't registered
+                # on the agent yet), fall back to the legacy prose regex so
+                # we never lose follow-ups during rollout.
+                follow_ups: list[str] = []
+                if _follow_ups_collector is not None and _follow_ups_collector.questions:
+                    follow_ups = list(_follow_ups_collector.questions)
+                if not follow_ups:
+                    follow_up_match = re.search(
+                        r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text
+                    )
+                    if follow_up_match:
+                        try:
+                            follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
+                            accumulated_text = re.sub(
+                                r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
+                            ).rstrip()
+                        except (json.JSONDecodeError, ValueError):
+                            pass
 
                 if follow_ups:
                     yield _sse_event("follow_ups", {"suggestions": follow_ups})
+
+                # Onboarding length monitor (warn-only, no truncation).
+                try:
+                    from beever_atlas.infra.config import get_settings
+                    _monitor_on = get_settings().qa_onboarding_length_monitor
+                except Exception:
+                    _monitor_on = True
+                if mode != "deep" and _monitor_on and len(accumulated_text) > 1500:
+                    logger.warning(
+                        "onboarding response exceeded 1500 chars: %d", len(accumulated_text)
+                    )
 
                 yield _sse_event("metadata", {
                     "route": "qa_agent",
@@ -347,6 +432,20 @@ async def _run_agent_stream(
         })
         done_sent = True
     finally:
+        # Reset citation registry contextvars regardless of how we got here.
+        if _registry_token is not None:
+            try:
+                from beever_atlas.agents.citations import registry as _citation_registry_mod
+                _citation_registry_mod.reset(_registry_token)
+            except Exception:
+                logger.warning("failed to reset citation registry token", exc_info=True)
+        if _follow_ups_token is not None:
+            try:
+                from beever_atlas.agents.query.follow_ups_tool import reset_collector
+                reset_collector(_follow_ups_token)
+            except Exception:
+                logger.warning("failed to reset follow_ups collector", exc_info=True)
+
         if not done_sent:
             logger.warning(
                 "Agent stream ended without turn_complete for channel=%s; "
@@ -355,20 +454,36 @@ async def _run_agent_stream(
             )
             # Persist even when turn_complete didn't fire (e.g., thinking planner flow)
             if accumulated_text.strip():
-                citations = _extract_citations_from_text(accumulated_text)
-                yield _sse_event("citations", {"items": citations})
+                # Flush rewriter + emit envelope when registry is active.
+                if _rewriter is not None and _registry is not None:
+                    tail = _rewriter.flush()
+                    if tail:
+                        yield _sse_event("response_delta", {"delta": tail})
+                        accumulated_text += tail
+                    envelope = _registry.finalize(accumulated_text)
+                    citations = envelope.items
+                    yield _sse_event("citations", envelope.to_dict())
+                else:
+                    citations = _extract_citations_from_text(accumulated_text)
+                    yield _sse_event("citations", {"items": citations})
 
-                # Extract follow-ups
-                follow_ups = []
-                follow_up_match = re.search(r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text)
-                if follow_up_match:
-                    try:
-                        follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
-                        accumulated_text = re.sub(
-                            r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
-                        ).rstrip()
-                    except (json.JSONDecodeError, ValueError):
-                        pass
+                # Extract follow-ups — prefer the tool-collector (Phase 1)
+                # and fall back to the legacy prose regex.
+                follow_ups: list[str] = []
+                if _follow_ups_collector is not None and _follow_ups_collector.questions:
+                    follow_ups = list(_follow_ups_collector.questions)
+                if not follow_ups:
+                    follow_up_match = re.search(
+                        r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text
+                    )
+                    if follow_up_match:
+                        try:
+                            follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
+                            accumulated_text = re.sub(
+                                r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
+                            ).rstrip()
+                        except (json.JSONDecodeError, ValueError):
+                            pass
                 if follow_ups:
                     yield _sse_event("follow_ups", {"suggestions": follow_ups})
 
