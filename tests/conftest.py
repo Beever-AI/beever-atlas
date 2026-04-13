@@ -113,3 +113,44 @@ def mock_stores():
         yield fake
     finally:
         stores_mod._stores = saved
+
+
+@pytest.fixture(autouse=True)
+def _auth_bypass(monkeypatch):
+    """Bypass the global `require_user` dependency for endpoint tests.
+
+    PR #2 added a FastAPI `require_user` dependency to protected routers.
+    Tests that construct `TestClient`/`AsyncClient` without Authorization
+    headers would otherwise get 401. We install a FastAPI
+    `dependency_overrides` entry that returns a static test user, and also
+    set `BEEVER_API_KEYS` so tests that exercise the real dependency (e.g.
+    `test_auth.py`) can still pass explicit Bearer tokens.
+    """
+    monkeypatch.setenv("BEEVER_API_KEYS", "test-key")
+    monkeypatch.setenv("BEEVER_ENV", "test")
+
+    try:
+        from beever_atlas.infra.auth import require_user
+        from beever_atlas.server.app import app
+    except Exception:
+        yield
+        return
+
+    def _fake_user() -> str:
+        return "user:test"
+
+    saved = app.dependency_overrides.get(require_user)
+    app.dependency_overrides[require_user] = _fake_user
+    try:
+        yield
+    finally:
+        if saved is None:
+            app.dependency_overrides.pop(require_user, None)
+        else:
+            app.dependency_overrides[require_user] = saved
+
+
+@pytest.fixture
+def auth_headers() -> dict[str, str]:
+    """Bearer header matching the `BEEVER_API_KEYS=test-key` set in `_auth_bypass`."""
+    return {"Authorization": "Bearer test-key"}
