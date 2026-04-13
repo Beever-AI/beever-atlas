@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -163,14 +163,20 @@ class Settings(BaseSettings):
     # QA agent configuration
     qa_confidence_threshold: float = Field(default=0.4, alias="QA_CONFIDENCE_THRESHOLD")
     external_mcp_servers: str = Field(default="", alias="EXTERNAL_MCP_SERVERS")
-    qa_new_prompt: bool = Field(default=False, alias="QA_NEW_PROMPT")
+    # Strengthened OUTPUT_CONTRACT + registry-style citation tags.
+    # Env var: QA_RICH_OUTPUT (preferred) or QA_NEW_PROMPT (legacy alias).
+    qa_new_prompt: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("QA_RICH_OUTPUT", "QA_NEW_PROMPT"),
+    )
 
     # QA Agent Skills (progressive disclosure via ADK SkillToolset).
     # When ON, create_qa_agent() wires an 8-skill pack into the QA LlmAgent
     # so the model can load_skill / load_resource on demand for richer
     # formatted output (timelines, profile cards, comparison tables, etc.).
-    # REQUIRES qa_new_prompt=True; agent-build raises ConfigurationError if
-    # this flag is on while qa_new_prompt is off. DEFAULT OFF.
+    # REQUIRES qa_new_prompt=True (QA_RICH_OUTPUT); agent-build raises
+    # ConfigurationError if this flag is on while qa_new_prompt is off.
+    # DEFAULT OFF.
     qa_skills_enabled: bool = Field(default=False, alias="QA_SKILLS_ENABLED")
 
     # Onboarding response length monitor.
