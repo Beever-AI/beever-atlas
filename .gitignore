@@ -72,3 +72,9 @@ openspec/
 
 # Root package-lock (monorepo uses per-package locks)
 /package-lock.json
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+
+# QA harness output artifacts
+scripts/_qa_harness_out/
