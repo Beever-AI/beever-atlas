@@ -6,7 +6,7 @@ Please **do not** open public GitHub issues for security vulnerabilities.
 
 Report privately via GitHub Security Advisories:
 
-- https://github.com/TODO-OWNER/beever-atlas/security/advisories/new
+- https://github.com/votee/beever-atlas/security/advisories/new
 
 When reporting, include:
 
