@@ -10,6 +10,12 @@ from beever_atlas.stores.mongodb_store import MongoDBStore
 from beever_atlas.stores.weaviate_store import WeaviateStore
 from beever_atlas.stores.neo4j_store import Neo4jStore
 from beever_atlas.stores.graph_protocol import GraphStore
+from beever_atlas.stores.graph_errors import (
+    GraphBackendUnavailable,
+    GraphConflict,
+    GraphNotFound,
+    GraphStoreError,
+)
 from beever_atlas.stores.entity_registry import EntityRegistry
 from beever_atlas.stores.platform_store import PlatformStore
 from beever_atlas.infra.config import Settings
