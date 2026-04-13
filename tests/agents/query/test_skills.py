@@ -6,6 +6,12 @@ import re
 
 import pytest
 
+# Skip this entire module if the upstream `google.adk.skills` module is not
+# available (e.g. older google-adk versions or environments without the
+# private skills API surface). The skill pack cannot be constructed without it.
+pytest.importorskip("google.adk.skills")
+pytest.importorskip("google.adk.skills.models")
+
 from beever_atlas.agents.query.skills import (
     QA_SKILL_NAMES,
     build_qa_skill_pack,

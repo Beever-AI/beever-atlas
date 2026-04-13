@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("google.adk.skills")
+pytest.importorskip("google.adk.skills.models")
+
 from beever_atlas.agents.query.skills import load_resource
 
 

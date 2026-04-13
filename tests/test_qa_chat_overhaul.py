@@ -309,15 +309,19 @@ class TestChannelResolver:
     """Verify channel name resolver utility."""
 
     def test_cache_returns_same_value(self):
-        from beever_atlas.agents.tools.channel_resolver import _channel_name_cache
-        _channel_name_cache["test_id"] = "test_channel"
-        # Import and call
         import asyncio
-        from beever_atlas.agents.tools.channel_resolver import resolve_channel_name
-        result = asyncio.get_event_loop().run_until_complete(resolve_channel_name("test_id"))
-        assert result == "test_channel"
-        # Clean up
-        del _channel_name_cache["test_id"]
+
+        from beever_atlas.agents.tools.channel_resolver import (
+            _channel_name_cache,
+            resolve_channel_name,
+        )
+
+        _channel_name_cache["test_id"] = "test_channel"
+        try:
+            result = asyncio.run(resolve_channel_name("test_id"))
+            assert result == "test_channel"
+        finally:
+            _channel_name_cache.pop("test_id", None)
 
 
 # ── Test 16.2: SSE event format ──────────────────────────────────────────────
