@@ -21,6 +21,7 @@ export function AskPage() {
   const [searchParams] = useSearchParams();
   const contextChannelId = searchParams.get("context") ?? "";
   const initialQuery = searchParams.get("q") ?? "";
+  const newChatIntent = searchParams.get("new") === "1";
 
   const [channels, setChannels] = useState<ChannelOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,14 +33,16 @@ export function AskPage() {
     return () => setActive(false);
   }, [setActive]);
 
-  // An `?q=...` landing is a new-chat intent (e.g. Dashboard suggestion
-  // chips). If we don't clear the sticky activeSessionId, AskCore's
-  // session-load effect races the auto-send and rehydrates a stale
-  // conversation, so the question never lands.
+  // Clear the sticky activeSessionId on any explicit "new chat" intent:
+  //   - `?q=...` (Dashboard suggestion chips / pre-filled queries)
+  //   - `?new=1` (Dashboard search bar — empty click = start fresh chat)
+  // Without this, AskCore's session-load effect rehydrates the previous
+  // conversation and (for ?q=) races the auto-send so the question is lost.
+  // `newConversation` is stable via useCallback in AskSessionsContext, so
+  // including it in deps is a no-op in practice but keeps the lint rule honest.
   useEffect(() => {
-    if (initialQuery) newConversation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialQuery]);
+    if (initialQuery || newChatIntent) newConversation();
+  }, [initialQuery, newChatIntent, newConversation]);
 
   useEffect(() => {
     api
@@ -79,10 +82,11 @@ export function AskPage() {
 
   return (
     <AskCore
-      // Remount when a fresh `?q=` arrives so AskCorePicker's internal
-      // `initialQuerySent` / `sessionIdRef` reset and the auto-send fires
-      // against a new session instead of appending to the previous one.
-      key={initialQuery ? `q:${initialQuery}` : "idle"}
+      // Remount when a fresh `?q=` or `?new=1` arrives so AskCorePicker's
+      // internal `initialQuerySent` / `sessionIdRef` reset and the fresh
+      // session is used instead of appending to the previous one.
+      // `?q=` implies new-chat intent, so `q:` takes precedence over `new`.
+      key={initialQuery ? `q:${initialQuery}` : newChatIntent ? "new" : "idle"}
       channelMode="picker"
       channelId={initialChannelId || channels[0].channel_id}
       initialQuery={initialQuery || undefined}

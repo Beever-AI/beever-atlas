@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { WikiMarkdown } from "./WikiMarkdown";
 import { CitationPanel } from "./CitationPanel";
 import type { WikiPage, WikiCitation } from "@/lib/types";
+import { wikiT } from "@/lib/wikiI18n";
 
 interface QAPair {
   question: string;
@@ -136,15 +137,18 @@ function FaqSection({ section, citations }: { section: FaqSection; citations: Wi
 interface FaqPageProps {
   page: WikiPage;
   onNavigate: (pageId: string) => void;
+  lang?: string;
 }
 
-export function FaqPage({ page, onNavigate }: FaqPageProps) {
+export function FaqPage({ page, onNavigate, lang }: FaqPageProps) {
   const { preamble, sections, trailer } = parseFaqMarkdown(page.content);
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-foreground">{page.title}</h1>
-      <p className="mt-1 text-sm text-muted-foreground">{page.memory_count} memories</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {wikiT(lang, "memoriesSuffix", { n: page.memory_count })}
+      </p>
 
       {/* Preamble: chart + intro sentence */}
       {preamble && (

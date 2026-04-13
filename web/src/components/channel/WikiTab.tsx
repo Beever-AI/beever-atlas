@@ -391,17 +391,18 @@ function renderPage(
   page: WikiPage,
   topicPages: WikiPageNode[],
   onNavigate: (pageId: string) => void,
+  lang?: string,
 ) {
   if (page.id === "overview" || (page.page_type === "fixed" && page.slug === "overview")) {
-    return <OverviewPage page={page} topicPages={topicPages} onNavigate={onNavigate} />;
+    return <OverviewPage page={page} topicPages={topicPages} onNavigate={onNavigate} lang={lang} />;
   }
   if (page.page_type === "topic" || page.page_type === "sub-topic") {
-    return <TopicPage page={page} onNavigate={onNavigate} />;
+    return <TopicPage page={page} onNavigate={onNavigate} lang={lang} />;
   }
   if (page.id === "faq" || page.slug === "faq") {
-    return <FaqPage page={page} onNavigate={onNavigate} />;
+    return <FaqPage page={page} onNavigate={onNavigate} lang={lang} />;
   }
-  return <GenericPage page={page} onNavigate={onNavigate} />;
+  return <GenericPage page={page} onNavigate={onNavigate} lang={lang} />;
 }
 
 export function WikiTab() {
@@ -611,6 +612,13 @@ export function WikiTab() {
 
   const showPageLoading = isViewingVersion ? isVersionLoading : isPageLoading;
 
+  // The language currently on screen — matches what the top bar chip shows.
+  // Historical versions must never borrow the current session's targetLang;
+  // fall back to "en" when a legacy version record lacks target_lang.
+  const displayedLang = isViewingVersion
+    ? (versionData?.target_lang ?? "en")
+    : targetLang;
+
   // Show a loading indicator inside the layout when fetching a non-overview page
   const pageContent =
     showPageLoading || !activePage ? (
@@ -618,7 +626,7 @@ export function WikiTab() {
         <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
       </div>
     ) : (
-      renderPage(activePage, topicPages, handleNavigate)
+      renderPage(activePage, topicPages, handleNavigate, displayedLang)
     );
 
   return (
@@ -635,11 +643,7 @@ export function WikiTab() {
       viewingVersionNumber={viewingVersionNumber}
       onSelectVersion={handleSelectVersion}
       onBackToCurrent={handleBackToCurrent}
-      currentLang={
-        isViewingVersion && versionData?.target_lang
-          ? versionData.target_lang
-          : targetLang
-      }
+      currentLang={displayedLang}
       supportedLanguages={langConfig?.supported_languages ?? [targetLang]}
       onRegenerateInLang={handleSwitchLang}
     >

@@ -2,13 +2,15 @@ import { ChevronRight } from "lucide-react";
 import { WikiMarkdown } from "./WikiMarkdown";
 import { CitationPanel } from "./CitationPanel";
 import type { WikiPage } from "@/lib/types";
+import { wikiT } from "@/lib/wikiI18n";
 
 interface TopicPageProps {
   page: WikiPage;
   onNavigate: (pageId: string) => void;
+  lang?: string;
 }
 
-export function TopicPage({ page, onNavigate }: TopicPageProps) {
+export function TopicPage({ page, onNavigate, lang }: TopicPageProps) {
   const content = page.content.replace(/^#\s+[^\n]+\n*/, "");
   const isSubTopic = page.page_type === "sub-topic" && page.parent_id;
   const hasChildren = page.children && page.children.length > 0;
@@ -30,12 +32,14 @@ export function TopicPage({ page, onNavigate }: TopicPageProps) {
       )}
 
       <h1 className="text-2xl font-bold text-foreground">{page.title}</h1>
-      <p className="mt-1 text-sm text-muted-foreground">{page.memory_count} memories</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {wikiT(lang, "memoriesSuffix", { n: page.memory_count })}
+      </p>
 
       {/* Table of contents for parent pages with sub-pages */}
       {hasChildren && (
         <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-4">
-          <h3 className="text-sm font-semibold text-foreground mb-2">Sub-topics</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-2">{wikiT(lang, "subTopics")}</h3>
           <ul className="space-y-1">
             {page.children.map((child) => (
               <li key={child.id}>
@@ -48,7 +52,9 @@ export function TopicPage({ page, onNavigate }: TopicPageProps) {
                   )}
                   {child.title}
                   {child.memory_count > 0 && (
-                    <span className="ml-1.5 text-xs text-muted-foreground">({child.memory_count} memories)</span>
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      ({wikiT(lang, "memoriesSuffix", { n: child.memory_count })})
+                    </span>
                   )}
                 </button>
               </li>

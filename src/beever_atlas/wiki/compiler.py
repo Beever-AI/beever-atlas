@@ -265,6 +265,26 @@ def _parse_llm_json(raw: str | None) -> dict | list | None:
     return None
 
 
+def _looks_like_handle(s: str) -> bool:
+    """Heuristic: does this string look like a protected identifier rather than a
+    natural-language title? Used to reject LLM "translations" of things like
+    ``@alice``, ``build-pipeline``, ``v2``, ``FooBar``, ``foo_bar`` — while still
+    letting common single-word nouns (``Meeting``, ``Roadmap``) translate.
+    """
+    if not s or not s.isascii() or any(ch.isspace() for ch in s):
+        return False
+    if s.startswith(("@", "#", "/")):
+        return True
+    if any(ch in s for ch in "_-./"):
+        return True
+    if any(ch.isdigit() for ch in s):
+        return True
+    # Internal capitals (CamelCase, iOS) — but a plain Title-cased word
+    # like "Meeting" has its only capital at index 0, so skip that case.
+    caps = [i for i, ch in enumerate(s) if ch.isupper()]
+    return len(caps) >= 2 and caps != [0]
+
+
 class WikiCompiler:
     """Compiles gathered channel data into WikiPage objects using the LLM."""
 
@@ -978,6 +998,106 @@ class WikiCompiler:
             memory_count=len(gathered["recent_facts"]),
         )
 
+    async def _translate_cluster_titles(
+        self, clusters: list
+    ) -> dict[str, str]:
+        """Translate topic-cluster titles from source_lang into target_lang.
+
+        Topic cluster titles are baked at consolidation time in the source
+        language. When the wiki renders in a different target language, we
+        translate titles once per compile in a single batched LLM call so
+        the sidebar, topic cards, and page headers all read natively.
+
+        Returns a dict ``{cluster_id: translated_title}``. Clusters missing
+        from the dict keep their original title. An empty dict is returned
+        when source_lang == target_lang, when there are no clusters, or
+        when the LLM call fails (caller falls back to the original).
+
+        Proper nouns (people, product, tool names) must stay as-is — the
+        prompt repeats the Language Directive rule for that.
+        """
+        if self._target_lang == self._source_lang or not clusters:
+            return {}
+        pairs = [{"id": c.id, "title": c.title} for c in clusters if c.title]
+        if not pairs:
+            return {}
+
+        # Build ad-hoc (not via _fmt_prompt) because the prompt explicitly names
+        # both languages — the usual page-body language header isn't relevant
+        # here and would only add token overhead.
+        pairs_json = json.dumps(pairs, ensure_ascii=False)
+        prompt = (
+            f"Translate these topic titles from {self._source_lang} (BCP-47) "
+            f"to {self._target_lang} (BCP-47).\n\n"
+            "Rules:\n"
+            "- Preserve proper nouns VERBATIM (people names, tool names, "
+            "product names, company names, project codenames).\n"
+            "- Native-script proper nouns stay in their native script; "
+            "romanized names stay romanized.\n"
+            "- Keep titles concise — do not expand or editorialize.\n"
+            "- Return JSON only, no prose, no markdown fences.\n\n"
+            f"Input (list of {{id, title}}):\n{pairs_json}\n\n"
+            'Output JSON shape:\n'
+            '{"titles": [{"id": "<cluster_id>", "title": "<translated>"}]}'
+        )
+        try:
+            raw = await self._llm_generate_json(prompt, temperature=0.2)
+            parsed = _parse_llm_json(raw)
+            if not isinstance(parsed, dict):
+                return {}
+            items = parsed.get("titles") or []
+            # Originals map lets us (a) reject hallucinated ids and (b) detect
+            # proper-noun drift for identifier-shaped titles. Plain single-word
+            # nouns like "Meeting" must still translate, so the handle gate
+            # looks for identifier-shape signals (mention prefixes, separators,
+            # digits, internal capitals) rather than just "single ASCII token".
+            originals = {p["id"]: p["title"] for p in pairs}
+            out: dict[str, str] = {}
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                cid = item.get("id")
+                title = item.get("title")
+                if not (isinstance(cid, str) and isinstance(title, str) and title.strip()):
+                    continue
+                if cid not in originals:
+                    logger.warning(
+                        "WikiCompiler: unknown cluster id %s in translation response", cid,
+                    )
+                    continue
+                if cid in out:
+                    logger.warning(
+                        "WikiCompiler: duplicate cluster id %s in translation response", cid,
+                    )
+                    continue
+                stripped = title.strip()
+                original = originals[cid]
+                if _looks_like_handle(original) and stripped != original:
+                    logger.warning(
+                        "WikiCompiler: rejecting suspicious title translation for handle-like id %s (%r -> %r)",
+                        cid, original, stripped,
+                    )
+                    continue
+                # Length sanity: reject pathological expansions (>3x char length).
+                if len(stripped) > max(40, 3 * len(original)):
+                    logger.warning(
+                        "WikiCompiler: rejecting over-long title translation for %s (%d -> %d chars)",
+                        cid, len(original), len(stripped),
+                    )
+                    continue
+                out[cid] = stripped
+            logger.info(
+                "WikiCompiler: translated %d/%d topic titles to %s",
+                len(out), len(pairs), self._target_lang,
+            )
+            return out
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "WikiCompiler: topic-title translation failed (%s), keeping originals",
+                exc,
+            )
+            return {}
+
     async def compile(
         self,
         gathered: dict,
@@ -992,6 +1112,18 @@ class WikiCompiler:
         """
         clusters = gathered["clusters"]
         channel_summary = gathered["channel_summary"]
+
+        # Localize topic titles when rendering in a different target language.
+        # Each cluster is shallow-copied with an updated title so the rest of
+        # this compile sees translated titles without touching the DB-backing
+        # TopicCluster objects (they're pydantic; model_copy returns a clone).
+        title_map = await self._translate_cluster_titles(clusters)
+        if title_map:
+            clusters = [
+                c.model_copy(update={"title": title_map[c.id]}) if c.id in title_map else c
+                for c in clusters
+            ]
+            gathered = {**gathered, "clusters": clusters}
         pages: dict[str, WikiPage] = {}
         pages_completed: list[str] = []
 
