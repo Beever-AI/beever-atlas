@@ -3,18 +3,76 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from neo4j import AsyncGraphDatabase
+from neo4j import exceptions as neo4j_exc
 
 from beever_atlas.models import GraphEntity, GraphRelationship, Subgraph
+from beever_atlas.stores.graph_errors import (
+    GraphBackendUnavailable,
+    GraphConflict,
+    GraphStoreError,
+)
 
 if TYPE_CHECKING:
     from beever_atlas.stores.graph_protocol import GraphStore
 
 
+@asynccontextmanager
+async def _translate_errors() -> AsyncIterator[None]:
+    """Translate raw ``neo4j.exceptions.*`` into :mod:`graph_errors` types.
+
+    ``GraphNotFound`` is NOT raised here — point-query methods raise it
+    explicitly when a ``result.single()`` yields ``None``.
+    """
+    try:
+        yield
+    except (neo4j_exc.ConstraintError, neo4j_exc.Forbidden) as exc:
+        raise GraphConflict(str(exc)) from exc
+    except (
+        neo4j_exc.ServiceUnavailable,
+        neo4j_exc.SessionExpired,
+        neo4j_exc.TransientError,
+    ) as exc:
+        raise GraphBackendUnavailable(str(exc)) from exc
+    except GraphStoreError:
+        raise
+    except neo4j_exc.Neo4jError as exc:
+        # Catch-all for other driver errors — surface as generic backend error
+        raise GraphStoreError(str(exc)) from exc
+
+
+def _wrap_async_methods(cls: type) -> type:
+    """Decorator: wrap every public async method on *cls* with
+    :func:`_translate_errors` so callers see ``GraphStoreError`` subclasses
+    instead of raw ``neo4j.exceptions.*``.
+    """
+    for attr_name, attr in list(vars(cls).items()):
+        if attr_name.startswith("_"):
+            continue
+        if not inspect.iscoroutinefunction(attr):
+            continue
+
+        def _make(fn):  # noqa: ANN001 — local closure
+            @functools.wraps(fn)
+            async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                async with _translate_errors():
+                    return await fn(*args, **kwargs)
+
+            return _wrapped
+
+        setattr(cls, attr_name, _make(attr))
+    return cls
+
+
+@_wrap_async_methods
 class Neo4jStore:
     """Manages a Neo4j knowledge graph with Entity nodes, Event nodes, and
     flexible relationship types."""
