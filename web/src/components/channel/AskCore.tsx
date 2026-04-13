@@ -6,7 +6,6 @@ import { useFeedback } from "@/hooks/useFeedback";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
-import { ToolsPanel } from "./ToolsPanel";
 import { ChannelPicker } from "@/components/ask/ChannelPicker";
 import type { AnswerMode, Message } from "@/types/askTypes";
 import type { ChannelOption } from "@/components/ask/ChannelPicker";
@@ -380,16 +379,6 @@ function AskCorePicker({
         activeChannelId={activeChannelId}
       />
 
-      {toolDescriptors.length > 0 && (
-        <div className="px-4 sm:px-6 pb-2 max-w-3xl mx-auto w-full">
-          <ToolsPanel
-            descriptors={toolDescriptors}
-            disabledTools={disabledTools}
-            onToggle={toggleTool}
-          />
-        </div>
-      )}
-
       <ChatInputBar
         onSubmit={handleSubmit}
         onAbort={abort}
@@ -408,6 +397,9 @@ function AskCorePicker({
             ? `Ask Beever about #${channelNames[activeChannelId] ?? "this channel"}…`
             : "Choose a channel to start asking…"
         }
+        toolDescriptors={toolDescriptors.length > 0 ? toolDescriptors : undefined}
+        disabledTools={disabledTools}
+        onToggleTool={toggleTool}
       />
     </div>
   );

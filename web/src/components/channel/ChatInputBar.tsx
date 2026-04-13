@@ -1,6 +1,16 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Send, Square, Paperclip, X, Sparkles, ChevronDown } from "lucide-react";
+import { Send, Square, Paperclip, X, Sparkles, ChevronDown, SlidersHorizontal } from "lucide-react";
 import type { AnswerMode, AttachmentFile } from "../../types/askTypes";
+import type { ToolDescriptor, ToolCategory } from "../../types/toolTypes";
+
+const TOOL_CATEGORY_LABELS: Record<ToolCategory, string> = {
+  wiki: "Wiki",
+  memory: "Memory",
+  graph: "Graph",
+  external: "External",
+};
+
+const TOOL_CATEGORY_ORDER: ToolCategory[] = ["wiki", "memory", "graph", "external"];
 
 interface ChatInputBarProps {
   onSubmit: (question: string, options?: { mode?: AnswerMode; attachments?: AttachmentFile[] }) => void;
@@ -23,6 +33,12 @@ interface ChatInputBarProps {
    * suggestion chips → /ask?q=…) without auto-sending.
    */
   initialValue?: string;
+  /** Tool descriptors for the in-composer Tools popover (v2 flow). */
+  toolDescriptors?: ToolDescriptor[];
+  /** Names of currently disabled tools. */
+  disabledTools?: string[];
+  /** Called when the user toggles a tool on/off. */
+  onToggleTool?: (name: string) => void;
 }
 
 const MODE_OPTIONS: { value: AnswerMode; label: string; description: string }[] = [
@@ -45,6 +61,9 @@ export function ChatInputBar({
   channelPicker,
   placeholder,
   initialValue,
+  toolDescriptors,
+  disabledTools = [],
+  onToggleTool,
 }: ChatInputBarProps) {
   const [text, setText] = useState(initialValue ?? "");
 
@@ -67,6 +86,17 @@ export function ChatInputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
+
+  // Close tools menu on Escape
+  useEffect(() => {
+    if (!showToolsMenu) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowToolsMenu(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showToolsMenu]);
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -102,6 +132,18 @@ export function ChatInputBar({
 
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) ?? MODE_OPTIONS[1];
   const canSubmit = !!text.trim() && !isStreaming && !disabled;
+
+  // Tools popover derived values
+  const hasTools = !!toolDescriptors && toolDescriptors.length > 0;
+  const toolsTotal = toolDescriptors?.length ?? 0;
+  const toolsEnabled = toolDescriptors?.filter((d) => !disabledTools.includes(d.name)).length ?? 0;
+  const toolsGrouped = TOOL_CATEGORY_ORDER.reduce<Record<ToolCategory, ToolDescriptor[]>>(
+    (acc, cat) => {
+      acc[cat] = toolDescriptors?.filter((d) => d.category === cat) ?? [];
+      return acc;
+    },
+    { wiki: [], memory: [], graph: [], external: [] },
+  );
 
   return (
     <div className="px-4 sm:px-6 pb-5 pt-2 bg-background">
@@ -225,6 +267,90 @@ export function ChatInputBar({
                 </>
               )}
             </div>
+
+            {/* Tools selector — only rendered when descriptors are available */}
+            {hasTools && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowToolsMenu(!showToolsMenu)}
+                  className="inline-flex items-center gap-1 h-8 px-2 rounded-lg text-[13px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  aria-label={`Tools (${toolsEnabled}/${toolsTotal} enabled)`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 opacity-70" strokeWidth={2} />
+                  <span>Tools</span>
+                  <span className="opacity-60">({toolsEnabled}/{toolsTotal})</span>
+                </button>
+                {showToolsMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowToolsMenu(false)}
+                    />
+                    <div className="absolute bottom-full left-0 mb-2 bg-popover border border-border rounded-xl shadow-xl z-50 w-80 max-h-[420px] overflow-y-auto motion-safe:animate-scale-in origin-bottom-left">
+                      {/* Popover header */}
+                      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border sticky top-0 bg-popover">
+                        <span className="text-[13px] font-semibold text-foreground">Tools</span>
+                        <span className="text-[11px] text-muted-foreground">{toolsEnabled}/{toolsTotal} enabled</span>
+                      </div>
+                      {/* Category sections */}
+                      <div className="py-1">
+                        {TOOL_CATEGORY_ORDER.map((cat) => {
+                          const tools = toolsGrouped[cat];
+                          if (tools.length === 0) return null;
+                          return (
+                            <div key={cat} className="px-3 py-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+                                {TOOL_CATEGORY_LABELS[cat]}
+                              </div>
+                              <div className="space-y-0.5">
+                                {tools.map((tool) => {
+                                  const isDisabled = disabledTools.includes(tool.name);
+                                  return (
+                                    <div
+                                      key={tool.name}
+                                      className="flex items-center justify-between gap-3 py-1.5"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <span className="block text-[13px] font-medium text-foreground truncate">
+                                          {tool.name}
+                                        </span>
+                                        <span className="block text-[11px] text-muted-foreground leading-snug">
+                                          {tool.description}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={!isDisabled}
+                                        aria-pressed={!isDisabled}
+                                        aria-label={`${isDisabled ? "Enable" : "Disable"} ${tool.name}`}
+                                        onClick={() => onToggleTool?.(tool.name)}
+                                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
+                                          isDisabled ? "bg-muted" : "bg-primary"
+                                        }`}
+                                      >
+                                        <span className="sr-only">
+                                          {isDisabled ? "Enable" : "Disable"} {tool.name}
+                                        </span>
+                                        <span
+                                          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ${
+                                            isDisabled ? "translate-x-0" : "translate-x-4"
+                                          }`}
+                                        />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Spacer */}
             <div className="flex-1" />
