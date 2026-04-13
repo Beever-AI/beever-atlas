@@ -168,8 +168,8 @@ class StreamRewriter:
         parts: list[str] = []
         for match in _INNER_TAG_RE.finditer(content):
             src_id = match.group(1)
-            inline = bool(match.group(2))
-            rewritten = self._rewrite(src_id, inline)
+            tag_inline = bool(match.group(2))
+            rewritten = self._rewrite(src_id, tag_inline)
             if rewritten:
                 parts.append(rewritten)
         if not parts:
