@@ -458,7 +458,8 @@ export function WikiTab() {
   }, [triggerRefresh, refetch, refetchVersions]);
 
   const handleRegenerateInLang = useCallback((lang: string) => {
-    // Switch displayed language and trigger generation in that language
+    // Switch displayed language AND force a regeneration in that language.
+    // Used by the empty-state "Generate" CTA — unambiguously means "make one".
     setTargetLang(lang);
     if (channelId) {
       try {
@@ -472,6 +473,49 @@ export function WikiTab() {
       refetchVersions();
     }, lang);
   }, [channelId, triggerRefresh, refetch, refetchVersions]);
+
+  // Track the last language the user asked to switch to. When the fetch for
+  // that language resolves as 404 (wiki doesn't exist yet) we auto-regenerate;
+  // when it resolves as 200 we just show the cached wiki. Cleared as soon as
+  // the transition is handled so subsequent 404s (e.g. user returns to a page
+  // they previously switched away from) don't silently re-trigger regens.
+  const [pendingSwitchLang, setPendingSwitchLang] = useState<string | null>(null);
+
+  const handleSwitchLang = useCallback((lang: string) => {
+    // Dropdown picker path: switch displayed language. Only auto-regen if the
+    // target language's wiki does not yet exist (404). Existing wikis in
+    // another language are shown from cache without burning a generation.
+    if (lang === targetLang) return;
+    setTargetLang(lang);
+    if (channelId) {
+      try {
+        localStorage.setItem(`wiki.targetLang.${channelId}`, lang);
+      } catch {
+        // Silently ignore — private-mode Safari throws on localStorage access
+      }
+    }
+    setPendingSwitchLang(lang);
+  }, [channelId, targetLang]);
+
+  useEffect(() => {
+    // Resolve a pending language switch once the new fetch has settled.
+    if (!pendingSwitchLang || pendingSwitchLang !== targetLang) return;
+    if (isLoading || isRefreshing) return;
+    if (isNotFound) {
+      // Wiki for this language doesn't exist — auto-regen.
+      setPendingSwitchLang(null);
+      triggerRefresh(() => {
+        refetch();
+        refetchVersions();
+      }, targetLang);
+    } else if (wiki) {
+      // Wiki for this language exists — just show it.
+      setPendingSwitchLang(null);
+    }
+  }, [
+    pendingSwitchLang, targetLang, isLoading, isRefreshing, isNotFound, wiki,
+    triggerRefresh, refetch, refetchVersions,
+  ]);
 
   const handleNavigate = useCallback((pageId: string) => {
     setActivePageId(pageId);
@@ -523,7 +567,7 @@ export function WikiTab() {
               supportedLanguages={supported}
               isRefreshing={isRefreshing}
               onRegenerate={() => handleRegenerateInLang(targetLang)}
-              onRegenerateInLang={handleRegenerateInLang}
+              onRegenerateInLang={handleSwitchLang}
               label="Generate"
               size="lg"
             />
@@ -597,7 +641,7 @@ export function WikiTab() {
           : targetLang
       }
       supportedLanguages={langConfig?.supported_languages ?? [targetLang]}
-      onRegenerateInLang={handleRegenerateInLang}
+      onRegenerateInLang={handleSwitchLang}
     >
       <>
         {viewingVersionNumber !== null && versionData && (

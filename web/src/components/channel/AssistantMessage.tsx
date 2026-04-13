@@ -158,45 +158,90 @@ function AssistantMessageInner({
   const markdownTree = useMemo(
     () =>
       body ? (
-        <div className="prose prose-invert prose-sm max-w-none text-foreground/90">
+        <div className="max-w-none text-[15px] leading-relaxed text-foreground/90">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              h1: ({ children }) => (
+                <h1 className="text-2xl font-bold text-foreground mt-6 mb-3 first:mt-0 tracking-tight">
+                  {children}
+                </h1>
+              ),
+              h2: ({ children }) => (
+                <h2 className="text-xl font-bold text-foreground mt-6 mb-3 first:mt-0 tracking-tight">
+                  {children}
+                </h2>
+              ),
+              h3: ({ children }) => (
+                <h3 className="text-base font-semibold text-foreground mt-5 mb-2 first:mt-0">
+                  {children}
+                </h3>
+              ),
+              h4: ({ children }) => (
+                <h4 className="text-sm font-semibold text-foreground mt-4 mb-2 first:mt-0 uppercase tracking-wide text-foreground/80">
+                  {children}
+                </h4>
+              ),
               p: ({ children }) => (
-                <p className="mb-3 leading-relaxed">
+                <p className="mb-3 leading-relaxed text-[15px]">
                   {renderWithCitationChips(children, ctx)}
                 </p>
               ),
+              strong: ({ children }) => (
+                <strong className="font-semibold text-foreground">{children}</strong>
+              ),
+              em: ({ children }) => (
+                <em className="italic text-foreground/90">{children}</em>
+              ),
+              hr: () => <hr className="border-border my-6" />,
               li: ({ children }) => (
-                <li className="text-foreground/90">
+                <li className="text-foreground/90 leading-relaxed marker:text-muted-foreground/70">
                   {renderWithCitationChips(children, ctx)}
                 </li>
               ),
-              ul: ({ children }) => <ul className="mb-3 space-y-1 list-disc list-inside">{children}</ul>,
-              ol: ({ children }) => <ol className="mb-3 space-y-1 list-decimal list-inside">{children}</ol>,
+              ul: ({ children }) => (
+                <ul className="mb-4 ml-5 space-y-1.5 list-disc">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="mb-4 ml-5 space-y-1.5 list-decimal">{children}</ol>
+              ),
               code: ({ className, children, ...props }) => {
                 if (className === "language-mermaid") {
                   return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
                 }
                 const isInline = !className;
                 return isInline ? (
-                  <code className="px-1.5 py-0.5 bg-muted rounded text-primary text-xs" {...props}>{children}</code>
+                  <code className="px-1.5 py-0.5 bg-muted rounded text-primary text-[13px] font-mono" {...props}>{children}</code>
                 ) : (
-                  <code className={`block p-3 bg-muted rounded-lg text-xs overflow-x-auto ${className ?? ""}`} {...props}>{children}</code>
+                  <code className={`block p-3 bg-muted rounded-lg text-[13px] font-mono overflow-x-auto my-3 ${className ?? ""}`} {...props}>{children}</code>
                 );
               },
+              pre: ({ children }) => <pre className="mb-3">{children}</pre>,
               table: ({ children }) => (
-                <div className="overflow-x-auto mb-3">
-                  <table className="text-sm border-collapse border border-border">{children}</table>
+                <div className="overflow-x-auto mb-4 rounded-lg border border-border">
+                  <table className="w-full text-sm border-collapse">{children}</table>
                 </div>
               ),
-              th: ({ children }) => <th className="px-3 py-2 bg-muted border border-border text-left text-foreground/90">{children}</th>,
-              td: ({ children }) => <td className="px-3 py-2 border border-border text-muted-foreground">{children}</td>,
+              thead: ({ children }) => <thead className="bg-muted/60">{children}</thead>,
+              tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+              tr: ({ children }) => <tr className="hover:bg-muted/30 transition-colors">{children}</tr>,
+              th: ({ children }) => (
+                <th className="px-3 py-2 text-left font-semibold text-foreground border-b border-border">
+                  {children}
+                </th>
+              ),
+              td: ({ children }) => (
+                <td className="px-3 py-2 text-foreground/90 align-top">
+                  {renderWithCitationChips(children, ctx)}
+                </td>
+              ),
               blockquote: ({ children }) => (
-                <blockquote className="border-l-2 border-border pl-4 text-muted-foreground italic mb-3">{children}</blockquote>
+                <blockquote className="border-l-2 border-primary/40 pl-4 text-muted-foreground italic my-3">
+                  {children}
+                </blockquote>
               ),
               a: ({ href, children }) => (
-                <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80 underline">{children}</a>
+                <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80 underline underline-offset-2">{children}</a>
               ),
             }}
           >
