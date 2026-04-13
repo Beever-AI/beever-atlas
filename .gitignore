@@ -78,3 +78,4 @@ openspec/
 
 # QA harness output artifacts
 scripts/_qa_harness_out/
+.hypothesis/
