@@ -1,0 +1,83 @@
+"""Authentication dependencies for the FastAPI app.
+
+API-key auth (v0.1.0): `Authorization: Bearer <token>` validated against
+`settings.api_keys` (env `BEEVER_API_KEYS`, comma-separated). Uses
+`hmac.compare_digest` for constant-time comparison.
+"""
+
+from __future__ import annotations
+
+import hmac
+import logging
+from typing import Optional
+
+from fastapi import Header, HTTPException, status
+
+from beever_atlas.infra.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_keys(raw: str) -> list[str]:
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    return parts[1].strip() or None
+
+
+def require_user(authorization: Optional[str] = Header(default=None)) -> str:
+    """Validate Bearer token against configured API keys.
+
+    Returns a user identifier string on success, raises HTTP 401 otherwise.
+    """
+    settings = get_settings()
+    keys = _parse_keys(settings.api_keys)
+    if not keys:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API authentication not configured",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = _extract_bearer(authorization)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    for key in keys:
+        if hmac.compare_digest(token, key):
+            return f"user:{key[:6]}"
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API key",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def require_admin(
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+) -> str:
+    """Validate admin token for dev-only endpoints."""
+    settings = get_settings()
+    expected = (settings.admin_token or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin token not configured",
+        )
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin token",
+        )
+    return "admin"
