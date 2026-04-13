@@ -161,6 +161,20 @@ Structure rules:
 - Bold key entity names and technical terms on first mention.
 - Do not write prose blocks longer than ~150 words without a heading, list, or table."""
 
+OUTPUT_CONTRACT_STRICT = """\
+STRUCTURE (mandatory):
+- Any answer longer than ~80 words MUST begin with a single-line `##` heading that names the topic.
+- Use `###` sub-headings when the answer has 2+ distinct sub-topics.
+- Every bullet in a list MUST be a complete sentence containing at least one concrete fact, name, date, or citation. NO one-or-two-word bullets. NO bullets that only repeat the heading.
+- Lists of 3+ items related to comparing entities MUST be rendered as a markdown table, not a bullet list, with dimensions as rows and entities as columns.
+- When the answer braids internal (channel) knowledge with external (web) context, use EXPLICIT section headers: `## From your knowledge base` and `## External context`, followed by `## Synthesis` (one paragraph, no citations). Do NOT mix internal and external facts in the same bullet.
+
+DEPTH (mandatory):
+- For any substantive question (not a greeting/small-talk), emit AT LEAST 150 words of cited content.
+- Each factual claim MUST carry an inline citation unless it is a synthesis sentence in the Synthesis block.
+- If the knowledge base has fewer than 3 relevant facts, say so explicitly in one sentence, then use external_knowledge to flesh out context, then cite both."""
+
+
 RETRIEVAL_GUIDANCE = """\
 Retrieve enough evidence to cite every non-trivial claim. \
 Start with channel context (wiki/overview), add atomic facts (search_channel_facts/search_qa_history), \
@@ -185,7 +199,9 @@ Never write 'my approach', 'let me kick off', 'okay so', 'I\'ll start by', \
 Do not restate the user's question. Do not narrate tool calls. \
 Emit the finished answer only. \
 Do not emit raw untitled paragraphs back-to-back. \
-Do not dump unstructured lists of more than 7 items without grouping."""
+Do not dump unstructured lists of more than 7 items without grouping.
+- NEVER repeat the same sentence or paragraph verbatim. If you catch yourself drafting a repeat, delete it.
+- NEVER close the answer with a sentence that just restates the opening. Answers end on new information or a synthesis claim."""
 
 EMPTY_SIGNAL_HANDLING = """\
 If a tool returns a row with `_empty: true`, disclose that the knowledge graph \
@@ -245,6 +261,8 @@ def build_qa_system_prompt(
             IDENTITY_PREAMBLE,
             "",
             OUTPUT_CONTRACT,
+            "",
+            OUTPUT_CONTRACT_STRICT,
             "",
             RETRIEVAL_GUIDANCE,
             "",

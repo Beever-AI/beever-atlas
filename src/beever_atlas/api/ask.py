@@ -266,6 +266,15 @@ async def _run_agent_stream(
 
     accumulated_text = ""
     accumulated_thinking = ""
+    # Defensive dedup state: track the last emitted chunk and the tail of the
+    # accumulated stream so a verbatim-repeated response_delta (seen on some
+    # skill-tool / Gemini-planner paths) can be suppressed before reaching
+    # the client.  See Ask-page v2 polish notes.
+    _last_emitted_chunk: str = ""
+    _DEDUP_TAIL_WINDOW = 400
+    # Repeat tool-call suppression: log a warning when the agent invokes the
+    # same tool with identical args back-to-back within a single turn.
+    _last_tool_sig: tuple[str, str] | None = None
     # Persisted trace of tool calls in the order they appeared. Entries are
     # upgraded in place when the matching FunctionResponse arrives.
     persisted_tool_calls: list[dict] = []
@@ -327,6 +336,18 @@ async def _run_agent_stream(
                     tool_input = fc.args or {}
                     active_tool_calls[tool_name] = time.monotonic()
                     normalized_input = tool_input if isinstance(tool_input, dict) else {}
+                    # Repeat tool-call suppression: warn if same tool+args ran twice in a row.
+                    try:
+                        _sig = (tool_name, json.dumps(normalized_input, sort_keys=True, default=str))
+                    except Exception:
+                        _sig = (tool_name, str(normalized_input))
+                    if _last_tool_sig is not None and _sig == _last_tool_sig:
+                        logger.warning(
+                            "repeat tool call detected: %s with identical args (session=%s)",
+                            tool_name,
+                            session_id,
+                        )
+                    _last_tool_sig = _sig
                     persisted_tool_calls.append({
                         "tool_name": tool_name,
                         "input": normalized_input,
@@ -430,11 +451,36 @@ async def _run_agent_stream(
                         if _rewriter is not None:
                             rewritten = _rewriter.feed(part.text)
                             if rewritten:
-                                yield _sse_event("response_delta", {"delta": rewritten})
-                                accumulated_text += rewritten
+                                # Defensive dedup: skip verbatim repeats.
+                                if rewritten == _last_emitted_chunk or (
+                                    len(rewritten) >= 40
+                                    and accumulated_text.endswith(rewritten)
+                                ):
+                                    logger.warning(
+                                        "dedup: skipped duplicate response_delta "
+                                        "(len=%d, session=%s)",
+                                        len(rewritten),
+                                        session_id,
+                                    )
+                                else:
+                                    yield _sse_event("response_delta", {"delta": rewritten})
+                                    accumulated_text += rewritten
+                                    _last_emitted_chunk = rewritten
                         else:
-                            yield _sse_event("response_delta", {"delta": part.text})
-                            accumulated_text += part.text
+                            if part.text == _last_emitted_chunk or (
+                                len(part.text) >= 40
+                                and accumulated_text.endswith(part.text)
+                            ):
+                                logger.warning(
+                                    "dedup: skipped duplicate response_delta "
+                                    "(len=%d, session=%s)",
+                                    len(part.text),
+                                    session_id,
+                                )
+                            else:
+                                yield _sse_event("response_delta", {"delta": part.text})
+                                accumulated_text += part.text
+                                _last_emitted_chunk = part.text
 
             # Turn complete
             if event.turn_complete:

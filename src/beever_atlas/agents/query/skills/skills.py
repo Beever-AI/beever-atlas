@@ -57,7 +57,10 @@ def _build_skills() -> list[Skill]:
             description=(
                 "Decision trace, decision history, evolution of a choice over time: "
                 "renders a vertical timeline of who proposed/pushed-back/decided what "
-                "and when, with one pinned step per event and a final outcome arrow."
+                "and when, with one pinned step per event and a final outcome arrow. "
+                "If `trace_decision_history` returns no SUPERSEDES chain, STILL use the "
+                "timeline template — fill it with search_channel_facts events sorted by "
+                "timestamp. Never degrade to plain prose."
             ),
             allowed_tools="trace_decision_history search_channel_facts",
             resource_files=("timeline_template.md",),
@@ -138,9 +141,12 @@ def _build_skills() -> list[Skill]:
         _skill(
             name="media-gallery",
             description=(
-                "Media gallery, images, screenshots, files, diagrams, attachments: renders "
+                "Media gallery, images, screenshots, files, diagrams, attachments, architecture diagram, "
+                "flowchart of, image of, photos, pictures, visuals, uploads: renders "
                 "image/file hits from search_media_references as a markdown gallery with "
-                "inline thumbnails, captions, and citations."
+                "inline thumbnails, captions, and citations. Use for any question that mentions "
+                "'show me', 'visual', 'pictures', 'photos', 'files', 'uploads', 'diagrams', "
+                "'screenshots', 'architecture diagram', 'flowchart of', 'image of'."
             ),
             allowed_tools="search_media_references",
             resource_files=("gallery_template.md",),
@@ -148,10 +154,14 @@ def _build_skills() -> list[Skill]:
                 "Use when the user asks about images, screenshots, diagrams, files, or any "
                 "attached media (e.g. 'show me screenshots of X', 'files about Y').\n"
                 "1. Call `search_media_references(query=...)` once.\n"
-                "2. Load `gallery_template.md` via `load_resource` and follow it EXACTLY: "
-                "markdown image bullets, caption, one-line context, `[src:src_xxx inline]` "
-                "so the UI renders the attachment next to the citation.\n"
-                "If no results, say 'No media attachments found for this query.' — do not fabricate."
+                "2. If the tool returned AT LEAST ONE hit, ALWAYS load `gallery_template.md` "
+                "via `load_resource` and emit the gallery — follow it EXACTLY: markdown image "
+                "bullets, caption, one-line context, `[src:src_xxx inline]` so the UI renders "
+                "the attachment next to the citation. Never fall back to prose when there is "
+                "at least one hit.\n"
+                "3. If the tool returned ZERO hits, say "
+                "'No media attachments matching the query were found.' in one sentence and "
+                "STOP. Do not fabricate."
             ),
         ),
         _skill(
@@ -179,7 +189,11 @@ def _build_skills() -> list[Skill]:
             description=(
                 "Source braid, internal plus external synthesis: braids team knowledge with "
                 "external context across three labelled lines (From your knowledge base / "
-                "External context / Synthesis)."
+                "External context / Synthesis). USE this whenever the user's question touches "
+                "industry benchmarks, best practices, standards, comparisons to the outside world, "
+                "public documentation, or when the internal knowledge base has <3 relevant facts. "
+                "Examples: 'how do we compare to industry', 'what are best practices', "
+                "'is this standard', 'what do others do'."
             ),
             allowed_tools="search_channel_facts search_external_knowledge",
             resource_files=("braid_pattern.md",),
