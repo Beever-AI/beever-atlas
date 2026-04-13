@@ -17,7 +17,12 @@ class ConfigurationError(RuntimeError):
 class Settings(BaseSettings):
     """Beever Atlas configuration — all values from env vars."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+        "populate_by_name": True,
+    }
 
     # Data stores
     weaviate_url: str = Field(default="http://localhost:8080")
