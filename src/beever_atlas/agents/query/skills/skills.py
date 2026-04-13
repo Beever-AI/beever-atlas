@@ -79,9 +79,12 @@ def _build_skills() -> list[Skill]:
         _skill(
             name="people-profile",
             description=(
-                "People profile card, expertise lookup, who-is-@handle: summarizes a "
-                "person's inferred role, top 3 topics, recent activity, and 3 cited "
-                "evidence bullets from channel facts."
+                "People profile card, expertise lookup, who-is-@handle, 'who works on', "
+                "'key people', 'team members', 'contributors', 'who are the': summarizes "
+                "a person's inferred role, top 3 topics, recent activity, and 3 cited "
+                "evidence bullets. When the question asks about 3+ people, render a "
+                "markdown table with columns Handle / Role / Top topics / Evidence (cited). "
+                "Single-person queries render a card."
             ),
             allowed_tools="find_experts search_channel_facts",
             resource_files=("profile_template.md",),
@@ -120,9 +123,14 @@ def _build_skills() -> list[Skill]:
         _skill(
             name="visual-graph",
             description=(
-                "Visual graph, flowchart, timeline diagram, relationship diagram: emits a "
-                "Mermaid fenced block (flowchart / timeline / graph LR) when a diagram "
-                "clarifies the answer better than prose."
+                "Visual graph, flowchart, timeline diagram, relationship diagram, architecture, "
+                "pipeline, workflow, data flow, org chart, dependency graph, decision tree, "
+                "supersedes chain, process, sequence, hierarchy: emits a Mermaid fenced block "
+                "(flowchart / timeline / graph LR / graph TD) whenever the answer involves 3+ "
+                "related entities with directional relationships. PREFER Mermaid over prose for "
+                "any question touching 'pipeline', 'architecture', 'flow', 'workflow', 'process', "
+                "'how X works', 'how data moves', 'who reports to', 'what happens before/after', "
+                "'timeline of events', 'org structure', 'dependencies between'."
             ),
             allowed_tools=None,
             resource_files=("mermaid_cheatsheet.md",),

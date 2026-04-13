@@ -166,7 +166,9 @@ STRUCTURE (mandatory):
 - Any answer longer than ~80 words MUST begin with a single-line `##` heading that names the topic.
 - Use `###` sub-headings when the answer has 2+ distinct sub-topics.
 - Every bullet in a list MUST be a complete sentence containing at least one concrete fact, name, date, or citation. NO one-or-two-word bullets. NO bullets that only repeat the heading.
-- Lists of 3+ items related to comparing entities MUST be rendered as a markdown table, not a bullet list, with dimensions as rows and entities as columns.
+- Lists of 3+ items that each have 2+ attributes (e.g. name + role, name + topic, item + description, handle + expertise) MUST render as a GitHub-flavored markdown table — NOT a bullet list. Columns = attributes, rows = items. Always include a header row. Cite cells inline with `[src:...]`.
+- If the items are entities with directional relationships (caller → callee, before → after, parent → child, input → output, decision → outcome), render a Mermaid fenced block (```mermaid / flowchart LR / graph TD / timeline) INSTEAD OF a bullet list. Keep nodes ≤12 and label every edge.
+- Prefer tables over bulleted name-value pairs. Prefer Mermaid diagrams over prose for pipelines, architectures, workflows, supersedes chains, org structures, data flows, or decision trees.
 - When the answer braids internal (channel) knowledge with external (web) context, use EXPLICIT section headers: `## From your knowledge base` and `## External context`, followed by `## Synthesis` (one paragraph, no citations). Do NOT mix internal and external facts in the same bullet.
 
 DEPTH (mandatory):
