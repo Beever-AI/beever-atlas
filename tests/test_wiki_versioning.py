@@ -255,7 +255,9 @@ class TestWikiCacheArchiveOnSave:
             new_wiki = _make_wiki_doc()
             await cache.save_wiki("C001", new_wiki)
 
-            mock_vs.archive.assert_called_once_with("C001", existing_wiki)
+            mock_vs.archive.assert_called_once_with(
+                "C001", existing_wiki, target_lang="en",
+            )
             mock_vs.cleanup.assert_called_once_with("C001")
             mock_collection.update_one.assert_called_once()
 
