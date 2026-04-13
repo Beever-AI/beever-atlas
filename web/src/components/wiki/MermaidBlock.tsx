@@ -1,22 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import mermaid from "mermaid";
-import DOMPurify from "dompurify";
 import { useTheme } from "@/hooks/useTheme";
-
-function sanitizeSvg(svg: string): string {
-  return DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: ["script", "foreignObject"],
-    FORBID_ATTR: ["onerror", "onload", "onclick"],
-  });
-}
 
 function mermaidThemeConfig(theme: "light" | "dark") {
   if (theme === "dark") {
     return {
       startOnLoad: false,
-      securityLevel: "strict" as const,
+      securityLevel: "loose" as const,
       theme: "base" as const,
       themeVariables: {
         background: "transparent",
@@ -31,7 +22,7 @@ function mermaidThemeConfig(theme: "light" | "dark") {
 
   return {
     startOnLoad: false,
-    securityLevel: "strict" as const,
+    securityLevel: "loose" as const,
     theme: "base" as const,
     themeVariables: {
       background: "transparent",
@@ -160,17 +151,15 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const origWidth = widthMatch ? parseFloat(widthMatch[1]) : 0;
 
   // If diagram is very wide (>800px), scale it down but keep readable
-  const inlineSvgRaw = origWidth > 800
+  const inlineSvg = origWidth > 800
     ? svg.replace(/<svg /, '<svg style="height:auto;min-height:250px" ')
     : svg.replace(/<svg /, '<svg style="width:100%;height:auto;min-height:200px" ');
-  const inlineSvg = sanitizeSvg(inlineSvgRaw);
 
   // For expanded view: force SVG to fill available width
-  const expandedSvgRaw = svg
+  const expandedSvg = svg
     .replace(/width="[\d.]+"/, 'width="100%"')
     .replace(/height="[\d.]+"/, 'height="100%"')
     .replace(/<svg /, '<svg style="width:100%;height:auto;min-width:80vw" ');
-  const expandedSvg = sanitizeSvg(expandedSvgRaw);
 
   if (expanded) {
     return (

@@ -8,7 +8,6 @@ import logging
 import re
 from typing import Any
 
-from beever_atlas.agents.prompt_safety import wrap_untrusted
 from beever_atlas.llm import get_llm_provider
 from beever_atlas.llm.model_resolver import is_ollama_model
 from beever_atlas.models.domain import AtomicFact, WikiCitation, WikiPage, WikiPageNode, WikiPageRef, WikiStructure
@@ -551,7 +550,7 @@ class WikiCompiler:
             {
                 "index": i,
                 "author": f.author_name,
-                "excerpt": wrap_untrusted(f.memory_text[:120]),
+                "excerpt": f.memory_text[:120],
                 "timestamp": f.message_ts,
             }
             for i, f in enumerate(citation_facts, 1)
@@ -610,7 +609,7 @@ class WikiCompiler:
         Returns the parsed analysis dict or None if analysis fails or isn't needed.
         """
         indexed_facts = [
-            {"index": i, "memory_text": wrap_untrusted(f.memory_text), "author_name": f.author_name, "fact_type": f.fact_type}
+            {"index": i, "memory_text": f.memory_text, "author_name": f.author_name, "fact_type": f.fact_type}
             for i, f in enumerate(sorted_facts[:30])
         ]
         prompt = self._fmt_prompt(TOPIC_ANALYSIS_PROMPT,
@@ -642,7 +641,7 @@ class WikiCompiler:
         sub_facts = [all_sorted_facts[i] for i in fact_indices if i < len(all_sorted_facts)]
         facts_data = [
             {
-                "memory_text": wrap_untrusted(f.memory_text),
+                "memory_text": f.memory_text,
                 "author_name": f.author_name,
                 "quality_score": f.quality_score,
                 "fact_type": f.fact_type,
@@ -687,7 +686,7 @@ class WikiCompiler:
         sorted_facts = sorted(member_facts, key=lambda f: f.quality_score, reverse=True)
         facts_data = [
             {
-                "memory_text": wrap_untrusted(f.memory_text),
+                "memory_text": f.memory_text,
                 "author_name": f.author_name,
                 "quality_score": f.quality_score,
                 "fact_type": f.fact_type,
@@ -972,7 +971,7 @@ class WikiCompiler:
         channel_summary = gathered["channel_summary"]
         recent_data = [
             {
-                "memory_text": wrap_untrusted(f.memory_text),
+                "memory_text": f.memory_text,
                 "author_name": f.author_name,
                 "message_ts": f.message_ts,
                 "fact_type": f.fact_type,

@@ -33,8 +33,8 @@ services:
       retries: 10
       start_period: 20s
     ports:
-      - "127.0.0.1:9559:9559"
-      - "127.0.0.1:19559:19559"
+      - "9559:9559"
+      - "19559:19559"
 
   nebula-storaged:
     image: vesoft/nebula-storaged:v3.8.0
@@ -59,15 +59,11 @@ services:
         condition: service_healthy
     # No healthcheck — storaged is healthy once metad registers it via ADD HOSTS
     ports:
-      - "127.0.0.1:9779:9779"
+      - "9779:9779"
 
   nebula-graphd:
     image: vesoft/nebula-graphd:v3.8.0
     environment:
-      # Nebula ships with default auth root/nebula. After first boot, rotate
-      # via `ALTER USER root WITH PASSWORD '${NEBULA_PASSWORD}'` and update
-      # clients to use ${NEBULA_PASSWORD:?NEBULA_PASSWORD must be set}.
-      NEBULA_PASSWORD: ${NEBULA_PASSWORD:?NEBULA_PASSWORD must be set}
       USER: root
       TZ: UTC
     command:
@@ -91,8 +87,8 @@ services:
       retries: 10
       start_period: 20s
     ports:
-      - "127.0.0.1:9669:9669"
-      - "127.0.0.1:19669:19669"
+      - "9669:9669"
+      - "19669:19669"
 
 volumes:
   nebula_meta_data:

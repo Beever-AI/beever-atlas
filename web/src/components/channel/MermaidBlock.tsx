@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState } from "react";
-import DOMPurify from "dompurify";
 
 interface MermaidBlockProps {
   code: string;
@@ -49,12 +48,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           throw new Error("Mermaid render produced a syntax-error SVG.");
         }
         if (!cancelled) {
-          const cleanSvg = DOMPurify.sanitize(rendered, {
-            USE_PROFILES: { svg: true, svgFilters: true },
-            FORBID_TAGS: ["script", "foreignObject"],
-            FORBID_ATTR: ["onerror", "onload", "onclick"],
-          });
-          setSvg(cleanSvg);
+          setSvg(rendered);
           setError(null);
         }
       } catch (err) {

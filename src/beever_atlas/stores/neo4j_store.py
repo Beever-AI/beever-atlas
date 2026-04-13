@@ -482,7 +482,7 @@ class Neo4jStore:
         self, entity_id: str, hops: int = 1, limit: int = 50
     ) -> Subgraph:
         """Return the neighborhood subgraph up to `hops` hops from an entity."""
-        hops = max(1, min(int(hops), 4))
+        hops = max(1, hops)
         async with self._driver.session() as session:
             result = await session.run(
                 f"""

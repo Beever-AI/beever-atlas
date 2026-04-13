@@ -6,7 +6,6 @@ import logging
 
 from google.adk.agents import LlmAgent
 
-from beever_atlas.agents.prompt_safety import UNTRUSTED_SYSTEM_NOTE
 from beever_atlas.agents.query.prompts import (
     build_qa_system_prompt,
     QA_QUICK_SUFFIX,
@@ -14,42 +13,6 @@ from beever_atlas.agents.query.prompts import (
 )
 from beever_atlas.agents.tools import QA_TOOLS
 from beever_atlas.infra.config import ConfigurationError
-
-
-# Tool name fragments that indicate write or network-egress capability.
-# When an agent context includes untrusted content, these tools are filtered
-# out as an output-side defense against prompt-injection-driven exfiltration.
-_UNTRUSTED_TOOL_DENYLIST_FRAGMENTS = (
-    "tavily",       # web search — network egress
-    "web_search",   # network egress
-    "write",        # generic write verb
-    "create",       # generic write verb
-    "update",       # generic write verb
-    "delete",       # generic write verb
-    "send",         # messaging
-    "post",         # HTTP POST / posting
-)
-
-
-def _filter_tools_for_untrusted(tools: list) -> list:
-    """Drop write/egress tools when the prompt contains untrusted content.
-
-    Defense-in-depth: a prompt-injection payload in retrieved memory could
-    instruct the model to exfiltrate data via web search or mutate state
-    via MCP write tools. Restrict to read-only tools in that context.
-    """
-    kept: list = []
-    for t in tools:
-        name = (
-            getattr(t, "__name__", None)
-            or getattr(t, "name", None)
-            or getattr(getattr(t, "func", None), "__name__", "")
-            or ""
-        ).lower()
-        if any(frag in name for frag in _UNTRUSTED_TOOL_DENYLIST_FRAGMENTS):
-            continue
-        kept.append(t)
-    return kept
 
 logger = logging.getLogger(__name__)
 
@@ -186,11 +149,6 @@ def create_qa_agent(
     registry = get_mcp_registry()
 
     base_tools = tools if tools is not None else QA_TOOLS
-
-    # Inject the untrusted-content system note once. Retrieved memory text
-    # and message bodies are wrapped in <untrusted> tags downstream
-    # (see beever_atlas.agents.prompt_safety).
-    extra_instruction = f"\n\n{UNTRUSTED_SYSTEM_NOTE}\n{extra_instruction}"
 
     if mode == "quick":
         # Quick: 2 tools, no thinking, concise prompt

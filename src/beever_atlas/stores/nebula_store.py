@@ -79,15 +79,7 @@ def _event_vid(weaviate_id: str) -> str:
 
 def _escape(value: str) -> str:
     """Escape a string for nGQL.  Nebula uses backslash escaping inside
-    double-quoted strings.
-
-    Callers use this both for double-quoted string literals and for
-    identifiers wrapped in backticks. Backticks in input would break out of
-    the identifier context — reject them outright since valid schema
-    identifiers never contain them.
-    """
-    if "`" in value:
-        raise ValueError(f"Backtick not allowed in nGQL identifier/literal: {value!r}")
+    double-quoted strings."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
