@@ -42,10 +42,11 @@ def recover_truncated_json(text: str) -> dict | list | None:
         pass
 
     # Find the last complete object boundary.
-    recovered = _find_last_complete_boundary(stripped)
-    if recovered is None:
+    boundary = _find_last_complete_boundary(stripped)
+    if boundary <= 0:
         logger.debug("json_recovery: no object boundary found, cannot recover")
         return None
+    recovered = stripped[:boundary]
 
     # Close any unmatched opening brackets/braces.
     closed = _close_open_structures(recovered)
@@ -151,25 +152,54 @@ def recover_entities_from_truncated(text: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _find_last_complete_boundary(text: str) -> str | None:
-    """Return text truncated at the last ``},`` or ``}]`` boundary.
+def _find_last_complete_boundary(text: str) -> int:
+    """Return an index at which ``text`` can be safely truncated.
 
-    Searches from the end of the string towards the beginning so that we
-    keep the maximum number of complete objects.
+    Walks forward tracking JSON string context so that ``}``, ``,`` and
+    ``]`` characters *inside* string literals cannot be misidentified as
+    structural boundaries. The returned index points just after the last
+    ``}`` that is followed by ``,`` or ``]`` in structural position — i.e.
+    the end of the most recent complete object inside an enclosing array.
+
+    Returns ``-1`` when no complete boundary has been observed.
     """
-    # Walk backwards looking for }, or }]
-    for i in range(len(text) - 1, 0, -1):
-        ch = text[i]
-        prev = text[i - 1]
-        if prev == "}" and ch in (",", "]"):
-            # Include the ``}`` but not the trailing comma (if any).
-            # Keep the ``]`` so arrays close naturally.
-            if ch == "]":
-                return text[: i + 1]
-            else:  # ch == ","
-                return text[:i]  # drop the comma; caller will close structures
-
-    return None
+    in_string = False
+    escape = False
+    last_brace_close = -1  # index just after a structural '}'
+    last_safe = -1
+    for i, c in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+            last_brace_close = -1
+            continue
+        if c == "}":
+            last_brace_close = i + 1
+            continue
+        if c == "]":
+            # A structural ``]`` after a complete object closes the array;
+            # keep the ``]`` so arrays close naturally.
+            if last_brace_close != -1:
+                last_safe = i + 1
+            last_brace_close = -1
+            continue
+        if c == ",":
+            # Drop the comma — caller will close remaining structures.
+            if last_brace_close != -1:
+                last_safe = last_brace_close
+            last_brace_close = -1
+            continue
+        if not c.isspace():
+            last_brace_close = -1
+    return last_safe
 
 
 def _close_open_structures(text: str) -> str:
