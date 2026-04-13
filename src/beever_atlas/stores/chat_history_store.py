@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import UTC, datetime
 
@@ -25,9 +26,12 @@ class ChatHistoryStore:
     TTL index auto-expires documents after 90 days.
     """
 
-    def __init__(self, mongodb_uri: str, db_name: str = "beever_atlas") -> None:
+    def __init__(self, mongodb_uri: str, db_name: str | None = None) -> None:
+        # Tests set BEEVER_CHAT_HISTORY_DB to route writes to an isolated
+        # database and avoid polluting the dev sidebar.
+        resolved = db_name or os.environ.get("BEEVER_CHAT_HISTORY_DB", "beever_atlas")
         self._client = AsyncIOMotorClient(mongodb_uri)
-        self._db = self._client[db_name]
+        self._db = self._client[resolved]
         self._collection = self._db["chat_history"]
 
     async def startup(self) -> None:

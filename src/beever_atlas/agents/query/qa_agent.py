@@ -63,13 +63,16 @@ def _maybe_wrap_with_skills(tools_list: list) -> list:
         if required.issubset(enabled_tool_names):
             overlap_skills.append(skill)
 
-    toolset = SkillToolset(skills=overlap_skills, additional_tools=tools_list)
+    toolset = SkillToolset(skills=overlap_skills)
     logger.info(
         "QA skills enabled: %d/%d skills survived tool-overlap filter",
         len(overlap_skills),
         len(build_qa_skill_pack()),
     )
-    return [toolset]
+    # Surface the QA tools as siblings of the SkillToolset so the LLM
+    # can call them directly (not just via load_skill). `additional_tools`
+    # on SkillToolset does not expose tools to the agent in current ADK.
+    return [toolset, *tools_list]
 
 # Tool subsets for each answer mode
 _WIKI_TOOLS_NAMES = {"get_wiki_page", "get_topic_overview"}

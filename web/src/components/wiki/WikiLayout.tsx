@@ -22,6 +22,9 @@ interface WikiLayoutProps {
   onSelectVersion?: (versionNumber: number) => void;
   onBackToCurrent?: () => void;
   headerExtra?: ReactNode;
+  /** BCP-47 tag of the language currently displayed. Shown as a chip in the
+   *  sidebar header so users can see at a glance which rendering they're viewing. */
+  currentLang?: string;
 }
 
 const MIN_WIDTH = 180;
@@ -236,6 +239,7 @@ export function WikiLayout({
   onSelectVersion,
   onBackToCurrent,
   headerExtra,
+  currentLang,
 }: WikiLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -279,7 +283,17 @@ export function WikiLayout({
       >
         <div className="p-4 pb-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-foreground truncate">Wiki</h3>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h3 className="text-sm font-semibold text-foreground truncate">Wiki</h3>
+              {currentLang && (
+                <span
+                  className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                  title={`Displaying wiki in ${currentLang.toUpperCase()}`}
+                >
+                  {currentLang.toUpperCase()}
+                </span>
+              )}
+            </div>
             {headerExtra}
           </div>
           <FreshnessBadge

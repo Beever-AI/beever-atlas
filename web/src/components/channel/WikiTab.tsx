@@ -12,7 +12,7 @@ import { OverviewPage } from "@/components/wiki/OverviewPage";
 import { TopicPage } from "@/components/wiki/TopicPage";
 import { GenericPage } from "@/components/wiki/GenericPage";
 import { FaqPage } from "@/components/wiki/FaqPage";
-import { WikiLanguageSelect } from "@/components/channel/WikiLanguageSelect";
+import { WikiRegenerateButton } from "@/components/channel/WikiRegenerateButton";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type { WikiPage, WikiPageNode } from "@/lib/types";
@@ -410,7 +410,6 @@ export function WikiTab() {
   const [viewingVersionNumber, setViewingVersionNumber] = useState<number | null>(null);
 
   const [langConfig, setLangConfig] = useState<LanguageConfig | null>(null);
-  const [primaryLanguage, setPrimaryLanguage] = useState<string | null>(null);
   const [targetLang, setTargetLang] = useState<string>(() => {
     if (!channelId) return "en";
     return localStorage.getItem(`wiki.targetLang.${channelId}`) ?? "en";
@@ -427,14 +426,9 @@ export function WikiTab() {
       }
     }).catch(() => {});
 
-    if (channelId) {
-      api.get<{ primary_language?: string | null }>(`/api/channels/${channelId}`)
-        .then((ch) => setPrimaryLanguage(ch.primary_language ?? null))
-        .catch(() => {});
-    }
   }, [channelId]);
 
-  const { data: wiki, isLoading, error, refetch } = useWiki(channelId, targetLang);
+  const { data: wiki, isLoading, error, isNotFound, refetch } = useWiki(channelId, targetLang);
   const { hasMemories, isLoading: isMemoryCountLoading } = useChannelMemoryCount(channelId);
 
   // Version history
@@ -462,9 +456,21 @@ export function WikiTab() {
     });
   }, [triggerRefresh, refetch, refetchVersions]);
 
-  const handleLangChange = useCallback((lang: string) => {
+  const handleRegenerateInLang = useCallback((lang: string) => {
+    // Switch displayed language and trigger generation in that language
     setTargetLang(lang);
-  }, []);
+    if (channelId) {
+      try {
+        localStorage.setItem(`wiki.targetLang.${channelId}`, lang);
+      } catch {
+        // Silently ignore — private-mode Safari throws on localStorage access
+      }
+    }
+    triggerRefresh(() => {
+      refetch();
+      refetchVersions();
+    }, lang);
+  }, [channelId, triggerRefresh, refetch, refetchVersions]);
 
   const handleNavigate = useCallback((pageId: string) => {
     setActivePageId(pageId);
@@ -494,6 +500,37 @@ export function WikiTab() {
   }
 
   const isNoMemory = !isMemoryCountLoading && !hasMemories;
+
+  // 404: wiki has never been generated for this language — show a targeted empty state
+  if (!wiki && isNotFound && !isRefreshing) {
+    const supported = langConfig?.supported_languages ?? [targetLang];
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center px-6 py-12">
+        <div className="mx-auto w-full max-w-md text-center">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+            <BookOpen className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <h3 className="text-base font-semibold text-foreground">
+            No Wiki Yet
+          </h3>
+          <p className="mx-auto mt-1.5 max-w-xs text-sm text-muted-foreground">
+            Generate a wiki for this channel. Pick a language from the dropdown to generate in another language.
+          </p>
+          <div className="mt-6 flex justify-center">
+            <WikiRegenerateButton
+              currentLang={targetLang}
+              supportedLanguages={supported}
+              isRefreshing={isRefreshing}
+              onRegenerate={() => handleRegenerateInLang(targetLang)}
+              onRegenerateInLang={handleRegenerateInLang}
+              label="Generate"
+              size="lg"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (error || !wiki) {
     return (
@@ -553,17 +590,29 @@ export function WikiTab() {
       viewingVersionNumber={viewingVersionNumber}
       onSelectVersion={handleSelectVersion}
       onBackToCurrent={handleBackToCurrent}
+      currentLang={
+        isViewingVersion && versionData?.target_lang
+          ? versionData.target_lang
+          : targetLang
+      }
       headerExtra={
         langConfig ? (
-          <WikiLanguageSelect
-            channelId={channelId!}
-            primaryLanguage={primaryLanguage}
-            defaultTargetLanguage={langConfig.default_target_language}
+          <WikiRegenerateButton
+            currentLang={targetLang}
             supportedLanguages={langConfig.supported_languages}
-            currentTargetLang={targetLang}
-            onChange={handleLangChange}
+            isRefreshing={isRefreshing}
+            onRegenerate={handleRefresh}
+            onRegenerateInLang={handleRegenerateInLang}
           />
-        ) : undefined
+        ) : (
+          <WikiRegenerateButton
+            currentLang={targetLang}
+            supportedLanguages={[targetLang]}
+            isRefreshing={isRefreshing}
+            onRegenerate={handleRefresh}
+            onRegenerateInLang={handleRegenerateInLang}
+          />
+        )
       }
     >
       <>

@@ -45,13 +45,16 @@ class WikiVersionStore:
         )
         await self._collection.create_index("channel_id")
 
-    async def archive(self, channel_id: str, wiki_doc: dict) -> int:
+    async def archive(
+        self, channel_id: str, wiki_doc: dict, target_lang: str = "en",
+    ) -> int:
         """Archive a wiki document as a new version. Returns the assigned version number."""
         await self._ensure_db()
         next_version = await self._next_version_number(channel_id)
         version_doc = {
             "channel_id": channel_id,
             "version_number": next_version,
+            "target_lang": target_lang,
             "channel_name": wiki_doc.get("channel_name", ""),
             "platform": wiki_doc.get("platform", ""),
             "generated_at": wiki_doc.get("generated_at"),
@@ -110,6 +113,7 @@ class WikiVersionStore:
                 "_id": 0,
                 "version_number": 1,
                 "channel_id": 1,
+                "target_lang": 1,
                 "generated_at": 1,
                 "archived_at": 1,
                 "page_count": 1,

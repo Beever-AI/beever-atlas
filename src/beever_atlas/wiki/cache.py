@@ -159,11 +159,19 @@ class WikiCache:
         try:
             existing = await self._collection.find_one({"channel_id": key}, {"_id": 0})
             if existing:
-                await self._version_store.archive(channel_id, existing)
+                # Preserve the language the archived version was rendered in,
+                # so version history can label each entry correctly.
+                archived_lang = existing.get("target_lang") or target_lang
+                await self._version_store.archive(
+                    channel_id, existing, target_lang=archived_lang,
+                )
                 await self._version_store.cleanup(channel_id)
         except Exception:
             logger.exception("Failed to archive wiki version for channel %s", channel_id)
 
+        # Stamp the live wiki doc with its target_lang so future archive calls
+        # can read it back to label older versions correctly.
+        wiki_data = {**wiki_data, "target_lang": target_lang}
         await self._collection.update_one(
             {"channel_id": key},
             {"$set": wiki_data},

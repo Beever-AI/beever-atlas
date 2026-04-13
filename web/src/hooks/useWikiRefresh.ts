@@ -66,7 +66,7 @@ export function useWikiRefresh(channelId: string | undefined, targetLang?: strin
   }, [channelId, targetLang, stopPolling]);
 
   const mutate = useCallback(
-    async (onDone?: () => void) => {
+    async (onDone?: () => void, targetLangOverride?: string) => {
       if (!channelId) return;
       // Reset circuit breaker + prior error so a user-initiated retry after
       // 10 consecutive polling failures doesn't immediately re-trip.
@@ -81,7 +81,8 @@ export function useWikiRefresh(channelId: string | undefined, targetLang?: strin
       onDoneRef.current = onDone ?? null;
 
       try {
-        const langParam = targetLang ? `?target_lang=${encodeURIComponent(targetLang)}` : "";
+        const effectiveLang = targetLangOverride ?? targetLang;
+        const langParam = effectiveLang ? `?target_lang=${encodeURIComponent(effectiveLang)}` : "";
         await api.post(`/api/channels/${channelId}/wiki/refresh${langParam}`);
         // Start polling for status
         stopPolling();

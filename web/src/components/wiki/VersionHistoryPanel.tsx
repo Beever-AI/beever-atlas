@@ -95,8 +95,13 @@ export function VersionHistoryPanel({
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
                     Version {v.version_number}
+                    {v.target_lang && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {v.target_lang}
+                      </span>
+                    )}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     {v.page_count} pages

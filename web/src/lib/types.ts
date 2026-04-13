@@ -112,6 +112,9 @@ export interface WikiResponse {
 export interface WikiVersionSummary {
   version_number: number;
   channel_id: string;
+  /** BCP-47 tag of the language this version was rendered in. Missing on
+   *  docs archived before multilang tagging was introduced. */
+  target_lang?: string;
   generated_at: string;
   archived_at: string;
   page_count: number;
@@ -123,6 +126,7 @@ export interface WikiVersionResponse {
   channel_id: string;
   channel_name: string;
   platform: string;
+  target_lang?: string;
   generated_at: string;
   archived_at: string;
   page_count: number;
