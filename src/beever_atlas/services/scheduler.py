@@ -222,12 +222,17 @@ class SyncScheduler:
                         )
                         return
 
-            # Acquire semaphore
+            # Acquire semaphore. Track acquisition so a wait_for timeout
+            # (which cancels the pending acquire) does NOT cause an
+            # over-release in the finally block below — the previous code
+            # always released, corrupting the counter on timeout.
+            acquired = False
             if self._global_semaphore:
                 await asyncio.wait_for(
                     self._global_semaphore.acquire(),
                     timeout=30,
                 )
+                acquired = True
 
             try:
                 from beever_atlas.api.sync import get_sync_runner
@@ -244,7 +249,8 @@ class SyncScheduler:
                     channel_id, exc,
                 )
             finally:
-                self.release_sync_semaphore()
+                if acquired:
+                    self.release_sync_semaphore()
 
         except asyncio.TimeoutError:
             logger.warning(
