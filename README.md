@@ -9,7 +9,7 @@ Turn Slack, Discord, and Teams conversations into a living, searchable knowledge
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green.svg)](https://fastapi.tiangolo.com)
 [![Google ADK](https://img.shields.io/badge/Google%20ADK-agent%20framework-orange.svg)](https://google.github.io/adk-docs/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 </div>
 
@@ -144,7 +144,7 @@ After ingestion, Atlas builds a structured wiki per channel:
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/your-org/beever-atlas.git
+git clone https://github.com/TODO-OWNER/beever-atlas.git
 cd beever-atlas
 cp .env.example .env
 ```
@@ -167,7 +167,19 @@ BRIDGE_API_KEY=          # any random secret (openssl rand -hex 16)
 docker compose up
 ```
 
-This starts: Python backend (`:8000`), Bot service (`:3001`), React frontend (`:3000`), Weaviate (`:8080`), Neo4j (`:7474`/`:7687`), MongoDB (`:27017`), Redis (`:6380`).
+This starts: Python backend (`:8000`), Bot service (`:3001`), React frontend (`:3000`), Weaviate (`:8080`), Neo4j (`:7474`/`:7687`), MongoDB (`:27017`), Redis (`:6379`).
+
+---
+
+## Privacy & Telemetry
+
+Beever Atlas collects no telemetry. No usage data, error reports, or analytics are sent anywhere by default. All LLM calls go through API keys you configure in your own `.env`, and all data stays in the databases you control.
+
+---
+
+## API Stability
+
+**API Stability:** All `/api/*` endpoints are UNSTABLE in 0.1.0. v0.2.0 will introduce a `/api/v1/*` prefix; clients pinning current paths will break. See [SECURITY.md](SECURITY.md).
 
 **First run takes 2–3 minutes** as Docker builds images and databases initialize.
 
@@ -594,7 +606,7 @@ Please open an issue first for significant changes.
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE) © 2026 Beever Atlas contributors. Third-party attributions in [NOTICE](NOTICE).
 
 ---
 
