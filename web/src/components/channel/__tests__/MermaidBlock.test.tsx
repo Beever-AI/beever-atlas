@@ -61,6 +61,41 @@ describe("MermaidBlock", () => {
     expect(mermaid.render).not.toHaveBeenCalled();
   });
 
+  it("strips <script> tags from rendered SVG (XSS defense)", async () => {
+    const { default: mermaid } = await import("mermaid");
+    vi.mocked(mermaid.render).mockResolvedValueOnce({
+      svg: '<svg><script>window.__xss=1</script><text>ok</text></svg>',
+      bindFunctions: undefined,
+      diagramType: "flowchart",
+    });
+
+    render(<MermaidBlock code="graph TD; A-->B" />);
+
+    await waitFor(() => {
+      expect(document.querySelector("svg")).not.toBeNull();
+    });
+    expect(document.querySelector("svg script")).toBeNull();
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global check
+    expect((window as any).__xss).toBeUndefined();
+  });
+
+  it("strips onerror attributes from rendered SVG (XSS defense)", async () => {
+    const { default: mermaid } = await import("mermaid");
+    vi.mocked(mermaid.render).mockResolvedValueOnce({
+      svg: '<svg><image href="x" onerror="window.__xss2=1"/></svg>',
+      bindFunctions: undefined,
+      diagramType: "flowchart",
+    });
+
+    render(<MermaidBlock code="graph TD; A-->B" />);
+
+    await waitFor(() => {
+      expect(document.querySelector("svg")).not.toBeNull();
+    });
+    const img = document.querySelector("svg image");
+    expect(img?.getAttribute("onerror")).toBeNull();
+  });
+
   it("falls back when render returns a syntax-error SVG (v11 swallow)", async () => {
     const { default: mermaid } = await import("mermaid");
     vi.mocked(mermaid.render).mockResolvedValueOnce({
