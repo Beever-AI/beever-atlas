@@ -1,9 +1,13 @@
 """Application configuration loaded from environment variables."""
 
+import logging
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationError(RuntimeError):
@@ -128,6 +132,13 @@ class Settings(BaseSettings):
     # Bridge (bot service)
     bridge_url: str = Field(default="http://localhost:3001")
     bridge_api_key: str = Field(default="")
+    # When True, accept both constant-time and legacy `==` bridge auth paths
+    # for one release cycle. Every legacy accept logs a warning.
+    bridge_hmac_dual: bool = Field(default=False, alias="BEEVER_BRIDGE_HMAC_DUAL")
+    # Allowlist of external hostnames reachable by outbound MCP tool calls.
+    # Empty list disables allowlist enforcement (SSRF guard still rejects
+    # private IPs).
+    external_mcp_allowlist: list[str] = Field(default_factory=list)
 
     # Graph database backend
     graph_backend: str = Field(default="neo4j")  # "neo4j", "nebula", or "none"
@@ -231,6 +242,15 @@ class Settings(BaseSettings):
     # Credential encryption
     credential_master_key: str = Field(default="")
 
+    # Deployment environment — gates fail-fast production validation
+    beever_env: Literal["development", "production", "test"] = Field(
+        default="development", alias="BEEVER_ENV"
+    )
+    # API bearer tokens (comma-separated)
+    api_keys: str = Field(default="", alias="BEEVER_API_KEYS")
+    # Admin token for /api/dev/* endpoints
+    admin_token: str = Field(default="", alias="BEEVER_ADMIN_TOKEN")
+
     @property
     def neo4j_user(self) -> str:
         return self.neo4j_auth.split("/")[0]
@@ -239,6 +259,31 @@ class Settings(BaseSettings):
     def neo4j_password(self) -> str:
         parts = self.neo4j_auth.split("/", 1)
         return parts[1] if len(parts) > 1 else ""
+
+    @model_validator(mode="after")
+    def _validate_production(self) -> "Settings":
+        problems: list[str] = []
+        key = self.credential_master_key or ""
+        hex_ok = len(key) == 64 and all(c in "0123456789abcdefABCDEF" for c in key)
+        if not hex_ok:
+            problems.append("CREDENTIAL_MASTER_KEY must be 64 hex chars (AES-256-GCM)")
+        if self.neo4j_password in {"beever_atlas_dev", ""}:
+            problems.append("NEO4J_AUTH password is a dev default or empty")
+        if self.nebula_password == "nebula":
+            problems.append("NEBULA_PASSWORD is the default 'nebula'")
+        if not (self.bridge_api_key or "").strip():
+            problems.append("BRIDGE_API_KEY is empty")
+        if not (self.api_keys or "").strip():
+            problems.append("BEEVER_API_KEYS is empty")
+        if not (self.admin_token or "").strip():
+            problems.append("BEEVER_ADMIN_TOKEN is empty")
+
+        if self.beever_env == "production" and problems:
+            raise ValueError("Production config invalid: " + "; ".join(problems))
+        if problems:
+            for p in problems:
+                logger.warning("config: %s (dev-mode warning only)", p)
+        return self
 
 
 @lru_cache
