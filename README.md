@@ -144,7 +144,7 @@ After ingestion, Atlas builds a structured wiki per channel:
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/TODO-OWNER/beever-atlas.git
+git clone https://github.com/votee/beever-atlas.git
 cd beever-atlas
 cp .env.example .env
 ```

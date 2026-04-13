@@ -72,4 +72,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Unused `ANTHROPIC_API_KEY` environment variable.
 
-[Unreleased]: https://github.com/TODO-OWNER/beever-atlas/compare/HEAD...HEAD
+[Unreleased]: https://github.com/votee/beever-atlas/compare/HEAD...HEAD
