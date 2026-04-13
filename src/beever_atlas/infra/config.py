@@ -195,8 +195,10 @@ class Settings(BaseSettings):
     # When ON, ingestion detects BCP-47 source_lang per channel/message,
     # facts/entities are stored in source language, wiki/QA render in requested
     # target language. When OFF, everything hardcodes source_lang="en".
+    # Default ON so multilang channels (zh-HK, ja, es, …) work without manual
+    # env configuration. Set LANGUAGE_DETECTION_ENABLED=false to force English.
     language_detection_enabled: bool = Field(
-        default=False, alias="LANGUAGE_DETECTION_ENABLED"
+        default=True, alias="LANGUAGE_DETECTION_ENABLED"
     )
     default_target_language: str = Field(
         default="en", alias="DEFAULT_TARGET_LANGUAGE"

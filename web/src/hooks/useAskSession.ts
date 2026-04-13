@@ -1,7 +1,62 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile, DecompositionPlan } from "../types/askTypes";
+import type { ToolDescriptor } from "../types/toolTypes";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+// ---------------------------------------------------------------------------
+// Tool descriptor cache — module-scoped so subsequent hook mounts reuse it.
+// ---------------------------------------------------------------------------
+
+let _toolDescriptorCache: ToolDescriptor[] | null = null;
+let _toolDescriptorPromise: Promise<ToolDescriptor[]> | null = null;
+
+function fetchToolDescriptors(): Promise<ToolDescriptor[]> {
+  if (_toolDescriptorCache !== null) return Promise.resolve(_toolDescriptorCache);
+  if (_toolDescriptorPromise !== null) return _toolDescriptorPromise;
+  _toolDescriptorPromise = fetch(`${API_BASE}/api/ask/tools`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`GET /api/ask/tools returned ${res.status}`);
+      return res.json() as Promise<{ tools: ToolDescriptor[] }>;
+    })
+    .then((body) => {
+      _toolDescriptorCache = body.tools ?? [];
+      return _toolDescriptorCache;
+    })
+    .catch((err) => {
+      console.error("[useAskSession] Failed to load tool descriptors:", err);
+      _toolDescriptorPromise = null; // allow retry on next mount
+      return [];
+    });
+  return _toolDescriptorPromise;
+}
+
+// ---------------------------------------------------------------------------
+// localStorage helpers for disabledTools persistence
+// ---------------------------------------------------------------------------
+
+function localKey(conversationId: string): string {
+  return `askSession.disabledTools.${conversationId}`;
+}
+
+function loadDisabledTools(conversationId: string): string[] {
+  try {
+    const raw = localStorage.getItem(localKey(conversationId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDisabledTools(conversationId: string, tools: string[]): void {
+  try {
+    localStorage.setItem(localKey(conversationId), JSON.stringify(tools));
+  } catch {
+    // quota exceeded or private browsing — silently ignore
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Typewriter helper
@@ -84,6 +139,9 @@ interface UseAskSessionReturn {
   citations: MessageCitations;
   metadata: AskMetadata | null;
   toolCalls: ToolCallEvent[];
+  disabledTools: string[];
+  toggleTool: (name: string) => void;
+  toolDescriptors: ToolDescriptor[];
 }
 
 /**
@@ -106,6 +164,34 @@ export function useAskSession(): UseAskSessionReturn {
   // Typewriter controllers — reset per ask call
   const contentTwRef = useRef<TypewriterController | null>(null);
   const thinkingTwRef = useRef<TypewriterController | null>(null);
+
+  // Tool descriptors — fetched once, cached at module scope
+  const [toolDescriptors, setToolDescriptors] = useState<ToolDescriptor[]>([]);
+  // disabledTools — per-conversation, persisted to localStorage
+  const [disabledTools, setDisabledTools] = useState<string[]>([]);
+
+  // Load tool descriptors on first mount
+  useEffect(() => {
+    fetchToolDescriptors().then(setToolDescriptors);
+  }, []);
+
+  // Load persisted disabledTools when conversationId becomes known
+  useEffect(() => {
+    if (sessionIdRef.current) {
+      setDisabledTools(loadDisabledTools(sessionIdRef.current));
+    }
+  }, [sessionId]);
+
+  const toggleTool = useCallback((name: string) => {
+    const convId = sessionIdRef.current;
+    setDisabledTools((prev) => {
+      const next = prev.includes(name)
+        ? prev.filter((n) => n !== name)
+        : [...prev, name];
+      if (convId) saveDisabledTools(convId, next);
+      return next;
+    });
+  }, []);
 
   // Cancel typewriters on unmount
   useEffect(() => {
@@ -221,6 +307,7 @@ export function useAskSession(): UseAskSessionReturn {
             session_id: sessionIdRef.current,
             mode: options.mode ?? "deep",
             attachments: options.attachments ?? [],
+            disabled_tools: disabledTools,
           }),
           signal: controller.signal,
         });
@@ -407,7 +494,7 @@ export function useAskSession(): UseAskSessionReturn {
         abortRef.current = null;
       }
     },
-    [clearIdleTimeout],
+    [clearIdleTimeout, disabledTools],
   );
 
   const loadSession = useCallback((loaded: Message[], loadedSid: string) => {
@@ -457,5 +544,8 @@ export function useAskSession(): UseAskSessionReturn {
     citations: tailMsg?.citations ?? [],
     metadata: tailMsg?.metadata ?? null,
     toolCalls: tailMsg?.toolCalls ?? [],
+    disabledTools,
+    toggleTool,
+    toolDescriptors,
   };
 }

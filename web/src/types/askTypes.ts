@@ -104,6 +104,15 @@ export interface CitationEnvelope {
 /** Shape `message.citations` can take in memory after normalization. */
 export type MessageCitations = Citation[] | CitationEnvelope;
 
+export interface AskRequest {
+  question: string;
+  channel_id?: string;
+  session_id?: string;
+  mode?: AnswerMode;
+  attachments?: AttachmentFile[];
+  disabled_tools?: string[];
+}
+
 export interface AskMetadata {
   route: string;
   confidence: number;

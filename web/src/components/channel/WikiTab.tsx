@@ -559,6 +559,7 @@ export function WikiTab() {
             channelId={channelId!}
             primaryLanguage={primaryLanguage}
             defaultTargetLanguage={langConfig.default_target_language}
+            supportedLanguages={langConfig.supported_languages}
             currentTargetLang={targetLang}
             onChange={handleLangChange}
           />

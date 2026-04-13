@@ -2,6 +2,7 @@ interface WikiLanguageSelectProps {
   channelId: string;
   primaryLanguage: string | null | undefined;
   defaultTargetLanguage: string;
+  supportedLanguages: string[];
   currentTargetLang: string;
   onChange: (lang: string) => void;
 }
@@ -10,11 +11,19 @@ export function WikiLanguageSelect({
   channelId,
   primaryLanguage,
   defaultTargetLanguage,
+  supportedLanguages,
   currentTargetLang,
   onChange,
 }: WikiLanguageSelectProps) {
+  // Expose every supported language so users can render wikis in any
+  // configured target (e.g. zh-HK for Cantonese) regardless of the
+  // channel's detected primary language.
   const options = Array.from(
-    new Set([primaryLanguage, defaultTargetLanguage].filter(Boolean) as string[])
+    new Set(
+      [primaryLanguage, defaultTargetLanguage, ...supportedLanguages].filter(
+        Boolean,
+      ) as string[],
+    ),
   );
 
   if (options.length <= 1) return null;

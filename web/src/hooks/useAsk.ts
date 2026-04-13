@@ -122,7 +122,7 @@ export function useAsk(channelId: string): UseAskReturn {
   }, [clearIdleTimeout]);
 
   const ask = useCallback(
-    async (question: string, options?: { mode?: AnswerMode; attachments?: AttachmentFile[] }) => {
+    async (question: string, options?: { mode?: AnswerMode; attachments?: AttachmentFile[]; disabled_tools?: string[] }) => {
       if (abortRef.current) {
         abortRef.current.abort();
       }
@@ -191,6 +191,7 @@ export function useAsk(channelId: string): UseAskReturn {
             session_id: sessionIdRef.current,
             mode: options?.mode ?? "deep",
             attachments: options?.attachments ?? [],
+            disabled_tools: options?.disabled_tools ?? [],
           }),
           signal: controller.signal,
         });
