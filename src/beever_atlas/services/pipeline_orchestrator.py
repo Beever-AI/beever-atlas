@@ -13,6 +13,20 @@ logger = logging.getLogger(__name__)
 
 # Track running consolidation tasks to avoid duplicates
 _consolidation_tasks: dict[str, asyncio.Task] = {}
+# Per-channel locks guarding the read+set of ``_consolidation_tasks``.
+# Without these, two near-simultaneous ``on_ingestion_complete`` calls for
+# the same channel can both see "no task running" and spawn duplicates.
+_consolidation_locks: dict[str, asyncio.Lock] = {}
+_consolidation_locks_guard = asyncio.Lock()
+
+
+async def _get_lock(channel_id: str) -> asyncio.Lock:
+    async with _consolidation_locks_guard:
+        lock = _consolidation_locks.get(channel_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _consolidation_locks[channel_id] = lock
+        return lock
 
 
 async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
@@ -29,7 +43,7 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
                 "Orchestrator: triggering consolidation (after_every_sync) channel=%s facts=%d",
                 channel_id, facts_created,
             )
-            _spawn_consolidation(channel_id)
+            await _spawn_consolidation(channel_id)
 
         case ConsolidationStrategy.AFTER_N_SYNCS:
             stores = get_stores()
@@ -40,7 +54,7 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
                 channel_id, count, threshold,
             )
             if count >= threshold:
-                _spawn_consolidation(channel_id)
+                await _spawn_consolidation(channel_id)
                 # Counter reset happens in _run_consolidation after completion
 
         case ConsolidationStrategy.SCHEDULED:
@@ -62,18 +76,25 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
             )
 
 
-def _spawn_consolidation(channel_id: str) -> None:
-    """Spawn a consolidation task if one isn't already running."""
-    existing = _consolidation_tasks.get(channel_id)
-    if existing and not existing.done():
-        logger.info(
-            "Orchestrator: consolidation already running for channel=%s, skipping",
-            channel_id,
-        )
-        return
+async def _spawn_consolidation(channel_id: str) -> None:
+    """Spawn a consolidation task if one isn't already running.
 
-    task = asyncio.create_task(_run_consolidation(channel_id))
-    _consolidation_tasks[channel_id] = task
+    The read-then-set of ``_consolidation_tasks[channel_id]`` is serialized
+    via a per-channel ``asyncio.Lock`` so concurrent callers can't both
+    observe "no running task" and each create one.
+    """
+    lock = await _get_lock(channel_id)
+    async with lock:
+        existing = _consolidation_tasks.get(channel_id)
+        if existing and not existing.done():
+            logger.info(
+                "Orchestrator: consolidation already running for channel=%s, skipping",
+                channel_id,
+            )
+            return
+
+        task = asyncio.create_task(_run_consolidation(channel_id))
+        _consolidation_tasks[channel_id] = task
 
 
 async def _run_consolidation(channel_id: str) -> None:
@@ -137,7 +158,7 @@ async def _run_consolidation(channel_id: str) -> None:
 async def trigger_consolidation(channel_id: str) -> None:
     """Manually trigger consolidation regardless of policy. Used by API."""
     logger.info("Orchestrator: manual consolidation triggered channel=%s", channel_id)
-    _spawn_consolidation(channel_id)
+    await _spawn_consolidation(channel_id)
 
 
 def get_active_consolidation_tasks() -> dict[str, asyncio.Task]:

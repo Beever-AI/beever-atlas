@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import DESCENDING
+from pymongo import DESCENDING, ReturnDocument
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ class WikiVersionStore:
         self._db_name = db_name
         self._db: Any = None
         self._collection: Any = None
+        self._counters: Any = None
 
     async def _ensure_db(self) -> None:
         """Resolve the shared Motor client (singleton from cache module).
@@ -29,13 +30,16 @@ class WikiVersionStore:
         Short-circuits if _collection has already been set (e.g. by test
         fixtures that inject a mock collection directly).
         """
-        if self._collection is not None:
+        if self._collection is not None and self._counters is not None:
             return
         # Reuse the same singleton registry as WikiCache to avoid a second pool.
         from beever_atlas.wiki.cache import _get_motor_client
         client = await _get_motor_client(self._mongodb_uri)
         self._db = client[self._db_name]
-        self._collection = self._db["wiki_versions"]
+        if self._collection is None:
+            self._collection = self._db["wiki_versions"]
+        if self._counters is None:
+            self._counters = self._db["wiki_version_counters"]
 
     async def ensure_indexes(self) -> None:
         await self._ensure_db()
@@ -149,16 +153,42 @@ class WikiVersionStore:
         return await self._collection.count_documents({"channel_id": channel_id})
 
     async def _next_version_number(self, channel_id: str) -> int:
-        """Get the next version number for a channel."""
+        """Allocate the next version number atomically.
+
+        Uses MongoDB ``find_one_and_update`` with ``$inc`` on a dedicated
+        ``wiki_version_counters`` collection so concurrent ``archive()``
+        calls for the same channel cannot collide on ``version_number``.
+
+        Backfill note: channels that existed before this counter was
+        introduced have no counter document. On the first call the upsert
+        seeds ``seq=1`` — which is incorrect if previous versions already
+        occupy 1..N in ``wiki_versions``. We therefore reconcile the
+        counter to ``max(existing version_number)`` on first use and only
+        then apply the ``$inc``.
+        """
         # _ensure_db() guaranteed by the public callers (archive, cleanup).
-        latest = await self._collection.find_one(
-            {"channel_id": channel_id},
-            {"version_number": 1},
-            sort=[("version_number", DESCENDING)],
+        existing = await self._counters.find_one({"_id": channel_id})
+        if existing is None:
+            latest = await self._collection.find_one(
+                {"channel_id": channel_id},
+                {"version_number": 1},
+                sort=[("version_number", DESCENDING)],
+            )
+            seed = latest["version_number"] if latest else 0
+            # Upsert the seed value using $max so parallel backfillers
+            # converge on the highest observed version rather than racing.
+            await self._counters.update_one(
+                {"_id": channel_id},
+                {"$max": {"seq": seed}},
+                upsert=True,
+            )
+        doc = await self._counters.find_one_and_update(
+            {"_id": channel_id},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
         )
-        if latest is None:
-            return 1
-        return latest["version_number"] + 1
+        return doc["seq"]
 
     def close(self) -> None:
         # The Motor client is the module-level singleton from cache.py; do not
