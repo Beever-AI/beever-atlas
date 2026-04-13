@@ -5,7 +5,21 @@ interface MermaidBlockProps {
   code: string;
 }
 
-let mermaidInitialized = false;
+let mermaidInitPromise: Promise<void> | null = null;
+
+async function ensureMermaidInit() {
+  if (!mermaidInitPromise) {
+    mermaidInitPromise = (async () => {
+      const mermaid = (await import("mermaid")).default;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "default",
+        securityLevel: "strict",
+      });
+    })();
+  }
+  return mermaidInitPromise;
+}
 
 /**
  * Lazy-loads mermaid and renders a diagram SVG.
@@ -15,8 +29,10 @@ let mermaidInitialized = false;
  */
 export function MermaidBlock({ code }: MermaidBlockProps) {
   const reactId = useId();
-  // mermaid requires IDs that start with a letter and contain no colons
-  const diagramId = `mermaid-${reactId.replace(/[^a-zA-Z0-9-]/g, "")}`;
+  // Mermaid IDs must start with a letter and contain only alphanumerics.
+  // Strip everything else and prefix with "m" so a leading digit or dash
+  // in the React-generated id can never produce an invalid selector.
+  const diagramId = `m${reactId.replace(/[^a-zA-Z0-9]/g, "")}`;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,16 +43,8 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
 
     async function render() {
       try {
+        await ensureMermaidInit();
         const mermaid = (await import("mermaid")).default;
-
-        if (!mermaidInitialized) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: "default",
-            securityLevel: "strict" as const,
-          });
-          mermaidInitialized = true;
-        }
 
         // Validate first so bad syntax throws instead of producing an
         // error-SVG that slips past the catch branch. Mermaid v10+ may

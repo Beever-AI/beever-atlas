@@ -45,6 +45,7 @@ class AtomicFact(BaseModel):
     fact_type: str = ""  # "decision", "opinion", "observation", "action_item", "question"
     thread_context_summary: str = ""  # Brief summary of thread deliberation
     source_lang: str = "en"  # BCP-47 tag of the source message (e.g. "en", "zh-HK", "ja")
+    derived_from: str = ""  # Provenance marker, e.g. "heuristic_word_overlap" for low-confidence attribution
 
     @staticmethod
     def deterministic_id(platform: str, channel_id: str, message_ts: str, fact_index: int = 0) -> str:

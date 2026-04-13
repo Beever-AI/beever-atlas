@@ -12,6 +12,19 @@ function sanitizeSvg(svg: string): string {
   });
 }
 
+let mermaidInitPromise: Promise<void> | null = null;
+let mermaidInitTheme: "light" | "dark" | null = null;
+
+function ensureMermaidInit(theme: "light" | "dark", config: Parameters<typeof mermaid.initialize>[0]) {
+  if (!mermaidInitPromise || mermaidInitTheme !== theme) {
+    mermaidInitTheme = theme;
+    mermaidInitPromise = (async () => {
+      mermaid.initialize(config);
+    })();
+  }
+  return mermaidInitPromise;
+}
+
 function mermaidThemeConfig(theme: "light" | "dark") {
   if (theme === "dark") {
     return {
@@ -113,22 +126,26 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
 
   useEffect(() => {
     const render = async () => {
-      mermaid.initialize(mermaidThemeConfig(resolvedTheme === "dark" ? "dark" : "light"));
+      const theme = resolvedTheme === "dark" ? "dark" : "light";
+      await ensureMermaidInit(theme, mermaidThemeConfig(theme));
       const sanitized = sanitizeMermaid(chart);
       // Mermaid v10+ resolves the promise even on parse errors, but returns a
       // diagnostic SVG containing the error text. Detect these cases explicitly.
       const isErrorSvg = (svg: string) =>
         svg.includes("Syntax error in text") || svg.includes("class=\"error-icon\"");
+      // Mermaid IDs must start with a letter; Math.random().toString(36).slice(2)
+      // can begin with a digit, which breaks selector lookups inside mermaid.
+      const newId = () => `m${Math.random().toString(36).slice(2).replace(/[^a-zA-Z0-9]/g, "")}`;
 
       try {
-        const id = `mermaid-${Math.random().toString(36).slice(2)}`;
+        const id = newId();
         const result = await mermaid.render(id, sanitized);
         if (isErrorSvg(result.svg)) throw new Error("mermaid returned error svg");
         setSvg(result.svg);
         setError(null);
       } catch {
         try {
-          const id2 = `mermaid-${Math.random().toString(36).slice(2)}`;
+          const id2 = newId();
           const result2 = await mermaid.render(id2, simplifyMermaid(sanitized));
           if (isErrorSvg(result2.svg)) throw new Error("mermaid returned error svg after simplify");
           setSvg(result2.svg);
