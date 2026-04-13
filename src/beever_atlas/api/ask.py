@@ -42,6 +42,10 @@ class AskRequest(BaseModel):
     session_id: str | None = Field(default=None, description="Resume an existing session")
     mode: str = Field(default="deep", pattern="^(quick|deep|summarize)$")
     attachments: list[dict] = Field(default_factory=list, description="Attached file content")
+    disabled_tools: list[str] = Field(
+        default_factory=list,
+        description="Per-request tool names to disable. Unknown names are ignored with a warning.",
+    )
 
 
 class FeedbackRequest(BaseModel):
@@ -164,10 +168,42 @@ async def _run_agent_stream(
     mode: str = "deep",
     attachments: list[dict] | None = None,
     use_v2_schema: bool = False,
+    disabled_tools: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the ADK agent and yield SSE events including tool call progress."""
-    from beever_atlas.agents.query.qa_agent import get_agent_for_mode
-    agent = get_agent_for_mode(mode)
+    from beever_atlas.agents.query.qa_agent import (
+        create_qa_agent,
+        get_agent_for_mode,
+        _tool_name,
+    )
+    from beever_atlas.agents.tools import QA_TOOLS, QA_TOOL_DESCRIPTORS
+
+    disabled_tools = disabled_tools or []
+    if disabled_tools:
+        known_names = {d["name"] for d in QA_TOOL_DESCRIPTORS}
+        effective_disabled: list[str] = []
+        for name in disabled_tools:
+            if name in known_names:
+                effective_disabled.append(name)
+            else:
+                logger.warning(
+                    "Ignoring unknown tool name in disabled_tools: %r", name
+                )
+        if effective_disabled:
+            # Build a NEW list — never mutate QA_TOOLS.
+            filtered = [t for t in QA_TOOLS if _tool_name(t) not in effective_disabled]
+            refusal_clause = (
+                "\n\nThe following tools are disabled for this request: "
+                f"{', '.join(effective_disabled)}. If answering the question "
+                "requires any of them, politely refuse and name the disabled tool(s)."
+            )
+            agent = create_qa_agent(
+                mode=mode, tools=filtered, extra_instruction=refusal_clause
+            )
+        else:
+            agent = get_agent_for_mode(mode)
+    else:
+        agent = get_agent_for_mode(mode)
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
 
@@ -844,6 +880,7 @@ async def ask_channel(
             request,
             mode=body.mode,
             attachments=body.attachments,
+            disabled_tools=body.disabled_tools,
         ),
         media_type="text/event-stream",
         headers={
@@ -1034,6 +1071,10 @@ class AskV2Request(BaseModel):
     session_id: str | None = Field(default=None, description="Resume an existing session")
     mode: str = Field(default="deep", pattern="^(quick|deep|summarize)$")
     attachments: list[dict] = Field(default_factory=list)
+    disabled_tools: list[str] = Field(
+        default_factory=list,
+        description="Per-request tool names to disable. Unknown names are ignored with a warning.",
+    )
 
 
 class FeedbackV2Request(BaseModel):
@@ -1068,6 +1109,7 @@ async def ask_v2(
             mode=body.mode,
             attachments=body.attachments,
             use_v2_schema=True,
+            disabled_tools=body.disabled_tools,
         ),
         media_type="text/event-stream",
         headers={
@@ -1075,6 +1117,21 @@ async def ask_v2(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.get("/api/ask/tools")
+async def get_ask_tools() -> "StreamingResponse":
+    """Return the QA tool registry for the tools panel UI.
+
+    Response is cacheable for 5 minutes — the registry is static per deploy.
+    """
+    from fastapi.responses import JSONResponse
+    from beever_atlas.agents.tools import QA_TOOL_DESCRIPTORS
+
+    return JSONResponse(
+        content={"tools": list(QA_TOOL_DESCRIPTORS)},
+        headers={"Cache-Control": "public, max-age=300"},
     )
 
 

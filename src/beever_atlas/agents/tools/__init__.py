@@ -4,6 +4,8 @@ Each function has the correct signature and docstring for its target store metho
 In M1, all raise NotImplementedError — implementations arrive in M3/M4.
 """
 
+from typing import Literal, TypedDict
+
 # --- QA Agent tools (implemented) ---
 from beever_atlas.agents.tools.wiki_tools import get_wiki_page, get_topic_overview
 from beever_atlas.agents.tools.memory_tools import (
@@ -31,6 +33,73 @@ QA_TOOLS = [
     trace_decision_history,
     find_experts,
     search_external_knowledge,
+]
+
+
+ToolDescriptor = TypedDict(
+    "ToolDescriptor",
+    {
+        "name": str,
+        "category": Literal["wiki", "memory", "graph", "external"],
+        "description": str,
+    },
+)
+
+
+# UI-facing registry: one entry per tool in QA_TOOLS (order preserved).
+# Descriptions are short (one-line) paraphrases of the tool docstrings —
+# suitable for rendering in the /api/ask/tools panel.
+QA_TOOL_DESCRIPTORS: list[ToolDescriptor] = [
+    {
+        "name": "get_wiki_page",
+        "category": "wiki",
+        "description": "Retrieve a pre-compiled wiki page from the channel cache.",
+    },
+    {
+        "name": "get_topic_overview",
+        "category": "wiki",
+        "description": "Retrieve a channel-level summary or a topic cluster summary.",
+    },
+    {
+        "name": "search_qa_history",
+        "category": "memory",
+        "description": "Search past Q&A pairs for similar questions in this channel.",
+    },
+    {
+        "name": "search_channel_facts",
+        "category": "memory",
+        "description": "BM25 keyword search over atomic facts in the channel.",
+    },
+    {
+        "name": "search_media_references",
+        "category": "memory",
+        "description": "Search for images, PDFs, and links shared in the channel.",
+    },
+    {
+        "name": "get_recent_activity",
+        "category": "memory",
+        "description": "Return recent facts from the channel, optionally filtered by topic.",
+    },
+    {
+        "name": "search_relationships",
+        "category": "graph",
+        "description": "Traverse the knowledge graph for relationships between entities.",
+    },
+    {
+        "name": "trace_decision_history",
+        "category": "graph",
+        "description": "Trace temporal evolution of decisions about a topic.",
+    },
+    {
+        "name": "find_experts",
+        "category": "graph",
+        "description": "Find top contributors for a topic by expertise ranking.",
+    },
+    {
+        "name": "search_external_knowledge",
+        "category": "external",
+        "description": "Search external web knowledge via the Tavily API.",
+    },
 ]
 
 

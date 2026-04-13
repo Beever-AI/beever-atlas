@@ -119,11 +119,21 @@ def _maybe_add_follow_ups_tool(tools_list: list, include_follow_ups: bool) -> li
     return [*tools_list, suggest_follow_ups]
 
 
-def create_qa_agent(mode: str = "deep") -> LlmAgent:
+def create_qa_agent(
+    mode: str = "deep",
+    tools: list | None = None,
+    extra_instruction: str = "",
+) -> LlmAgent:
     """Create a QA LlmAgent for the specified answer mode.
 
     Args:
         mode: "quick", "deep", or "summarize"
+        tools: Optional override for `QA_TOOLS`. When provided, mode-specific
+            tool subsets are filtered against this list instead of the global
+            registry. `QA_TOOLS` is never mutated.
+        extra_instruction: Optional trailing text appended to the mode's
+            system prompt (e.g. per-request refusal clause for disabled
+            tools).
 
     Returns:
         LlmAgent configured for the specified mode.
@@ -135,10 +145,13 @@ def create_qa_agent(mode: str = "deep") -> LlmAgent:
     model = provider.resolve_model("qa_agent")
     registry = get_mcp_registry()
 
+    base_tools = tools if tools is not None else QA_TOOLS
+
     if mode == "quick":
         # Quick: 2 tools, no thinking, concise prompt
-        tools_list = [t for t in QA_TOOLS if getattr(t, '__name__', '') in _WIKI_TOOLS_NAMES]
+        tools_list = [t for t in base_tools if getattr(t, '__name__', '') in _WIKI_TOOLS_NAMES]
         prompt = build_qa_system_prompt(max_tool_calls=2, include_follow_ups=False, mode="quick") + QA_QUICK_SUFFIX
+        prompt = prompt + extra_instruction
         agent_tools = _maybe_wrap_with_skills(tools_list)
         agent = LlmAgent(
             name="qa_agent_quick",
@@ -148,10 +161,11 @@ def create_qa_agent(mode: str = "deep") -> LlmAgent:
         )
     elif mode == "summarize":
         # Summarize: 4 tools, thinking, structured output
-        tools_list = [t for t in QA_TOOLS if getattr(t, '__name__', '') in _SUMMARIZE_TOOLS_NAMES]
+        tools_list = [t for t in base_tools if getattr(t, '__name__', '') in _SUMMARIZE_TOOLS_NAMES]
         tools_list = [*tools_list, *registry.tools]
         tools_list = _maybe_add_follow_ups_tool(tools_list, include_follow_ups=True)
         prompt = build_qa_system_prompt(max_tool_calls=4, include_follow_ups=True, mode="summarize") + QA_SUMMARIZE_SUFFIX
+        prompt = prompt + extra_instruction
         planner = _create_thinking_planner()
         agent_tools = _maybe_wrap_with_skills(tools_list)
         agent = LlmAgent(
@@ -163,9 +177,10 @@ def create_qa_agent(mode: str = "deep") -> LlmAgent:
         )
     else:
         # Deep (default): all tools, thinking, full pipeline
-        all_tools = [*QA_TOOLS, *registry.tools]
+        all_tools = [*base_tools, *registry.tools]
         all_tools = _maybe_add_follow_ups_tool(all_tools, include_follow_ups=True)
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True)
+        prompt = prompt + extra_instruction
         planner = _create_thinking_planner()
         agent_tools = _maybe_wrap_with_skills(all_tools)
         agent = LlmAgent(

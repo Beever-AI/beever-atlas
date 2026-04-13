@@ -15,6 +15,7 @@ import { InlineMedia } from "./InlineMedia";
 import { AnswerActions } from "./AnswerActions";
 import { FollowUpSuggestions } from "./FollowUpSuggestions";
 import { selectCitations, stripSourcesBlock } from "@/lib/citations";
+import { MermaidBlock } from "./MermaidBlock";
 
 interface AssistantMessageProps {
   message: Message;
@@ -174,6 +175,9 @@ function AssistantMessageInner({
               ul: ({ children }) => <ul className="mb-3 space-y-1 list-disc list-inside">{children}</ul>,
               ol: ({ children }) => <ol className="mb-3 space-y-1 list-decimal list-inside">{children}</ol>,
               code: ({ className, children, ...props }) => {
+                if (className === "language-mermaid") {
+                  return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
+                }
                 const isInline = !className;
                 return isInline ? (
                   <code className="px-1.5 py-0.5 bg-muted rounded text-primary text-xs" {...props}>{children}</code>
