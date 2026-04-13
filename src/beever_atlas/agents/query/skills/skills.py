@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from google.adk.skills.models import Frontmatter, Skill
+from google.adk.skills.models import Frontmatter, Resources, Skill
+
+from ._loader import load_resource
 
 
 # Kebab-case skill names (each ≤ 64 chars, matches ^[a-z][a-z0-9-]*$).
@@ -34,7 +36,9 @@ def _skill(
     description: str,
     allowed_tools: str | None,
     instructions: str,
+    resource_files: tuple[str, ...] = (),
 ) -> Skill:
+    refs = {fn: load_resource(fn) for fn in resource_files}
     return Skill(
         frontmatter=Frontmatter(
             name=name,
@@ -42,6 +46,7 @@ def _skill(
             allowed_tools=allowed_tools,
         ),
         instructions=instructions,
+        resources=Resources(references=refs) if refs else Resources(),
     )
 
 
@@ -55,8 +60,9 @@ def _build_skills() -> list[Skill]:
                 "and when, with one pinned step per event and a final outcome arrow."
             ),
             allowed_tools="trace_decision_history search_channel_facts",
+            resource_files=("timeline_template.md",),
             instructions=(
-                "Use when the user asks 'why decide X', 'how did Y evolve', "
+                "Use when the user asks 'why decide X', 'how did Y evolve',"
                 "'decision history of Z', or any question about how a team arrived "
                 "at a choice.\n"
                 "1. Call `trace_decision_history(topic=...)` for the chronological spine.\n"
@@ -75,6 +81,7 @@ def _build_skills() -> list[Skill]:
                 "evidence bullets from channel facts."
             ),
             allowed_tools="find_experts search_channel_facts",
+            resource_files=("profile_template.md",),
             instructions=(
                 "Use when the user asks 'who works on X', 'expert in Y', "
                 "'who is @handle', or any person-shaped question.\n"
@@ -95,6 +102,7 @@ def _build_skills() -> list[Skill]:
                 "every cell cited, plus a short synthesis summary."
             ),
             allowed_tools="search_channel_facts search_external_knowledge",
+            resource_files=("comparison_table_template.md",),
             instructions=(
                 "Use when the user asks 'A vs B', 'differences between', 'pros and cons', "
                 "or any question comparing 2+ entities across 2+ attributes.\n"
@@ -114,6 +122,7 @@ def _build_skills() -> list[Skill]:
                 "clarifies the answer better than prose."
             ),
             allowed_tools=None,
+            resource_files=("mermaid_cheatsheet.md",),
             instructions=(
                 "Use when the answer involves a process flow, time-ordered sequence, or "
                 "entity-relationship structure that is clearer as a diagram than prose.\n"
@@ -134,6 +143,7 @@ def _build_skills() -> list[Skill]:
                 "inline thumbnails, captions, and citations."
             ),
             allowed_tools="search_media_references",
+            resource_files=("gallery_template.md",),
             instructions=(
                 "Use when the user asks about images, screenshots, diagrams, files, or any "
                 "attached media (e.g. 'show me screenshots of X', 'files about Y').\n"
@@ -152,6 +162,7 @@ def _build_skills() -> list[Skill]:
                 "overview and recent activity tools."
             ),
             allowed_tools="get_topic_overview get_recent_activity",
+            resource_files=("digest_template.md",),
             instructions=(
                 "Use when the user asks 'summarize this channel', 'what's happening', "
                 "'give me an overview', or any channel-wide digest request.\n"
@@ -171,6 +182,7 @@ def _build_skills() -> list[Skill]:
                 "External context / Synthesis)."
             ),
             allowed_tools="search_channel_facts search_external_knowledge",
+            resource_files=("braid_pattern.md",),
             instructions=(
                 "Use when answering benefits from BOTH internal team knowledge AND external "
                 "context (industry benchmarks, public docs, best practices).\n"
@@ -190,6 +202,7 @@ def _build_skills() -> list[Skill]:
                 "and emits 2-3 context-aware follow-up strings via suggest_follow_ups."
             ),
             allowed_tools="suggest_follow_ups",
+            resource_files=("followup_templates_by_type.md",),
             instructions=(
                 "Use at the end of ANY response that should offer follow-up questions.\n"
                 "1. Classify the just-answered question as one of: people / decision / "
