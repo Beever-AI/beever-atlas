@@ -89,11 +89,22 @@ function parseQuery(url: string): URLSearchParams {
   return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : "");
 }
 
+/**
+ * Shape of a Slack/Discord/etc. platform SDK error. The SDK wraps the raw
+ * HTTP payload under `data` and exposes a semantic `code` at the top level.
+ * All fields are optional because upstream SDKs disagree on what they set.
+ */
+interface PlatformErrorShape {
+  code?: string;
+  data?: { error?: string };
+}
+
 /** Classify a platform SDK error into an appropriate HTTP status code. */
-function classifyPlatformError(err: unknown): { status: number; code: string } {
+export function classifyPlatformError(err: unknown): { status: number; code: string } {
   const msg = String(err).toLowerCase();
-  const errData = (err as any)?.data?.error || "";
-  const errCode = (err as any)?.code || "";
+  const shape = (err ?? {}) as PlatformErrorShape;
+  const errData = shape.data?.error ?? "";
+  const errCode = shape.code ?? "";
 
   // Not-found errors (Slack: channel_not_found, file_not_found; Discord: 404; generic)
   if (
@@ -115,7 +126,7 @@ function classifyPlatformError(err: unknown): { status: number; code: string } {
     errData === "token_revoked" ||
     errData === "missing_scope" ||
     errData === "not_allowed_token_type" ||
-    errCode === "slack_webapi_platform_error" && errData === "not_in_channel" ||
+    (errCode === "slack_webapi_platform_error" && errData === "not_in_channel") ||
     msg.includes("forbidden") ||
     msg.includes(": 403")
   ) {
