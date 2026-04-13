@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from beever_atlas.agents.tools._citation_decorator import cite_tool_output
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MODES = frozenset({"general", "documentation", "best_practices"})
 
 
+@cite_tool_output(kind="web_result")
 async def search_external_knowledge(query: str, mode: str = "general") -> dict:
     """Search external web knowledge via Tavily API.
 
@@ -57,6 +60,9 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "content": item.get("content", "")[:500],
+                # Expose a `text` field so the citation decorator can
+                # pick it up as the source excerpt.
+                "text": item.get("content", "")[:500],
                 "score": item.get("score", 0.0),
             }
             for item in response.get("results", [])

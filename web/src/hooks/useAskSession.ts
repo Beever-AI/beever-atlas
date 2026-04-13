@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { Message, Citation, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile } from "../types/askTypes";
+import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile } from "../types/askTypes";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -21,7 +21,7 @@ interface UseAskSessionReturn {
   sessionId: string | null;
   response: string;
   thinking: string[];
-  citations: Citation[];
+  citations: MessageCitations;
   metadata: AskMetadata | null;
   toolCalls: ToolCallEvent[];
 }
@@ -191,7 +191,15 @@ export function useAskSession(): UseAskSessionReturn {
                   case "citations":
                     updateAssistant((msg) => ({
                       ...msg,
-                      citations: data.items || [],
+                      // Phase 2: preserve structured envelope when present;
+                      // fall back to the legacy items list for flag-off path.
+                      citations: Array.isArray(data.sources)
+                        ? {
+                            items: data.items || [],
+                            sources: data.sources,
+                            refs: data.refs || [],
+                          }
+                        : data.items || [],
                     }));
                     break;
                   case "metadata":

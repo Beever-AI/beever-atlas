@@ -21,6 +21,7 @@ interface WikiLayoutProps {
   viewingVersionNumber?: number | null;
   onSelectVersion?: (versionNumber: number) => void;
   onBackToCurrent?: () => void;
+  headerExtra?: ReactNode;
 }
 
 const MIN_WIDTH = 180;
@@ -234,6 +235,7 @@ export function WikiLayout({
   viewingVersionNumber = null,
   onSelectVersion,
   onBackToCurrent,
+  headerExtra,
 }: WikiLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -276,7 +278,10 @@ export function WikiLayout({
         style={{ width: sidebarWidth }}
       >
         <div className="p-4 pb-2 shrink-0">
-          <h3 className="text-sm font-semibold text-foreground truncate">Wiki</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-foreground truncate">Wiki</h3>
+            {headerExtra}
+          </div>
           <FreshnessBadge
             isStale={structure.is_stale}
             generatedAt={structure.generated_at}

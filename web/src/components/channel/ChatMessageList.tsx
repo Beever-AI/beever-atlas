@@ -117,7 +117,7 @@ export function ChatMessageList({
         onScroll={handleScroll}
         className="h-full overflow-y-auto px-4 md:px-8 py-6"
       >
-        <div className="max-w-3xl mx-auto w-full space-y-6">
+        <div className="max-w-3xl mx-auto w-full flex flex-col gap-8">
           {messages.map((msg) =>
             msg.role === "user" ? (
               <UserMessage

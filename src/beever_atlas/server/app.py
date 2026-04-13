@@ -27,6 +27,7 @@ from beever_atlas.api.search import router as search_router
 from beever_atlas.api.stats import router as stats_router
 from beever_atlas.api.topics import router as topics_router
 from beever_atlas.api.wiki import router as wiki_router
+from beever_atlas.api.config import router as config_router
 from beever_atlas.api.policies import router as policies_router
 from beever_atlas.api.models import router as models_router
 from beever_atlas.api.dev import router as dev_router
@@ -176,6 +177,7 @@ app.include_router(policies_router)
 app.include_router(models_router)
 app.include_router(dev_router)
 app.include_router(wiki_router)
+app.include_router(config_router)
 
 # Mount MCP server — auth inherits from FastAPI middleware (Task 8.6/8.7)
 app.mount("/mcp", mcp_server.http_app(path="/"))

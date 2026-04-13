@@ -65,14 +65,14 @@ class TestModelResolver:
 
 class TestLLMProviderResolve:
     def _make_provider(self, **overrides) -> LLMProvider:
-        defaults = dict(
+        defaults: dict[str, object] = dict(
             google_api_key="test",
             llm_fast_model="gemini-2.5-flash",
             llm_quality_model="gemini-2.5-flash",
             ollama_enabled=False,
         )
         defaults.update(overrides)
-        settings = Settings(**defaults)
+        settings = Settings(**defaults)  # type: ignore[arg-type]
         return LLMProvider(settings)
 
     def test_resolve_from_default_map(self):
@@ -82,7 +82,8 @@ class TestLLMProviderResolve:
         assert result == "gemini-2.5-flash"
 
     def test_resolve_lite_agent_from_default(self):
-        provider = self._make_provider()
+        # An agent not in DEFAULT_AGENT_MODELS falls back to llm_fast_model.
+        provider = self._make_provider(llm_fast_model="gemini-2.5-flash-lite")
         result = provider.resolve_model("classifier")
         assert result == "gemini-2.5-flash-lite"
 
@@ -112,7 +113,8 @@ class TestLLMProviderResolve:
             assert name in all_models
 
     def test_reload_updates_overrides(self):
-        provider = self._make_provider()
+        # Unknown agents fall back to llm_fast_model when no override is set.
+        provider = self._make_provider(llm_fast_model="gemini-2.5-flash-lite")
         provider.reload({"classifier": "gemini-2.5-flash"})
         assert provider.get_model_string("classifier") == "gemini-2.5-flash"
         provider.reload({})

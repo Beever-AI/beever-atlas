@@ -15,6 +15,7 @@ from beever_atlas.models.sync_policy import (
     ResolvedPolicy,
     SyncConfig,
     SyncTriggerMode,
+    WikiConfig,
 )
 
 
@@ -41,6 +42,7 @@ def _make_resolved(strategy: ConsolidationStrategy, after_n: int = 3) -> Resolve
             min_facts_for_clustering=3,
             staleness_refresh_days=7,
         ),
+        wiki=WikiConfig(),
     )
 
 

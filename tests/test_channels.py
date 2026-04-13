@@ -12,7 +12,7 @@ from beever_atlas.server.app import app
 
 
 @pytest.fixture
-async def client():
+async def client(mock_stores):  # noqa: ARG001 — dependency wires the stores
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -20,8 +20,15 @@ async def client():
 
 @pytest.fixture(autouse=True)
 def use_mock_adapter():
+    # Reset the adapter singleton so each test gets a fresh one honoring
+    # ADAPTER_MOCK=true. Without this, the first real test run caches the
+    # bridge adapter and later tests would not see the mock.
+    import beever_atlas.adapters as adapters_mod
+    saved = adapters_mod._adapter
+    adapters_mod._adapter = None
     with patch.dict(os.environ, {"ADAPTER_MOCK": "true"}):
         yield
+    adapters_mod._adapter = saved
 
 
 class TestListChannels:

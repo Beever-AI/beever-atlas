@@ -232,6 +232,26 @@ class MongoDBStore:
         doc.pop("_id", None)
         return ChannelSyncState(**doc)
 
+    async def get_channel_sync_states_batch(
+        self, channel_ids: list[str]
+    ) -> dict[str, ChannelSyncState]:
+        """Return a map of channel_id -> ChannelSyncState using a single $in query."""
+        if not channel_ids:
+            return {}
+        result: dict[str, ChannelSyncState] = {}
+        cursor = self._channel_sync_state.find(
+            {"channel_id": {"$in": list(channel_ids)}}
+        )
+        async for doc in cursor:
+            cid = doc.get("channel_id")
+            doc.pop("_id", None)
+            if cid:
+                try:
+                    result[cid] = ChannelSyncState(**doc)
+                except Exception:  # noqa: BLE001
+                    continue
+        return result
+
     async def update_channel_sync_state(
         self,
         channel_id: str,

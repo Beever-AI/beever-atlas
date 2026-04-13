@@ -27,6 +27,7 @@ dependencies = [
     "fastmcp>=3.2.2",
     "chardet>=5.2.0",
     "python-dateutil>=2.9.0",
+    "langdetect>=1.0.9",
 ]
 
 [project.optional-dependencies]

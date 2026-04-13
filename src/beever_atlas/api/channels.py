@@ -32,8 +32,16 @@ def _detect_platform_from_channel_id(channel_id: str) -> str | None:
 router = APIRouter()
 
 
-def _get_adapter_for_connection(connection_id: str | None = None) -> ChatBridgeAdapter:
-    """Return a connection-scoped adapter if connection_id is given, else the default."""
+def _get_adapter_for_connection(connection_id: str | None = None):
+    """Return a connection-scoped adapter, honoring ADAPTER_MOCK=true.
+
+    In mock mode we always use the singleton MockAdapter regardless of
+    connection_id (mock has no notion of distinct workspaces). This lets
+    integration tests drive the channels API without a real bridge.
+    """
+    import os
+    if os.environ.get("ADAPTER_MOCK", "").lower() in ("true", "1", "yes"):
+        return get_adapter()
     if connection_id:
         return ChatBridgeAdapter(connection_id=connection_id)
     base = get_adapter()
@@ -42,16 +50,29 @@ def _get_adapter_for_connection(connection_id: str | None = None) -> ChatBridgeA
     return ChatBridgeAdapter()
 
 
+def _make_bridge_adapter(connection_id: str):
+    """Construct a per-connection adapter, honoring ADAPTER_MOCK=true.
+
+    Replaces direct `ChatBridgeAdapter(connection_id=...)` calls so that
+    mock mode routes to the MockAdapter singleton uniformly.
+    """
+    import os
+    if os.environ.get("ADAPTER_MOCK", "").lower() in ("true", "1", "yes"):
+        return get_adapter()
+    return ChatBridgeAdapter(connection_id=connection_id)
+
+
 async def _resolve_adapter_for_channel(
     channel_id: str, connection_id: str | None = None
-) -> ChatBridgeAdapter:
+):
     """Resolve the correct adapter for a channel, with multi-workspace fallback.
 
     Tries the explicit connection_id first. If that fails (wrong workspace),
     searches all connections to find the one that owns this channel.
+    Honors ADAPTER_MOCK=true via `_make_bridge_adapter`.
     """
     if connection_id:
-        adapter = ChatBridgeAdapter(connection_id=connection_id)
+        adapter = _make_bridge_adapter(connection_id)
         try:
             await adapter.get_channel_info(channel_id)
             return adapter
@@ -72,7 +93,7 @@ async def _resolve_adapter_for_channel(
     for conn in candidates:
         if conn.id == connection_id:
             continue  # Already tried this one
-        adapter = ChatBridgeAdapter(connection_id=conn.id)
+        adapter = _make_bridge_adapter(conn.id)
         try:
             await adapter.get_channel_info(channel_id)
             return adapter
@@ -93,6 +114,8 @@ class ChannelResponse(BaseModel):
     topic: str | None = None
     purpose: str | None = None
     connection_id: str | None = None
+    primary_language: str | None = None
+    primary_language_confidence: float | None = None
 
 
 class MessageResponse(BaseModel):
@@ -129,6 +152,41 @@ def _channel_to_response(info: ChannelInfo) -> ChannelResponse:
         purpose=info.purpose,
         connection_id=info.connection_id,
     )
+
+
+async def _enrich_with_language(resp: ChannelResponse) -> ChannelResponse:
+    """Populate primary_language fields from ChannelSyncState; swallow all errors."""
+    try:
+        stores = get_stores()
+        state = await stores.mongodb.get_channel_sync_state(resp.channel_id)
+        if state is not None:
+            lang = state.primary_language
+            conf = state.primary_language_confidence
+            resp = resp.model_copy(update={
+                "primary_language": lang if lang else None,
+                "primary_language_confidence": conf if conf is not None else None,
+            })
+    except Exception:
+        logger.debug(
+            "Failed to enrich channel %s with language metadata",
+            resp.channel_id,
+            exc_info=True,
+        )
+    return resp
+
+
+def _apply_language_state(
+    resp: ChannelResponse, state: Any | None
+) -> ChannelResponse:
+    """In-memory variant of _enrich_with_language using a pre-fetched state."""
+    if state is None:
+        return resp
+    lang = getattr(state, "primary_language", None)
+    conf = getattr(state, "primary_language_confidence", None)
+    return resp.model_copy(update={
+        "primary_language": lang if lang else None,
+        "primary_language_confidence": conf if conf is not None else None,
+    })
 
 
 _PER_CONNECTION_TIMEOUT = 10.0  # seconds — prevent one slow platform from blocking all
@@ -246,7 +304,7 @@ async def _fetch_connection_channels(
                 return [ch for ch in cached_channels if ch.channel_id in selected_set]
             return cached_channels
 
-    adapter = ChatBridgeAdapter(connection_id=conn_id)
+    adapter = _make_bridge_adapter(conn_id)
     try:
         channels = await asyncio.wait_for(
             adapter.list_channels(),
@@ -315,7 +373,17 @@ async def list_channels() -> list[ChannelResponse]:
                 connection_id=None,
             ))
 
-    return [_channel_to_response(ch) for ch in all_channels]
+    responses = [_channel_to_response(ch) for ch in all_channels]
+    # Batch enrich: single $in query instead of N per-channel reads.
+    try:
+        states_map = await stores.mongodb.get_channel_sync_states_batch(
+            [r.channel_id for r in responses]
+        )
+    except Exception:
+        logger.debug("Failed to batch-fetch channel sync states", exc_info=True)
+        states_map = {}
+    responses = [_apply_language_state(r, states_map.get(r.channel_id)) for r in responses]
+    return list(responses)
 
 
 @router.get("/api/channels/{channel_id}", response_model=ChannelResponse)
@@ -331,10 +399,10 @@ async def get_channel(
     route state (and therefore no connection_id) is available.
     """
     if connection_id:
-        adapter = ChatBridgeAdapter(connection_id=connection_id)
+        adapter = _make_bridge_adapter(connection_id)
         try:
             info = await adapter.get_channel_info(channel_id)
-            return _channel_to_response(info)
+            return await _enrich_with_language(_channel_to_response(info))
         except Exception:
             pass  # Fall through to search all connections
         finally:
@@ -360,10 +428,10 @@ async def get_channel(
         candidates = connected
 
     for conn in candidates:
-        adapter = ChatBridgeAdapter(connection_id=conn.id)
+        adapter = _make_bridge_adapter(conn.id)
         try:
             info = await adapter.get_channel_info(channel_id)
-            return _channel_to_response(info)
+            return await _enrich_with_language(_channel_to_response(info))
         except (KeyError, BridgeError):
             continue
         except Exception:
@@ -376,25 +444,25 @@ async def get_channel(
     file_conn = next((c for c in connected if c.platform == "file"), None)
     if file_conn is not None and channel_id in file_conn.selected_channels:
         name = await stores.mongodb.get_channel_display_name(channel_id)
-        return ChannelResponse(
+        return await _enrich_with_language(ChannelResponse(
             channel_id=channel_id,
             name=name or channel_id,
             platform="file",
             is_member=True,
             connection_id=file_conn.id,
-        )
+        ))
 
     synced_ids = await stores.mongodb.list_synced_channel_ids()
     if channel_id in synced_ids:
         name = await stores.mongodb.get_channel_display_name(channel_id)
         platform = _detect_platform_from_channel_id(channel_id) or "discord"
-        return ChannelResponse(
+        return await _enrich_with_language(ChannelResponse(
             channel_id=channel_id,
             name=name or channel_id,
             platform=platform,
             is_member=True,
             connection_id=None,
-        )
+        ))
 
     raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
@@ -479,7 +547,7 @@ async def get_channel_messages(
         pass
     # Fall back to live count from bridge if no sync data
     if total_count is None and hasattr(adapter, "fetch_message_count"):
-        total_count = await adapter.fetch_message_count(channel_id)
+        total_count = await adapter.fetch_message_count(channel_id)  # type: ignore[attr-defined]
     return MessagesListResponse(
         messages=response_messages,
         total_count=total_count,

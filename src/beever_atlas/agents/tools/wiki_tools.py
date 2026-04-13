@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from beever_atlas.agents.tools._citation_decorator import cite_tool_output
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_PAGE_TYPES = frozenset(
@@ -11,6 +13,7 @@ SUPPORTED_PAGE_TYPES = frozenset(
 )
 
 
+@cite_tool_output(kind="wiki_page")
 async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
     """Retrieve a pre-compiled wiki page from MongoDB wiki_cache.
 
@@ -34,10 +37,42 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
         page = await cache.get_page(channel_id, page_type)
         if page is None:
             return None
+        summary_text = page.get("summary", "")
+        content_text = page.get("content", "")
+
+        # Fix: stale "No activity recorded in the last 7 days" sentinel.
+        # When the stored activity page echoes the canned empty message,
+        # attempt a live fallback from get_recent_activity before returning.
+        _STALE_SENTINEL = "No activity recorded in the last 7 days"
+        if page_type == "activity" and _STALE_SENTINEL in (content_text or summary_text or ""):
+            from beever_atlas.agents.tools.memory_tools import get_recent_activity
+
+            fresh_facts = await get_recent_activity(channel_id, days=7, limit=5)
+            if fresh_facts:
+                # Format top-5 facts as a lightweight activity summary.
+                lines = [
+                    f"- [{f.get('timestamp', '')}] {f.get('author', 'unknown')}: {f.get('text', '')}"
+                    for f in fresh_facts[:5]
+                ]
+                fresh_content = "\n".join(lines)
+                return {
+                    "page_type": page_type,
+                    "channel_id": channel_id,
+                    "content": fresh_content,
+                    "summary": f"Recent activity ({len(fresh_facts)} items)",
+                    "text": fresh_content[:400],
+                }
+            # Truly empty channel — return None so the agent doesn't echo the sentinel.
+            return None
+
+        # Expose fields the citation decorator reads: channel_id and a
+        # text excerpt (`text`) it treats as the grounding text.
         return {
             "page_type": page_type,
-            "content": page.get("content", ""),
-            "summary": page.get("summary", ""),
+            "channel_id": channel_id,
+            "content": content_text,
+            "summary": summary_text,
+            "text": summary_text or content_text[:400],
         }
     except Exception:
         logger.exception(
@@ -46,6 +81,7 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
         return None
 
 
+@cite_tool_output(kind="wiki_page")
 async def get_topic_overview(
     channel_id: str, topic_name: str | None = None
 ) -> dict | None:
@@ -71,7 +107,10 @@ async def get_topic_overview(
                 return None
             return {
                 "tier": "summary",
+                "channel_id": channel_id,
+                "page_type": "overview",
                 "summary": summary.text,
+                "text": summary.text,
                 "cluster_count": summary.cluster_count,
                 "fact_count": summary.fact_count,
             }
@@ -90,8 +129,12 @@ async def get_topic_overview(
             return None
         return {
             "tier": "topic",
+            "channel_id": channel_id,
+            "page_type": "topics",
+            "slug": (best.topic_tags[0] if best.topic_tags else None) or topic_name,
             "cluster_id": best.id,
             "summary": best.summary,
+            "text": best.summary,
             "topic_tags": best.topic_tags,
             "member_count": best.member_count,
         }

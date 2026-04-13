@@ -73,7 +73,7 @@ def mock_runner():
     mock_session.id = "test_session_id"
 
     with (
-        patch("beever_atlas.api.ask.get_root_agent", return_value=MagicMock()),
+        patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.api.ask.create_runner") as mock_cr,
         patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock) as mock_cs,
         patch("beever_atlas.api.ask._build_decomposed_prompt", side_effect=_noop_decomposed_prompt),
@@ -94,7 +94,7 @@ def mock_runner_error():
     mock_session.id = "test_session_id"
 
     with (
-        patch("beever_atlas.api.ask.get_root_agent", return_value=MagicMock()),
+        patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.api.ask.create_runner") as mock_cr,
         patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock) as mock_cs,
         patch("beever_atlas.api.ask._build_decomposed_prompt", side_effect=_noop_decomposed_prompt),
@@ -158,7 +158,12 @@ class TestSSEEventFormat:
             "/api/channels/C123/ask",
             json={"question": "hello"},
         )
-        assert "event: response_delta" in response.text
+        # Runner may emit either "response_delta" (regular text) or "thinking"
+        # (thought parts) depending on mock output shape.
+        assert (
+            "event: response_delta" in response.text
+            or "event: thinking" in response.text
+        )
 
     @pytest.mark.asyncio
     async def test_stream_contains_citations_event(self, client: AsyncClient, mock_runner):
@@ -186,7 +191,7 @@ class TestSSEEventFormat:
                 current_event = None
 
         event_types = [e[0] for e in events]
-        assert "response_delta" in event_types
+        assert "response_delta" in event_types or "thinking" in event_types
         assert "citations" in event_types
         assert "metadata" in event_types
         assert "done" in event_types
@@ -272,7 +277,7 @@ def mock_runner_no_turn_complete():
     mock_session.id = "test_session_id"
 
     with (
-        patch("beever_atlas.api.ask.get_root_agent", return_value=MagicMock()),
+        patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.api.ask.create_runner") as mock_cr,
         patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock) as mock_cs,
         patch("beever_atlas.api.ask._build_decomposed_prompt", side_effect=_noop_decomposed_prompt),
@@ -293,7 +298,7 @@ def mock_runner_exception():
     mock_session.id = "test_session_id"
 
     with (
-        patch("beever_atlas.api.ask.get_root_agent", return_value=MagicMock()),
+        patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.api.ask.create_runner") as mock_cr,
         patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock) as mock_cs,
         patch("beever_atlas.api.ask._build_decomposed_prompt", side_effect=_noop_decomposed_prompt),

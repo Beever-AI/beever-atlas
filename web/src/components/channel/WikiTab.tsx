@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { RefreshCw, BookOpen, AlertTriangle, Sparkles, Network, FileText, Loader2, CheckCircle2, Circle, ArrowRight, FolderSync, History as HistoryIcon } from "lucide-react";
 import { useWiki } from "@/hooks/useWiki";
@@ -12,8 +12,15 @@ import { OverviewPage } from "@/components/wiki/OverviewPage";
 import { TopicPage } from "@/components/wiki/TopicPage";
 import { GenericPage } from "@/components/wiki/GenericPage";
 import { FaqPage } from "@/components/wiki/FaqPage";
+import { WikiLanguageSelect } from "@/components/channel/WikiLanguageSelect";
 import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
 import type { WikiPage, WikiPageNode } from "@/lib/types";
+
+interface LanguageConfig {
+  supported_languages: string[];
+  default_target_language: string;
+}
 
 function WikiLoadingSkeleton() {
   return (
@@ -402,7 +409,32 @@ export function WikiTab() {
   const [activePageId, setActivePageId] = useState<string>("overview");
   const [viewingVersionNumber, setViewingVersionNumber] = useState<number | null>(null);
 
-  const { data: wiki, isLoading, error, refetch } = useWiki(channelId);
+  const [langConfig, setLangConfig] = useState<LanguageConfig | null>(null);
+  const [primaryLanguage, setPrimaryLanguage] = useState<string | null>(null);
+  const [targetLang, setTargetLang] = useState<string>(() => {
+    if (!channelId) return "en";
+    return localStorage.getItem(`wiki.targetLang.${channelId}`) ?? "en";
+  });
+
+  // Fetch language config and channel primary_language once on mount
+  useEffect(() => {
+    api.get<LanguageConfig>("/api/config/languages").then((cfg) => {
+      setLangConfig(cfg);
+      // Hydrate targetLang from localStorage, fallback to default
+      if (channelId) {
+        const stored = localStorage.getItem(`wiki.targetLang.${channelId}`);
+        setTargetLang(stored ?? cfg.default_target_language);
+      }
+    }).catch(() => {});
+
+    if (channelId) {
+      api.get<{ primary_language?: string | null }>(`/api/channels/${channelId}`)
+        .then((ch) => setPrimaryLanguage(ch.primary_language ?? null))
+        .catch(() => {});
+    }
+  }, [channelId]);
+
+  const { data: wiki, isLoading, error, refetch } = useWiki(channelId, targetLang);
   const { hasMemories, isLoading: isMemoryCountLoading } = useChannelMemoryCount(channelId);
 
   // Version history
@@ -414,14 +446,14 @@ export function WikiTab() {
 
   // Only fetch non-overview pages lazily (when not viewing a version)
   const lazyPageId = viewingVersionNumber === null && activePageId !== "overview" ? activePageId : undefined;
-  const { data: pageData, isLoading: isPageLoading } = useWikiPage(channelId, lazyPageId);
+  const { data: pageData, isLoading: isPageLoading } = useWikiPage(channelId, lazyPageId, targetLang);
 
   const {
     mutate: triggerRefresh,
     isPending: isRefreshing,
     error: refreshError,
     generationStatus,
-  } = useWikiRefresh(channelId);
+  } = useWikiRefresh(channelId, targetLang);
 
   const handleRefresh = useCallback(() => {
     triggerRefresh(() => {
@@ -429,6 +461,10 @@ export function WikiTab() {
       refetchVersions();
     });
   }, [triggerRefresh, refetch, refetchVersions]);
+
+  const handleLangChange = useCallback((lang: string) => {
+    setTargetLang(lang);
+  }, []);
 
   const handleNavigate = useCallback((pageId: string) => {
     setActivePageId(pageId);
@@ -517,6 +553,17 @@ export function WikiTab() {
       viewingVersionNumber={viewingVersionNumber}
       onSelectVersion={handleSelectVersion}
       onBackToCurrent={handleBackToCurrent}
+      headerExtra={
+        langConfig ? (
+          <WikiLanguageSelect
+            channelId={channelId!}
+            primaryLanguage={primaryLanguage}
+            defaultTargetLanguage={langConfig.default_target_language}
+            currentTargetLang={targetLang}
+            onChange={handleLangChange}
+          />
+        ) : undefined
+      }
     >
       <>
         {viewingVersionNumber !== null && versionData && (

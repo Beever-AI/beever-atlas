@@ -15,7 +15,7 @@ export interface WikiGenerationStatus {
   updated_at?: string;
 }
 
-export function useWikiRefresh(channelId: string | undefined) {
+export function useWikiRefresh(channelId: string | undefined, targetLang?: string) {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [generationStatus, setGenerationStatus] =
@@ -33,12 +33,16 @@ export function useWikiRefresh(channelId: string | undefined) {
   // Clean up on unmount
   useEffect(() => stopPolling, [stopPolling]);
 
+  const consecutiveFailuresRef = useRef(0);
+
   const pollStatus = useCallback(async () => {
     if (!channelId) return;
     try {
+      const langParam = targetLang ? `?target_lang=${encodeURIComponent(targetLang)}` : "";
       const status = await api.get<WikiGenerationStatus>(
-        `/api/channels/${channelId}/wiki/status`
+        `/api/channels/${channelId}/wiki/status${langParam}`
       );
+      consecutiveFailuresRef.current = 0;
       setGenerationStatus(status);
 
       if (status.status === "done") {
@@ -52,13 +56,21 @@ export function useWikiRefresh(channelId: string | undefined) {
         setError(new Error(status.error || "Wiki generation failed"));
       }
     } catch {
-      // Silent — keep polling
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current >= 10) {
+        stopPolling();
+        setIsPending(false);
+        setError(new Error("Lost connection to wiki refresh; please retry."));
+      }
     }
-  }, [channelId, stopPolling]);
+  }, [channelId, targetLang, stopPolling]);
 
   const mutate = useCallback(
     async (onDone?: () => void) => {
       if (!channelId) return;
+      // Reset circuit breaker + prior error so a user-initiated retry after
+      // 10 consecutive polling failures doesn't immediately re-trip.
+      consecutiveFailuresRef.current = 0;
       setIsPending(true);
       setError(null);
       setGenerationStatus({
@@ -69,7 +81,8 @@ export function useWikiRefresh(channelId: string | undefined) {
       onDoneRef.current = onDone ?? null;
 
       try {
-        await api.post(`/api/channels/${channelId}/wiki/refresh`);
+        const langParam = targetLang ? `?target_lang=${encodeURIComponent(targetLang)}` : "";
+        await api.post(`/api/channels/${channelId}/wiki/refresh${langParam}`);
         // Start polling for status
         stopPolling();
         pollRef.current = setInterval(pollStatus, 2000);
@@ -81,7 +94,7 @@ export function useWikiRefresh(channelId: string | undefined) {
         setGenerationStatus(null);
       }
     },
-    [channelId, pollStatus, stopPolling]
+    [channelId, targetLang, pollStatus, stopPolling]
   );
 
   return { mutate, isPending, error, generationStatus };

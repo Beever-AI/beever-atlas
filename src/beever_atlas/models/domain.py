@@ -44,6 +44,7 @@ class AtomicFact(BaseModel):
     text_vector: list[float] | None = None
     fact_type: str = ""  # "decision", "opinion", "observation", "action_item", "question"
     thread_context_summary: str = ""  # Brief summary of thread deliberation
+    source_lang: str = "en"  # BCP-47 tag of the source message (e.g. "en", "zh-HK", "ja")
 
     @staticmethod
     def deterministic_id(platform: str, channel_id: str, message_ts: str, fact_index: int = 0) -> str:
@@ -68,6 +69,7 @@ class GraphEntity(BaseModel):
     source_fact_ids: list[str] = Field(default_factory=list)
     source_message_id: str = ""
     message_ts: str = ""
+    source_lang: str = "en"  # BCP-47 tag — language of the messages this entity was observed in
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 

@@ -9,6 +9,7 @@ import { SyncButton } from "@/components/channel/SyncButton";
 import { SyncProgress } from "@/components/channel/SyncProgress";
 import { NextSyncBadge } from "@/components/channel/NextSyncBadge";
 import { useSync } from "@/hooks/useSync";
+import { LanguageBadge } from "@/components/channel/LanguageBadge";
 
 interface ChannelInfo {
   channel_id: string;
@@ -17,6 +18,8 @@ interface ChannelInfo {
   is_member?: boolean;
   member_count?: number | null;
   connection_id?: string | null;
+  primary_language?: string | null;
+  primary_language_confidence?: number | null;
 }
 
 interface ChannelRouteState {
@@ -76,6 +79,8 @@ export function ChannelWorkspace() {
         is_member: routeState.is_member ?? prev?.is_member ?? false,
         member_count: routeState.member_count ?? prev?.member_count ?? null,
         connection_id: routeState.connection_id ?? prev?.connection_id ?? null,
+        primary_language: prev?.primary_language ?? null,
+        primary_language_confidence: prev?.primary_language_confidence ?? null,
       }));
     }
     // Don't send route-state connection_id — it may be stale (wrong workspace).
@@ -171,6 +176,7 @@ export function ChannelWorkspace() {
               activeTab={TAB_LABELS[activeTab]}
               connectionId={channel?.connection_id ?? null}
             />
+            <LanguageBadge lang={channel?.primary_language ?? null} confidence={channel?.primary_language_confidence ?? null} />
             {!isMember && (
               <span className="inline-flex px-2.5 py-0.5 rounded-xl text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
                 Not Connected

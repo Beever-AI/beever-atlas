@@ -1,0 +1,21 @@
+timestamp,author,author_name,content
+2026-04-08T09:12:00Z,U001,阿明,早晨，今日我哋開個短會傾下 Redis 嘅 migration plan
+2026-04-08T09:13:05Z,U002,阿May,好啊，我準備咗份 cache eviction 策略嘅 doc，陣間 share 畀大家睇
+2026-04-08T09:14:20Z,U001,阿明,staging 個 DB migration 仲未 run 完，Bob 可唔可以跟進下？
+2026-04-08T09:15:00Z,U003,Bob,On it — 我用緊 flyway，大概15分鐘就搞掂
+2026-04-08T09:16:45Z,U002,阿May,Ah Ming，你決定咗用 Redis 定 Memcached？上星期你話 pub/sub 同 persistence 重要
+2026-04-08T09:17:10Z,U001,阿明,決定用 Redis，主因係 pub/sub + built-in persistence，Memcached 冇呢兩樣
+2026-04-08T09:18:55Z,U003,Bob,OK，咁我將 session store 改去 Redis。TTL 設一個鐘得唔得？
+2026-04-08T09:19:40Z,U001,阿明,一個鐘 OK，但 admin session 要長啲，set 8 個鐘
+2026-04-08T09:21:00Z,U002,阿May,搞掂，我update 埋 design doc，陣間 push 個 PR 畀你哋 review
+2026-04-08T09:22:30Z,U004,Alvin,嗰邊 /search endpoint 個 latency 200ms 已經 over SLA 150ms，可能要加 cache layer
+2026-04-08T09:23:15Z,U001,阿明,Alvin 講得啱，呢個同 Redis migration 有關，我哋一齊搞
+2026-04-08T09:24:50Z,U002,阿May,我補埋 observation 去 glossary：「p95 latency 超過 150ms 就要 trigger alert」
+2026-04-08T09:26:10Z,U003,Bob,flyway migration 完成，staging 綠燈，production 等 weekend window
+2026-04-08T09:27:30Z,U001,阿明,Good，Friday EOD 前 cut release branch，mobile team 下星期一要 build
+2026-04-08T09:28:45Z,U004,Alvin,我 book 咗 monitoring review meeting 星期二早上10點，入 Grafana dashboard 睇個 trend
+2026-04-08T09:29:55Z,U002,阿May,加埋一 action item：Bob 要 doc 返 Redis failover runbook
+2026-04-08T09:31:00Z,U003,Bob,收到，會喺今星期五前搞掂
+2026-04-08T09:32:20Z,U001,阿明,thanks 大家，散會。會後個 summary 我會 paste 去 #decisions
+2026-04-08T09:33:00Z,U004,Alvin,Ah Ming 記得 flag 埋 compliance team，session TTL 改動要 legal sign-off
+2026-04-08T09:34:15Z,U001,阿明,好，我 email 阿Ken，legal 方面佢負責

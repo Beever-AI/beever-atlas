@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { WikiResponse } from "@/lib/types";
 
-export function useWiki(channelId: string | undefined) {
+export function useWiki(channelId: string | undefined, targetLang?: string) {
   const [data, setData] = useState<WikiResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -18,8 +18,9 @@ export function useWiki(channelId: string | undefined) {
 
     setIsLoading(true);
 
+    const langParam = targetLang ? `?target_lang=${encodeURIComponent(targetLang)}` : "";
     api
-      .get<WikiResponse>(`/api/channels/${channelId}/wiki`)
+      .get<WikiResponse>(`/api/channels/${channelId}/wiki${langParam}`)
       .then((res) => {
         setData(res);
         setError(null);
@@ -33,7 +34,7 @@ export function useWiki(channelId: string | undefined) {
         }
       })
       .finally(() => setIsLoading(false));
-  }, [channelId, fetchKey]);
+  }, [channelId, targetLang, fetchKey]);
 
   return { data, isLoading, error, refetch };
 }

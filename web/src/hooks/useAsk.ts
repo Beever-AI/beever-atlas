@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { Message, Citation, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile } from "../types/askTypes";
+import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile } from "../types/askTypes";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -16,7 +16,7 @@ interface UseAskReturn {
   // Backwards-compat: derived from tail assistant message
   response: string;
   thinking: string[];
-  citations: Citation[];
+  citations: MessageCitations;
   metadata: AskMetadata | null;
   toolCalls: ToolCallEvent[];
 }
@@ -164,7 +164,15 @@ export function useAsk(channelId: string): UseAskReturn {
                   case "citations":
                     updateAssistant((msg) => ({
                       ...msg,
-                      citations: data.items || [],
+                      // Phase 2: preserve structured envelope when present;
+                      // fall back to the legacy items list for flag-off path.
+                      citations: Array.isArray(data.sources)
+                        ? {
+                            items: data.items || [],
+                            sources: data.sources,
+                            refs: data.refs || [],
+                          }
+                        : data.items || [],
                     }));
                     break;
                   case "metadata":
@@ -206,30 +214,16 @@ export function useAsk(channelId: string): UseAskReturn {
                     });
                     break;
                   case "follow_ups":
-                    setMessages((prev) => {
-                      const updated = [...prev];
-                      const lastIdx = updated.length - 1;
-                      if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                        updated[lastIdx] = {
-                          ...updated[lastIdx],
-                          followUps: data.suggestions ?? [],
-                        };
-                      }
-                      return updated;
-                    });
+                    updateAssistant((msg) => ({
+                      ...msg,
+                      followUps: data.suggestions ?? [],
+                    }));
                     break;
                   case "thinking_done":
-                    setMessages((prev) => {
-                      const updated = [...prev];
-                      const lastIdx = updated.length - 1;
-                      if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
-                        updated[lastIdx] = {
-                          ...updated[lastIdx],
-                          thinkingDuration: data.duration_ms ?? null,
-                        };
-                      }
-                      return updated;
-                    });
+                    updateAssistant((msg) => ({
+                      ...msg,
+                      thinkingDuration: data.duration_ms ?? null,
+                    }));
                     break;
                   case "error":
                     setError(data.message || "Unknown error");

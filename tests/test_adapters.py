@@ -113,7 +113,10 @@ class TestChatBridgeAdapter:
         adapter = ChatBridgeAdapter(bridge_url="http://bot:3001", api_key="my-secret")
         assert adapter._client.headers["authorization"] == "Bearer my-secret"
 
-    def test_no_auth_header_when_no_key(self):
+    def test_no_auth_header_when_no_key(self, monkeypatch):
+        from beever_atlas.infra.config import get_settings
+        settings = get_settings()
+        monkeypatch.setattr(settings, "bridge_api_key", "")
         adapter = ChatBridgeAdapter(bridge_url="http://bot:3001", api_key="")
         assert "authorization" not in adapter._client.headers
 
@@ -275,7 +278,9 @@ class TestMockAdapter:
     @pytest.mark.asyncio
     async def test_fetch_history(self):
         adapter = MockAdapter()
-        messages = await adapter.fetch_history("C_MOCK_GENERAL", limit=100)
+        messages = await adapter.fetch_history(
+            "C_MOCK_GENERAL", limit=100, order="asc"
+        )
         assert len(messages) > 0
         for i in range(1, len(messages)):
             assert messages[i].timestamp >= messages[i - 1].timestamp
@@ -316,7 +321,7 @@ class TestMockAdapter:
         if len(messages) >= 2:
             first_day = messages[0].timestamp.date()
             last_day = messages[-1].timestamp.date()
-            span = (last_day - first_day).days
+            span = abs((last_day - first_day).days)
             assert span >= 14
 
     @pytest.mark.asyncio
@@ -354,18 +359,24 @@ class TestGetAdapterFactory:
             assert isinstance(adapter, MockAdapter)
 
     def test_returns_bridge_when_no_mock_env(self):
+        import beever_atlas.adapters as adapters_mod
         from beever_atlas.adapters import get_adapter
 
         env = os.environ.copy()
         env.pop("ADAPTER_MOCK", None)
         with patch.dict(os.environ, env, clear=True):
+            adapters_mod._adapter = None
             adapter = get_adapter()
             assert isinstance(adapter, ChatBridgeAdapter)
+        adapters_mod._adapter = None
 
     def test_bridge_adapter_is_default(self):
+        import beever_atlas.adapters as adapters_mod
         from beever_atlas.adapters import get_adapter
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("ADAPTER_MOCK", None)
+            adapters_mod._adapter = None
             adapter = get_adapter()
             assert isinstance(adapter, ChatBridgeAdapter)
+        adapters_mod._adapter = None

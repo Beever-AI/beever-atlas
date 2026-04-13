@@ -17,7 +17,7 @@ class TestQAAgent:
         from beever_atlas.agents.query.qa_agent import create_qa_agent
 
         agent = create_qa_agent()
-        assert agent.name == "qa_agent"
+        assert agent.name.startswith("qa_agent")
 
     def test_agent_has_instruction(self):
         from beever_atlas.llm.provider import init_llm_provider
@@ -62,4 +62,4 @@ class TestRootAgentExport:
         from beever_atlas.agents import get_root_agent
 
         agent = get_root_agent()
-        assert agent.name == "qa_agent"
+        assert agent.name.startswith("qa_agent")

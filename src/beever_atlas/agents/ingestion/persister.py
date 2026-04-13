@@ -51,6 +51,10 @@ class PersisterAgent(BaseAgent):
         sync_job_id = ctx.session.state.get("sync_job_id", "unknown")
         channel_id = ctx.session.state.get("channel_id", "unknown")
         batch_num = ctx.session.state.get("batch_num", "?")
+        # Source language for this batch (BCP-47). Seeded by BatchProcessor.
+        # Defaults to "en" when language detection is off or unavailable so
+        # existing channels keep their historical behavior.
+        batch_source_lang: str = ctx.session.state.get("source_language") or "en"
         embedded_facts: list[dict[str, Any]] = (
             ctx.session.state.get("embedded_facts") or []
         )
@@ -169,6 +173,13 @@ class PersisterAgent(BaseAgent):
             fact_data["fact_type"] = raw_type if raw_type in valid_types else "observation" if raw_type else ""
             # Pass through thread_context_summary as-is (already a string)
 
+            # Tag the fact with the batch's source language so wiki/QA can
+            # translate on-demand while preserving native memory. The LLM may
+            # have already populated this from the schema; keep its value if
+            # present, else fall back to the batch-level tag.
+            if not fact_data.get("source_lang"):
+                fact_data["source_lang"] = batch_source_lang
+
             fact = AtomicFact(id=fact_id, **fact_data)
             facts.append(fact)
 
@@ -180,6 +191,10 @@ class PersisterAgent(BaseAgent):
                 cleaned["properties"] = {
                     k: v for k, v in raw_props.items() if v not in (None, "")
                 }
+            # Tag the entity with the batch's source language (entity registry
+            # will preserve this across dedup merges).
+            if not cleaned.get("source_lang"):
+                cleaned["source_lang"] = batch_source_lang
             entity = GraphEntity(**cleaned)
             entities.append(entity)
 

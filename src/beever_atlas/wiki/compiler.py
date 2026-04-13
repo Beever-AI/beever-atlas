@@ -163,12 +163,52 @@ GENERIC_GLOSSARY_TERMS: set[str] = {
 }
 
 
+_LANG_HEADER_TEMPLATE = """\
+## Language Directive (applies to every section below)
+The underlying channel memory is in **{source_language}** (BCP-47).
+Produce this wiki page's content in **{target_language}** (BCP-47).
+- If source_language == target_language, write naturally in that language.
+- If they differ, translate from the memory into target_language.
+- Preserve proper nouns VERBATIM: people names, project codenames,
+  tool/technology names, company names. Do not translate or transliterate
+  them. Native-script names (e.g. 阿明) stay in their native script;
+  romanized names (e.g. Ah Ming) stay romanized.
+- Keep [N] citation markers exactly as they appear. Do not renumber or
+  relocate them during translation.
+- Keep ```mermaid and ```chart code blocks structurally unchanged; only
+  translate the human-readable labels inside them.
+
+---
+
+"""
+
+
 class WikiCompiler:
     """Compiles gathered channel data into WikiPage objects using the LLM."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        target_lang: str = "en",
+        source_lang: str = "en",
+    ) -> None:
         provider = get_llm_provider()
         self._model_name: str = provider.get_model_string("wiki_compiler")
+        self._target_lang = target_lang
+        self._source_lang = source_lang
+
+    def _fmt_prompt(self, template: str, **kwargs) -> str:
+        """Format a wiki page prompt with language header prepended.
+
+        Every page prompt is prefixed with the language directive so the LLM
+        renders in `target_lang` while preserving proper nouns from
+        `source_lang` memory. Template placeholders remain unchanged.
+        """
+        header = _LANG_HEADER_TEMPLATE.format(
+            target_language=self._target_lang,
+            source_language=self._source_lang,
+        )
+        return header + template.format(**kwargs)
 
     @staticmethod
     def _is_topic_relevant(cluster, channel_themes: list[str], cluster_facts: dict) -> tuple[bool, str]:
@@ -413,7 +453,7 @@ class WikiCompiler:
                 for d in getattr(c, "decisions", [])
             ]
 
-        prompt = OVERVIEW_PROMPT.format(
+        prompt = self._fmt_prompt(OVERVIEW_PROMPT,
             channel_name=summary.channel_name,
             description=summary.description,
             text=summary.text,
@@ -461,7 +501,7 @@ class WikiCompiler:
             {"index": i, "memory_text": f.memory_text, "author_name": f.author_name, "fact_type": f.fact_type}
             for i, f in enumerate(sorted_facts[:30])
         ]
-        prompt = TOPIC_ANALYSIS_PROMPT.format(
+        prompt = self._fmt_prompt(TOPIC_ANALYSIS_PROMPT,
             title=cluster.title,
             summary=cluster.summary,
             fact_count=len(sorted_facts),
@@ -504,7 +544,7 @@ class WikiCompiler:
         sub_slug = _slugify(sub_title)
 
         fact_count = len(sub_facts)
-        prompt = SUBTOPIC_PROMPT.format(
+        prompt = self._fmt_prompt(SUBTOPIC_PROMPT,
             parent_title=parent_title,
             title=sub_title,
             summary=sub_info.get("summary", ""),
@@ -587,7 +627,7 @@ class WikiCompiler:
 
                     if sub_pages:
                         # Build parent overview page (without full detail — sub-pages have that)
-                        parent_prompt = TOPIC_PROMPT.format(
+                        parent_prompt = self._fmt_prompt(TOPIC_PROMPT,
                             title=cluster.title,
                             summary=cluster.summary,
                             current_state=cluster.current_state,
@@ -636,7 +676,7 @@ class WikiCompiler:
                     )
 
         # Flat topic page (default path, or fallback from failed sub-page generation)
-        prompt = TOPIC_PROMPT.format(
+        prompt = self._fmt_prompt(TOPIC_PROMPT,
             title=cluster.title,
             summary=cluster.summary,
             current_state=cluster.current_state,
@@ -676,7 +716,7 @@ class WikiCompiler:
     async def _compile_people(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
         relationship_edges = _format_relationship_edges(gathered["persons"])
-        prompt = PEOPLE_PROMPT.format(
+        prompt = self._fmt_prompt(PEOPLE_PROMPT,
             persons_json=json.dumps(gathered["persons"], default=str),
             top_people_json=json.dumps(channel_summary.top_people, default=str),
             relationship_edges_json=json.dumps(relationship_edges, default=str),
@@ -694,7 +734,7 @@ class WikiCompiler:
 
     async def _compile_decisions(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
-        prompt = DECISIONS_PROMPT.format(
+        prompt = self._fmt_prompt(DECISIONS_PROMPT,
             decisions_json=json.dumps(gathered["decisions"], default=str),
             top_decisions_json=json.dumps(channel_summary.top_decisions, default=str),
         )
@@ -723,7 +763,7 @@ class WikiCompiler:
                 })
                 topic_names.append(cluster.title)
 
-        prompt = FAQ_PROMPT.format(
+        prompt = self._fmt_prompt(FAQ_PROMPT,
             faq_candidates_json=json.dumps(faq_by_topic, default=str),
             topic_names_json=json.dumps(topic_names, default=str),
         )
@@ -780,7 +820,7 @@ class WikiCompiler:
         # Cap at 30 terms
         glossary_terms = glossary_terms[:30]
 
-        prompt = GLOSSARY_PROMPT.format(
+        prompt = self._fmt_prompt(GLOSSARY_PROMPT,
             glossary_terms_json=json.dumps(glossary_terms, default=str),
             channel_description=channel_summary.description or channel_summary.channel_name,
         )
@@ -800,7 +840,7 @@ class WikiCompiler:
         media_facts = gathered.get("media_facts", [])
         media_data = _build_media_data(media_facts)
         media_data = self._filter_media_for_resources(media_data)
-        prompt = RESOURCES_PROMPT.format(
+        prompt = self._fmt_prompt(RESOURCES_PROMPT,
             media_json=json.dumps(media_data, default=str),
             media_count=len(media_data),
         )
@@ -831,7 +871,7 @@ class WikiCompiler:
         # Include recent media
         recent_media = _build_media_data(gathered["recent_facts"])
 
-        prompt = ACTIVITY_PROMPT.format(
+        prompt = self._fmt_prompt(ACTIVITY_PROMPT,
             recent_facts_json=json.dumps(recent_data, default=str),
             recent_activity_json=json.dumps(channel_summary.recent_activity_summary, default=str),
             recent_media_json=json.dumps(recent_media, default=str),

@@ -42,6 +42,12 @@ class ExtractedFact(BaseModel):
     thread_context_summary: str = ""
     """Brief summary of thread deliberation arc when fact comes from a threaded discussion."""
 
+    source_lang: str = "en"
+    """BCP-47 language tag of the source message this fact was extracted from
+    (e.g. "en", "zh-HK", "ja"). Preserved so wiki/QA rendering can translate
+    on demand. Defaults to "en" for backwards compatibility with pre-change data.
+    """
+
 
 class FactExtractionResult(BaseModel):
     """Top-level LLM output for one batch of preprocessed messages."""
@@ -97,6 +103,12 @@ class ExtractedEntity(BaseModel):
 
     source_message_id: str = ""
     """Slack message ``ts`` where this entity was first identified in the batch."""
+
+    source_lang: str = "en"
+    """BCP-47 language tag of the source messages this entity was observed in.
+    Used by the wiki/QA layer to preserve native-script names and render
+    translated descriptions on demand.
+    """
 
 
 class ExtractedRelationship(BaseModel):

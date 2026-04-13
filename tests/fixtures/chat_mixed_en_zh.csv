@@ -1,0 +1,8 @@
+timestamp,author,author_name,content
+2026-04-08T10:01:00Z,U001,Jordan,Team - just kicked off the Neo4j upgrade discussion in the other channel
+2026-04-08T10:02:30Z,U005,小雯,我覺得 Neo4j 5.26 嘅 vector index 對我哋 knowledge graph 好有幫助
+2026-04-08T10:03:50Z,U001,Jordan,Agreed — the cosine-similarity op is exactly what we need for entity dedup
+2026-04-08T10:05:10Z,U005,小雯,咁 migration 你打算幾時做？production 仲跑緊 4.x
+2026-04-08T10:06:25Z,U001,Jordan,Planning a dry-run next Tuesday. Bob is on-call that week so we can roll back fast
+2026-04-08T10:07:40Z,U005,小雯,好，我負責測 vector queries，Jordan 你負責 schema migration，咁 ok？
+2026-04-08T10:09:00Z,U001,Jordan,Perfect. I will draft the migration spec by EOD Friday

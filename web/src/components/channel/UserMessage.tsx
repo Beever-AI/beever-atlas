@@ -32,7 +32,7 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
   return (
     <div className="flex justify-end gap-3">
       <div className="max-w-[70%] min-w-0">
-        <div className="bg-primary/10 rounded-2xl px-4 py-3">
+        <div className="bg-primary/10 rounded-2xl px-4 py-3 w-fit ml-auto">
           <p className="text-foreground text-sm whitespace-pre-wrap">{message.content}</p>
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">

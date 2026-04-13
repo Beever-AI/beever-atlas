@@ -285,6 +285,34 @@ class BatchProcessor:
                     if ingestion_config and ingestion_config.max_facts_per_message is not None
                     else settings.max_facts_per_message
                 )
+                # Resolve the batch's source language. When detection is enabled,
+                # sniff the batch's dominant language so extractor prompts
+                # receive a concrete BCP-47 tag via {source_language} and facts/
+                # entities can be tagged with `source_lang` at persist time.
+                # When disabled, we hardcode "en" so the pipeline behaves
+                # byte-identically to the pre-change implementation.
+                _batch_source_lang = "en"
+                if settings.language_detection_enabled:
+                    try:
+                        from beever_atlas.services.language_detector import (
+                            detect_channel_primary_language,
+                        )
+                        _sample_texts = [
+                            str(m.get("text") or m.get("content") or "")
+                            for m in messages_as_dicts
+                        ]
+                        _batch_source_lang, _ = detect_channel_primary_language(
+                            _sample_texts,
+                            confidence_threshold=settings.language_detection_confidence_threshold,
+                            default=settings.default_target_language,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "BatchProcessor: language detection failed, defaulting to en",
+                            exc_info=True,
+                        )
+                        _batch_source_lang = "en"
+
                 initial_state: dict[str, Any] = {
                     "messages": messages_as_dicts,
                     "channel_id": channel_id,
@@ -294,6 +322,7 @@ class BatchProcessor:
                     "known_entities": known_entities,
                     "embedding_similarity_candidates": embedding_similarity_candidates,
                     "sync_job_id": sync_job_id,
+                    "source_language": _batch_source_lang,
                     "skip_entity_extraction": bool(
                         ingestion_config and ingestion_config.skip_entity_extraction
                     ),

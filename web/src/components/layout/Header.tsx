@@ -1,5 +1,14 @@
 import { useLocation, NavLink } from "react-router-dom";
-import { Menu } from "lucide-react";
+import {
+  Menu,
+  Home,
+  MessageSquare,
+  MessageCircleQuestion,
+  Activity,
+  Settings,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -9,19 +18,26 @@ interface HeaderProps {
   onMenuClick: () => void;
 }
 
-const PAGE_TITLES: Record<string, string> = {
-  "/": "Home",
-  "/channels": "Channels",
-  "/ask": "Ask",
-  "/settings": "Settings",
-  "/activity": "Activity",
-  "/profile": "My Profile",
+interface PageMeta {
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+}
+
+const PAGE_META: Record<string, PageMeta> = {
+  "/": { title: "Home", subtitle: "Your workspace at a glance", icon: Home },
+  "/channels": { title: "Channels", subtitle: "Browse conversations & memory", icon: MessageSquare },
+  "/ask": { title: "Ask", subtitle: "Talk to your knowledge base", icon: MessageCircleQuestion },
+  "/settings": { title: "Settings", subtitle: "Preferences & integrations", icon: Settings },
+  "/activity": { title: "Activity", subtitle: "Recent events across channels", icon: Activity },
+  "/profile": { title: "My Profile", subtitle: "Your identity in Beever Atlas", icon: UserRound },
 };
 
 export function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
   const isChannel = location.pathname.startsWith("/channels/");
-  const title = PAGE_TITLES[location.pathname];
+  const meta = PAGE_META[location.pathname];
+  const Icon = meta?.icon;
   const { profile } = useUserProfile();
 
   const emoji = profile.avatarEmoji || "🦫";
@@ -48,7 +64,13 @@ export function Header({ onMenuClick }: HeaderProps) {
   }
 
   return (
-    <header className="flex items-center h-12 px-4 border-b border-border bg-background shrink-0 gap-3">
+    <header className="relative flex items-center h-14 px-4 border-b border-border/70 bg-background shrink-0 gap-3">
+      {/* subtle top accent */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
+      />
+
       {/* Mobile hamburger */}
       <Button
         variant="ghost"
@@ -61,9 +83,29 @@ export function Header({ onMenuClick }: HeaderProps) {
       </Button>
       <Separator orientation="vertical" className="h-5 lg:hidden" />
 
-      <h1 className="text-base font-semibold text-foreground flex-1">
-        {title ?? "Beever Atlas"}
-      </h1>
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        {Icon && (
+          <div className="relative shrink-0">
+            <div
+              aria-hidden
+              className="absolute inset-0 rounded-xl bg-primary/15 blur-md"
+            />
+            <div className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary/15 to-primary/5 border border-primary/20 text-primary shadow-sm">
+              <Icon size={18} strokeWidth={2.25} />
+            </div>
+          </div>
+        )}
+        <div className="flex flex-col min-w-0 leading-tight">
+          <h1 className="font-heading text-[17px] font-semibold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-foreground to-foreground/70 truncate">
+            {meta?.title ?? "Beever Atlas"}
+          </h1>
+          {meta?.subtitle && (
+            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70 truncate">
+              {meta.subtitle}
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* Profile avatar button */}
       <NavLink

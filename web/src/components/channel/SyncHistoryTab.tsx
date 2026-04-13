@@ -35,6 +35,8 @@ function CompactBatchResults({ results }: { results: BatchResultEntry[] }) {
           (batch.sample_facts?.length ?? 0) > 0 ||
           (batch.sample_entities?.length ?? 0) > 0 ||
           (batch.sample_relationships?.length ?? 0) > 0;
+        // Error rows are expandable too — users need the full traceback to diagnose.
+        const isClickable = hasSamples || !!batch.error;
 
         return (
           <div
@@ -46,10 +48,10 @@ function CompactBatchResults({ results }: { results: BatchResultEntry[] }) {
           >
             <button
               type="button"
-              onClick={() => hasSamples && setExpandedBatch(isExpanded ? null : batch.batch_num)}
+              onClick={() => isClickable && setExpandedBatch(isExpanded ? null : batch.batch_num)}
               className={cn(
                 "w-full px-2.5 py-1.5 flex items-center justify-between",
-                hasSamples && "hover:bg-muted/30 transition-colors cursor-pointer",
+                isClickable && "hover:bg-muted/30 transition-colors cursor-pointer",
               )}
             >
               <div className="flex items-center gap-2">
@@ -70,12 +72,40 @@ function CompactBatchResults({ results }: { results: BatchResultEntry[] }) {
                     {batch.duration_seconds < 60 ? `${batch.duration_seconds.toFixed(1)}s` : `${(batch.duration_seconds / 60).toFixed(1)}m`}
                   </span>
                 )}
-                {batch.error && <span className="text-red-500 truncate max-w-[200px]">{batch.error}</span>}
-                {hasSamples && (
+                {batch.error && (
+                  <span
+                    className="text-red-500 truncate max-w-[260px]"
+                    title="Click the row to expand the full error"
+                  >
+                    {batch.error}
+                  </span>
+                )}
+                {isClickable && (
                   isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />
                 )}
               </div>
             </button>
+
+            {isExpanded && batch.error && (
+              <div className="border-t border-red-500/20 px-2.5 py-2 space-y-1 bg-red-500/5">
+                <div className="text-[9px] uppercase tracking-wider text-red-500/70 flex items-center justify-between">
+                  <span>Full error</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard?.writeText(batch.error ?? "");
+                    }}
+                    className="text-[9px] normal-case tracking-normal text-red-500/70 hover:text-red-500 underline-offset-2 hover:underline"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre className="text-[10px] font-mono whitespace-pre-wrap break-words leading-snug text-red-600 dark:text-red-400 max-h-[360px] overflow-y-auto">
+                  {batch.error}
+                </pre>
+              </div>
+            )}
 
             {isExpanded && !batch.error && (
               <div className="border-t border-border/30 px-2.5 py-2 space-y-2">
@@ -268,11 +298,30 @@ function SyncJobCard({ entry }: { entry: SyncHistoryEntry }) {
             })}
           </div>
 
-          {/* Errors */}
+          {/* Errors — show full traceback, wrap long lines, allow copy */}
           {isFailed && entry.errors.length > 0 && (
-            <div className="px-5 py-3 border-b border-border/30 space-y-1">
+            <div className="px-5 py-3 border-b border-border/30 space-y-2">
               {entry.errors.filter(Boolean).map((err, i) => (
-                <div key={i} className="text-xs text-red-600 dark:text-red-400 truncate">{err}</div>
+                <div
+                  key={i}
+                  className="rounded-md border border-red-500/20 bg-red-500/5 px-2.5 py-2 space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] uppercase tracking-wider text-red-500/70">
+                      Error {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(err)}
+                      className="text-[9px] text-red-500/70 hover:text-red-500 hover:underline underline-offset-2"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre className="text-[11px] font-mono whitespace-pre-wrap break-words leading-snug text-red-600 dark:text-red-400 max-h-[320px] overflow-y-auto">
+                    {err}
+                  </pre>
+                </div>
               ))}
             </div>
           )}

@@ -129,7 +129,7 @@ class ConsolidationService:
             from beever_atlas.wiki.cache import WikiCache
             settings = get_settings()
             cache = WikiCache(settings.mongodb_uri)
-            await cache.mark_stale(channel_id)
+            await cache.mark_all_stale(channel_id)
         except Exception:
             logger.warning("Failed to mark wiki stale for channel %s", channel_id)
 

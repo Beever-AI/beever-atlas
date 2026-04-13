@@ -35,6 +35,75 @@ export interface Citation {
   permalink?: string;
 }
 
+// ----- Phase 2 structured citation contract -----
+
+export type SourceKind =
+  | "channel_message"
+  | "wiki_page"
+  | "qa_history"
+  | "uploaded_file"
+  | "web_result"
+  | "graph_relationship"
+  | "decision_record"
+  | "media";
+
+export type MediaKind =
+  | "image"
+  | "pdf"
+  | "video"
+  | "audio"
+  | "link_preview"
+  | "document";
+
+export interface MediaAttachment {
+  kind: MediaKind;
+  url: string;
+  thumbnail_url?: string;
+  mime_type?: string;
+  filename?: string;
+  title?: string;
+  alt_text?: string;
+  width?: number;
+  height?: number;
+  byte_size?: number;
+}
+
+export interface SourceRetrievedBy {
+  tool?: string;
+  query?: string;
+  score?: number | null;
+}
+
+export interface Source {
+  id: string;
+  kind: SourceKind;
+  title: string;
+  excerpt: string;
+  retrieved_by: SourceRetrievedBy;
+  native: Record<string, unknown>;
+  attachments: MediaAttachment[];
+  permalink: string | null;
+  created_at?: string;
+}
+
+export interface CitationRef {
+  marker: number;
+  source_id: string;
+  inline?: boolean;
+  ranges?: Array<{ start: number; end: number }>;
+  note?: string | null;
+}
+
+/** Full envelope shape the backend ships. Legacy messages may only have `items`. */
+export interface CitationEnvelope {
+  items: Citation[];
+  sources: Source[];
+  refs: CitationRef[];
+}
+
+/** Shape `message.citations` can take in memory after normalization. */
+export type MessageCitations = Citation[] | CitationEnvelope;
+
 export interface AskMetadata {
   route: string;
   confidence: number;
@@ -70,7 +139,13 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  citations: Citation[];
+  /**
+   * Citations carried by an assistant turn. Legacy shape is `Citation[]`
+   * (flat list); Phase 2 / registry-enabled path uses `CitationEnvelope`
+   * which preserves structured `sources` + `refs` alongside `items` for
+   * back-compat.
+   */
+  citations: MessageCitations;
   toolCalls: ToolCallEvent[];
   thinking: string[];
   metadata: AskMetadata | null;

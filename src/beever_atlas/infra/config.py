@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     # QA agent configuration
     qa_confidence_threshold: float = Field(default=0.4, alias="QA_CONFIDENCE_THRESHOLD")
     external_mcp_servers: str = Field(default="", alias="EXTERNAL_MCP_SERVERS")
+    qa_new_prompt: bool = Field(default=False, alias="QA_NEW_PROMPT")
 
     # Onboarding response length monitor.
     # When ON, a warning is logged if a non-deep response exceeds 1500 chars.

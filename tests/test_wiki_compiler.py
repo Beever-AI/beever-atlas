@@ -29,7 +29,7 @@ class TestPostprocessContent:
         content = "```mermaid\ngraph TD\n    A[Foo] -- explores --> B[Bar]\n    C[Baz] --> D[Qux]\n```"
         result = WikiCompiler._postprocess_content(content)
         assert "-- explores -->" not in result
-        assert "A[Foo] --> B[Bar]" in result
+        assert "A[Foo] -->|explores| B[Bar]" in result
         assert "C[Baz] --> D[Qux]" in result
 
     def test_removes_subgraph_and_style_lines(self):

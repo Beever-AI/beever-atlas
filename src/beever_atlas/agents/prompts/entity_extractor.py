@@ -1,6 +1,21 @@
 from __future__ import annotations
 
 ENTITY_EXTRACTOR_INSTRUCTION: str = """\
+## Language Directive
+The source messages are predominantly in {source_language} (BCP-47 tag).
+- Extract entity names AS THEY APPEAR in the source messages. Do not
+  translate or transliterate them. "阿明" stays "阿明"; "Ah Ming" stays
+  "Ah Ming"; "Redis" stays "Redis".
+- When the same real-world entity is referenced by more than one script
+  or romanization within the batch (e.g. "阿明" and later "Ah Ming"),
+  record ONE entity with the most complete/formal form as `name` and
+  list every other observed form in `aliases`.
+- Cross-script canonicalization example (Cantonese, zh-HK):
+    Message A: "阿明決定用 Redis 做 session cache"
+    Message B: "Ah Ming 嘅方案已經 approved"
+  → Entity: {{"name": "阿明", "type": "Person", "aliases": ["Ah Ming"]}}
+- Preserve proper nouns verbatim across all entity and relationship fields.
+
 ## Role
 You are an entity and relationship extraction engine for a workspace knowledge graph.
 

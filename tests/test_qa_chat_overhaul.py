@@ -256,20 +256,36 @@ class TestAgentModeConfig:
         assert "ALWAYS" in prompt
 
     def test_citation_format_in_prompt(self):
+        """Prompt must instruct the model how to cite, in either regime.
+
+        Registry-on: `_cite` tag form. Registry-off: the legacy
+        channel_name / NOT-raw-channel_id guidance.
+        """
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
         prompt = build_qa_system_prompt()
-        assert "channel_name" in prompt
-        assert "NOT the raw channel_id" in prompt
+        registry_on = "_cite" in prompt
+        if registry_on:
+            assert "[src:" in prompt
+            assert "Do NOT write a Sources" in prompt
+        else:
+            assert "channel_name" in prompt
+            assert "NOT the raw channel_id" in prompt
 
     def test_follow_up_instruction_in_deep_mode(self):
+        """Deep mode must instruct follow-ups in whichever regime is active."""
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
         prompt = build_qa_system_prompt(include_follow_ups=True)
-        assert "FOLLOW_UPS" in prompt
+        registry_on = "_cite" in prompt
+        if registry_on:
+            assert "suggest_follow_ups" in prompt
+        else:
+            assert "FOLLOW_UPS" in prompt
 
     def test_no_follow_up_in_quick_mode(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
         prompt = build_qa_system_prompt(include_follow_ups=False)
         assert "FOLLOW_UPS" not in prompt
+        assert "suggest_follow_ups" not in prompt
 
     def test_max_tool_calls_configurable(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt

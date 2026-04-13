@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from beever_atlas.infra.config import get_settings
@@ -27,31 +27,64 @@ def _get_cache() -> WikiCache:
     return _wiki_cache
 
 
+async def _resolve_target_lang(channel_id: str, requested: str | None) -> str:
+    """Resolve and validate the requested target language for a channel."""
+    settings = get_settings()
+    default_lang = settings.default_target_language
+
+    if requested is None:
+        return default_lang
+
+    # Allow-list is the global supported language set (union with default).
+    # Fresh channels with no sync state must not be pinned to "en".
+    allowed = set(settings.supported_languages_list) | {default_lang}
+
+    stores = get_stores()
+    try:
+        state = await stores.mongodb.get_channel_sync_state(channel_id)
+    except Exception:  # noqa: BLE001
+        state = None
+    if state is not None:
+        primary_language = getattr(state, "primary_language", None)
+        if primary_language:
+            allowed.add(primary_language)
+
+    if requested in allowed:
+        return requested
+    raise HTTPException(
+        status_code=400,
+        detail={"error": "unsupported_target_lang", "allowed": sorted(allowed)},
+    )
+
+
 @router.get("")
-async def get_wiki(channel_id: str) -> dict:
+async def get_wiki(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
     """Return the full cached wiki for a channel."""
     cache = _get_cache()
-    doc = await cache.get_wiki(channel_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    doc = await cache.get_wiki(channel_id, target_lang=lang)
     if doc is None:
         raise HTTPException(status_code=404, detail="No wiki available yet")
     return doc
 
 
 @router.get("/pages/{page_id}")
-async def get_wiki_page(channel_id: str, page_id: str) -> dict:
+async def get_wiki_page(channel_id: str, page_id: str, target_lang: str | None = Query(default=None)) -> dict:
     """Return a single wiki page from cache."""
     cache = _get_cache()
-    page = await cache.get_page(channel_id, page_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    page = await cache.get_page(channel_id, page_id, target_lang=lang)
     if page is None:
         raise HTTPException(status_code=404, detail=f"Page {page_id!r} not found")
     return page
 
 
 @router.get("/structure")
-async def get_wiki_structure(channel_id: str) -> dict:
+async def get_wiki_structure(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
     """Return the wiki sidebar structure without page content."""
     cache = _get_cache()
-    doc = await cache.get_structure(channel_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    doc = await cache.get_structure(channel_id, target_lang=lang)
     if doc is None:
         raise HTTPException(status_code=404, detail="No wiki structure available yet")
     return doc
@@ -147,40 +180,48 @@ async def download_wiki_markdown(channel_id: str) -> PlainTextResponse:
 
 
 @router.get("/status")
-async def get_wiki_status(channel_id: str) -> dict:
+async def get_wiki_status(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
     """Return the current wiki generation status for a channel."""
     cache = _get_cache()
-    status = await cache.get_generation_status(channel_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    status = await cache.get_generation_status(channel_id, target_lang=lang)
     if status is None:
         return {"status": "idle", "channel_id": channel_id}
     return status
 
 
 @router.post("/refresh", status_code=202)
-async def refresh_wiki(channel_id: str, background_tasks: BackgroundTasks) -> dict:
+async def refresh_wiki(
+    channel_id: str,
+    background_tasks: BackgroundTasks,
+    target_lang: str | None = Query(default=None),
+) -> dict:
     """Trigger async wiki generation for a channel."""
     from beever_atlas.wiki.builder import WikiBuilder
 
     stores = get_stores()
     cache = _get_cache()
+    lang = await _resolve_target_lang(channel_id, target_lang)
     builder = WikiBuilder(stores.weaviate, stores.graph, cache)
 
     # Set status to "running" immediately so the frontend sees it on first poll
     await cache.set_generation_status(
         channel_id, status="running", stage="starting",
         stage_detail="Initiating wiki generation…",
+        target_lang=lang,
     )
 
-    background_tasks.add_task(_run_generation, builder, channel_id, cache)
+    background_tasks.add_task(_run_generation, builder, channel_id, cache, lang)
     return {"status": "started", "channel_id": channel_id}
 
 
-async def _run_generation(builder, channel_id: str, cache: WikiCache) -> None:
+async def _run_generation(builder, channel_id: str, cache: WikiCache, target_lang: str = "en") -> None:
     try:
-        await builder.refresh_wiki(channel_id)
+        await builder.refresh_wiki(channel_id, target_lang=target_lang)
     except Exception as exc:
         logger.error("Wiki generation failed channel=%s: %s", channel_id, exc, exc_info=True)
         await cache.set_generation_status(
             channel_id, status="failed", stage="error",
             error=str(exc),
+            target_lang=target_lang,
         )

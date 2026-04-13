@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { WikiPage } from "@/lib/types";
 
-export function useWikiPage(channelId: string | undefined, pageId: string | undefined) {
+export function useWikiPage(channelId: string | undefined, pageId: string | undefined, targetLang?: string) {
   const [data, setData] = useState<WikiPage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -15,8 +15,9 @@ export function useWikiPage(channelId: string | undefined, pageId: string | unde
 
     setIsLoading(true);
 
+    const langParam = targetLang ? `?target_lang=${encodeURIComponent(targetLang)}` : "";
     api
-      .get<WikiPage>(`/api/channels/${channelId}/wiki/pages/${pageId}`)
+      .get<WikiPage>(`/api/channels/${channelId}/wiki/pages/${pageId}${langParam}`)
       .then((res) => {
         setData(res);
         setError(null);
@@ -30,7 +31,7 @@ export function useWikiPage(channelId: string | undefined, pageId: string | unde
         }
       })
       .finally(() => setIsLoading(false));
-  }, [channelId, pageId]);
+  }, [channelId, pageId, targetLang]);
 
   return { data, isLoading, error };
 }

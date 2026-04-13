@@ -68,7 +68,7 @@ async def test_fetch_all_messages_filters_inclusive_cursor_duplicates(monkeypatc
     )
 
     runner = sync_runner_module.SyncRunner()
-    result = await runner._fetch_all_messages("C123")
+    result = await runner._fetch_all_messages("C123", adapter=adapter)
 
     assert [m.timestamp for m in result] == [t1, t2, t3]
     assert adapter.calls == 3
@@ -90,7 +90,8 @@ async def test_fetch_all_messages_parses_iso_since_string(monkeypatch: pytest.Mo
             seen_since = since
             return []
 
-    monkeypatch.setattr(sync_runner_module, "get_adapter", lambda: _Adapter())
+    _adapter_instance = _Adapter()
+    monkeypatch.setattr(sync_runner_module, "get_adapter", lambda: _adapter_instance)
     monkeypatch.setattr(
         sync_runner_module,
         "get_settings",
@@ -98,7 +99,7 @@ async def test_fetch_all_messages_parses_iso_since_string(monkeypatch: pytest.Mo
     )
 
     runner = sync_runner_module.SyncRunner()
-    await runner._fetch_all_messages("C123", since="2026-03-15T00:00:00Z")
+    await runner._fetch_all_messages("C123", adapter=_adapter_instance, since="2026-03-15T00:00:00Z")
 
     assert isinstance(seen_since, datetime)
     assert seen_since == datetime(2026, 3, 15, 0, 0, tzinfo=UTC)
@@ -111,7 +112,7 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
     calls: dict[str, object] = {}
 
     class _Mongo:
-        async def complete_sync_job(self, job_id: str, status: str, errors: list[str] | None = None) -> None:
+        async def complete_sync_job(self, job_id: str, status: str, errors: list[str] | None = None, failed_stage: str | None = None) -> None:
             calls["complete"] = {"job_id": job_id, "status": status, "errors": errors}
 
         async def log_activity(self, event_type: str, channel_id: str, details: dict[str, object]) -> None:
@@ -121,7 +122,7 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
                 "details": details,
             }
 
-        async def update_channel_sync_state(self, channel_id: str, last_sync_ts: str, increment: int = 0) -> None:
+        async def update_channel_sync_state(self, channel_id: str, last_sync_ts: str, increment: int = 0, **kwargs) -> None:
             calls["sync_state"] = {
                 "channel_id": channel_id,
                 "last_sync_ts": last_sync_ts,
@@ -130,6 +131,16 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
 
     stores = SimpleNamespace(mongodb=_Mongo())
     monkeypatch.setattr(sync_runner_module, "get_stores", lambda: stores)
+
+    async def _fake_resolve_policy(channel_id):
+        from types import SimpleNamespace as NS
+        return NS(ingestion=NS(), sync=NS(max_messages=100))
+
+    monkeypatch.setattr(
+        "beever_atlas.services.sync_runner.resolve_effective_policy",
+        _fake_resolve_policy,
+        raising=False,
+    )
 
     async def _process_messages(**kwargs) -> BatchResult:
         return BatchResult(
@@ -199,12 +210,39 @@ async def test_start_sync_recovers_stale_running_job(monkeypatch: pytest.MonkeyP
         async def get_channel_info(self, channel_id: str):
             return SimpleNamespace(name="all-testing")
 
-    stores = SimpleNamespace(mongodb=_Mongo())
+    class _FakeCollection:
+        def find(self, *args, **kwargs):
+            return self
+        def to_list(self, length=None):
+            async def _empty():
+                return []
+            return _empty()
+
+    class _FakeDb:
+        def __getitem__(self, name):
+            return _FakeCollection()
+
+    mongo = _Mongo()
+    mongo.db = _FakeDb()
+    stores = SimpleNamespace(mongodb=mongo)
     monkeypatch.setattr(sync_runner_module, "get_stores", lambda: stores)
-    monkeypatch.setattr(sync_runner_module, "get_settings", lambda: SimpleNamespace(sync_max_messages=100, sync_batch_size=50))
+    monkeypatch.setattr(sync_runner_module, "get_settings", lambda: SimpleNamespace(sync_max_messages=100, sync_batch_size=50, stale_job_threshold_hours=2))
     monkeypatch.setattr(sync_runner_module, "get_adapter", lambda: _Adapter())
 
+    import beever_atlas.services.policy_resolver as _policy_mod
+
+    async def _fake_policy(channel_id):
+        return SimpleNamespace(sync=SimpleNamespace(max_messages=100), ingestion=SimpleNamespace())
+
+    monkeypatch.setattr(_policy_mod, "resolve_effective_policy", _fake_policy)
+
     runner = sync_runner_module.SyncRunner()
+
+    async def _fake_resolve_conn(channel_id, connection_id):
+        return None
+
+    runner._resolve_connection_id = _fake_resolve_conn
+
     job_id = await runner.start_sync("C0AMY9QSPB2")
 
     assert job_id == "job-new"

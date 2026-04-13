@@ -51,6 +51,13 @@ class ChannelSyncState(BaseModel):
     channel_id: str
     last_sync_ts: str  # ISO-8601 timestamp of last synced message
     total_synced_messages: int = 0
+    primary_language: str = "en"
+    """BCP-47 language tag for the channel's dominant language. Populated by
+    the language detector at ingestion when LANGUAGE_DETECTION_ENABLED=true;
+    defaults to "en" for existing channels and when the flag is off.
+    """
+    primary_language_confidence: float = 0.0
+    """Detector confidence [0.0, 1.0] for `primary_language`."""
 
 
 class WriteIntent(BaseModel):

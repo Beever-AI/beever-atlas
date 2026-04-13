@@ -1,6 +1,20 @@
 from __future__ import annotations
 
 FACT_EXTRACTOR_INSTRUCTION: str = """\
+## Language Directive
+The source messages are predominantly in {source_language} (BCP-47 tag).
+Write every extracted fact's `memory_text` in {source_language}.
+Preserve proper nouns (people names, project codenames, tool/technology
+names, company names) VERBATIM — do not translate or transliterate them.
+When a message contains code-switching (e.g. Cantonese with English
+technical terms like "deployment", "PR", "staging"), keep the mixed form
+as-is; do NOT convert one language to the other.
+Language-agnostic calibration example (Cantonese, zh-HK):
+  Message: "阿明今日話佢搞掂咗個 deployment，但 staging 個 DB migration 仲未 run"
+  Fact memory_text: "阿明完成咗個 deployment，但 staging 嘅 DB migration 仲未 run，令到今日嘅 release 未可以 cut"
+  Notes: people names (阿明), tech terms (deployment, staging, DB migration),
+  and native particles (咗/嘅) are all preserved.
+
 ## Role
 You are a fact-extraction engine for a workspace memory system.
 

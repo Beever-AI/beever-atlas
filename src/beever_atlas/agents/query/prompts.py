@@ -149,6 +149,40 @@ Format them on a new line after a separator:
 FOLLOW_UPS: ["first follow-up question?", "second follow-up question?", "third follow-up question?"]"""
 
 
+OUTPUT_CONTRACT = """\
+Your final message is the answer the user reads. It contains only the answer. \
+No preamble, no process narration, no phrase like 'let me', 'I\'ll start by', \
+'my approach', 'okay so', 'first I will'. Write the answer directly."""
+
+RETRIEVAL_GUIDANCE = """\
+Retrieve enough evidence to cite every non-trivial claim. \
+Start with channel context (wiki/overview), add atomic facts (search_channel_facts/search_qa_history), \
+reach for graph memory only when the question involves people, decisions, or relationships, \
+and fall back to external search only when internal sources yield nothing relevant. \
+Stop retrieving once you can answer with citations. \
+Every additional tool call must be justified by a specific gap in your evidence."""
+
+TOOL_SELECTION_HINTS = """\
+When the question…
+- names a person or asks 'who': add `search_relationships`.
+- asks how a decision evolved: add `trace_decision_history`.
+- asks 'who knows about X': add `find_experts`.
+- asks about images, diagrams, or attachments: add `search_media_references`.
+- asks about recent activity: add `get_recent_activity`.
+If none of those fit, Tier 0 + Tier 2 is usually enough."""
+
+ANTI_META_COMMENTARY = """\
+Never describe your reasoning, plan, or next steps in the final answer. \
+Never write 'my approach', 'let me kick off', 'okay so', 'I\'ll start by', \
+'first I will', 'now synthesizing', 'tier 0/1/2'. \
+Do not restate the user's question. Do not narrate tool calls. \
+Emit the finished answer only."""
+
+EMPTY_SIGNAL_HANDLING = """\
+If a tool returns a row with `_empty: true`, disclose that the knowledge graph \
+has no edges for that entity. Never silently substitute wiki content for empty graph results."""
+
+
 def build_qa_system_prompt(
     *,
     max_tool_calls: int = 8,
@@ -171,12 +205,43 @@ def build_qa_system_prompt(
     """
     try:
         from beever_atlas.infra.config import get_settings
-        registry_on = bool(get_settings().citation_registry_enabled)
+        settings = get_settings()
+        registry_on = bool(settings.citation_registry_enabled)
+        new_prompt = bool(settings.qa_new_prompt)
     except Exception:
         registry_on = False
+        new_prompt = False
 
     citation_block = CITATION_FORMAT_REGISTRY if registry_on else CITATION_FORMAT
 
+    if new_prompt:
+        parts = [
+            IDENTITY_PREAMBLE,
+            "",
+            OUTPUT_CONTRACT,
+            "",
+            RETRIEVAL_GUIDANCE,
+            "",
+            TOOL_SELECTION_HINTS,
+            "",
+            ANTI_META_COMMENTARY,
+            "",
+            citation_block,
+            "",
+            EMPTY_SIGNAL_HANDLING,
+            "",
+            LANGUAGE_DIRECTIVE,
+            "",
+            MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
+        ]
+        if mode != "deep":
+            parts.extend(["", ONBOARDING_LENGTH_HINT])
+        if include_follow_ups:
+            follow_up_block = FOLLOW_UPS_TOOL_INSTRUCTION if registry_on else FOLLOW_UP_INSTRUCTION
+            parts.extend(["", follow_up_block])
+        return "\n".join(parts)
+
+    # Legacy path — flag off: byte-identical to pre-redesign output
     parts = [
         IDENTITY_PREAMBLE,
         "",

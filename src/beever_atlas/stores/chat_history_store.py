@@ -39,7 +39,29 @@ class ChatHistoryStore:
             "created_at",
             expireAfterSeconds=CHAT_HISTORY_TTL_DAYS * 24 * 3600,
         )
+        await self._ensure_citation_indexes()
         logger.info("ChatHistoryStore: indexes ensured (TTL=%d days)", CHAT_HISTORY_TTL_DAYS)
+
+    async def _ensure_citation_indexes(self) -> None:
+        """Create multikey indexes on citation source fields (Phase 3 audit).
+
+        Idempotent: Mongo returns the same index name on re-creation, so
+        this is safe to call on every startup. Failures log at warning
+        level and do not block startup — queries still function, just
+        linearly.
+        """
+        for keys, name in (
+            ("messages.citations.sources.id", "messages_citations_sources_id_1"),
+            ("messages.citations.sources.kind", "messages_citations_sources_kind_1"),
+        ):
+            try:
+                await self._collection.create_index(keys, name=name)
+            except Exception:
+                logger.warning(
+                    "ChatHistoryStore: citation index %s creation failed (non-fatal)",
+                    name,
+                    exc_info=True,
+                )
 
     def _now(self) -> datetime:
         return datetime.now(tz=UTC)
@@ -96,7 +118,7 @@ class ChatHistoryStore:
         session_id: str,
         role: str,
         content: str,
-        citations: list[dict] | None = None,
+        citations: list[dict] | dict | None = None,
         tools_used: list[str] | None = None,
         channel_id: str | None = None,
         thinking: dict | None = None,
@@ -112,10 +134,16 @@ class ChatHistoryStore:
         collapsed "Thought for Xs" disclosure after reload. `tool_calls`
         persists the tool timeline used to produce the answer.
         """
+        # Phase 1: persist citations in the envelope shape
+        # {items, sources, refs}. Legacy callers pass a plain list; the
+        # shim wraps it. Read paths apply the same shim so consumers can
+        # receive either form indefinitely.
+        from beever_atlas.agents.citations.persistence import upgrade_envelope
+
         message: dict = {
             "role": role,
             "content": content,
-            "citations": citations or [],
+            "citations": upgrade_envelope(citations),
             "tools_used": tools_used or [],
             "timestamp": self._now().isoformat(),
         }
@@ -134,11 +162,32 @@ class ChatHistoryStore:
             },
         )
 
+    @staticmethod
+    def _flatten_citations_in_place(messages: list[dict]) -> None:
+        """Mutate messages so that `citations` is always a flat legacy list.
+
+        NOTE: This helper MUTATES the provided messages in place — each
+        message's `citations` field is replaced with a flat list.
+
+        Storage wraps citations as `{items, sources, refs}` (Phase 1
+        envelope). Until Phase 2, frontend consumers still expect a list
+        on `message.citations`, so we flatten on read. Rows written in
+        legacy regime (already a list) pass through unchanged.
+        """
+        from beever_atlas.agents.citations.persistence import as_legacy_items
+
+        for msg in messages:
+            if "citations" in msg:
+                msg["citations"] = as_legacy_items(msg["citations"])
+
     async def load_session(self, session_id: str) -> dict | None:
         """Load a full session by ID. Returns None if not found."""
-        return await self._collection.find_one(
+        doc = await self._collection.find_one(
             {"session_id": session_id}, {"_id": 0}
         )
+        if doc is not None:
+            self._flatten_citations_in_place(doc.get("messages", []))
+        return doc
 
     async def load_session_with_channels(self, session_id: str) -> dict | None:
         """Load session and attach a derived `channel_ids` array.
@@ -151,6 +200,7 @@ class ChatHistoryStore:
         if doc is None:
             return None
 
+        self._flatten_citations_in_place(doc.get("messages", []))
         legacy_channel_id = doc.get("channel_id")
         channel_ids: list[str] = []
         seen: set[str] = set()
@@ -174,7 +224,9 @@ class ChatHistoryStore:
         )
         if doc is None:
             return []
-        return doc.get("messages", [])
+        messages = doc.get("messages", [])
+        self._flatten_citations_in_place(messages)
+        return messages
 
     async def list_sessions(
         self,
@@ -289,5 +341,156 @@ class ChatHistoryStore:
             })
         return results
 
+    # ----- Phase 3 citation audit queries -----
+
+    async def find_messages_citing_source(
+        self, source_id: str, limit: int = 50
+    ) -> list[dict]:
+        """Return messages whose citations contain `source_id`.
+
+        Output shape per entry: `{session_id, channel_id, role, content,
+        timestamp, citations}` with `citations` flattened through the
+        envelope read-shim for consistency with legacy consumers.
+        """
+        from beever_atlas.agents.citations.persistence import (
+            as_legacy_items,
+            upgrade_envelope,
+        )
+
+        cursor = self._collection.find(
+            {"messages.citations.sources.id": source_id},
+            {"_id": 0, "session_id": 1, "channel_id": 1, "messages": 1},
+        )
+        out: list[dict] = []
+        async for doc in cursor:
+            if len(out) >= limit:
+                break
+            sess_id = doc.get("session_id")
+            sess_channel = doc.get("channel_id")
+            for m in doc.get("messages", []):
+                env = upgrade_envelope(m.get("citations"))
+                sources = env.get("sources") or []
+                if not any(
+                    isinstance(s, dict) and s.get("id") == source_id
+                    for s in sources
+                ):
+                    continue
+                out.append(
+                    {
+                        "session_id": sess_id,
+                        "channel_id": m.get("channel_id") or sess_channel,
+                        "role": m.get("role"),
+                        "content": m.get("content", ""),
+                        "timestamp": m.get("timestamp"),
+                        # Legacy consumers get the flat items list; the
+                        # admin endpoint can still fetch the full session
+                        # for the structured envelope if needed.
+                        "citations": as_legacy_items(m.get("citations")),
+                    }
+                )
+                if len(out) >= limit:
+                    break
+        return out
+
+    async def sources_cited_in_session(self, session_id: str) -> list[dict]:
+        """Dedup'd list of source dicts cited across a session's messages."""
+        from beever_atlas.agents.citations.persistence import upgrade_envelope
+        from beever_atlas.agents.citations.audit import dedup_by_id
+
+        doc = await self._collection.find_one(
+            {"session_id": session_id}, {"_id": 0, "messages": 1}
+        )
+        if doc is None:
+            return []
+        all_sources: list[dict] = []
+        for msg in doc.get("messages", []):
+            env = upgrade_envelope(msg.get("citations"))
+            all_sources.extend(env.get("sources") or [])
+        return dedup_by_id(all_sources)
+
+    async def top_sources_for_channel(
+        self, channel_id: str, limit: int = 20
+    ) -> list[dict]:
+        """Top `limit` sources by citation count across a channel's sessions.
+
+        Handles BOTH citation storage shapes that coexist in the
+        collection:
+          (a) legacy list shape — `citations: [ {id, ...}, ... ]`
+          (b) envelope shape — `citations: {sources: [...], items: [...], refs: [...]}`
+
+        We normalize each message into a `_norm_sources` array before
+        the terminal `$unwind` / `$group`, using `$cond` to branch on
+        the BSON type of `citations`.
+        """
+        pipeline = [
+            {"$match": {"channel_id": channel_id}},
+            {"$unwind": "$messages"},
+            # Normalize citations into a single array of source dicts so
+            # downstream stages are shape-agnostic.
+            {
+                "$addFields": {
+                    "_norm_sources": {
+                        "$switch": {
+                            "branches": [
+                                # Envelope shape: citations.sources is an array.
+                                {
+                                    "case": {
+                                        "$eq": [
+                                            {"$type": "$messages.citations.sources"},
+                                            "array",
+                                        ]
+                                    },
+                                    "then": "$messages.citations.sources",
+                                },
+                                # Legacy list shape: citations itself is the array.
+                                {
+                                    "case": {
+                                        "$eq": [
+                                            {"$type": "$messages.citations"},
+                                            "array",
+                                        ]
+                                    },
+                                    "then": "$messages.citations",
+                                },
+                            ],
+                            "default": [],
+                        }
+                    }
+                }
+            },
+            {"$unwind": "$_norm_sources"},
+            {"$match": {"_norm_sources.id": {"$exists": True, "$ne": None}}},
+            {
+                "$group": {
+                    "_id": "$_norm_sources.id",
+                    "source": {"$first": "$_norm_sources"},
+                    "citation_count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"citation_count": -1}},
+            {"$limit": max(1, min(limit, 500))},
+        ]
+        out: list[dict] = []
+        try:
+            cursor = self._collection.aggregate(pipeline)
+            async for row in cursor:
+                if not row.get("_id"):
+                    continue
+                out.append(
+                    {
+                        "source": row.get("source") or {},
+                        "citation_count": int(row.get("citation_count") or 0),
+                    }
+                )
+        except Exception:
+            logger.warning(
+                "top_sources_for_channel aggregation failed for channel=%s",
+                channel_id,
+                exc_info=True,
+            )
+        return out
+
     def close(self) -> None:
         self._client.close()
+
+

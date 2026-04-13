@@ -8,7 +8,7 @@ import pytest
 SUBMODULES = [
     "agents",
     "adapters",
-    "pipeline",
+    "services",
     "stores",
     "retrieval",
     "wiki",
