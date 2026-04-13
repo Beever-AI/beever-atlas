@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -39,6 +39,15 @@ export interface SessionMessage {
   tool_calls?: PersistedToolCall[];
 }
 
+export interface SessionsPage {
+  sessions: GlobalConversationSession[];
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+const PAGE_SIZE = 20;
+
 /**
  * Channel-less conversation history. Hits /api/ask/sessions (v2 endpoints).
  *
@@ -50,21 +59,67 @@ export function useGlobalConversationHistory() {
   const [sessions, setSessions] = useState<GlobalConversationSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // nextPage tracks the next page number to fetch when loading more.
+  const nextPageRef = useRef(2);
+  const loadingMoreRef = useRef(false);
+  // Keep a ref to the current search query so loadMore can read it without
+  // being in its dependency array (avoids recreating on every keystroke).
+  const searchQueryRef = useRef(searchQuery);
 
   const fetchSessions = useCallback(async (search?: string) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
+      params.set("page", "1");
+      params.set("page_size", String(PAGE_SIZE));
       const res = await fetch(`${API_BASE}/api/ask/sessions?${params}`);
       if (res.ok) {
-        const data = await res.json();
+        const data: SessionsPage = await res.json();
         setSessions(data.sessions ?? []);
+        setHasMore(data.has_more ?? false);
+        nextPageRef.current = 2;
       }
     } catch (err) {
       console.error("Failed to fetch global sessions", err);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Keep ref in sync so loadMore always reads the latest search query.
+  searchQueryRef.current = searchQuery;
+
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams();
+      const search = searchQueryRef.current;
+      if (search) params.set("search", search);
+      params.set("page", String(nextPageRef.current));
+      params.set("page_size", String(PAGE_SIZE));
+      const res = await fetch(`${API_BASE}/api/ask/sessions?${params}`);
+      if (res.ok) {
+        const data: SessionsPage = await res.json();
+        setSessions((prev) => {
+          const existingIds = new Set(prev.map((s) => s.session_id));
+          const newItems = (data.sessions ?? []).filter(
+            (s) => !existingIds.has(s.session_id),
+          );
+          return [...prev, ...newItems];
+        });
+        setHasMore(data.has_more ?? false);
+        nextPageRef.current += 1;
+      }
+    } catch (err) {
+      console.error("Failed to load more sessions", err);
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
     }
   }, []);
 
@@ -119,14 +174,22 @@ export function useGlobalConversationHistory() {
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
-      await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
+      const res = await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
         method: "DELETE",
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error("Failed to delete session", res.status, body);
+        return;
+      }
+      // Optimistically remove locally so a racing stale fetch can't resurrect it.
       setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+      // Refetch page 1 and reset pagination.
+      await fetchSessions(undefined);
     } catch (err) {
       console.error("Failed to delete session", err);
     }
-  }, []);
+  }, [fetchSessions]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -140,7 +203,10 @@ export function useGlobalConversationHistory() {
     loading,
     searchQuery,
     setSearchQuery,
+    hasMore,
+    loadingMore,
     fetchSessions,
+    loadMore,
     loadSession,
     renameSession,
     pinSession,

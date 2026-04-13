@@ -177,19 +177,110 @@ class QAHistoryStore:
 
         return await asyncio.to_thread(_write)
 
+    def _parse_qa_objects(self, objects) -> list[dict]:
+        """Convert Weaviate result objects to QA history dicts."""
+        from beever_atlas.agents.citations.persistence import as_legacy_items
+
+        entries = []
+        for obj in objects:
+            props = obj.properties
+            try:
+                raw = json.loads(str(props.get("citations_json") or "[]"))
+            except (json.JSONDecodeError, TypeError):
+                raw = []
+            # Envelope-aware: collapse `{items,sources,refs}` → items,
+            # passthrough bare lists (legacy rows).
+            citations = as_legacy_items(raw)
+            entries.append({
+                "question": props.get("question", ""),
+                "answer": props.get("answer", ""),
+                "citations": citations,
+                "timestamp": props.get("timestamp", ""),
+                "session_id": props.get("session_id", ""),
+                "id": str(obj.uuid),
+                # NULL on historical rows treated as "answered" (backfill-safe)
+                "answer_kind": props.get("answer_kind") or "answered",
+            })
+        return entries
+
+    async def true_hybrid_search(
+        self,
+        channel_id: str,
+        query: str,
+        query_vector: list[float],
+        limit: int = 5,
+        alpha: float | None = None,
+    ) -> list[dict]:
+        """Weaviate v4 native hybrid search over QAHistory.
+
+        Combines BM25 (keyword) and vector search server-side.  Filters out
+        ``is_deleted=True`` entries.  Returns the same shape as
+        ``search_qa_history``.
+
+        Args:
+            channel_id: Scope search to this channel.
+            query: Raw text for the BM25 side.
+            query_vector: Pre-computed embedding for the vector side.
+            limit: Maximum entries to return.
+            alpha: BM25/vector blend (0.0 = pure BM25, 1.0 = pure vector).
+                Defaults to ``settings.weaviate_hybrid_alpha`` (0.6).
+        """
+        from beever_atlas.infra.config import get_settings
+        from weaviate.classes.query import MetadataQuery
+
+        resolved_alpha = alpha if alpha is not None else get_settings().weaviate_hybrid_alpha
+
+        def _search() -> list[dict]:
+            collection = self._collection()
+            channel_filter = Filter.by_property("channel_id").equal(channel_id)
+            not_deleted = Filter.by_property("is_deleted").equal(False)
+            combined = channel_filter & not_deleted
+            result = collection.query.hybrid(
+                query=query,
+                vector=query_vector,
+                alpha=resolved_alpha,
+                limit=limit,
+                filters=combined,
+                return_metadata=MetadataQuery(score=True),
+            )
+            return self._parse_qa_objects(result.objects)
+
+        try:
+            return await asyncio.to_thread(_search)
+        except Exception:
+            logger.exception("QAHistoryStore.true_hybrid_search failed")
+            return []
+
     async def search_qa_history(
         self,
         channel_id: str,
         query: str,
         limit: int = 5,
+        query_vector: list[float] | None = None,
     ) -> list[dict]:
-        """BM25 keyword search over QAHistory scoped to a channel.
+        """Hybrid search over QAHistory scoped to a channel.
+
+        When ``query_vector`` is provided, uses Weaviate native hybrid search
+        (BM25 + vector).  Falls back to BM25-only when no vector is given or
+        when the hybrid call fails.
 
         Filters out is_deleted=True entries. Returns list of
         {question, answer, citations, timestamp}.
         """
+        if query_vector is not None:
+            try:
+                return await self.true_hybrid_search(
+                    channel_id=channel_id,
+                    query=query,
+                    query_vector=query_vector,
+                    limit=limit,
+                )
+            except Exception:
+                logger.warning(
+                    "QAHistoryStore.search_qa_history: hybrid failed, falling back to bm25"
+                )
 
-        def _search() -> list[dict]:
+        def _bm25_search() -> list[dict]:
             collection = self._collection()
             channel_filter = Filter.by_property("channel_id").equal(channel_id)
             not_deleted = Filter.by_property("is_deleted").equal(False)
@@ -199,31 +290,10 @@ class QAHistoryStore:
                 limit=limit,
                 filters=combined,
             )
-            entries = []
-            for obj in result.objects:
-                props = obj.properties
-                from beever_atlas.agents.citations.persistence import as_legacy_items
-                try:
-                    raw = json.loads(str(props.get("citations_json") or "[]"))
-                except (json.JSONDecodeError, TypeError):
-                    raw = []
-                # Envelope-aware: collapse `{items,sources,refs}` → items,
-                # passthrough bare lists (legacy rows).
-                citations = as_legacy_items(raw)
-                entries.append({
-                    "question": props.get("question", ""),
-                    "answer": props.get("answer", ""),
-                    "citations": citations,
-                    "timestamp": props.get("timestamp", ""),
-                    "session_id": props.get("session_id", ""),
-                    "id": str(obj.uuid),
-                    # NULL on historical rows treated as "answered" (backfill-safe)
-                    "answer_kind": props.get("answer_kind") or "answered",
-                })
-            return entries
+            return self._parse_qa_objects(result.objects)
 
         try:
-            return await asyncio.to_thread(_search)
+            return await asyncio.to_thread(_bm25_search)
         except Exception:
             logger.exception("QAHistoryStore.search_qa_history failed")
             return []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -13,6 +14,31 @@ from beever_atlas.wiki.version_store import WikiVersionStore
 
 logger = logging.getLogger(__name__)
 
+# ── Shared Motor client singleton (keyed by URI) ──────────────────────
+# Motor opens a connection pool per AsyncIOMotorClient instance; creating
+# a new instance on every WikiCache.__init__ call leaks those pools.
+# This dict caches one client per unique mongodb_uri, created lazily under
+# a module-level lock that is itself created lazily (asyncio.Lock() must be
+# created inside a running event-loop on Python <3.10).
+_motor_clients: dict[str, AsyncIOMotorClient] = {}
+_motor_clients_lock: asyncio.Lock | None = None
+
+
+def _get_clients_lock() -> asyncio.Lock:
+    global _motor_clients_lock
+    if _motor_clients_lock is None:
+        _motor_clients_lock = asyncio.Lock()
+    return _motor_clients_lock
+
+
+async def _get_motor_client(mongodb_uri: str) -> AsyncIOMotorClient:
+    """Return a shared AsyncIOMotorClient for the given URI, creating it once."""
+    lock = _get_clients_lock()
+    async with lock:
+        if mongodb_uri not in _motor_clients:
+            _motor_clients[mongodb_uri] = AsyncIOMotorClient(mongodb_uri)
+        return _motor_clients[mongodb_uri]
+
 
 def _cache_key(channel_id: str, target_lang: str) -> str:
     """Return the compound cache key for a channel + language."""
@@ -23,16 +49,35 @@ class WikiCache:
     """Stores one wiki document per channel in MongoDB."""
 
     def __init__(self, mongodb_uri: str, db_name: str = "beever_atlas") -> None:
-        self._db = AsyncIOMotorClient(mongodb_uri)[db_name]
+        self._mongodb_uri = mongodb_uri
+        self._db_name = db_name
+        # _db is set lazily via _ensure_db(); callers that need it await that method.
+        # For backward compat, synchronous attribute access still works after
+        # _ensure_db() has been called at least once (assigned to self._db).
+        self._db: Any = None
+        self._collection: Any = None
+        self._status_collection: Any = None
+        self._version_store = WikiVersionStore(mongodb_uri, db_name)
+
+    async def _ensure_db(self) -> None:
+        """Resolve the shared Motor client and cache DB/collection handles.
+
+        Short-circuits if _collection has already been set (e.g. by test
+        fixtures that inject a mock collection directly).
+        """
+        if self._collection is not None:
+            return
+        client = await _get_motor_client(self._mongodb_uri)
+        self._db = client[self._db_name]
         self._collection = self._db["wiki_cache"]
         self._status_collection = self._db["wiki_generation_status"]
-        self._version_store = WikiVersionStore(mongodb_uri, db_name)
 
     @property
     def version_store(self) -> WikiVersionStore:
         return self._version_store
 
     async def ensure_indexes(self) -> None:
+        await self._ensure_db()
         await self._collection.create_index("channel_id", unique=True)
         await self._status_collection.create_index("channel_id", unique=True)
         await self._version_store.ensure_indexes()
@@ -41,6 +86,7 @@ class WikiCache:
         return target_lang == get_settings().default_target_language
 
     async def get_wiki(self, channel_id: str, target_lang: str = "en") -> dict | None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         doc = await self._collection.find_one({"channel_id": key}, {"_id": 0})
         # Backward-compat: fall back to legacy key for default language
@@ -51,6 +97,7 @@ class WikiCache:
         return doc
 
     async def get_page(self, channel_id: str, page_id: str, target_lang: str = "en") -> dict | None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         doc = await self._collection.find_one(
             {"channel_id": key},
@@ -67,6 +114,7 @@ class WikiCache:
         return doc.get("pages", {}).get(page_id)
 
     async def get_structure(self, channel_id: str, target_lang: str = "en") -> dict | None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         doc = await self._collection.find_one(
             {"channel_id": key},
@@ -81,6 +129,7 @@ class WikiCache:
         return doc
 
     async def save_wiki(self, channel_id: str, wiki_data: dict, target_lang: str = "en") -> None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         # One-shot legacy migration: for the default language, if the new-key
         # doc is absent but the legacy (unsuffixed) doc exists, copy the
@@ -122,6 +171,7 @@ class WikiCache:
         )
 
     async def mark_stale(self, channel_id: str, target_lang: str | None = None) -> None:
+        await self._ensure_db()
         if target_lang is None:
             target_lang = get_settings().default_target_language
         key = _cache_key(channel_id, target_lang)
@@ -131,6 +181,7 @@ class WikiCache:
         )
 
     async def clear_stale(self, channel_id: str, target_lang: str | None = None) -> None:
+        await self._ensure_db()
         if target_lang is None:
             target_lang = get_settings().default_target_language
         key = _cache_key(channel_id, target_lang)
@@ -145,6 +196,7 @@ class WikiCache:
         Matches the bare legacy key (`channel_id`) and any namespaced key
         (`channel_id:<lang>`) in one update.
         """
+        await self._ensure_db()
         import re
         pattern = f"^{re.escape(channel_id)}(:.+)?$"
         await self._collection.update_many(
@@ -168,6 +220,7 @@ class WikiCache:
         target_lang: str = "en",
     ) -> None:
         """Upsert the current generation status for a channel."""
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         doc: dict[str, Any] = {
             "channel_id": key,
@@ -190,6 +243,7 @@ class WikiCache:
         )
 
     async def get_generation_status(self, channel_id: str, target_lang: str = "en") -> dict | None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         doc = await self._status_collection.find_one({"channel_id": key}, {"_id": 0})
         # Backward-compat: fall back to legacy key for default language
@@ -200,8 +254,12 @@ class WikiCache:
         return doc
 
     async def clear_generation_status(self, channel_id: str, target_lang: str = "en") -> None:
+        await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         await self._status_collection.delete_one({"channel_id": key})
 
     def close(self) -> None:
-        self._db.client.close()
+        # The Motor client is now a module-level singleton; do not close it
+        # here — closing it would break all other WikiCache instances sharing
+        # the same URI. This method is kept for API compatibility only.
+        pass

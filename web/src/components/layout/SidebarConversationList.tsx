@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { Plus, Search, X, Pin } from "lucide-react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { Plus, Search, X, Pin, Loader2 } from "lucide-react";
 import { useAskSessions } from "@/contexts/AskSessionsContext";
 import { ConversationItem } from "@/components/channel/ConversationItem";
 import type { GlobalConversationSession } from "@/hooks/useGlobalConversationHistory";
@@ -49,9 +49,28 @@ export function SidebarConversationList() {
     renameSession,
     pinSession,
     deleteSession,
+    hasMore,
+    loadMore,
+    loadingMore,
   } = useAskSessions();
 
   const [searchFocused, setSearchFocused] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, loadMore]);
 
   const pinnedSessions = useMemo(() => sessions.filter((s) => s.pinned), [sessions]);
   const unpinnedSessions = useMemo(() => sessions.filter((s) => !s.pinned), [sessions]);
@@ -145,6 +164,14 @@ export function SidebarConversationList() {
                 </div>
               </section>
             ))}
+
+            {/* Infinite scroll sentinel */}
+            <div ref={sentinelRef} className="h-px" />
+            {loadingMore && (
+              <div className="flex justify-center py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground/40" />
+              </div>
+            )}
           </>
         )}
       </div>

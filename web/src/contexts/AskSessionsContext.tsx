@@ -22,6 +22,11 @@ interface AskSessionsContextValue {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
 
+  /** Infinite-scroll pagination */
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
+
   /** Session CRUD actions */
   fetchSessions: () => void;
   loadSession: (sessionId: string) => Promise<Message[]>;
@@ -47,6 +52,9 @@ export function useAskSessions(): AskSessionsContextValue {
       setActiveSessionId: () => {},
       searchQuery: "",
       setSearchQuery: () => {},
+      hasMore: false,
+      loadingMore: false,
+      loadMore: () => {},
       fetchSessions: () => {},
       loadSession: async () => [],
       renameSession: () => {},
@@ -115,6 +123,9 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
       setActiveSessionId,
       searchQuery: history.searchQuery,
       setSearchQuery: history.setSearchQuery,
+      hasMore: history.hasMore,
+      loadingMore: history.loadingMore,
+      loadMore: history.loadMore,
       fetchSessions: history.fetchSessions,
       loadSession,
       renameSession: history.renameSession,
@@ -129,6 +140,9 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
       history.searchQuery,
       history.fetchSessions,
       history.setSearchQuery,
+      history.hasMore,
+      history.loadingMore,
+      history.loadMore,
       loadSession,
       history.renameSession,
       history.pinSession,

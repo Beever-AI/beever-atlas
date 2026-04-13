@@ -11,6 +11,36 @@ from beever_atlas.agents.tools.channel_resolver import resolve_channel_name
 logger = logging.getLogger(__name__)
 
 
+async def _embed_query(text: str) -> list[float]:
+    """Compute a Jina embedding for a query string.
+
+    Reuses the same API path as EntityRegistry.compute_name_embedding so we
+    have a single embedding code path for agent tools.  Raises on HTTP error —
+    callers should catch and fall back if needed.
+    """
+    import httpx
+
+    from beever_atlas.infra.config import get_settings
+
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            settings.jina_api_url,
+            headers={
+                "Authorization": f"Bearer {settings.jina_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.jina_model,
+                "input": [text],
+                "dimensions": settings.jina_dimensions,
+                "task": "text-matching",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["data"][0]["embedding"]
+
+
 def _format_timestamp(ts: str | None) -> str:
     """Convert Slack epoch timestamp to ISO date string."""
     if not ts:
@@ -42,7 +72,14 @@ async def search_qa_history(channel_id: str, query: str, limit: int = 5) -> list
         settings = get_settings()
         store = QAHistoryStore(settings.weaviate_url, settings.weaviate_api_key)
         await store.startup()
-        results = await store.search_qa_history(channel_id=channel_id, query=query, limit=limit)
+        try:
+            query_vector = await _embed_query(query)
+        except Exception:
+            logger.warning("search_qa_history: embedding failed, using bm25 fallback for channel=%s", channel_id)
+            query_vector = None
+        results = await store.search_qa_history(
+            channel_id=channel_id, query=query, limit=limit, query_vector=query_vector
+        )
         await store.shutdown()
         if settings.qa_history_negative_filter:
             results = [r for r in results if r.get("answer_kind", "answered") != "refused"]
@@ -139,9 +176,24 @@ async def search_channel_facts(
         store = get_stores().weaviate
         # Over-fetch (k*3, capped at 30) then MMR-rerank down to limit.
         fetch_limit = min(limit * 3, 30)
-        facts = await store.bm25_search(
-            query=query, channel_id=channel_id, tier="atomic", limit=fetch_limit
-        )
+        try:
+            query_vector = await _embed_query(query)
+            raw_results = await store.true_hybrid_search(
+                query_text=query,
+                query_vector=query_vector,
+                channel_id=channel_id,
+                tier="atomic",
+                limit=fetch_limit,
+            )
+            facts = [r["fact"] for r in raw_results]
+        except Exception:
+            logger.warning(
+                "search_channel_facts: hybrid search failed, falling back to bm25 for channel=%s",
+                channel_id,
+            )
+            facts = await store.bm25_search(
+                query=query, channel_id=channel_id, tier="atomic", limit=fetch_limit
+            )
 
         cutoff: datetime | None = None
         if time_scope == "recent":
@@ -216,9 +268,24 @@ async def search_media_references(
         from beever_atlas.stores import get_stores
 
         store = get_stores().weaviate
-        facts = await store.bm25_search(
-            query=query, channel_id=channel_id, tier="atomic", limit=limit * 4
-        )
+        try:
+            query_vector = await _embed_query(query)
+            raw_results = await store.true_hybrid_search(
+                query_text=query,
+                query_vector=query_vector,
+                channel_id=channel_id,
+                tier="atomic",
+                limit=limit * 4,
+            )
+            facts = [r["fact"] for r in raw_results]
+        except Exception:
+            logger.warning(
+                "search_media_references: hybrid search failed, falling back to bm25 for channel=%s",
+                channel_id,
+            )
+            facts = await store.bm25_search(
+                query=query, channel_id=channel_id, tier="atomic", limit=limit * 4
+            )
 
         output = []
         for fact in facts:
@@ -282,9 +349,24 @@ async def get_recent_activity(
 
         store = get_stores().weaviate
         search_query = topic or "recent updates"
-        facts = await store.bm25_search(
-            query=search_query, channel_id=channel_id, tier="atomic", limit=limit * 3
-        )
+        try:
+            query_vector = await _embed_query(search_query)
+            raw_results = await store.true_hybrid_search(
+                query_text=search_query,
+                query_vector=query_vector,
+                channel_id=channel_id,
+                tier="atomic",
+                limit=limit * 3,
+            )
+            facts = [r["fact"] for r in raw_results]
+        except Exception:
+            logger.warning(
+                "get_recent_activity: hybrid search failed, falling back to bm25 for channel=%s",
+                channel_id,
+            )
+            facts = await store.bm25_search(
+                query=search_query, channel_id=channel_id, tier="atomic", limit=limit * 3
+            )
 
         cutoff = datetime.now(tz=UTC) - timedelta(days=days)
         output = []

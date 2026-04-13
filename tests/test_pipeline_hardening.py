@@ -283,7 +283,9 @@ class TestSemanticSearch:
 
         store = WeaviateStore("http://localhost:8080")
         assert hasattr(store, "semantic_search")
-        assert hasattr(store, "hybrid_search")
+        # hybrid_search renamed to pseudo_hybrid_search; true_hybrid_search is the new implementation
+        assert hasattr(store, "pseudo_hybrid_search")
+        assert hasattr(store, "true_hybrid_search")
         assert hasattr(store, "supersede_fact")
 
     def test_supersession_properties_in_schema(self):

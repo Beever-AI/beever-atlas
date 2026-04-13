@@ -35,9 +35,11 @@ _SRC_BRACKET_RE = re.compile(r"\[([^\[\]]*?src:src_[a-f0-9]{10}[^\[\]]*?)\]")
 # Individual tag within a bracket's content.
 _INNER_TAG_RE = re.compile(r"src:(src_[a-f0-9]{10})(\s+inline)?", re.IGNORECASE)
 
-# Safety-net: any leftover `[src:...]` literal (malformed hex, nested, etc.)
-# that the main passes didn't consume. Stripped at flush time.
-_LEFTOVER_TAG_RE = re.compile(r"\[\s*src:[^\[\]]*?\]", re.IGNORECASE)
+# Safety-net: any leftover `[src:...]` or `[External: ...]` literal that the
+# main passes didn't consume. Stripped at flush time.
+_LEFTOVER_TAG_RE = re.compile(
+    r"\[\s*(?:src:[^\[\]]*?|External:[^\[\]]*?)\]", re.IGNORECASE
+)
 
 # Truncated tag openers at the tail of a buffer that must be flushed
 # (e.g. cap tripped). These are strictly unclosed; stripping them

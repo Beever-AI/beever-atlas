@@ -91,7 +91,7 @@ async def test_part_thought_not_in_response_delta():
         ),
         patch(
             "beever_atlas.api.ask._build_decomposed_prompt",
-            new=AsyncMock(return_value="test question"),
+            new=AsyncMock(return_value=("test question", None)),
         ),
         patch(
             "beever_atlas.api.ask._persist_qa_history",

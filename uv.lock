@@ -274,6 +274,7 @@ dependencies = [
     { name = "google-adk" },
     { name = "httpx" },
     { name = "jellyfish" },
+    { name = "langdetect" },
     { name = "litellm" },
     { name = "motor" },
     { name = "neo4j" },
@@ -285,6 +286,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "redis" },
     { name = "sse-starlette" },
+    { name = "tavily-python" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "weaviate-client" },
 ]
@@ -311,6 +313,7 @@ requires-dist = [
     { name = "google-adk", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "jellyfish", specifier = ">=1.0.0" },
+    { name = "langdetect", specifier = ">=1.0.9" },
     { name = "litellm", specifier = ">=1.75.5" },
     { name = "motor", specifier = ">=3.6.0" },
     { name = "nebula3-python", marker = "extra == 'nebula'", specifier = ">=3.4.0" },
@@ -327,6 +330,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.2.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sse-starlette", specifier = ">=2.1.0" },
+    { name = "tavily-python", specifier = ">=0.5.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "weaviate-client", specifier = ">=4.10.0" },
 ]
@@ -2277,6 +2281,15 @@ wheels = [
 ]
 
 [[package]]
+name = "langdetect"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2569554f7c70f4a3c27712f40e3284d483e88094cc0e/langdetect-1.0.9.tar.gz", hash = "sha256:cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0", size = 981474, upload-time = "2021-05-07T07:54:13.562Z" }
+
+[[package]]
 name = "litellm"
 version = "1.82.6"
 source = { registry = "https://pypi.org/simple" }
@@ -4114,6 +4127,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "tavily-python"
+version = "0.7.23"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "requests" },
+    { name = "tiktoken" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/d1/197419d6133643848514e5e84e8f41886e825b73bf91ae235a1595c964f5/tavily_python-0.7.23.tar.gz", hash = "sha256:3b92232e0e29ab68898b765f281bb4f2c650b02210b64affbc48e15292e96161", size = 25968, upload-time = "2026-03-09T19:17:32.333Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/27/f9c6e9249367be0772fb754849e03cbbc6ad8d80a479bf30ea8811828b2e/tavily_python-0.7.23-py3-none-any.whl", hash = "sha256:52ef85c44b926bce3f257570cd32bc1bd4db54666acf3105617f27411a59e188", size = 19079, upload-time = "2026-03-09T19:17:29.593Z" },
 ]
 
 [[package]]

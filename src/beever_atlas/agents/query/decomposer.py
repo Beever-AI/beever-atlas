@@ -41,10 +41,29 @@ def _is_simple(question: str) -> bool:
 
     Simple questions: single entity/topic, no conjunctions, short.
     Cost: $0 (no LLM call).
+
+    Complexity triggers (any one is sufficient to force LLM decomposition):
+    - Existing ``_COMPLEX_PATTERNS`` regex (vs/compare/and/etc.)
+    - Length > 10 words
+    - Coordinating conjunctions: "and", "or"
+    - Comma separating list items (e.g. "impact of X, Y, and Z")
+    - Multiple question marks (compound question)
+    - List-style enumeration (e.g. "X, Y, Z" within the question)
     """
     if _COMPLEX_PATTERNS.search(question):
         return False
-    if len(question.split()) > 15:
+    words = question.split()
+    if len(words) > 10:
+        return False
+    # Coordinating conjunctions that signal multiple aspects
+    lower = question.lower()
+    if re.search(r"\band\b|\bor\b", lower):
+        return False
+    # Comma signals list/enumeration
+    if "," in question:
+        return False
+    # Multiple question marks → compound question
+    if question.count("?") > 1:
         return False
     return True
 
@@ -77,23 +96,33 @@ async def _decompose_complex(question: str) -> QueryPlan:
 
         # Ollama models return a LiteLlm object — fall back to single query
         if not isinstance(model_name, str):
-            logger.debug("QueryDecomposer: Ollama model, skipping LLM decomposition")
+            logger.warning(
+                "QueryDecomposer: Ollama/non-string model %r, skipping LLM decomposition (degraded)",
+                type(model_name).__name__,
+            )
             return QueryPlan(
                 original=question,
                 is_simple=False,
                 internal_queries=[SubQuery(query=question, focus="main")],
             )
 
-        import google.generativeai as genai  # type: ignore[import]
+        from google import genai  # type: ignore[import-untyped]
+        from beever_atlas.infra.config import get_settings
 
         prompt = DECOMPOSITION_PROMPT.format(question=question)
-        model = genai.GenerativeModel(model_name)
+        client = genai.Client(api_key=get_settings().google_api_key)
 
+        # Use the async client so asyncio.wait_for cancellation actually
+        # propagates to the underlying HTTP request (threads cannot be
+        # cancelled in Python — a thread-based path would leak on timeout).
         response = await asyncio.wait_for(
-            asyncio.to_thread(model.generate_content, prompt),
+            client.aio.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            ),
             timeout=10.0,
         )
-        text = response.text.strip()
+        text = (response.text or "").strip()
 
         # Strip markdown fences if present
         text = re.sub(r"^```[a-z]*\n?", "", text)
@@ -128,11 +157,22 @@ async def _decompose_complex(question: str) -> QueryPlan:
         )
 
     except (TimeoutError, asyncio.TimeoutError):
-        logger.warning("QueryDecomposer: decomposition timed out, using single query")
+        logger.warning(
+            "QueryDecomposer: decomposition timed out after 10s for %r (degraded, returning 1 query)",
+            question[:80],
+        )
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        logger.warning("QueryDecomposer: JSON parse failed (%s), using single query", exc)
+        logger.warning(
+            "QueryDecomposer: JSON parse failed for %r — %s (degraded, returning 1 query)",
+            question[:80],
+            exc,
+        )
     except Exception:
-        logger.warning("QueryDecomposer: unexpected error, using single query", exc_info=True)
+        logger.warning(
+            "QueryDecomposer: unexpected error for %r (degraded, returning 1 query)",
+            question[:80],
+            exc_info=True,
+        )
 
     # Fallback: single internal query, no decomposition error surfaced to user
     return QueryPlan(
