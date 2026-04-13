@@ -1,0 +1,61 @@
+name: Smoke – Docker Compose Quickstart
+
+on:
+  push:
+    branches: [main, "oss-launch/**"]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      NEO4J_PASSWORD: ci_neo4j_test_pw
+      WEAVIATE_API_KEY: ci_weaviate_test_key
+      NEBULA_PASSWORD: ci_nebula_test_pw
+      BRIDGE_API_KEY: ci_bridge_api_key
+      BEEVER_API_KEYS: ci_beever_api_key_1,ci_beever_api_key_2
+      BEEVER_ADMIN_TOKEN: ci_admin_token_test
+      CREDENTIAL_MASTER_KEY: ci_credential_master_key_32bytes!!
+      BEEVER_ENV: development
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start services
+        run: docker compose up -d --build
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
+
+      - name: Wait for health endpoint
+        run: bash scripts/wait-for-health.sh
+
+      - name: Assert health response shape
+        run: |
+          RESP=$(curl -sf http://localhost:8000/api/health)
+          echo "Health response: $RESP"
+          STATUS=$(echo "$RESP" | jq -r '.status')
+          if [ "$STATUS" != "healthy" ] && [ "$STATUS" != "degraded" ]; then
+            echo "Unexpected status: $STATUS"
+            exit 1
+          fi
+          echo "$RESP" | jq -e '.components | keys | length > 0' > /dev/null
+          echo "$RESP" | jq -e '.checked_at | length > 0' > /dev/null
+          echo "Health check passed: status=$STATUS"
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
