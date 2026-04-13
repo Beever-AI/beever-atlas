@@ -582,11 +582,6 @@ class WeaviateStore:
             weaviate_filter = None
             if channel_id:
                 weaviate_filter = Filter.by_property("channel_id").equal(channel_id)
-            if not include_superseded:
-                no_superseded = Filter.by_property("invalid_at").is_none(True)
-                weaviate_filter = (
-                    weaviate_filter & no_superseded if weaviate_filter else no_superseded
-                )
 
             # Exclude cluster/summary objects from fact search
             tier_filter = Filter.by_property("tier").equal("atomic")
@@ -610,6 +605,11 @@ class WeaviateStore:
                 if similarity < threshold:
                     continue
                 fact = self._obj_to_fact(obj)
+                # Post-filter superseded facts Python-side (avoids is_none nullstate
+                # indexing requirement that Weaviate rejects when nullstate is not
+                # indexed in the schema).
+                if not include_superseded and fact.invalid_at is not None:
+                    continue
                 results.append({
                     "fact": fact,
                     "similarity_score": round(similarity, 4),
@@ -645,7 +645,93 @@ class WeaviateStore:
             logger.exception("WeaviateStore.bm25_search failed for query=%r channel=%s", query, channel_id)
             return []
 
-    async def hybrid_search(
+    async def true_hybrid_search(
+        self,
+        query_text: str,
+        query_vector: list[float],
+        channel_id: str,
+        tier: str = "atomic",
+        limit: int = 20,
+        alpha: float | None = None,
+        include_superseded: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Weaviate v4 native hybrid search combining BM25 + vector via Weaviate's
+        built-in fusion (Ranked Fusion by default).
+
+        Unlike ``pseudo_hybrid_search``, this issues a single Weaviate
+        ``collection.query.hybrid()`` call, so both the BM25 and vector scores
+        are fused server-side rather than merged client-side.
+
+        Args:
+            query_text: Raw text for the BM25 side.
+            query_vector: Pre-computed embedding for the vector side.  Required
+                because the MemoryFact collection uses ``Vectorizer.none()``.
+            channel_id: Scope results to this channel.
+            tier: Weaviate ``tier`` property filter (default ``"atomic"``).
+            limit: Maximum results to return.
+            alpha: BM25/vector blend (0.0 = pure BM25, 1.0 = pure vector).
+                Defaults to ``settings.weaviate_hybrid_alpha`` (0.6).
+            include_superseded: When False (default), exclude facts with a
+                non-null ``invalid_at`` field.
+
+        Returns:
+            Same shape as ``bm25_search`` / ``semantic_search``:
+            list of ``{"fact": AtomicFact, "similarity_score": float}``.
+        """
+        from beever_atlas.infra.config import get_settings
+        from weaviate.classes.query import MetadataQuery
+
+        resolved_alpha = alpha if alpha is not None else get_settings().weaviate_hybrid_alpha
+
+        def _search() -> list[dict[str, Any]]:
+            collection = self._collection()
+
+            weaviate_filter: Any = Filter.by_property("channel_id").equal(channel_id)
+            tier_filter = Filter.by_property("tier").equal(tier)
+            weaviate_filter = weaviate_filter & tier_filter
+
+            result = collection.query.hybrid(
+                query=query_text,
+                vector=query_vector,
+                alpha=resolved_alpha,
+                limit=limit,
+                filters=weaviate_filter,
+                return_metadata=MetadataQuery(score=True),
+            )
+
+            results: list[dict[str, Any]] = []
+            for obj in result.objects:
+                # Hybrid score is already 0-1 (Weaviate Ranked Fusion).
+                # Do not apply a distance threshold here — hybrid scores are not
+                # distances and the 0.7 cutoff in semantic_search is for cosine
+                # distance, not hybrid score.
+                score = getattr(obj.metadata, "score", None) or 0.0
+                fact = self._obj_to_fact(obj)
+                # Post-filter superseded facts Python-side (avoids is_none nullstate
+                # indexing requirement that Weaviate rejects when nullstate is not
+                # indexed in the schema).
+                if not include_superseded and fact.invalid_at is not None:
+                    continue
+                results.append({
+                    "fact": fact,
+                    "similarity_score": round(float(score), 4),
+                })
+            return results
+
+        try:
+            return await asyncio.to_thread(_search)
+        except Exception:
+            logger.exception(
+                "WeaviateStore.true_hybrid_search failed for query=%r channel=%s",
+                query_text,
+                channel_id,
+            )
+            return []
+
+    # Legacy pseudo-hybrid: vector search + field-filter merge (client-side).
+    # Kept for api/search.py backward compatibility.  New code should use
+    # true_hybrid_search() for real BM25+vector fusion via Weaviate.
+    async def pseudo_hybrid_search(
         self,
         query_vector: list[float],
         channel_id: str,
@@ -658,6 +744,11 @@ class WeaviateStore:
 
         Returns list of dicts with ``fact`` and ``similarity_score``.
         Overlapping facts (found by both methods) are ranked highest.
+
+        .. deprecated::
+            This is a client-side merge, NOT a real hybrid search.  It has no
+            BM25 component and no ``alpha`` parameter.  Use
+            ``true_hybrid_search()`` for Weaviate-native BM25+vector fusion.
         """
         # Run both searches
         vector_results = await self.semantic_search(

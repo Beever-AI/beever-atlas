@@ -135,6 +135,16 @@ export interface ToolCallEvent {
   started_at: number; // Date.now() timestamp
 }
 
+export interface DecompositionSubQuery {
+  label: string;
+  query: string;
+}
+
+export interface DecompositionPlan {
+  internal: DecompositionSubQuery[];
+  external: DecompositionSubQuery[];
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -157,4 +167,6 @@ export interface Message {
   mode?: AnswerMode;
   /** Channel this turn queried (v2 schema). Absent on legacy messages. */
   channel_id?: string;
+  /** Query decomposition plan, present only for complex multi-part questions. */
+  decomposition?: DecompositionPlan;
 }

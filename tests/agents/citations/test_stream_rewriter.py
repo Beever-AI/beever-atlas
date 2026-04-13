@@ -269,3 +269,48 @@ def test_open_tag_detects_combined_partial_at_boundary():
     mid = full.index(", ")
     out = _collect(rw, [full[:mid], full[mid:]])
     assert out == "pre [1] [2] post"
+
+
+# ---- leftover tag stripping: src and External shapes ---------------------
+
+
+def test_flush_strips_leftover_src_tag():
+    """_strip_leftovers removes a malformed [src:...] literal at flush time.
+
+    Tags with valid 10-hex IDs are caught earlier by the main pass (as
+    unknown-tag stripped). _strip_leftovers handles the residual cases:
+    malformed hex, extra spaces, etc. — whatever slipped through.
+    """
+    r, _ = _registry_with("A")
+    rw = StreamRewriter(r)
+    # Non-hex content — regex won't match the main pass, so it reaches flush.
+    rw._buffer = "before [src:malformed-not-hex] after"  # noqa: SLF001
+    out = rw.flush()
+    assert "[src:" not in out
+    assert "before" in out
+    assert "after" in out
+    assert rw.leftover_stripped_count == 1
+
+
+def test_flush_strips_leftover_external_tag():
+    """_strip_leftovers removes [External: some_url] at flush time."""
+    r, _ = _registry_with("A")
+    rw = StreamRewriter(r)
+    rw._buffer = "see [External: https://example.com] for more"  # noqa: SLF001
+    out = rw.flush()
+    assert "[External:" not in out
+    assert "see" in out
+    assert "for more" in out
+    assert rw.leftover_stripped_count == 1
+
+
+def test_flush_strips_both_leftover_shapes():
+    """_strip_leftovers handles both [src:...] and [External: ...] in one pass."""
+    r, _ = _registry_with("A")
+    rw = StreamRewriter(r)
+    rw._buffer = "a [src:bad-hex] b [External: https://x.com/page] c"  # noqa: SLF001
+    out = rw.flush()
+    assert "[src:" not in out
+    assert "[External:" not in out
+    assert "a" in out and "b" in out and "c" in out
+    assert rw.leftover_stripped_count == 2

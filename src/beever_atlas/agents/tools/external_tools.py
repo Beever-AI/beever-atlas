@@ -53,6 +53,7 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
             search_depth=search_depth,
             max_results=5,
             include_answer=True,
+            include_raw_content="markdown",
         )
 
         results = [

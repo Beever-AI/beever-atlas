@@ -157,8 +157,15 @@ async def trace_decision_history(channel_id: str, topic: str) -> list[dict]:
             return [{"_empty": True, "entity": topic, "reason": "no_edges"}]
 
         return timeline
-    except Exception:
-        logger.exception("trace_decision_history failed for topic=%s", topic)
+    except (ConnectionError, OSError) as e:
+        logger.error(
+            "trace_decision_history graph unavailable for topic=%s exc=%r",
+            topic,
+            e,
+        )
+        return {"result": [], "error": "graph_unavailable"}  # type: ignore[return-value]
+    except Exception as e:
+        logger.exception("trace_decision_history failed for topic=%s exc=%r", topic, e)
         return []
 
 

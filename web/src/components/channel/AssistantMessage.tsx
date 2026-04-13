@@ -1,4 +1,4 @@
-import { Children, Fragment, isValidElement, type ReactNode } from "react";
+import { Children, Fragment, isValidElement, memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -8,6 +8,7 @@ import type {
 } from "@/types/askTypes";
 import { Reasoning } from "./Reasoning";
 import { ToolList } from "./ToolList";
+import { QueryPlan } from "./QueryPlan";
 import { Sources } from "./Sources";
 import { CitationChip } from "./CitationChip";
 import { InlineMedia } from "./InlineMedia";
@@ -135,7 +136,7 @@ function renderMarker(
   );
 }
 
-export function AssistantMessage({
+function AssistantMessageInner({
   message,
   onFollowUpClick,
   onFeedback,
@@ -151,27 +152,11 @@ export function AssistantMessage({
     inlineUsed: new Set<number>(),
   };
 
-  return (
-    <div className="min-w-0 max-w-none">
-      {/* Thinking */}
-      {message.thinking && message.thinking.length > 0 && (
-        <Reasoning
-          thinking={message.thinking}
-          isStreaming={message.isStreaming}
-          durationMs={message.thinkingDuration ?? null}
-        />
-      )}
-
-      {/* Tool calls */}
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <ToolList
-          toolCalls={message.toolCalls}
-          isStreaming={message.isStreaming}
-        />
-      )}
-
-      {/* Response content */}
-      {body && (
+  // Memoize the markdown tree so React doesn't re-parse the same prefix on
+  // every typewriter tick. Re-renders only when body content actually changes.
+  const markdownTree = useMemo(
+    () =>
+      body ? (
         <div className="prose prose-invert prose-sm max-w-none text-foreground/90">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -214,7 +199,37 @@ export function AssistantMessage({
             {body}
           </ReactMarkdown>
         </div>
+      ) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [body, refs],
+  );
+
+  return (
+    <div className="min-w-0 max-w-none">
+      {/* Query decomposition plan */}
+      {message.decomposition && (
+        <QueryPlan plan={message.decomposition} isStreaming={message.isStreaming} />
       )}
+
+      {/* Thinking */}
+      {message.thinking && message.thinking.length > 0 && (
+        <Reasoning
+          thinking={message.thinking}
+          isStreaming={message.isStreaming}
+          durationMs={message.thinkingDuration ?? null}
+        />
+      )}
+
+      {/* Tool calls */}
+      {message.toolCalls && message.toolCalls.length > 0 && (
+        <ToolList
+          toolCalls={message.toolCalls}
+          isStreaming={message.isStreaming}
+        />
+      )}
+
+      {/* Response content */}
+      {markdownTree}
 
       {/* Streaming indicator */}
       {message.isStreaming && !message.content && message.thinking?.length === 0 && (
@@ -269,3 +284,5 @@ export function AssistantMessage({
     </div>
   );
 }
+
+export const AssistantMessage = memo(AssistantMessageInner);

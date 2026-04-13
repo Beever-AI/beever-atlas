@@ -9,12 +9,16 @@ import re
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator
+
+if TYPE_CHECKING:
+    from beever_atlas.agents.query.decomposer import QueryPlan
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File as FastAPIFile
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.genai import types as genai_types
 
 from beever_atlas.agents.runner import create_runner, create_session
@@ -83,13 +87,23 @@ def _extract_citations_from_text(text: str) -> list[dict]:
     return citations
 
 
-async def _build_decomposed_prompt(question: str, channel_id: str) -> str:
-    """Run QueryDecomposer and annotate the prompt for complex questions."""
+async def _build_decomposed_prompt(
+    question: str, channel_id: str
+) -> "tuple[str, QueryPlan | None]":
+    """Run QueryDecomposer and annotate the prompt for complex questions.
+
+    Returns a tuple of (prompt_text, plan_or_None).  plan is None when the
+    question is simple (no decomposition event should be emitted).
+    """
     from beever_atlas.agents.query.decomposer import decompose
 
     plan = await decompose(question)
-    if plan.is_simple or len(plan.internal_queries) <= 1:
-        return f"[Channel: {channel_id}]\n\n{question}"
+    logger.info(
+        "QueryDecomposer result: is_simple=%s internal=%d external=%d for %r",
+        plan.is_simple, len(plan.internal_queries), len(plan.external_queries), question[:80],
+    )
+    if plan.is_simple:
+        return f"[Channel: {channel_id}]\n\n{question}", None
 
     # For complex questions, hint the agent about sub-queries so it can
     # plan tool calls more efficiently.
@@ -101,7 +115,7 @@ async def _build_decomposed_prompt(question: str, channel_id: str) -> str:
         if plan.external_queries
         else "  (none)"
     )
-    return (
+    prompt = (
         f"[Channel: {channel_id}]\n\n"
         f"{question}\n\n"
         f"<decomposition>\n"
@@ -109,6 +123,7 @@ async def _build_decomposed_prompt(question: str, channel_id: str) -> str:
         f"External sub-queries:\n{ext_lines}\n"
         f"</decomposition>"
     )
+    return prompt, plan
 
 
 async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]:
@@ -156,9 +171,12 @@ async def _run_agent_stream(
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
 
-    # ----- Citation registry (Phase 1, flag-gated) --------------------
+    # ----- Settings flags ---------------------------------------------
     from beever_atlas.infra.config import get_settings
     _settings = get_settings()
+    sse_streaming = bool(getattr(_settings, "qa_adk_streaming_sse", False))
+
+    # ----- Citation registry (Phase 1, flag-gated) --------------------
     _registry_enabled = bool(getattr(_settings, "citation_registry_enabled", False))
 
     _registry = None
@@ -181,7 +199,7 @@ async def _run_agent_stream(
     history_parts = await _load_chat_history_parts(session_id)
 
     # Task 4.3: Decompose question and annotate prompt for complex questions
-    prompt_text = await _build_decomposed_prompt(question, channel_id)
+    prompt_text, _decomposition_plan = await _build_decomposed_prompt(question, channel_id)
 
     # Inject attachment content
     if attachments:
@@ -223,12 +241,35 @@ async def _run_agent_stream(
     thinking_ended = False
     thinking_duration_ms: int | None = None
 
+    # Emit decomposition event before the agent starts, when the question was
+    # complex enough to warrant sub-query planning.
+    if _decomposition_plan is not None:
+        yield _sse_event("decomposition", {
+            "internal": [
+                {"label": sq.focus, "query": sq.query}
+                for sq in _decomposition_plan.internal_queries
+            ],
+            "external": [
+                {"label": sq.focus, "query": sq.query}
+                for sq in _decomposition_plan.external_queries
+            ],
+        })
+
     try:
-        async for event in runner.run_async(
-            user_id=session.user_id,
-            session_id=session.id,
-            new_message=new_message,
-        ):
+        if sse_streaming:
+            _stream = runner.run_async(
+                user_id=session.user_id,
+                session_id=session.id,
+                new_message=new_message,
+                run_config=RunConfig(streaming_mode=StreamingMode.SSE),
+            )
+        else:
+            _stream = runner.run_async(
+                user_id=session.user_id,
+                session_id=session.id,
+                new_message=new_message,
+            )
+        async for event in _stream:
             if await request.is_disconnected():
                 logger.info("Client disconnected, stopping agent stream")
                 break
@@ -241,21 +282,24 @@ async def _run_agent_stream(
                 done_sent = True
                 return
 
-            # Tool call start — ADK emits FunctionCall parts before tool executes
-            for fc in event.get_function_calls():
-                tool_name = fc.name or "unknown"
-                tool_input = fc.args or {}
-                active_tool_calls[tool_name] = time.monotonic()
-                normalized_input = tool_input if isinstance(tool_input, dict) else {}
-                persisted_tool_calls.append({
-                    "tool_name": tool_name,
-                    "input": normalized_input,
-                    "status": "running",
-                })
-                yield _sse_event("tool_call_start", {
-                    "tool_name": tool_name,
-                    "input": normalized_input,
-                })
+            # Tool call start — ADK emits FunctionCall parts before tool executes.
+            # With SSE streaming, partial events carry incomplete JSON args; skip
+            # them and only fire tool_call_start on the fully-assembled final event.
+            if not getattr(event, "partial", False):
+                for fc in event.get_function_calls():
+                    tool_name = fc.name or "unknown"
+                    tool_input = fc.args or {}
+                    active_tool_calls[tool_name] = time.monotonic()
+                    normalized_input = tool_input if isinstance(tool_input, dict) else {}
+                    persisted_tool_calls.append({
+                        "tool_name": tool_name,
+                        "input": normalized_input,
+                        "status": "running",
+                    })
+                    yield _sse_event("tool_call_start", {
+                        "tool_name": tool_name,
+                        "input": normalized_input,
+                    })
 
             # Tool call end — ADK emits FunctionResponse parts after tool returns
             for fr in event.get_function_responses():
@@ -294,6 +338,15 @@ async def _run_agent_stream(
             # INVARIANT: parts with thought=True MUST only yield "thinking" events,
             # never "response_delta". Do not relax this check without reviewing
             # downstream citation and history persistence logic.
+            #
+            # SSE streaming mode gate:
+            # - Flag ON + partial=True  → emit response_delta/thinking, accumulate.
+            # - Flag ON + partial=False → skip emission (final aggregate); fall through
+            #   to turn_complete bookkeeping only. No double-emission.
+            # - Flag OFF               → original behavior, byte-identical.
+            _event_is_partial = getattr(event, "partial", False)
+            _skip_text_emit = sse_streaming and not _event_is_partial
+
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     part_is_thought = getattr(part, "thought", False)
@@ -304,7 +357,8 @@ async def _run_agent_stream(
                             if thinking_start is None:
                                 thinking_start = time.monotonic()
                             accumulated_thinking += part.text
-                            yield _sse_event("thinking", {"text": part.text})
+                            if not _skip_text_emit:
+                                yield _sse_event("thinking", {"text": part.text})
                     elif part.text:
                         # Belt-and-suspenders: if thought flag somehow leaks here, drop it.
                         if getattr(part, "thought", False):
@@ -313,6 +367,21 @@ async def _run_agent_stream(
                                 "(session=%s)",
                                 session_id,
                             )
+                            continue
+                        if _skip_text_emit:
+                            # Flag ON, final aggregate event — skip SSE emission to
+                            # avoid double-sending text already streamed via partials.
+                            # BUT: if no partials contributed text (e.g. tool-only
+                            # turn, very short answer, or ADK emitted a single
+                            # partial=False event), the final aggregate is our only
+                            # source. Accumulate it so persistence gets the answer.
+                            if not accumulated_text:
+                                if _rewriter is not None:
+                                    rewritten = _rewriter.feed(part.text)
+                                    if rewritten:
+                                        accumulated_text += rewritten
+                                else:
+                                    accumulated_text += part.text
                             continue
                         # Regular response text — emit thinking_done if transitioning
                         if thinking_start is not None and not thinking_ended:
@@ -447,7 +516,13 @@ async def _run_agent_stream(
                 logger.warning("failed to reset follow_ups collector", exc_info=True)
 
         if not done_sent:
-            logger.warning(
+            # In SSE streaming mode (StreamingMode.SSE), ADK may deliver the
+            # final text via partial=True events and emit a terminal
+            # partial=False aggregate that carries no turn_complete flag.
+            # The safety-net below handles this correctly; downgraded from
+            # WARNING to INFO because it fires on every normal SSE completion
+            # and is not indicative of an error.
+            logger.info(
                 "Agent stream ended without turn_complete for channel=%s; "
                 "sending done event as safety net",
                 channel_id,
@@ -1014,21 +1089,27 @@ async def list_ask_sessions(
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.chat_history_store import ChatHistoryStore
 
+    page_size = min(page_size, 50)
     user_id = _extract_user_id(request)
     settings = get_settings()
     store = ChatHistoryStore(settings.mongodb_uri)
     await store.startup()
     try:
+        # Fetch one extra to determine whether more pages exist.
         sessions = await store.list_sessions_global(
             user_id=user_id,
             page=page,
-            page_size=page_size,
+            page_size=page_size + 1,
             search=search,
         )
     finally:
         store.close()
 
-    return {"sessions": sessions, "page": page, "page_size": page_size}
+    has_more = len(sessions) > page_size
+    if has_more:
+        sessions = sessions[:page_size]
+
+    return {"sessions": sessions, "page": page, "page_size": page_size, "has_more": has_more}
 
 
 @router.get("/api/ask/sessions/{session_id}")
@@ -1105,12 +1186,15 @@ async def delete_ask_session(
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
         db = client["beever_atlas"]
-        await db.chat_history.update_one(
+        result = await db.chat_history.update_one(
             {"session_id": session_id, "user_id": user_id},
             {"$set": {"is_deleted": True}},
         )
     finally:
         client.close()
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     return {"status": "ok"}
 

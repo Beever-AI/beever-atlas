@@ -28,6 +28,7 @@ dependencies = [
     "chardet>=5.2.0",
     "python-dateutil>=2.9.0",
     "langdetect>=1.0.9",
+    "tavily-python>=0.5.0",
 ]
 
 [project.optional-dependencies]

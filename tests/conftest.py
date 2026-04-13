@@ -37,6 +37,28 @@ def _build_mock_connection(connection_id: str = "conn-mock") -> PlatformConnecti
     )
 
 
+@pytest.fixture(autouse=True)
+def _reset_wiki_motor_singleton():
+    """Clear the WikiCache Motor-client singleton between tests.
+
+    Without this, a test that populates _motor_clients with a mock would
+    bleed into the next test, causing it to skip re-initialization even when
+    the next test patches AsyncIOMotorClient with a fresh mock.
+    """
+    import beever_atlas.wiki.cache as cache_mod
+
+    original = cache_mod._motor_clients.copy()
+    original_lock = cache_mod._motor_clients_lock
+    cache_mod._motor_clients.clear()
+    cache_mod._motor_clients_lock = None
+    try:
+        yield
+    finally:
+        cache_mod._motor_clients.clear()
+        cache_mod._motor_clients.update(original)
+        cache_mod._motor_clients_lock = original_lock
+
+
 @pytest.fixture
 def mock_stores():
     """Install a MagicMock StoreClients for the duration of the test.

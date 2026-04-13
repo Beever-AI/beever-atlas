@@ -60,7 +60,7 @@ async def search_facts(body: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=503, detail="Embedding service unavailable") from exc
 
     try:
-        raw_results = await stores.weaviate.hybrid_search(
+        raw_results = await stores.weaviate.pseudo_hybrid_search(
             query_vector=query_vector,
             channel_id=body.channel_id or "",
             limit=body.limit,

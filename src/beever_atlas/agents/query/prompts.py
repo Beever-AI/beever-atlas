@@ -37,7 +37,7 @@ Do NOT stop after the first tool returns a result.
 
 **Step 5 — External Search — FALLBACK only:**
   - Call `search_external_knowledge` ONLY if Steps 1-4 yielded fewer than 2 relevant facts.
-  - Mark external results clearly as [External: source_url]."""
+  - Mark external results clearly in your prose (e.g., 'according to external sources')."""
 
 QUERY_TYPE_TOOL_MAP = """\
 ## Query-Type Tool Requirements
@@ -116,7 +116,7 @@ TONE_INSTRUCTIONS = """\
 ## Tone
 Be concise and factual. Distinguish clearly between:
 - "Your team discussed..." / "According to your channel..." (internal knowledge with citations)
-- "According to external sources..." (external/Tavily results, marked [External: url])
+- "According to external sources..." (external/Tavily results, described in prose)
 If a tool returns a row with `_empty: true`, disclose that the knowledge graph has no edges for that entity; do not silently substitute wiki content."""
 
 
@@ -182,6 +182,23 @@ EMPTY_SIGNAL_HANDLING = """\
 If a tool returns a row with `_empty: true`, disclose that the knowledge graph \
 has no edges for that entity. Never silently substitute wiki content for empty graph results."""
 
+DECOMPOSITION_INSTRUCTIONS = """\
+## Handling decomposed questions
+When the user message contains a <decomposition> block with sub-queries:
+1. For EACH internal sub-query, call the appropriate retrieval tool (search_channel_facts, get_wiki_page, search_topic_overview, or whichever tool best matches the focus label).
+2. For EACH external sub-query, call web_search.
+3. Execute these in parallel when possible.
+4. Synthesize findings from ALL sub-queries into one cohesive, well-organized answer.
+5. Cite every claim with [src:src_xxx] tags. Do not drop sub-queries silently — if a sub-query returns no results, acknowledge it."""
+
+DEEP_MODE_INSTRUCTIONS = """\
+## Deep research mode
+- Produce a thorough, multi-section answer. Target 400-800 words for multi-aspect questions.
+- Use markdown headers (##) to organize by sub-topic.
+- Quote or paraphrase specific facts with citations; don't generalize.
+- Exhaust relevant tools before concluding — use the full tool-call budget when justified.
+- End with a "Summary" paragraph."""
+
 
 def build_qa_system_prompt(
     *,
@@ -226,6 +243,8 @@ def build_qa_system_prompt(
             "",
             ANTI_META_COMMENTARY,
             "",
+            DECOMPOSITION_INSTRUCTIONS,
+            "",
             citation_block,
             "",
             EMPTY_SIGNAL_HANDLING,
@@ -234,7 +253,9 @@ def build_qa_system_prompt(
             "",
             MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
         ]
-        if mode != "deep":
+        if mode == "deep":
+            parts.extend(["", DEEP_MODE_INSTRUCTIONS])
+        else:
             parts.extend(["", ONBOARDING_LENGTH_HINT])
         if include_follow_ups:
             follow_up_block = FOLLOW_UPS_TOOL_INSTRUCTION if registry_on else FOLLOW_UP_INSTRUCTION
@@ -249,6 +270,8 @@ def build_qa_system_prompt(
         "",
         QUERY_TYPE_TOOL_MAP,
         "",
+        DECOMPOSITION_INSTRUCTIONS,
+        "",
         citation_block,
         "",
         MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
@@ -257,7 +280,9 @@ def build_qa_system_prompt(
         "",
         LANGUAGE_DIRECTIVE,
     ]
-    if mode != "deep":
+    if mode == "deep":
+        parts.extend(["", DEEP_MODE_INSTRUCTIONS])
+    else:
         parts.extend(["", ONBOARDING_LENGTH_HINT])
     if include_follow_ups:
         follow_up_block = FOLLOW_UPS_TOOL_INSTRUCTION if registry_on else FOLLOW_UP_INSTRUCTION

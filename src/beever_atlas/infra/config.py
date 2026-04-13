@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # Semantic search
     semantic_search_min_similarity: float = Field(default=0.7)
 
+    # Hybrid search alpha controls the BM25 / vector blend.
+    # 0.0 = pure BM25 (keyword only), 1.0 = pure vector (semantic only).
+    # Default 0.6 gives a slight semantic bias while retaining keyword recall.
+    weaviate_hybrid_alpha: float = Field(default=0.6, alias="WEAVIATE_HYBRID_ALPHA")
+
     # Temporal fact lifecycle
     contradiction_confidence_threshold: float = Field(default=0.8)
     contradiction_flag_threshold: float = Field(default=0.5)
@@ -160,6 +165,13 @@ class Settings(BaseSettings):
     # agent cannot recycle hollow non-answers as context. DEFAULT OFF until
     # false-positive rate is measured against Pass-1 fixtures.
     qa_history_negative_filter: bool = Field(default=False, alias="QA_HISTORY_NEGATIVE_FILTER")
+
+    # QA ADK SSE streaming mode.
+    # When ON, runner.run_async() receives RunConfig(streaming_mode=StreamingMode.SSE)
+    # so ADK emits partial=True token deltas. response_delta/thinking events fire
+    # only on partials; the final aggregate drives turn_complete bookkeeping only.
+    # DEFAULT OFF. Flip QA_ADK_STREAMING_SSE=1 to enable.
+    qa_adk_streaming_sse: bool = Field(default=False, alias="QA_ADK_STREAMING_SSE")
 
     # Multilingual memory & wiki/QA rendering (change: multilingual-native-memory).
     # When ON, ingestion detects BCP-47 source_lang per channel/message,

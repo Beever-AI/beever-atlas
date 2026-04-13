@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo, useMemo } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
 interface ReasoningProps {
@@ -8,7 +10,7 @@ interface ReasoningProps {
   durationMs: number | null;
 }
 
-export function Reasoning({ thinking, isStreaming, durationMs }: ReasoningProps) {
+function ReasoningInner({ thinking, isStreaming, durationMs }: ReasoningProps) {
   const [expanded, setExpanded] = useState(true);
   const userToggledRef = useRef(false);
 
@@ -20,6 +22,35 @@ export function Reasoning({ thinking, isStreaming, durationMs }: ReasoningProps)
   }, [isStreaming, thinking.length]);
 
   const text = thinking.join("");
+  const renderedMarkdown = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => (
+            <p className="mb-2 leading-relaxed text-sm text-muted-foreground/80">{children}</p>
+          ),
+          strong: ({ children }) => (
+            <strong className="font-semibold text-muted-foreground/90">{children}</strong>
+          ),
+          ul: ({ children }) => (
+            <ul className="mb-2 space-y-0.5 list-disc list-inside text-sm text-muted-foreground/80">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="mb-2 space-y-0.5 list-decimal list-inside text-sm text-muted-foreground/80">{children}</ol>
+          ),
+          li: ({ children }) => <li className="text-muted-foreground/80">{children}</li>,
+          code: ({ children }) => (
+            <code className="px-1 py-0.5 bg-muted/50 rounded text-xs text-muted-foreground/90">{children}</code>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    ),
+    [text],
+  );
+
   if (!text) return null;
 
   const label = isStreaming
@@ -56,11 +87,11 @@ export function Reasoning({ thinking, isStreaming, durationMs }: ReasoningProps)
         )}
       >
         <div className="border-l border-border pl-4 ml-1.5 max-h-[480px] overflow-y-auto">
-          <p className="text-sm text-muted-foreground/80 leading-relaxed whitespace-pre-wrap">
-            {text}
-          </p>
+          {renderedMarkdown}
         </div>
       </div>
     </div>
   );
 }
+
+export const Reasoning = memo(ReasoningInner);

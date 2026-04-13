@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import DESCENDING
@@ -17,10 +18,27 @@ class WikiVersionStore:
     """Stores versioned snapshots of wiki documents per channel."""
 
     def __init__(self, mongodb_uri: str, db_name: str = "beever_atlas") -> None:
-        self._db = AsyncIOMotorClient(mongodb_uri)[db_name]
+        self._mongodb_uri = mongodb_uri
+        self._db_name = db_name
+        self._db: Any = None
+        self._collection: Any = None
+
+    async def _ensure_db(self) -> None:
+        """Resolve the shared Motor client (singleton from cache module).
+
+        Short-circuits if _collection has already been set (e.g. by test
+        fixtures that inject a mock collection directly).
+        """
+        if self._collection is not None:
+            return
+        # Reuse the same singleton registry as WikiCache to avoid a second pool.
+        from beever_atlas.wiki.cache import _get_motor_client
+        client = await _get_motor_client(self._mongodb_uri)
+        self._db = client[self._db_name]
         self._collection = self._db["wiki_versions"]
 
     async def ensure_indexes(self) -> None:
+        await self._ensure_db()
         await self._collection.create_index(
             [("channel_id", 1), ("version_number", 1)],
             unique=True,
@@ -29,6 +47,7 @@ class WikiVersionStore:
 
     async def archive(self, channel_id: str, wiki_doc: dict) -> int:
         """Archive a wiki document as a new version. Returns the assigned version number."""
+        await self._ensure_db()
         next_version = await self._next_version_number(channel_id)
         version_doc = {
             "channel_id": channel_id,
@@ -54,6 +73,7 @@ class WikiVersionStore:
 
     async def cleanup(self, channel_id: str, max_versions: int = MAX_VERSIONS_DEFAULT) -> int:
         """Delete oldest versions exceeding the limit. Returns number of versions deleted."""
+        await self._ensure_db()
         count = await self._collection.count_documents({"channel_id": channel_id})
         if count <= max_versions:
             return 0
@@ -83,6 +103,7 @@ class WikiVersionStore:
 
     async def list_versions(self, channel_id: str) -> list[dict]:
         """Return version summaries sorted by version_number descending."""
+        await self._ensure_db()
         cursor = self._collection.find(
             {"channel_id": channel_id},
             {
@@ -99,6 +120,7 @@ class WikiVersionStore:
 
     async def get_version(self, channel_id: str, version_number: int) -> dict | None:
         """Return a full version document or None."""
+        await self._ensure_db()
         return await self._collection.find_one(
             {"channel_id": channel_id, "version_number": version_number},
             {"_id": 0},
@@ -108,6 +130,7 @@ class WikiVersionStore:
         self, channel_id: str, version_number: int, page_id: str
     ) -> dict | None:
         """Return a single page from a version or None."""
+        await self._ensure_db()
         doc = await self._collection.find_one(
             {"channel_id": channel_id, "version_number": version_number},
             {"_id": 0, f"pages.{page_id}": 1},
@@ -118,10 +141,12 @@ class WikiVersionStore:
 
     async def count_versions(self, channel_id: str) -> int:
         """Return the number of archived versions for a channel."""
+        await self._ensure_db()
         return await self._collection.count_documents({"channel_id": channel_id})
 
     async def _next_version_number(self, channel_id: str) -> int:
         """Get the next version number for a channel."""
+        # _ensure_db() guaranteed by the public callers (archive, cleanup).
         latest = await self._collection.find_one(
             {"channel_id": channel_id},
             {"version_number": 1},
@@ -132,4 +157,7 @@ class WikiVersionStore:
         return latest["version_number"] + 1
 
     def close(self) -> None:
-        self._db.client.close()
+        # The Motor client is the module-level singleton from cache.py; do not
+        # close it here — closing it would break all other instances sharing
+        # the same URI. Kept for API compatibility only.
+        pass

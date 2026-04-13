@@ -63,7 +63,7 @@ def _base_patches(settings, fake_runner, fake_session):
         patch("beever_atlas.api.ask.create_runner", return_value=fake_runner),
         patch("beever_atlas.api.ask.create_session", new=AsyncMock(return_value=fake_session)),
         patch("beever_atlas.api.ask._load_chat_history_parts", new=AsyncMock(return_value=[])),
-        patch("beever_atlas.api.ask._build_decomposed_prompt", new=AsyncMock(return_value="test question")),
+        patch("beever_atlas.api.ask._build_decomposed_prompt", new=AsyncMock(return_value=("test question", None))),
         patch("beever_atlas.api.ask._persist_qa_history", new=AsyncMock()),
         patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.infra.config.get_settings", return_value=settings),

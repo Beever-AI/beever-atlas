@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from "react";
-import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile } from "../types/askTypes";
+import { useState, useCallback, useRef, useEffect } from "react";
+import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile, DecompositionPlan } from "../types/askTypes";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -21,6 +21,66 @@ interface UseAskReturn {
   toolCalls: ToolCallEvent[];
 }
 
+// ---------------------------------------------------------------------------
+// Typewriter helper
+// ---------------------------------------------------------------------------
+// Returns a controller that drips buffered text into React state at ~25ms per
+// tick. Call `feed(text)` to add chars; `flush()` to drain immediately;
+// `cancel()` on unmount/abort.
+
+interface TypewriterController {
+  feed: (text: string) => void;
+  flush: () => void;
+  cancel: () => void;
+}
+
+function createTypewriter(
+  apply: (chars: string) => void,
+  intervalMs = 20,
+): TypewriterController {
+  let pending = "";
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const CHARS_PER_TICK = 4; // release up to 4 chars every 20ms (~200 chars/s)
+
+  const start = () => {
+    if (timer !== null) return;
+    timer = setInterval(() => {
+      if (!pending) {
+        clearInterval(timer!);
+        timer = null;
+        return;
+      }
+      const chunk = pending.slice(0, CHARS_PER_TICK);
+      pending = pending.slice(CHARS_PER_TICK);
+      apply(chunk);
+    }, intervalMs);
+  };
+
+  return {
+    feed(text: string) {
+      pending += text;
+      start();
+    },
+    flush() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (pending) {
+        apply(pending);
+        pending = "";
+      }
+    },
+    cancel() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+      pending = "";
+    },
+  };
+}
+
 export function useAsk(channelId: string): UseAskReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +88,17 @@ export function useAsk(channelId: string): UseAskReturn {
   const abortRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
   const idleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Typewriter controllers — reset per ask call
+  const contentTwRef = useRef<TypewriterController | null>(null);
+  const thinkingTwRef = useRef<TypewriterController | null>(null);
+
+  // Cancel typewriters on unmount
+  useEffect(() => {
+    return () => {
+      contentTwRef.current?.cancel();
+      thinkingTwRef.current?.cancel();
+    };
+  }, []);
 
   const clearIdleTimeout = useCallback(() => {
     if (idleTimeoutRef.current) {
@@ -55,6 +126,9 @@ export function useAsk(channelId: string): UseAskReturn {
       if (abortRef.current) {
         abortRef.current.abort();
       }
+      // Cancel any in-flight typewriters from a previous ask
+      contentTwRef.current?.cancel();
+      thinkingTwRef.current?.cancel();
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -94,6 +168,19 @@ export function useAsk(channelId: string): UseAskReturn {
           prev.map((msg) => (msg.id === assistantMsgId ? updater(msg) : msg)),
         );
       };
+
+      // Set up typewriter controllers for this ask
+      contentTwRef.current = createTypewriter((chars) => {
+        updateAssistant((msg) => ({ ...msg, content: msg.content + chars }));
+      });
+      thinkingTwRef.current = createTypewriter((chars) => {
+        updateAssistant((msg) => {
+          const prev = msg.thinking;
+          // Append chars to the last thinking segment, or start a new one
+          if (prev.length === 0) return { ...msg, thinking: [chars] };
+          return { ...msg, thinking: [...prev.slice(0, -1), prev[prev.length - 1] + chars] };
+        });
+      });
 
       try {
         const res = await fetch(`${API_BASE}/api/channels/${channelId}/ask`, {
@@ -150,15 +237,15 @@ export function useAsk(channelId: string): UseAskReturn {
                 const data = JSON.parse(line.slice(6));
                 switch (currentEventType) {
                   case "thinking":
-                    updateAssistant((msg) => ({
-                      ...msg,
-                      thinking: [...msg.thinking, data.text],
-                    }));
+                    thinkingTwRef.current?.feed(data.text || "");
                     break;
                   case "response_delta":
+                    contentTwRef.current?.feed(data.delta || "");
+                    break;
+                  case "decomposition":
                     updateAssistant((msg) => ({
                       ...msg,
-                      content: msg.content + (data.delta || ""),
+                      decomposition: data as DecompositionPlan,
                     }));
                     break;
                   case "citations":
@@ -230,6 +317,14 @@ export function useAsk(channelId: string): UseAskReturn {
                     updateAssistant((msg) => ({ ...msg, isStreaming: false }));
                     break;
                   case "done":
+                    // Delay flush so the typewriter interval can drain several
+                    // ticks first (~6 ticks × 20ms = 120ms), then force-flush
+                    // anything still buffered. Other done-side-effects run
+                    // immediately and are not blocked by this timeout.
+                    setTimeout(() => {
+                      contentTwRef.current?.flush();
+                      thinkingTwRef.current?.flush();
+                    }, 150);
                     updateAssistant((msg) => {
                       const cleanedContent = msg.content
                         .replace(/\n*---\n*FOLLOW_UPS:\s*\[.*?\]/s, "")
@@ -273,13 +368,19 @@ export function useAsk(channelId: string): UseAskReturn {
         // Safety net: always reset streaming after the reader loop exits,
         // regardless of whether a "done" event was received. This is
         // idempotent — if done already set isStreaming: false, this is a no-op.
+        contentTwRef.current?.flush();
+        thinkingTwRef.current?.flush();
         updateAssistant((msg) => ({ ...msg, isStreaming: false }));
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          // Keep partial content, just stop streaming
+          // Keep partial content, just stop streaming; cancel pending typewriter chars
+          contentTwRef.current?.cancel();
+          thinkingTwRef.current?.cancel();
           updateAssistant((msg) => ({ ...msg, isStreaming: false }));
           return;
         }
+        contentTwRef.current?.cancel();
+        thinkingTwRef.current?.cancel();
         setError(err instanceof Error ? err.message : "Unknown error");
         updateAssistant((msg) => ({ ...msg, isStreaming: false }));
       } finally {

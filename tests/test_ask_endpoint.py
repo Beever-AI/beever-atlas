@@ -57,8 +57,8 @@ async def _mock_run_async_error(**kwargs):
     yield event
 
 
-async def _noop_decomposed_prompt(question: str, channel_id: str) -> str:
-    return f"[Channel: {channel_id}]\n\n{question}"
+async def _noop_decomposed_prompt(question: str, channel_id: str) -> tuple:
+    return f"[Channel: {channel_id}]\n\n{question}", None
 
 
 async def _noop_chat_history(session_id: str):
