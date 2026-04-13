@@ -73,6 +73,19 @@ def test_allowed_tools_exist_in_registry() -> None:
             )
 
 
+def test_media_gallery_description_keywords() -> None:
+    skills = {s.frontmatter.name: s for s in build_qa_skill_pack()}
+    desc = skills["media-gallery"].frontmatter.description
+    assert "architecture diagram" in desc or "flowchart" in desc
+
+
+def test_source_braid_description_keywords() -> None:
+    skills = {s.frontmatter.name: s for s in build_qa_skill_pack()}
+    desc = skills["source-braid"].frontmatter.description
+    assert "industry" in desc
+    assert "best practices" in desc
+
+
 def test_l1_token_budget() -> None:
     tiktoken = pytest.importorskip("tiktoken")
     enc = tiktoken.get_encoding("o200k_base")
