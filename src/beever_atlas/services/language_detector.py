@@ -82,6 +82,14 @@ _LANGDETECT_TO_BCP47: dict[str, str] = {
 
 # ---------------------------------------------------------------------------
 # langdetect integration (deterministic seed, optional dep)
+#
+# TODO(phase4-followup): langdetect is unmaintained (last release 2021-05).
+# Evaluate replacement with `lingua-py` (active, higher accuracy, but ~200MB
+# model download and different API surface). Migration touches:
+#   - _langdetect_classify() — lingua uses Language enum, not ISO strings
+#   - _LANGDETECT_TO_BCP47 map — lingua already emits ISO 639-1 names
+#   - tests/test_language_detector.py — mock surface changes
+# Estimated 2-4h including regression validation. Tracked separately.
 # ---------------------------------------------------------------------------
 
 _LANGDETECT_AVAILABLE = False
