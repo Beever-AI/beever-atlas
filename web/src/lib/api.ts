@@ -1,10 +1,18 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const API_KEY = import.meta.env.VITE_BEEVER_API_KEY as string | undefined;
 const REQUEST_TIMEOUT_MS = 15000;
 
+// Read the key lazily on every call so HMR-stale module instances (which can
+// capture an undefined value from before .env.local was written) cannot leak
+// unauthenticated requests. Runtime cost is negligible; import.meta.env is a
+// static object baked by Vite.
+function currentApiKey(): string | undefined {
+  const key = import.meta.env.VITE_BEEVER_API_KEY as string | undefined;
+  return key && key.length > 0 ? key : undefined;
+}
+
 let _missingKeyWarned = false;
-function warnIfMissingKey(): void {
-  if (!API_KEY && !_missingKeyWarned) {
+function warnIfMissingKey(key: string | undefined): void {
+  if (!key && !_missingKeyWarned) {
     _missingKeyWarned = true;
     console.warn(
       "[api] VITE_BEEVER_API_KEY is not set — /api/* requests will omit the Authorization header. " +
@@ -39,14 +47,15 @@ function hasAuthHeader(headers: HeadersInit | undefined): boolean {
  * fetch() for any call into the backend API.
  */
 export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  warnIfMissingKey();
+  const apiKey = currentApiKey();
+  warnIfMissingKey(apiKey);
   const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  const shouldInject = !!API_KEY && !isAuthExempt(urlStr) && !hasAuthHeader(init?.headers);
+  const shouldInject = !!apiKey && !isAuthExempt(urlStr) && !hasAuthHeader(init?.headers);
   if (!shouldInject) {
     return fetch(input, init);
   }
   const merged = new Headers(init?.headers);
-  merged.set("Authorization", `Bearer ${API_KEY}`);
+  merged.set("Authorization", `Bearer ${apiKey}`);
   return fetch(input, { ...init, headers: merged });
 }
 
