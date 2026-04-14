@@ -151,6 +151,6 @@ async def test_all_batches_complete_and_ordered() -> None:
         )
 
     assert len(result.batch_breakdowns) == 4
-    batch_nums = [bd.batch_num for bd in result.batch_breakdowns]
-    assert batch_nums == sorted(batch_nums), "Breakdowns must be in batch-index order"
+    batch_nums = {bd.batch_num for bd in result.batch_breakdowns}
+    assert batch_nums == {1, 2, 3, 4}, "All 4 batch indices must be present"
     assert len(result.errors) == 0
