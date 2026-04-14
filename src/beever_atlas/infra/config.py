@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     # Bounded inter-batch concurrency (1–8)
     ingest_batch_concurrency: int = Field(default=2, ge=1, le=8)
 
+    # Intra-batch contradiction detection concurrency (1–16)
+    contradiction_concurrency: int = Field(default=4, ge=1, le=16)
+
+    # Bounded concurrent in-flight Gemini image description calls (1–16)
+    image_extractor_concurrency: int = Field(default=4, ge=1, le=16)
+
     # Cross-batch thread context
     cross_batch_thread_context_enabled: bool = Field(default=True)
     thread_context_max_length: int = Field(default=200)
@@ -252,6 +258,17 @@ class Settings(BaseSettings):
     @property
     def supported_languages_list(self) -> list[str]:
         return [s.strip() for s in self.supported_languages.split(",") if s.strip()]
+
+    # Wiki compiler feature flags
+    # Phase 1: control-char sanitizer, degenerate-content guard, retry gating.
+    # Pure defensive additions — default ON.
+    wiki_parse_hardening: bool = Field(default=True, alias="BEEVER_WIKI_PARSE_HARDENING")
+    # Phase 2: parallelize title translation with page dispatch. Default ON.
+    wiki_parallel_dispatch: bool = Field(default=True, alias="BEEVER_WIKI_PARALLEL_DISPATCH")
+    # Phase 3: per-page-kind token budgets. Default ON.
+    wiki_token_budget_v2: bool = Field(default=True, alias="BEEVER_WIKI_TOKEN_BUDGET_V2")
+    # Phase 4+5: deterministic Key Facts table + delimited response parser. Default OFF.
+    wiki_compiler_v2: bool = Field(default=False, alias="BEEVER_WIKI_COMPILER_V2")
 
     # Credential encryption
     credential_master_key: str = Field(default="")
