@@ -46,11 +46,32 @@ function groupByWorkspace(
     buckets.set(key, list);
   }
   const groups: WorkspaceChannelGroup[] = [];
+  const seen = new Set<string>();
   for (const conn of connections) {
     const chs = buckets.get(conn.id);
     if (chs && chs.length > 0) {
       groups.push({ connection: conn, channels: chs.sort((a, b) => a.name.localeCompare(b.name)) });
+      seen.add(conn.id);
     }
+  }
+  // Fallback: surface channels whose connection_id has no matching PlatformConnection
+  // (e.g. /api/connections returned empty or the connection was deleted). Without
+  // this the page renders "No connected channels yet" while 3 channels exist.
+  const orphanBuckets: { key: string; chs: Channel[] }[] = [];
+  for (const [key, chs] of buckets.entries()) {
+    if (!seen.has(key) && chs.length > 0) orphanBuckets.push({ key, chs });
+  }
+  for (const { key, chs } of orphanBuckets) {
+    groups.push({
+      connection: {
+        id: key,
+        platform: chs[0]?.platform ?? "unknown",
+        display_name: "Ungrouped",
+        workspace_name: "Ungrouped",
+        is_active: true,
+      } as unknown as PlatformConnection,
+      channels: chs.sort((a, b) => a.name.localeCompare(b.name)),
+    });
   }
   return groups;
 }

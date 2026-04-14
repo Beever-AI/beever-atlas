@@ -113,6 +113,16 @@ function AskCoreFixed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions.activeSessionId]);
 
+  // Sidebar "+ New chat" always resets, even when activeSessionId was already
+  // null (state-equality would otherwise suppress the effect above).
+  const newChatNonce = sessions.newChatNonce;
+  const firstNonceRef = useRef(newChatNonce);
+  useEffect(() => {
+    if (newChatNonce === firstNonceRef.current) return;
+    reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newChatNonce]);
+
   const handleSubmit = useCallback(
     (question: string, options?: { mode?: AnswerMode }) => {
       ask(question, {
@@ -335,6 +345,16 @@ function AskCorePicker({
     if (sessions.activeSessionId === null && sessionId !== null) reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions.activeSessionId]);
+
+  // Nonce-based backup: fires on every explicit newConversation() regardless
+  // of activeSessionId equality shortcuts.
+  const newChatNoncePicker = sessions.newChatNonce;
+  const firstNoncePickerRef = useRef(newChatNoncePicker);
+  useEffect(() => {
+    if (newChatNoncePicker === firstNoncePickerRef.current) return;
+    reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newChatNoncePicker]);
 
   const handleSubmit = useCallback(
     (question: string, options?: { mode?: AnswerMode }) => {

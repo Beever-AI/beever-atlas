@@ -42,6 +42,7 @@ export function AskPage() {
     activeSessionId,
     loadStatus,
     clearLoadStatus,
+    newChatNonce,
   } = useAskSessions();
 
   // Bare-/ask redirect-to-latest state. `"pending"` = deciding; `"done"` = rendered.
@@ -120,6 +121,13 @@ export function AskPage() {
   // so the next mint on a fresh /ask gets its own tracking.
   useEffect(() => {
     if (!paramSessionId) return;
+    // If the user just clicked "+ New chat" from a /ask/:id URL, navigate
+    // fires before the URL propagates here. In that intermediate render
+    // `paramSessionId` is still the old id and `activeSessionId` is null
+    // (from newConversation). Without this guard the effect would re-assert
+    // the old session, causing AskCorePicker to reload its messages and the
+    // page to appear stuck on the previous chat.
+    if (newChatIntent) return;
     if (paramSessionId === mintedSessionId) return;
     if (mintedSessionId && paramSessionId !== mintedSessionId) {
       setMintedSessionId(null);
@@ -133,6 +141,7 @@ export function AskPage() {
     mintedSessionId,
     setActiveSessionId,
     clearLoadStatus,
+    newChatIntent,
   ]);
 
   useEffect(() => {
@@ -188,7 +197,9 @@ export function AskPage() {
             onClick={() => {
               clearLoadStatus();
               newConversation();
-              navigate("/ask");
+              // `?new=1` suppresses the bare-/ask redirect-to-latest, so
+              // the user lands on a genuinely fresh composer.
+              navigate("/ask?new=1");
             }}
             className="inline-flex items-center justify-center h-10 px-5 rounded-full text-sm font-medium border border-border bg-card hover:bg-muted transition-colors text-foreground"
           >
@@ -207,14 +218,21 @@ export function AskPage() {
       // `?q=` implies new-chat intent, so `q:` takes precedence over `new`.
       // Also remount on paramSessionId change so a /ask/:a → /ask/:b nav
       // reliably resets state.
+      // Remount rules (ordered):
+      //   1. `?q=foo` — fresh chat with prefilled query (remount per query)
+      //   2. Navigating to a different persisted session (not the one we just
+      //      minted in this tab) — remount with that session's id
+      //   3. Otherwise — stable key that only changes when `newChatNonce`
+      //      bumps. This preserves the AskCorePicker across:
+      //      - `/ask?new=1` → `/ask/:id` mint-replace (streaming must not die)
+      //      - user follow-ups on the same session
+      //      …while still remounting on every explicit "+ New chat" click.
       key={
         initialQuery
-          ? `q:${initialQuery}`
-          : newChatIntent
-            ? "new"
-            : paramSessionId && paramSessionId !== mintedSessionId
-              ? `s:${paramSessionId}`
-              : "idle"
+          ? `q:${initialQuery}:${newChatNonce}`
+          : paramSessionId && paramSessionId !== mintedSessionId
+            ? `s:${paramSessionId}`
+            : `n:${newChatNonce}`
       }
       channelMode="picker"
       channelId={initialChannelId || channels[0].channel_id}

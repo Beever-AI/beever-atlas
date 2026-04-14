@@ -102,7 +102,16 @@ export function SidebarConversationList() {
       {/* New chat button */}
       <div className="px-3 pt-3 pb-2">
         <button
-          onClick={newConversation}
+          onClick={() => {
+            // Navigate away from any /ask/:id URL first — otherwise AskPage's
+            // paramSessionId → activeSessionId reconcile effect immediately
+            // re-sets the session we just cleared.
+            if (window.location.pathname.startsWith("/ask")) {
+              // `?new=1` suppresses AskPage's bare-/ask redirect-to-latest.
+              navigate("/ask?new=1");
+            }
+            newConversation();
+          }}
           className="w-full inline-flex items-center justify-center gap-2 h-8 px-3 text-xs font-medium text-foreground bg-background hover:bg-muted border border-border rounded-lg transition-colors"
           title="New conversation (⌘⇧O)"
         >

@@ -30,7 +30,7 @@ const WIDTH_KEY = "sidebar:width";
 const navItems = [
   { to: "/", icon: Home, label: "Home" },
   { to: "/channels", icon: MessageSquare, label: "Channels" },
-  { to: "/ask", icon: MessageCircleQuestion, label: "Ask" },
+  { to: "/ask?new=1", icon: MessageCircleQuestion, label: "Ask" },
   { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

@@ -38,6 +38,12 @@ interface AskSessionsContextValue {
   deleteSession: (sessionId: string) => void;
   /** Start a new conversation — clears activeSessionId */
   newConversation: () => void;
+  /**
+   * Bumps every time `newConversation()` is called. AskCore effects subscribe
+   * to this so "+ New chat" reliably resets even when activeSessionId is
+   * already null (state-equality would otherwise suppress the effect).
+   */
+  newChatNonce: number;
 }
 
 const AskSessionsContext = createContext<AskSessionsContextValue | null>(null);
@@ -66,6 +72,7 @@ export function useAskSessions(): AskSessionsContextValue {
       pinSession: () => {},
       deleteSession: () => {},
       newConversation: () => {},
+      newChatNonce: 0,
     };
   }
   return ctx;
@@ -114,7 +121,6 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
           isStreaming: false,
           channel_id: m.channel_id,
         }));
-        setActiveSessionId(sessionId);
         return converted;
       }
       return [];
@@ -122,8 +128,10 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
     [history],
   );
 
+  const [newChatNonce, setNewChatNonce] = useState(0);
   const newConversation = useCallback(() => {
     setActiveSessionId(null);
+    setNewChatNonce((n) => n + 1);
   }, []);
 
   const value = useMemo<AskSessionsContextValue>(
@@ -146,8 +154,10 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
       pinSession: history.pinSession,
       deleteSession: history.deleteSession,
       newConversation,
+      newChatNonce,
     }),
     [
+      newChatNonce,
       isActive,
       history.sessions,
       activeSessionId,
