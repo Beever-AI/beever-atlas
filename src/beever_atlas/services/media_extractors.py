@@ -46,7 +46,8 @@ def _get_image_semaphore() -> asyncio.Semaphore:
     if _IMAGE_SEMAPHORE_LOCK is None:
         _IMAGE_SEMAPHORE_LOCK = asyncio.Lock()
     # Caller must be inside an async context; return existing or create
-    _IMAGE_SEMAPHORE = asyncio.Semaphore(4)
+    concurrency = get_settings().image_extractor_concurrency
+    _IMAGE_SEMAPHORE = asyncio.Semaphore(concurrency)
     return _IMAGE_SEMAPHORE
 
 
