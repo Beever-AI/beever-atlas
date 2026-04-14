@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-14
+
+First public open-source release. v0.1.0 was tagged before this work
+landed; 0.1.1 is the actual launch and includes the full security
+hardening, correctness fixes, OSS artifacts, CI workflows, and
+follow-up polish documented below.
+
 ### Added
 - Apache-2.0 LICENSE, NOTICE with third-party attributions, CONTRIBUTING,
   CODE_OF_CONDUCT (Contributor Covenant 2.1), and SECURITY policy.
