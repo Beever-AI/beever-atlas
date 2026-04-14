@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     contradiction_confidence_threshold: float = Field(default=0.8)
     contradiction_flag_threshold: float = Field(default=0.5)
 
+    # Provider rate limits (requests per minute)
+    gemini_rpm: int = Field(default=300)
+    jina_rpm: int = Field(default=500)
+
+    # Bounded inter-batch concurrency (1–8)
+    ingest_batch_concurrency: int = Field(default=2, ge=1, le=8)
+
     # Cross-batch thread context
     cross_batch_thread_context_enabled: bool = Field(default=True)
     thread_context_max_length: int = Field(default=200)

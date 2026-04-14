@@ -32,6 +32,7 @@ def create_entity_extractor(model=None) -> LlmAgent:
         "output_key": "extracted_entities",
         "generate_content_config": types.GenerateContentConfig(
             response_mime_type="application/json",
+            # Gemini 2.5 Flash real output ceiling ~65k; prior 131072 exceeded model limit causing silent truncation (see .omc/plans/ingestion-pipeline-hardening.md).
             max_output_tokens=65536,
         ),
         "before_agent_callback": make_checkpoint_skip_callback("entity_extractor"),

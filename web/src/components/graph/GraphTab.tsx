@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
-import { Loader2, Network } from "lucide-react";
+import { FolderSync, Loader2, Network, Sparkles } from "lucide-react";
 import { useGraph } from "@/hooks/useGraph";
+import { useChannelMemoryCount } from "@/hooks/useChannelMemoryCount";
+import { PipelineEmptyState } from "@/components/shared/PipelineEmptyState";
 import { GraphFilters } from "./GraphFilters";
 import { GraphCanvas } from "./GraphCanvas";
 import { EntityPanel } from "./EntityPanel";
@@ -12,6 +14,7 @@ const MEDIA_TYPES = new Set(["Link", "Document", "Image", "Media"]);
 export function GraphTab() {
   const { id: channelId } = useParams<{ id: string }>();
   const { entities, relationships, loading, error } = useGraph(channelId ?? "");
+  const { hasMemories, isLoading: isMemoryCountLoading } = useChannelMemoryCount(channelId);
   const [visibleTypes, setVisibleTypes] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mediaModal, setMediaModal] = useState<{ name: string; url: string; mediaType: string } | null>(null);
@@ -64,19 +67,24 @@ export function GraphTab() {
     );
   }
 
-  if (entities.length === 0) {
+  if (entities.length === 0 && !isMemoryCountLoading) {
+    const isNoMemory = !hasMemories;
+    const steps = [
+      { label: "Sync channel", icon: FolderSync, done: !isNoMemory, active: isNoMemory },
+      { label: "Build memories", icon: Sparkles, done: !isNoMemory, active: false },
+      { label: "View graph", icon: Network, done: false, active: !isNoMemory },
+    ];
     return (
-      <div className="flex items-center justify-center h-full p-6">
-        <div className="max-w-sm w-full text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-            <Network className="h-7 w-7 text-primary" />
-          </div>
-          <h3 className="text-lg font-semibold text-foreground">No entities yet</h3>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Sync this channel to extract entities and build a knowledge graph from its conversations.
-          </p>
-        </div>
-      </div>
+      <PipelineEmptyState
+        icon={isNoMemory ? FolderSync : Network}
+        title={isNoMemory ? "Sync this channel first" : "No entities yet"}
+        description={
+          isNoMemory
+            ? "The graph visualizes entities extracted from channel memories. Sync this channel to unlock it."
+            : "Entities will appear here once this channel's memories are consolidated into a knowledge graph."
+        }
+        steps={steps}
+      />
     );
   }
 

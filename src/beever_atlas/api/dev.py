@@ -99,7 +99,7 @@ async def reset_all_data() -> dict:
         defaults = GlobalPolicyDefaults(
             sync=SyncConfig(
                 trigger_mode=SyncTriggerMode.MANUAL, sync_type="auto",
-                max_messages=s.sync_max_messages, min_sync_interval_minutes=5,
+                max_messages=s.sync_max_messages, min_sync_interval_minutes=1,
             ),
             ingestion=IngestionConfig(
                 batch_size=s.sync_batch_size, quality_threshold=s.quality_threshold,

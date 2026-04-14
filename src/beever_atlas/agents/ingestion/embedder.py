@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -21,12 +22,17 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 
 from beever_atlas.infra.config import get_settings
+from beever_atlas.infra.rate_limit import JINA_LIMITER
 
 logger = logging.getLogger(__name__)
 
 # URL loaded from settings.jina_api_url at runtime
 _BATCH_SIZE = 100
 _MAX_RETRIES = 3
+# Retry on rate-limits (429) AND transient 5xx. Jina has observed 500s that
+# resolve on retry; losing an entire batch over a single blip wastes the
+# already-spent LLM extraction cost upstream.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 class EmbedderAgent(BaseAgent):
@@ -81,19 +87,46 @@ class EmbedderAgent(BaseAgent):
 
                 attempt = 0
                 while True:
-                    response = await client.post(
-                        settings.jina_api_url,
-                        headers=headers,
-                        json=payload,
-                    )
+                    try:
+                        async with JINA_LIMITER:
+                            response = await client.post(
+                                settings.jina_api_url,
+                                headers=headers,
+                                json=payload,
+                            )
+                    except (
+                        httpx.ConnectError,
+                        httpx.ReadTimeout,
+                        httpx.RemoteProtocolError,
+                    ) as transient_err:
+                        attempt += 1
+                        if attempt > _MAX_RETRIES:
+                            raise
+                        wait = (2 ** attempt) * (1 + random.uniform(-0.2, 0.2))
+                        logger.warning(
+                            "EmbedderAgent: transient %s job_id=%s channel=%s batch=%s chunk=%d/%d retry_in=%.1fs attempt=%d/%d",
+                            type(transient_err).__name__,
+                            sync_job_id,
+                            channel_id,
+                            batch_num,
+                            chunk_index,
+                            total_chunks,
+                            wait,
+                            attempt,
+                            _MAX_RETRIES,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
 
-                    if response.status_code == 429:
+                    if response.status_code in _RETRYABLE_STATUS:
                         attempt += 1
                         if attempt > _MAX_RETRIES:
                             response.raise_for_status()
-                        wait = 2 ** attempt
+                        # ±20% jitter to decorrelate concurrent batches
+                        wait = (2 ** attempt) * (1 + random.uniform(-0.2, 0.2))
                         logger.warning(
-                            "EmbedderAgent: rate-limited job_id=%s channel=%s batch=%s chunk=%d/%d retry_in=%ds attempt=%d/%d",
+                            "EmbedderAgent: retryable status=%d job_id=%s channel=%s batch=%s chunk=%d/%d retry_in=%.1fs attempt=%d/%d",
+                            response.status_code,
                             sync_job_id,
                             channel_id,
                             batch_num,

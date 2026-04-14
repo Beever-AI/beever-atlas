@@ -10,6 +10,7 @@ export interface SyncState {
   processed_messages?: number;
   current_batch?: number;
   total_batches?: number;
+  batches_completed?: number;
   current_stage?: string | null;
   stage_timings?: Record<string, number>;
   stage_details?: {
@@ -59,6 +60,7 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
         processed_messages: status.processed_messages,
         current_batch: status.current_batch,
         total_batches: status.total_batches,
+        batches_completed: (status as SyncStatusResponse & { batches_completed?: number }).batches_completed,
         current_stage: status.current_stage,
         stage_timings: status.stage_timings,
         stage_details: status.stage_details,

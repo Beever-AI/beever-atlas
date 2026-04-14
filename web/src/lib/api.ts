@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const REQUEST_TIMEOUT_MS = 15000;
 
 // Read the key lazily on every call so HMR-stale module instances (which can

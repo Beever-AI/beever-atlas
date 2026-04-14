@@ -9,9 +9,90 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TruncationReport:
+    """Metadata about a JSON recovery operation."""
+
+    recovered_count: int
+    """Number of complete top-level items recovered."""
+
+    estimated_lost: int
+    """Estimated number of items that could not be recovered."""
+
+    raw_bytes: int
+    """Length in bytes of the original (truncated) input."""
+
+    last_boundary_offset: int
+    """Byte offset of the last complete object boundary found."""
+
+
+def recover_truncated_json_with_report(
+    text: str,
+) -> tuple[dict | list | None, TruncationReport]:
+    """Like ``recover_truncated_json`` but also returns a ``TruncationReport``.
+
+    Args:
+        text: Raw text that may contain truncated JSON.
+
+    Returns:
+        A tuple ``(result, report)`` where *result* is the parsed value (or
+        ``None``) and *report* carries recovery metadata.
+    """
+    raw_bytes = len(text.encode()) if text else 0
+    stripped = text.strip() if text else ""
+
+    # Fast path — already valid JSON; no truncation.
+    if stripped:
+        try:
+            result = json.loads(stripped)
+            count = len(result) if isinstance(result, (list, dict)) else 0
+            report = TruncationReport(
+                recovered_count=count,
+                estimated_lost=0,
+                raw_bytes=raw_bytes,
+                last_boundary_offset=len(stripped),
+            )
+            return result, report
+        except json.JSONDecodeError:
+            pass
+
+    boundary = _find_last_complete_boundary(stripped) if stripped else -1
+    if boundary <= 0:
+        report = TruncationReport(
+            recovered_count=0,
+            estimated_lost=0,
+            raw_bytes=raw_bytes,
+            last_boundary_offset=-1,
+        )
+        return None, report
+
+    recovered_text = stripped[:boundary]
+    closed = _close_open_structures(recovered_text)
+
+    try:
+        result = json.loads(closed)
+        recovered_count = len(result) if isinstance(result, (list, dict)) else 0
+        report = TruncationReport(
+            recovered_count=recovered_count,
+            estimated_lost=1,  # at minimum one object was cut off
+            raw_bytes=raw_bytes,
+            last_boundary_offset=boundary,
+        )
+        return result, report
+    except json.JSONDecodeError:
+        report = TruncationReport(
+            recovered_count=0,
+            estimated_lost=1,
+            raw_bytes=raw_bytes,
+            last_boundary_offset=boundary,
+        )
+        return None, report
 
 
 def recover_truncated_json(text: str) -> dict | list | None:
@@ -73,7 +154,7 @@ def recover_facts_from_truncated(text: str) -> dict | None:
         ``{"facts": [<complete fact objects>]}`` or ``None`` if nothing
         could be recovered.
     """
-    result = recover_truncated_json(text)
+    result, report = recover_truncated_json_with_report(text)
     if result is None:
         logger.warning(
             "json_recovery: could not recover any facts from truncated JSON"
@@ -91,11 +172,15 @@ def recover_facts_from_truncated(text: str) -> dict | None:
         facts = []
 
     count = len(facts)
-    if count > 0:
+    estimated_lost = max(report.estimated_lost, 1 if report.last_boundary_offset > 0 else 0)
+    if count > 0 or report.estimated_lost > 0:
         logger.warning(
-            "json_recovery: Recovered %d facts from truncated JSON "
-            "(original had partial data)",
+            "json_recovery: truncated extract batch=facts recovered=%d lost_estimate=%d "
+            "raw_bytes=%d last_boundary_offset=%d",
             count,
+            estimated_lost,
+            report.raw_bytes,
+            report.last_boundary_offset,
         )
 
     return {"facts": facts}
@@ -115,7 +200,7 @@ def recover_entities_from_truncated(text: str) -> dict | None:
         complete objects were found, or ``None`` if nothing could be
         recovered.
     """
-    result = recover_truncated_json(text)
+    result, report = recover_truncated_json_with_report(text)
     if result is None:
         logger.warning(
             "json_recovery: could not recover any entities from truncated JSON"
@@ -136,12 +221,15 @@ def recover_entities_from_truncated(text: str) -> dict | None:
         relationships = []
 
     total = len(entities) + len(relationships)
-    if total > 0:
+    estimated_lost = max(report.estimated_lost, 1 if report.last_boundary_offset > 0 else 0)
+    if total > 0 or report.estimated_lost > 0:
         logger.warning(
-            "json_recovery: Recovered %d entities and %d relationships from "
-            "truncated JSON (original had partial data)",
-            len(entities),
-            len(relationships),
+            "json_recovery: truncated extract batch=entities recovered=%d lost_estimate=%d "
+            "raw_bytes=%d last_boundary_offset=%d",
+            total,
+            estimated_lost,
+            report.raw_bytes,
+            report.last_boundary_offset,
         )
 
     return {"entities": entities, "relationships": relationships}

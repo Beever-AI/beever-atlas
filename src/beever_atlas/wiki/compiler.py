@@ -126,6 +126,178 @@ def _build_media_data(facts: list[AtomicFact]) -> list[dict]:
     return media
 
 
+def _assemble_resources_markdown(media_data: list[dict]) -> str:
+    """Build the Resources & Media wiki page markdown deterministically.
+
+    Produces the same section structure that RESOURCES_PROMPT asked the LLM to
+    emit, but without an LLM round-trip, avoiding token-limit truncation on
+    large channels.
+
+    Sections emitted (each skipped if no data):
+      ## Media distribution  — donut chart JSON block
+      ## Resources table     — GFM table, max 40 rows, round-robin by type
+      ## Overview            — deterministic 1-2 sentence summary
+      ## Images              — top 10 image items
+      ## Documents           — top 10 document/file/pdf items
+      ## Links               — top 20 link items
+      ## Videos              — up to 10 video items
+    """
+    if not media_data:
+        return ""
+
+    from collections import Counter
+
+    def _esc(text: str) -> str:
+        """Escape pipe characters for GFM table cells and strip newlines."""
+        return " ".join(str(text).splitlines()).replace("|", "\\|")
+
+    def _ctx(text: str, limit: int = 120) -> str:
+        """Truncate context, sentence-case the result."""
+        clean = " ".join(str(text or "").split())[:limit]
+        return clean[:1].upper() + clean[1:] if clean else ""
+
+    # ── Type counts ──────────────────────────────────────────────────────
+    type_counts: Counter[str] = Counter(item["type"] for item in media_data)
+
+    # ── Section: Media distribution ──────────────────────────────────────
+    TYPE_LABELS = {
+        "image": "Images",
+        "document": "Documents",
+        "file": "Files",
+        "pdf": "PDFs",
+        "link": "Links",
+        "video": "Videos",
+    }
+    chart_data = [
+        {"name": TYPE_LABELS.get(t, t.title()), "value": count}
+        for t, count in sorted(type_counts.items())
+        if count > 0
+    ]
+    chart_block = (
+        "```chart\n"
+        + json.dumps(
+            {"type": "donut", "title": "Resources by Type", "data": chart_data},
+            separators=(",", ":"),
+        )
+        + "\n```"
+    )
+
+    # ── Section: Resources table (round-robin, max 40) ───────────────────
+    # Bucket by type and sort each bucket by fact_index (stable ordering).
+    buckets: dict[str, list[dict]] = {}
+    for item in media_data:
+        buckets.setdefault(item["type"], []).append(item)
+    # Within each bucket keep insertion order (already stable from _build_media_data).
+    type_order = ["image", "document", "file", "pdf", "link", "video"]
+    # Include any types not in type_order at the end.
+    extra_types = [t for t in buckets if t not in type_order]
+    ordered_types = [t for t in type_order if t in buckets] + extra_types
+
+    # Round-robin interleave.
+    table_rows: list[dict] = []
+    iters = {t: iter(buckets[t]) for t in ordered_types}
+    active = list(ordered_types)
+    while active and len(table_rows) < 40:
+        next_active = []
+        for t in active:
+            if len(table_rows) >= 40:
+                break
+            try:
+                table_rows.append(next(iters[t]))
+                next_active.append(t)
+            except StopIteration:
+                pass
+        active = next_active
+
+    table_lines = [
+        "| Name | Type | Shared By | Context | Link |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in table_rows:
+        name = _esc(row.get("name", ""))
+        rtype = _esc(TYPE_LABELS.get(row.get("type", ""), row.get("type", "").title()))
+        author = _esc(row.get("author", ""))
+        ctx = _esc(_ctx(row.get("context", "")))
+        url = row.get("url", "")
+        link_cell = f"[Open]({url})" if url else ""
+        table_lines.append(f"| {name} | {rtype} | {author} | {ctx} | {link_cell} |")
+
+    # ── Section: Overview ────────────────────────────────────────────────
+    unique_types = sorted(type_counts.keys())
+    author_counts: Counter[str] = Counter(
+        item.get("author", "") for item in media_data if item.get("author")
+    )
+    top_author = author_counts.most_common(1)[0][0] if author_counts else None
+
+    type_list = ", ".join(TYPE_LABELS.get(t, t.title()) for t in unique_types)
+    overview_parts = [
+        f"This channel has shared {len(media_data)} resource(s) across "
+        f"{len(unique_types)} type(s): {type_list}."
+    ]
+    if top_author:
+        overview_parts.append(f"Top contributor: {top_author}.")
+    overview_text = " ".join(overview_parts)
+
+    # ── Section: Images ──────────────────────────────────────────────────
+    images = [m for m in media_data if m.get("type") == "image"][:10]
+
+    # ── Section: Documents ───────────────────────────────────────────────
+    docs = [m for m in media_data if m.get("type") in ("document", "file", "pdf")][:10]
+
+    # ── Section: Links ───────────────────────────────────────────────────
+    links = [m for m in media_data if m.get("type") == "link"][:20]
+
+    # ── Section: Videos ──────────────────────────────────────────────────
+    videos = [m for m in media_data if m.get("type") == "video"][:10]
+
+    # ── Assemble ─────────────────────────────────────────────────────────
+    sections: list[str] = []
+
+    sections.append("## Media distribution\n\n" + chart_block)
+
+    if table_rows:
+        sections.append("## Resources table\n\n" + "\n".join(table_lines))
+
+    sections.append("## Overview\n\n" + overview_text)
+
+    if images:
+        img_lines = ["## Images"]
+        for item in images:
+            desc = _ctx(item.get("context", ""), 120) or item.get("name", "")
+            alt = item.get("name", "image")
+            url = item.get("url", "")
+            img_lines.append(f"\n**{desc}**\n![{alt}]({url})")
+        sections.append("\n".join(img_lines))
+
+    if docs:
+        doc_lines = ["## Documents"]
+        for item in docs:
+            name = item.get("name", "")
+            ctx = _ctx(item.get("context", ""), 120)
+            url = item.get("url", "")
+            doc_lines.append(f"\n**{name}** — {ctx} [Download]({url})")
+        sections.append("\n".join(doc_lines))
+
+    if links:
+        link_lines = ["## Links"]
+        for item in links:
+            name = item.get("name", "")
+            ctx = _ctx(item.get("context", ""), 120)
+            url = item.get("url", "")
+            link_lines.append(f"\n**{name}** — {ctx} [Read article]({url})")
+        sections.append("\n".join(link_lines))
+
+    if videos:
+        vid_lines = ["## Videos"]
+        for item in videos:
+            desc = _ctx(item.get("context", ""), 120) or item.get("name", "")
+            url = item.get("url", "")
+            vid_lines.append(f"\n**{desc}** [Watch]({url})")
+        sections.append("\n".join(vid_lines))
+
+    return "\n\n".join(sections) + "\n"
+
+
 def _format_relationship_edges(persons: list[dict]) -> list[dict]:
     """Extract relationship edges from person entities for the People prompt."""
     edges: list[dict] = []
@@ -376,6 +548,18 @@ class WikiCompiler:
         content = WikiCompiler._CITATION_LIST_RE.sub("", content)
 
         # 2. Sanitize mermaid blocks
+        def _sanitize_node_label(match: re.Match) -> str:
+            node_id = match.group(1)
+            label = match.group(2)
+            # Strip characters mermaid rejects inside [...]: parens, quotes, backticks
+            label = re.sub(r'[()"\'\`]', " ", label)
+            # Collapse repeated spaces
+            label = re.sub(r" {2,}", " ", label).strip()
+            # If label is now empty, fall back to node ID so the box shows something
+            if not label:
+                label = node_id
+            return f"{node_id}[{label}]"
+
         def _clean_mermaid(m: re.Match) -> str:
             opener, body, closer = m.group(1), m.group(2), m.group(3)
             lines = body.split("\n")
@@ -385,11 +569,16 @@ class WikiCompiler:
                 # Remove forbidden directives
                 if stripped.startswith(("subgraph", "end", "style ", "classDef ", "class ")):
                     continue
+                # Drop lines that are purely an empty bracket node: ID[] or bare [Label]
+                if re.match(r"^\s*\w*\[\s*\]\s*$", line):
+                    continue
                 # Convert dash-space edge labels to pipe style: A -- label --> B  →  A -->|label| B
                 line = re.sub(r"--\s+([^-\n][^>\n]*?)\s+-->", r"-->|\1|", line)
                 line = re.sub(r"--\s+([^-\n][^-\n]*?)\s+---", r"---|\1|", line)
-                # Strip colon-style labels: A --> B: label  →  A --> B
-                line = re.sub(r"(-->)\s+(\w+(?:\[[^\]]*\])?)\s*:\s*.+$", r"\1 \2", line)
+                # Strip colon-style labels conservatively: only when --> NODE: free text (no brackets)
+                line = re.sub(r"(-->\s*\w+(?:\[[^\]]*\])?)\s*:\s*[^\[\]|]+$", r"\1", line)
+                # Sanitize node-definition labels: strip forbidden chars inside [...]
+                line = re.sub(r"([A-Za-z0-9_]+)\[([^\]]*)\]", _sanitize_node_label, line)
                 # Keep pipe-style labels intact: A -->|label| B is valid mermaid
                 cleaned.append(line)
             return opener + "\n".join(cleaned) + closer
@@ -479,7 +668,16 @@ class WikiCompiler:
                 model=self._model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
+                    # response_mime_type alone nudges Gemini toward JSON without
+                    # forcing a schema. response_schema was tried but caused
+                    # instability on very long outputs (Resources page), where
+                    # the model got stuck escaping a multi-KB markdown string
+                    # and emitted corrupted JSON. _parse_llm_json handles minor
+                    # malformation; keep the nudge, skip the hard schema.
                     response_mime_type="application/json",
+                    # Headroom for the Resources & Media page (40-row table +
+                    # image/doc/link sections). Smaller pages finish well under.
+                    max_output_tokens=32768,
                     temperature=temperature,
                 ),
             )
@@ -492,19 +690,23 @@ class WikiCompiler:
             parsed = _parse_llm_json(raw)
             if parsed is None:
                 logger.warning(
-                    "WikiCompiler: failed to parse LLM JSON (attempt %d). raw_head=%r",
+                    "WikiCompiler: failed to parse LLM JSON (attempt %d), raw_len=%d. raw_head=%r",
                     attempt + 1,
+                    len(raw or ""),
                     (raw or "")[:200],
                 )
                 data = {}
-            else:
-                data = parsed if isinstance(parsed, dict) else {}
+                if attempt < max_retries:
+                    logger.info("WikiCompiler: parse failure (attempt %d), retrying...", attempt + 1)
+                continue
+            data = parsed if isinstance(parsed, dict) else {}
             content = data.get("content", "").strip()
             summary = data.get("summary", "").strip()
-            if content and len(content) > 50:
+            # Return immediately on any non-empty content — don't retry just because content is short
+            if content:
                 return CompiledPageContent(content=content, summary=summary)
             if attempt < max_retries:
-                logger.info("WikiCompiler: empty/short content (attempt %d), retrying...", attempt + 1)
+                logger.info("WikiCompiler: empty content (attempt %d), retrying...", attempt + 1)
         logger.warning("WikiCompiler: empty content after %d attempts", 1 + max_retries)
         return CompiledPageContent(
             content=data.get("content", "").strip(),
@@ -948,22 +1150,32 @@ class WikiCompiler:
         )
 
     async def _compile_resources(self, gathered: dict) -> WikiPage:
-        """Compile Resources & Media page from media_facts."""
+        """Compile Resources & Media page deterministically from media_facts.
+
+        Replaced the previous LLM call (which emitted large escape-heavy JSON
+        that overflowed max_output_tokens and produced truncated/unparseable
+        output) with pure Python markdown assembly.  The markdown structure and
+        section headings are identical to those the old RESOURCES_PROMPT asked
+        the LLM to produce, so frontend rendering is unchanged.
+        """
         media_facts = gathered.get("media_facts", [])
         media_data = _build_media_data(media_facts)
         media_data = self._filter_media_for_resources(media_data)
-        prompt = self._fmt_prompt(RESOURCES_PROMPT,
-            media_json=json.dumps(media_data, default=str),
-            media_count=len(media_data),
+
+        content = _assemble_resources_markdown(media_data)
+        summary = (
+            f"Catalog of {len(media_data)} shared resource(s) across "
+            f"{len({item['type'] for item in media_data})} type(s)."
+            if media_data else "No shared resources found."
         )
-        result = await self._call_llm(prompt)
+
         return WikiPage(
             id="resources",
             slug="resources",
             title=self._page_title("resources"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=content,
+            summary=summary,
             memory_count=len(media_data),
             citations=_build_citations(media_facts[:20]),
         )

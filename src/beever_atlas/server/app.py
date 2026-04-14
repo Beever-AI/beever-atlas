@@ -2,7 +2,8 @@
 
 import logging
 import warnings
-warnings.filterwarnings("ignore", message="unclosed resource.*TCPTransport", category=ResourceWarning)
+warnings.filterwarnings("ignore", category=ResourceWarning, module=r"neo4j\..*")
+warnings.filterwarnings("ignore", category=ResourceWarning, module=r"aiohttp\..*")
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timezone

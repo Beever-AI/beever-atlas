@@ -49,11 +49,16 @@ async def trigger_sync(
         from beever_atlas.services.policy_resolver import resolve_effective_policy
         effective = await resolve_effective_policy(channel_id)
 
-        # Cooldown enforcement
+        # Cooldown enforcement — bypassed when the last sync failed so users
+        # can retry immediately without waiting out a penalty on a broken run.
         cooldown = effective.sync.min_sync_interval_minutes or 0
         if cooldown > 0:
             last_job = await stores.mongodb.get_sync_status(channel_id)
-            if last_job and last_job.completed_at:
+            if (
+                last_job
+                and last_job.completed_at
+                and last_job.status != "failed"
+            ):
                 completed = last_job.completed_at
                 if completed.tzinfo is None:
                     completed = completed.replace(tzinfo=UTC)
@@ -62,7 +67,16 @@ async def trigger_sync(
                     remaining = timedelta(minutes=cooldown) - elapsed
                     raise HTTPException(
                         status_code=429,
-                        detail=f"Cooldown active. Try again in {int(remaining.total_seconds())}s.",
+                        detail=(
+                            f"Cooldown active. Try again in "
+                            f"{int(remaining.total_seconds())}s."
+                        ),
+                        headers={
+                            "Retry-After": str(int(remaining.total_seconds())),
+                            "X-Cooldown-Remaining-Seconds": str(
+                                int(remaining.total_seconds())
+                            ),
+                        },
                     )
 
         # Use policy sync_type as default when caller sends "auto"
@@ -158,17 +172,20 @@ async def get_sync_status(channel_id: str) -> dict:
     if job.status == "running":
         sync_runner = get_sync_runner()
         if not sync_runner.has_active_sync(channel_id):
+            # Job was running but has no active task — process restarted or crashed before completion.
+            _interrupted_errors = ["Sync was interrupted — server restarted or crashed before the job finished"]
             logger.info(
-                "Sync API: recovering stale running job channel=%s job_id=%s — marking completed",
+                "Sync API: recovering stale running job channel=%s job_id=%s — marking failed",
                 channel_id,
                 job.id,
             )
             await stores.mongodb.complete_sync_job(
                 job_id=job.id,
-                status="completed",
-                errors=[],
+                status="failed",
+                errors=_interrupted_errors,
+                failed_stage="interrupted",
             )
-            return {"state": "idle"}
+            return {"state": "error", "job_id": job.id, "errors": _interrupted_errors}
     response = {
         "state": _STATUS_MAP.get(job.status, job.status),
         "job_id": job.id,
@@ -177,6 +194,7 @@ async def get_sync_status(channel_id: str) -> dict:
         "processed_messages": job.processed_messages,
         "current_batch": job.current_batch,
         "total_batches": getattr(job, "total_batches", 0),
+        "batches_completed": getattr(job, "batches_completed", 0),
         "current_stage": getattr(job, "current_stage", None),
         "stage_timings": getattr(job, "stage_timings", {}),
         "stage_details": getattr(job, "stage_details", {}),

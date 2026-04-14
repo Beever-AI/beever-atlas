@@ -5,10 +5,21 @@ import DOMPurify from "dompurify";
 import { useTheme } from "@/hooks/useTheme";
 
 function sanitizeSvg(svg: string): string {
+  // mermaid (v11, securityLevel: "strict") already runs DOMPurify internally.
+  // Our outer pass must preserve:
+  //   - <foreignObject> + HTML children (if htmlLabels=true)
+  //   - <style> tags (mermaid injects CSS that colors node labels — stripping
+  //     these leaves node text invisible, not absent)
+  //   - class / style attributes (node text uses class="nodeLabel" + fill)
   return DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: ["script", "foreignObject"],
-    FORBID_ATTR: ["onerror", "onload", "onclick"],
+    USE_PROFILES: { svg: true, svgFilters: true, html: true },
+    ADD_TAGS: ["style", "foreignObject"],
+    ADD_ATTR: ["class", "style", "transform", "xmlns"],
+    FORBID_TAGS: ["script"],
+    FORBID_ATTR: [
+      "onerror", "onload", "onclick", "onmouseover", "onmousedown",
+      "onmouseup", "onfocus", "onblur", "onchange", "onsubmit",
+    ],
   });
 }
 
@@ -26,11 +37,16 @@ function ensureMermaidInit(theme: "light" | "dark", config: Parameters<typeof me
 }
 
 function mermaidThemeConfig(theme: "light" | "dark") {
+  // htmlLabels: false forces mermaid to render labels as SVG <text> instead
+  // of <foreignObject>-wrapped HTML. Otherwise DOMPurify drops the labels
+  // and nodes render as empty boxes.
+  const flowchart = { htmlLabels: false, useMaxWidth: true };
   if (theme === "dark") {
     return {
       startOnLoad: false,
       securityLevel: "strict" as const,
       theme: "base" as const,
+      flowchart,
       themeVariables: {
         background: "transparent",
         primaryColor: "#1f2937",
@@ -46,6 +62,7 @@ function mermaidThemeConfig(theme: "light" | "dark") {
     startOnLoad: false,
     securityLevel: "strict" as const,
     theme: "base" as const,
+    flowchart,
     themeVariables: {
       background: "transparent",
       primaryColor: "#e2e8f0",

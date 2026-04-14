@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+import httpx
 from google.genai import types
 from google.genai.errors import ServerError
 
@@ -231,28 +232,32 @@ class BatchProcessor:
 
         runner = create_runner(create_ingestion_pipeline())
 
-        processed_so_far = 0
         known_entities: list[dict[str, Any]] = (
             await stores.entity_registry.get_all_canonical()
         )
         cumulative_timings: dict[str, float] = {}
 
-        for batch_num, batch in enumerate(batches):
-            batch_index = batch_num + 1
-            try:
+        # ── Bounded-concurrency batch execution ───────────────────────────────
+        sem = asyncio.Semaphore(settings.ingest_batch_concurrency)
+
+        async def _run_single_batch(
+            batch_index: int,
+            batch: list[Any],
+            known_entities_snapshot: list[dict[str, Any]],
+        ) -> tuple[BatchBreakdown, dict[str, float], bool]:
+            """Run one batch. Returns (breakdown, stage_timings, entities_were_persisted)."""
+            async with sem:
                 logger.info(
-                    "BatchProcessor: start job_id=%s channel=%s batch=%d/%d messages=%d",
-                    sync_job_id,
-                    channel_id,
+                    "BatchProcessor: start batch=%d/%d job_id=%s channel=%s messages=%d",
                     batch_index,
                     max_batches,
+                    sync_job_id,
+                    channel_id,
                     len(batch),
                 )
-                # Mark batch start immediately so UI doesn't stay on batch 0 while
-                # long-running LLM/vector writes are in flight.
                 await stores.mongodb.update_sync_progress(
                     job_id=sync_job_id,
-                    processed=processed_so_far,
+                    processed=0,
                     current_batch=batch_index,
                     total_batches=max_batches,
                 )
@@ -271,24 +276,17 @@ class BatchProcessor:
                         sync_job_id=sync_job_id,
                         batch_num=batch_index,
                         max_batches=max_batches,
-                        known_entities=known_entities,
+                        known_entities=known_entities_snapshot,
                         ingestion_config=ingestion_config,
                     )
-                    # Accumulate results
-                    result.total_facts += breakdown.facts_count
-                    result.total_entities += breakdown.entities_count
-                    result.total_relationships += breakdown.relationships_count
-                    result.batch_breakdowns.append(breakdown)
-                    processed_so_far += len(batch)
-                    # Push batch result to MongoDB
                     await stores.mongodb.update_sync_progress(
                         job_id=sync_job_id,
-                        processed=processed_so_far,
+                        processed=0,
                         current_batch=batch_index,
                         current_stage=f"Step 7/7 — Batch {batch_index} complete",
                         batch_result=asdict(breakdown),
                     )
-                    continue  # Skip the normal ADK pipeline for this batch
+                    return breakdown, {}, False
 
                 # Embedding similarity pre-computation is deferred: entity_tags
                 # are not available on raw messages before extraction runs.
@@ -333,7 +331,7 @@ class BatchProcessor:
                     "channel_name": channel_name,
                     "batch_num": batch_index,
                     "max_facts_per_message": _max_facts,
-                    "known_entities": known_entities,
+                    "known_entities": known_entities_snapshot,
                     "embedding_similarity_candidates": embedding_similarity_candidates,
                     "sync_job_id": sync_job_id,
                     "source_language": _batch_source_lang,
@@ -394,11 +392,33 @@ class BatchProcessor:
                             )
                             await stores.mongodb.update_sync_progress(
                                 job_id=sync_job_id,
-                                processed=processed_so_far,
+                                processed=0,
                                 current_batch=batch_index,
                                 current_stage=f"Step 0/6 — Retrying in {wait}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1})",
                             )
                             await asyncio.sleep(wait)
+                            # Phase 1 Step 2 (ingestion-pipeline-hardening): unconditionally
+                            # re-consult the checkpoint store before every retry, regardless of
+                            # which exception class triggered the retry. Without this, an
+                            # httpx.HTTPStatusError from the embedder could restart from Stage 1
+                            # and re-run expensive LLM fact/entity extraction that was already
+                            # checkpointed. Retry count is the only gate.
+                            _retry_checkpoint = await stores.mongodb.load_pipeline_checkpoint(
+                                sync_job_id=sync_job_id, batch_num=batch_index,
+                            )
+                            if _retry_checkpoint:
+                                _resumed_from = _retry_checkpoint["completed_stage"]
+                                _skipped_stage_count = _retry_checkpoint["completed_stage_index"] + 1
+                                _retry_snapshot = _retry_checkpoint.get("state_snapshot") or {}
+                                for _key in _ALL_CHECKPOINT_KEYS:
+                                    if _key in _retry_snapshot:
+                                        initial_state[_key] = _retry_snapshot[_key]
+                                logger.info(
+                                    "BatchProcessor: retry resuming from checkpoint job_id=%s batch=%d/%d "
+                                    "attempt=%d last_completed=%s skipping=%d stages",
+                                    sync_job_id, batch_index, max_batches,
+                                    attempt + 1, _resumed_from, _skipped_stage_count,
+                                )
                             session = await create_session(
                                 user_id="system",
                                 state=initial_state,
@@ -700,7 +720,7 @@ class BatchProcessor:
                             if should_update or label:
                                 await stores.mongodb.update_sync_progress(
                                     job_id=sync_job_id,
-                                    processed=processed_so_far,
+                                    processed=0,
                                     current_batch=batch_index,
                                     current_stage=label if label else None,
                                     stage_timings=batch_stage_timings,
@@ -714,7 +734,7 @@ class BatchProcessor:
                         # Final progress flush after pipeline completes
                         await stores.mongodb.update_sync_progress(
                             job_id=sync_job_id,
-                            processed=processed_so_far,
+                            processed=0,
                             current_batch=batch_index,
                             current_stage=f"Step 7/7 — Batch {batch_index} complete",
                             stage_timings=batch_stage_timings,
@@ -728,10 +748,19 @@ class BatchProcessor:
                         except Exception:
                             pass
                         break  # success
-                    except ServerError as exc:
+                    except (ServerError, httpx.HTTPStatusError) as exc:
+                        # Phase 1 Step 2: httpx.HTTPStatusError (e.g. embedder 500) is
+                        # retryable just like ServerError. Checkpoint resume (above) ensures
+                        # completed stages are not re-run on retry.
+                        is_http_5xx = (
+                            isinstance(exc, httpx.HTTPStatusError)
+                            and exc.response.status_code >= 500
+                        )
+                        if not isinstance(exc, ServerError) and not is_http_5xx:
+                            raise
                         if attempt < _LLM_MAX_RETRIES:
                             logger.warning(
-                                "BatchProcessor: LLM 503/transient error job_id=%s batch=%d/%d "
+                                "BatchProcessor: transient error job_id=%s batch=%d/%d "
                                 "attempt=%d/%d: %s",
                                 sync_job_id, batch_index, max_batches,
                                 attempt + 1, _LLM_MAX_RETRIES + 1, exc,
@@ -860,29 +889,15 @@ class BatchProcessor:
                     ],
                     duration_seconds=round(batch_duration, 2),
                 )
-                result.batch_breakdowns.append(breakdown)
-
-                result.total_facts += batch_facts
-                result.total_entities += batch_entities
-                result.total_relationships += len(rels_list)
-
-                # Merge batch timings into cumulative totals.
-                for stage_key, duration in batch_stage_timings.items():
-                    cumulative_timings[stage_key] = cumulative_timings.get(stage_key, 0.0) + duration
-
-                # Re-fetch known entities only when new entities were persisted.
-                if persist_result.get("entity_count", 0) > 0:
-                    known_entities = await stores.entity_registry.get_all_canonical()
-
-                processed_so_far += len(batch)
+                entities_persisted = persist_result.get("entity_count", 0) > 0
 
                 await stores.mongodb.update_sync_progress(
                     job_id=sync_job_id,
-                    processed=processed_so_far,
+                    processed=0,
                     current_batch=batch_index,
                     current_stage="Step 7/7 — Complete",
                     stage_timings=batch_stage_timings,
-                    stage_details={"activity_log": activity_log[-50:], "cumulative_timings": cumulative_timings},
+                    stage_details={"activity_log": activity_log[-50:]},
                     batch_result=asdict(breakdown),
                 )
 
@@ -894,49 +909,62 @@ class BatchProcessor:
                         _resumed_from, _skipped_stage_count, _skipped_llm, sync_job_id, batch_index,
                     )
 
+                # Atomic increment — honest counter under concurrent batch execution.
+                # current_batch field keeps overwriting itself when batches run in
+                # parallel, so consumers should prefer batches_completed for progress.
+                await stores.mongodb.increment_batches_completed(sync_job_id)
+
                 logger.info(
-                    "BatchProcessor: done job_id=%s channel=%s batch=%d/%d facts=%d entities=%d processed=%d/%d",
-                    sync_job_id,
-                    channel_id,
+                    "BatchProcessor: done batch=%d/%d job_id=%s channel=%s facts=%d entities=%d",
                     batch_index,
                     max_batches,
+                    sync_job_id,
+                    channel_id,
                     batch_facts,
                     batch_entities,
-                    processed_so_far,
-                    total,
                 )
+                return breakdown, batch_stage_timings, entities_persisted
 
-            except Exception as exc:  # noqa: BLE001
-                err_text = _summarize_exception(exc)
+        # Launch all batches with bounded concurrency; gather preserves index order.
+        batch_tasks = [
+            _run_single_batch(i, b, list(known_entities))
+            for i, b in enumerate(batches, start=1)
+        ]
+        raw_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+        processed_so_far = 0
+        for idx, raw in enumerate(raw_results):
+            batch = batches[idx]
+            batch_index = idx + 1
+            if isinstance(raw, BaseException):
+                err_text = _summarize_exception(raw)  # type: ignore[arg-type]
                 logger.error(
-                    "BatchProcessor: failed job_id=%s channel=%s batch=%d/%d error=%s",
-                    sync_job_id,
-                    channel_id,
-                    batch_index,
-                    max_batches,
-                    err_text,
-                    exc_info=True,
+                    "BatchProcessor: unexpected gather failure batch=%d job_id=%s: %s",
+                    batch_index, sync_job_id, err_text,
                 )
-                result.errors.append(
-                    {
-                        "batch_num": batch_index,
-                        "error": err_text,
-                    }
-                )
-                # Record a breakdown for the failed batch so it appears in history.
-                failed_breakdown = BatchBreakdown(
-                    batch_num=batch_index,
-                    error=err_text,
-                )
+                failed_breakdown = BatchBreakdown(batch_num=batch_index, error=err_text)
+                result.errors.append({"batch_num": batch_index, "error": err_text})
                 result.batch_breakdowns.append(failed_breakdown)
-                # Advance progress even on failure so the UI doesn't stay stuck.
-                processed_so_far += len(batch)
-                await stores.mongodb.update_sync_progress(
-                    job_id=sync_job_id,
-                    processed=processed_so_far,
-                    current_batch=batch_index,
-                    batch_result=asdict(failed_breakdown),
-                )
+            else:
+                breakdown, batch_timings, entities_persisted = raw
+                result.batch_breakdowns.append(breakdown)
+                if breakdown.error:
+                    result.errors.append({"batch_num": batch_index, "error": breakdown.error})
+                else:
+                    result.total_facts += breakdown.facts_count
+                    result.total_entities += breakdown.entities_count
+                    result.total_relationships += breakdown.relationships_count
+                    for stage_key, duration in batch_timings.items():
+                        cumulative_timings[stage_key] = cumulative_timings.get(stage_key, 0.0) + duration
+                    if entities_persisted:
+                        known_entities = await stores.entity_registry.get_all_canonical()
+            processed_so_far += len(batch)
+            await stores.mongodb.update_sync_progress(
+                job_id=sync_job_id,
+                processed=processed_so_far,
+                current_batch=batch_index,
+                stage_details={"cumulative_timings": cumulative_timings},
+            )
 
         logger.info(
             "BatchProcessor: complete job_id=%s channel=%s total_facts=%d total_entities=%d errors=%d",

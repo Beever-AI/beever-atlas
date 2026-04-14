@@ -22,12 +22,32 @@ from beever_atlas.agents.prompts.media import (
     VIDEO_ANALYSIS_PROMPT,
 )
 from beever_atlas.infra.config import get_settings
+from beever_atlas.infra.rate_limit import GEMINI_LIMITER
 
 logger = logging.getLogger(__name__)
 
 # ── Shared Gemini client ──────────────────────────────────────────────
 _gemini_client: Any = None
 _gemini_client_lock: asyncio.Lock | None = None
+
+# Bounds concurrent in-flight Gemini image calls across all coroutines.
+# Set to 4 so up to 4 images are described in parallel; the outer
+# GEMINI_LIMITER still enforces the RPM budget.
+_IMAGE_SEMAPHORE: asyncio.Semaphore | None = None
+_IMAGE_SEMAPHORE_LOCK: asyncio.Lock | None = None
+
+
+def _get_image_semaphore() -> asyncio.Semaphore:
+    global _IMAGE_SEMAPHORE, _IMAGE_SEMAPHORE_LOCK
+    # Fast path — already created
+    if _IMAGE_SEMAPHORE is not None:
+        return _IMAGE_SEMAPHORE
+    # Lazy-init the lock itself (must happen inside a running loop)
+    if _IMAGE_SEMAPHORE_LOCK is None:
+        _IMAGE_SEMAPHORE_LOCK = asyncio.Lock()
+    # Caller must be inside an async context; return existing or create
+    _IMAGE_SEMAPHORE = asyncio.Semaphore(4)
+    return _IMAGE_SEMAPHORE
 
 
 def _get_client_lock() -> asyncio.Lock:
@@ -115,18 +135,19 @@ class MediaExtractor(ABC):
 
             prompt = DOCUMENT_DIGEST_PROMPT.format(document_text=text[:8000])
 
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[genai_types.Part.from_text(text=prompt)],
-                        )
-                    ],
-                ),
-                timeout=60,
-            )
+            async with GEMINI_LIMITER:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=settings.media_vision_model,
+                        contents=[
+                            genai_types.Content(
+                                role="user",
+                                parts=[genai_types.Part.from_text(text=prompt)],
+                            )
+                        ],
+                    ),
+                    timeout=60,
+                )
             return response.text or text[:4000]
         except Exception:
             logger.warning("Document digestion failed", exc_info=True)
@@ -340,24 +361,26 @@ class ImageExtractor(MediaExtractor):
                 "ImageExtractor: calling generate_content for %s (%s, %d bytes)",
                 filename, mime_type, len(data),
             )
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_bytes(
-                                    data=data,
-                                    mime_type=mime_type,
-                                ),
-                                genai_types.Part.from_text(text=prompt),
+            async with _get_image_semaphore():
+                async with GEMINI_LIMITER:
+                    response = await asyncio.wait_for(
+                        client.aio.models.generate_content(
+                            model=settings.media_vision_model,
+                            contents=[
+                                genai_types.Content(
+                                    role="user",
+                                    parts=[
+                                        genai_types.Part.from_bytes(
+                                            data=data,
+                                            mime_type=mime_type,
+                                        ),
+                                        genai_types.Part.from_text(text=prompt),
+                                    ],
+                                )
                             ],
-                        )
-                    ],
-                ),
-                timeout=60,
-            )
+                        ),
+                        timeout=60,
+                    )
             result = response.text or ""
             logger.info(
                 "ImageExtractor: result for %s — %d chars",
@@ -569,24 +592,25 @@ class VideoExtractor(MediaExtractor):
             await _poll_file_active(client, uploaded.name)
             logger.info("VideoExtractor: file ACTIVE for %s", filename)
 
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_uri(
-                                    file_uri=file_uri,
-                                    mime_type=mime_type,
-                                ),
-                                genai_types.Part.from_text(text=VIDEO_ANALYSIS_PROMPT),
-                            ],
-                        )
-                    ],
-                ),
-                timeout=60,
-            )
+            async with GEMINI_LIMITER:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=settings.media_vision_model,
+                        contents=[
+                            genai_types.Content(
+                                role="user",
+                                parts=[
+                                    genai_types.Part.from_uri(
+                                        file_uri=file_uri,
+                                        mime_type=mime_type,
+                                    ),
+                                    genai_types.Part.from_text(text=VIDEO_ANALYSIS_PROMPT),
+                                ],
+                            )
+                        ],
+                    ),
+                    timeout=60,
+                )
             result = response.text or ""
             logger.info("VideoExtractor: result for %s — %d chars", filename, len(result))
             return result
@@ -702,24 +726,25 @@ class AudioExtractor(MediaExtractor):
             await _poll_file_active(client, uploaded.name)
             logger.info("AudioExtractor: file ACTIVE for %s", filename)
 
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_uri(
-                                    file_uri=file_uri,
-                                    mime_type=mime_type,
-                                ),
-                                genai_types.Part.from_text(text=AUDIO_TRANSCRIPTION_PROMPT),
-                            ],
-                        )
-                    ],
-                ),
-                timeout=60,
-            )
+            async with GEMINI_LIMITER:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=settings.media_vision_model,
+                        contents=[
+                            genai_types.Content(
+                                role="user",
+                                parts=[
+                                    genai_types.Part.from_uri(
+                                        file_uri=file_uri,
+                                        mime_type=mime_type,
+                                    ),
+                                    genai_types.Part.from_text(text=AUDIO_TRANSCRIPTION_PROMPT),
+                                ],
+                            )
+                        ],
+                    ),
+                    timeout=60,
+                )
             if response.text:
                 logger.info("AudioExtractor: result for %s — %d chars", filename, len(response.text))
                 parts.append(f"[Audio summary]: {response.text}")

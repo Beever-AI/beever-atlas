@@ -207,9 +207,9 @@ export function SyncProgress({ syncState, isSyncing }: SyncProgressProps) {
             <span className={`text-sm font-medium ${isFailed ? "text-red-500" : "text-foreground"}`}>
               {isFailed ? "Sync failed" : isRetrying ? "Retrying..." : "Syncing channel"}
             </span>
-            {batch > 0 && (
+            {totalBatches > 0 && (
               <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                Batch {batch}/{totalBatches}
+                {syncState.batches_completed ?? 0} of {totalBatches} batches
               </span>
             )}
           </div>

@@ -174,6 +174,17 @@ async def get_channel_summary(channel_id: str) -> ChannelSummaryResponse:
     resolved_name = summary.channel_name
     if not resolved_name:
         display = await stores.mongodb.get_channel_display_name(channel_id)
+        if not display:
+            # Activity-event lookup can miss on first sync; ask the adapter
+            # directly as a last authoritative source before falling back
+            # to the raw id.
+            try:
+                from beever_atlas.adapters.bridge import BridgeClient
+                async with BridgeClient() as client:
+                    info = await client.get_channel_info(channel_id)
+                    display = info.channel_name
+            except Exception:
+                display = None
         resolved_name = display or channel_id
     return ChannelSummaryResponse(
         text=summary.text,

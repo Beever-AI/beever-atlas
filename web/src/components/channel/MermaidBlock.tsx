@@ -15,6 +15,9 @@ async function ensureMermaidInit() {
         startOnLoad: false,
         theme: "default",
         securityLevel: "strict",
+        // Render labels as SVG <text> instead of <foreignObject> HTML so
+        // DOMPurify cannot drop them, leaving empty node boxes.
+        flowchart: { htmlLabels: false, useMaxWidth: true },
       });
     })();
   }
@@ -57,10 +60,15 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           throw new Error("Mermaid render produced a syntax-error SVG.");
         }
         if (!cancelled) {
+          // mermaid renders node text inside <foreignObject>; forbidding it
+          // leaves empty boxes. Allow it + html profile, keep script blocked.
           const cleanSvg = DOMPurify.sanitize(rendered, {
-            USE_PROFILES: { svg: true, svgFilters: true },
-            FORBID_TAGS: ["script", "foreignObject"],
-            FORBID_ATTR: ["onerror", "onload", "onclick"],
+            USE_PROFILES: { svg: true, svgFilters: true, html: true },
+            FORBID_TAGS: ["script"],
+            FORBID_ATTR: [
+              "onerror", "onload", "onclick", "onmouseover", "onmousedown",
+              "onmouseup", "onfocus", "onblur", "onchange", "onsubmit",
+            ],
           });
           setSvg(cleanSvg);
           setError(null);

@@ -31,6 +31,7 @@ class SyncJob(BaseModel):
     processed_messages: int = 0
     current_batch: int = 0
     total_batches: int = 0
+    batches_completed: int = 0  # atomic counter; honest with concurrent batches
     current_stage: str | None = None
     batch_size: int = 10
     errors: list[str] = Field(default_factory=list)

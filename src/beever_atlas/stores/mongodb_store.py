@@ -64,7 +64,7 @@ class MongoDBStore:
                     trigger_mode=SyncTriggerMode.MANUAL,
                     sync_type="auto",
                     max_messages=s.sync_max_messages,
-                    min_sync_interval_minutes=5,
+                    min_sync_interval_minutes=1,
                 ),
                 ingestion=IngestionConfig(
                     batch_size=s.sync_batch_size,
@@ -141,6 +141,13 @@ class MongoDBStore:
             ops["$push"] = {"batch_results": batch_result}
 
         await self._sync_jobs.update_one({"id": job_id}, ops)
+
+    async def increment_batches_completed(self, job_id: str) -> None:
+        """Atomic increment of batches_completed — safe under concurrent batch runs."""
+        await self._sync_jobs.update_one(
+            {"id": job_id},
+            {"$inc": {"batches_completed": 1, "version": 1}},
+        )
 
     async def complete_sync_job(
         self,
