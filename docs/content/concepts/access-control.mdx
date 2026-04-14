@@ -1,0 +1,331 @@
+---
+title: Access Control
+description: How Beever Atlas ensures users only see knowledge from channels they're authorized to access
+---
+
+# Access Control
+
+Access control in Beever Atlas is **membership-based**: users can only see data from channels they are a member of on the originating platform. This applies to both private AND public channels — a user who has not joined `#backend` cannot see its memories, even if the channel is public.
+
+## Why Membership-Based Access
+
+This design choice prioritizes user expectations over platform defaults:
+
+**User expectation**: "I should only see data from channels I'm in"
+
+**Platform differences**:
+- **Slack**: Public channels are readable by all workspace members
+- **Beever Atlas**: All channels require membership, regardless of privacy setting
+
+**Rationale**:
+- Prevents information overload from irrelevant channels
+- Matches user mental model of "my channels"
+- Consistent experience across platforms
+- Simplifies permission model
+
+## How Access Control Works
+
+### Channel Membership Sync
+
+Beever Atlas pulls channel membership from each platform:
+
+**Slack**:
+```python
+members = await slack.conversations_members(channel=channel_id)
+info = await slack.conversations_info(channel=channel_id)
+is_private = info["channel"]["is_private"]
+```
+
+**Discord**:
+```python
+members = await discord.channel_members(channel_id)
+is_private = channel.type != ChannelType.text
+```
+
+**Microsoft Teams**:
+```python
+members = await teams.channel_members(channel_id)
+is_private = channel.visibility != "public"
+```
+
+**Storage**: MongoDB collection `channel_acl`
+```javascript
+{
+  channel_id: "C123456",
+  platform: "slack",
+  is_private: false,
+  member_ids: ["U123", "U456", "U789"],
+  last_synced: "2026-04-13T12:00:00Z"
+}
+```
+
+**Sync frequency**: 
+- On initial channel sync
+- When user explicitly refreshes
+- Background refresh every 1 hour
+
+### Access Checking
+
+Every API request checks access before returning data:
+
+**Query request**:
+```python
+# 1. Authenticate user
+user_id = await verify_token(request.headers["Authorization"])
+
+# 2. Get accessible channels
+accessible = await acl.get_accessible_channels(user_id)
+
+# 3. Filter results
+results = await semantic.search(query, channel_ids=accessible)
+```
+
+**Wiki request**:
+```python
+# Check if user can access channel
+if not await acl.check_access(user_id, channel_id):
+    return {"error": "Channel not accessible"}, 403
+```
+
+**Filter results**:
+```python
+# Remove results from unauthorized channels
+filtered = [r for r in results if r["channel_id"] in accessible]
+```
+
+## Cross-Channel Search
+
+When `channel_id` is omitted from a query, Beever Atlas searches **across all channels the user is a member of** — not all channels in the workspace.
+
+**Example**:
+- User is member of #backend, #platform, #auth
+- User is NOT member of #frontend, #mobile
+- Query without channel_id → searches #backend, #platform, #auth only
+- Results from #frontend and #mobile are filtered out
+
+**Implementation**:
+```python
+# Get user's accessible channels
+accessible = await acl.get_accessible_channels(user_id)
+
+# Search across all accessible channels
+results = await semantic.search(
+    query="deployment",
+    channel_ids=accessible  # Only user's channels
+)
+```
+
+## Platform-Specific Behavior
+
+### Slack
+
+**Authentication**: Bearer token from Slack app installation
+
+**Membership**: 
+- Pulled via `conversations.members` API
+- Includes private channels user has joined
+- Excludes channels user hasn't joined (even if public)
+
+**Bot access**: Bot token has access to all channels in workspace
+
+### Discord
+
+**Authentication**: Bot token with server permissions
+
+**Membership**:
+- Pulled via channel member list
+- Includes all channels user can see
+- Respects Discord role permissions
+
+**Bot access**: Bot has access to all channels in server
+
+### Microsoft Teams
+
+**Authentication**: Azure AD app with Graph API permissions
+
+**Membership**:
+- Pulled via Graph API channel members endpoint
+- Respects Teams private channel permissions
+
+**Bot access**: Bot has access to all teams in tenant
+
+## Access Control Integration Points
+
+### API Authentication
+
+**Bearer token middleware** validates user identity before any operation:
+
+```python
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        return JSONResponse(status_code=401, content={"error": "Missing auth token"})
+    
+    user = await verify_workspace_token(token)
+    request.state.user_id = user.id
+    request.state.workspace_id = user.workspace_id
+    return await call_next(request)
+```
+
+All routes receive `request.state.user_id` and `request.state.workspace_id` after authentication.
+
+### Retrieval Pipeline
+
+**Semantic Agent** and **Graph Agent** filter results before returning:
+
+```python
+async def search_with_acl(query: str, user_id: str):
+    # Get user's accessible channels
+    accessible = await acl.get_accessible_channels(user_id)
+    
+    # Search only accessible channels
+    results = await weaviate.search(
+        query=query,
+        filters=[{"channel_id": accessible}]  # Filter by ACL
+    )
+    
+    return results
+```
+
+### Wiki Builder
+
+**Private channel sections** display `[restricted]` for unauthorized users:
+
+```markdown
+# Engineering Wiki
+
+## Topics
+
+### Authentication ✅
+[Full content visible]
+
+### Backend Infrastructure 🔒
+[restricted - join #backend to view]
+
+### Frontend 🚫
+[restricted - join #frontend to view]
+```
+
+### Neo4j Traversal
+
+**Global entities** (Person, Technology, Project, Team) are visible to all users:
+
+```python
+# Alice is visible to all users
+alice = await neo4j.get_entity("Alice Chen")
+```
+
+**Relationships** from private channels are filtered:
+
+```python
+# Alice's work on private-project only visible to #private-project members
+if "private-project" in user_accessible_channels:
+    relationships = await neo4j.get_relationships(alice, "private-project")
+else:
+    relationships = []  # Filtered out
+```
+
+## Security Considerations
+
+### Token Validation
+
+**Workspace tokens** are validated against platform APIs:
+- Slack: `auth.test` endpoint
+- Discord: Validate against bot token
+- Teams: Validate against Azure AD
+
+**Token expiration**: Tokens expire per platform policy
+- Slack: User tokens expire after ~12 hours
+- Discord: Bot tokens don't expire
+- Teams: Azure AD tokens expire after 1 hour
+
+**Refresh**: Clients must refresh tokens before expiration
+
+### Membership Freshness
+
+**Sync triggers**:
+- Manual refresh via API
+- Background refresh every 1 hour
+- On user join/leave events (webhook)
+
+**Stale data**: If membership sync fails, last known membership is used
+- Conservative: Deny access if sync failed recently (< 5 min ago)
+- Background retry: Sync continues in background
+
+### Cross-Workspace Considerations
+
+**Workspace isolation**: Each workspace has isolated data
+- Slack workspace A cannot access Slack workspace B
+- Discord server A cannot access Discord server B
+
+**User identity**: User IDs are scoped per workspace
+- Same human in two workspaces = two different user_ids
+- No cross-workspace data leakage
+
+## Configuration
+
+```bash
+# Access Control Settings
+ACL_SYNC_INTERVAL_SECONDS=3600  # 1 hour
+ACL_STALE_THRESHOLD_SECONDS=300  # 5 minutes
+
+# Authentication
+SLACK_SIGNING_SECRET=required   # Slack app verification
+DISCORD_PUBLIC_KEY=required     # Discord bot verification
+TEAMS_APP_ID=required           # Teams app ID
+
+# Token Validation
+TOKEN_VALIDATION_ENABLED=true
+TOKEN_CACHE_TTL_SECONDS=300     # 5 minutes
+```
+
+## Troubleshooting
+
+### User can't see channel they're in
+
+**Causes**:
+1. ACL sync hasn't run recently
+2. User joined channel after last sync
+3. Sync failed for that channel
+
+**Solutions**:
+1. Trigger manual ACL refresh: `POST /api/admin/acl/refresh`
+2. Check sync logs for errors
+3. Verify bot has permissions to read channel members
+
+### User sees channel they shouldn't
+
+**Causes**:
+1. Channel membership sync error
+2. User left channel but ACL not updated
+3. Bot token has excessive permissions
+
+**Solutions**:
+1. Trigger immediate ACL sync for that channel
+2. Review bot permissions (principle of least privilege)
+3. Audit channel membership in platform vs database
+
+### Cross-channel search returns too many/few results
+
+**Check**:
+1. User's actual channel memberships in platform
+2. ACL data in MongoDB: `db.channel_acl.find({member_ids: "USER_ID"})`
+3. Sync logs for failed channel syncs
+
+**Debug query**:
+```python
+# Get user's accessible channels
+accessible = await acl.get_accessible_channels(user_id)
+print(f"User {user_id} can access: {accessible}")
+
+# Count memories per channel
+counts = await weaviate.count_by_channel(channel_ids=accessible)
+print(f"Memories per channel: {counts}")
+```
+
+## Next Steps
+
+- Learn about **[Resilience](/docs/concepts/resilience)** features when ACL sync fails
+- See **[Agent Architecture](/docs/concepts/agent-architecture)** for ACL integration points
+- Understand **[Ingestion Pipeline](/docs/concepts/ingestion-pipeline)** for channel sync process

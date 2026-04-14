@@ -1,0 +1,304 @@
+---
+title: Knowledge Graph Exploration
+description: Visual exploration of entities and relationships in your knowledge base
+---
+
+
+The Knowledge Graph visualization reveals connections between people, decisions, projects, and technologies in your organization. It's a powerful way to discover hidden relationships and understand organizational context.
+
+## Opening the Graph View
+
+Navigate to [http://localhost:8000/graph](http://localhost:8000/graph)
+
+The graph view loads with:
+- **Nodes**: Entities (people, decisions, projects, technologies)
+- **Edges**: Relationships between entities
+- **Initial focus**: Most connected entities
+
+<Steps>
+### Step 1: Understand node types
+
+Different node types are color-coded:
+
+<Tabs items={['Person', 'Decision', 'Project', 'Technology', 'Team']}>
+
+### Person Nodes
+
+**Color**: Blue
+**Shape**: Circle
+
+Represents:
+- Team members
+- Stakeholders
+- External contacts
+
+**Hover Info**:
+- Name
+- Role/position (if detected)
+- Channels they're active in
+- Message count
+
+### Decision Nodes
+
+**Color**: Purple
+**Shape**: Diamond
+
+Represents:
+- Architectural decisions
+- Product decisions
+- Process changes
+
+**Hover Info**:
+- Decision title
+- Date made
+- Who made it
+- Impact level
+
+### Project Nodes
+
+**Color**: Green
+**Shape**: Hexagon
+
+Represents:
+- Initiatives
+- Sprints
+- Feature development
+
+**Hover Info**:
+- Project name
+- Active dates
+- Team members involved
+- Status
+
+### Technology Nodes
+
+**Color**: Orange
+**Shape**: Square
+
+Represents:
+- Tools
+- Frameworks
+- Libraries
+- Systems
+
+**Hover Info**:
+- Technology name
+- Usage context
+- Related projects
+- Adoption timeline
+
+### Team Nodes
+
+**Color**: Teal
+**Shape**: Octagon
+
+Represents:
+- Departments
+- Working groups
+- Cross-functional teams
+
+**Hover Info**:
+- Team name
+- Members
+- Charter/purpose
+- Related projects
+
+</Tabs>
+
+### Step 2: Explore relationship types
+
+Edges show how entities relate to each other.
+
+**Common Relationship Types:**
+
+<Tabs items={['works_with', 'decided_by', 'uses', 'part_of', 'related_to']}>
+
+### works_with
+
+Connects people who collaborate frequently.
+
+Example:
+```
+[@sarah] --works_with--> [@mike]
+```
+
+Hovering shows:
+- How many messages they exchanged
+- Common channels
+- Time period of collaboration
+
+### decided_by
+
+Connects decisions to decision-makers.
+
+Example:
+```
+[Use JWT Auth] --decided_by--> [@alex]
+```
+
+Hovering shows:
+- Date of decision
+- Rationale (if extracted)
+- Related decisions
+
+### uses
+
+Connects projects or people to technologies.
+
+Example:
+```
+[Payment API] --uses--> [Stripe]
+[@john] --uses--> [Python]
+```
+
+Hovering shows:
+- Usage context
+- Frequency of mention
+- Time period
+
+### part_of
+
+Shows hierarchical or containment relationships.
+
+Example:
+```
+[Mobile App Redesign] --part_of--> [Q1 Product Launch]
+```
+
+Hovering shows:
+- Scope of relationship
+- Parent/child structure
+
+### related_to
+
+General semantic similarity.
+
+Example:
+```
+[Database Migration] --related_to--> [Performance Optimization]
+```
+
+Hovering shows:
+- Similarity score
+- Common context
+
+</Tabs>
+
+### Step 3: Click to explore
+
+Click any node to focus and expand:
+
+**What Happens:**
+1. Selected node moves to center
+2. Direct neighbors (1-hop) appear
+3. Related edges are highlighted
+4. Sidebar shows entity details
+
+**Entity Details Sidebar:**
+- **Summary**: What this entity is
+- **Related Facts**: Top facts mentioning this entity
+- **Connections**: List of connected entities
+- **Timeline**: When this entity appears in messages
+- **Source Messages**: Link to view all messages about this entity
+
+### Step 4: Use N-hop traversal
+
+Explore beyond direct connections using N-hop traversal.
+
+**How to Use:**
+1. Click a node to select it
+2. Use the "Expand" button (⊕) in the toolbar
+3. Choose hop depth (1, 2, or 3)
+4. Graph shows entities N connections away
+
+**Use Cases:**
+- **1-hop**: Direct connections (immediate collaborators)
+- **2-hop**: Friends of friends (extended network)
+- **3-hop**: Distant connections (organizational reach)
+
+<Callout type="info">
+**Performance Note**: 3-hop traversal on large graphs can be slow. Start with 1-hop, then expand as needed.
+</Callout>
+
+### Step 5: Filter and search
+
+Narrow down the graph to focus on specific aspects.
+
+**Filters (Left Panel):**
+- **Node Types**: Show only certain entity types
+- **Relationship Types**: Show only certain relationships
+- **Date Range**: Focus on specific time period
+- **Channels**: Show only from specific channels
+
+**Search (Top Bar):**
+- Search for entity names
+- Auto-complete suggests matches
+- Clicking a result centers the graph on that entity
+
+**Filter Combinations:**
+- "Show only Person nodes related to [@sarah]"
+- "Show Decision nodes from Q1 2024"
+- "Show Technology nodes used by [Project Phoenix]"
+
+### Step 6: Export graph data
+
+Download graph data for external analysis or visualization.
+
+**Export Options:**
+- **JSON**: Full graph with nodes, edges, metadata
+- **CSV**: Node list or edge list (for spreadsheet analysis)
+- **GEXF**: Import into Gephi or other network analysis tools
+
+**To Export:**
+1. Click "Export" button (top right)
+2. Choose format
+3. Optionally apply current filters
+4. Click download
+
+**Use Cases:**
+- Organizational network analysis
+- Identifying key influencers
+- Understanding team structure
+- Finding isolated entities (knowledge silos)
+
+</Steps>
+
+---
+
+## Graph Analytics
+
+The graph view includes built-in analytics:
+
+**Key Metrics:**
+- **Degree Centrality**: Most connected entities
+- **Betweenness Centrality**: Bridge entities connecting clusters
+- **PageRank**: Most influential entities
+- **Communities**: Automatically detected clusters
+
+**How to Use:**
+1. Click "Analytics" tab
+2. Choose metric
+3. See ranked list of entities
+4. Click any entity to highlight in graph
+
+---
+
+## Tips for Effective Graph Exploration
+
+<Callout type="info">
+**Pro Tip**: Start with a person you know and expand from there. This gives you a grounded entry point into the graph.
+</Callout>
+
+1. **Follow interesting paths**: Click through connections to discover unexpected relationships
+2. **Use filters**: Large graphs are overwhelming; filter to focus
+3. **Check citations**: Click entities to see source messages
+4. **Look for bridges**: Entities with high betweenness connect different parts of the org
+5. **Find silos**: Isolated clusters might indicate knowledge gaps
+
+---
+
+## Next Steps
+
+- Learn how to [import documents](/docs/tutorials/file-import) to enrich your graph
+- Set up [MCP integration](/docs/tutorials/mcp-integration) for external access
+- Read the [self-hosting guide](/docs/guides/self-hosting) for production deployment

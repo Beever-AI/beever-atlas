@@ -1,0 +1,400 @@
+---
+title: Architecture Tour
+description: Explore the Beever Atlas codebase structure and module organization
+---
+
+
+# Architecture Tour
+
+This guide walks you through the Beever Atlas codebase structure, explaining the purpose of each module and how they work together.
+
+## Project Structure
+
+```
+beever-atlas/
+├── src/beever_atlas/          # Main Python package
+│   ├── adapters/              # Platform adapters (Slack, Discord, Teams)
+│   ├── agents/                # Google ADK agents for extraction and routing
+│   ├── api/                   # FastAPI route handlers
+│   ├── infra/                 # Infrastructure (config, health, logging)
+│   ├── llm/                   # LLM provider abstraction
+│   ├── models/                # Pydantic data models
+│   ├── retrieval/             # Hybrid search and retrieval
+│   ├── services/              # Business logic layer
+│   ├── stores/                # Data store clients (Weaviate, Neo4j, MongoDB)
+│   └── wiki/                  # Wiki generation engine
+├── bot/                       # TypeScript bot service
+├── tests/                     # Test suite
+└── docker-compose.yml         # Infrastructure services
+```
+
+## Core Modules
+
+### adapters/
+
+Platform adapters provide a unified interface for fetching messages from different platforms.
+
+```
+adapters/
+├── __init__.py
+├── base.py           # BaseAdapter abstract class + data models
+├── mock.py           # Mock adapter for testing
+├── bridge.py         # Chat SDK bridge integration
+└── file_adapter.py   # File content extraction
+```
+
+**Key Types:**
+- `BaseAdapter`: Abstract interface for all platforms
+- `NormalizedMessage`: Platform-agnostic message representation
+- `ChannelInfo`: Platform-agnostic channel metadata
+
+**Responsibilities:**
+- Fetch message history from platforms
+- Normalize platform-specific data formats
+- Handle platform-specific quirks (pagination, rate limits)
+- Provide thread and channel metadata
+
+### agents/
+
+Google ADK (Agent Development Kit) agents for specialized tasks.
+
+```
+agents/
+├── __init__.py
+├── extraction/       # Content extraction agents
+│   ├── file_extractor.py
+│   └── message_extractor.py
+├── routing/          # Query routing agents
+│   └── query_router.py
+└── wiki/             # Wiki generation agents
+    ├── wiki_builder.py
+    └── wiki_compiler.py
+```
+
+**Responsibilities:**
+- Extract structured data from unstructured content
+- Route queries to appropriate retrieval strategies
+- Generate wiki documentation from conversations
+- Handle citation and follow-up generation
+
+### api/
+
+FastAPI route handlers organized by feature.
+
+```
+api/
+├── __init__.py
+├── mcp.py            # Model Context Protocol server
+├── channels.py       # Channel CRUD operations
+├── connections.py    # Platform connection management
+├── sync.py           # Sync job management
+├── ask.py            # Question answering endpoints
+├── search.py         # Search endpoints
+└── internal/         # Internal APIs
+    └── connections.py
+```
+
+**Responsibilities:**
+- Expose HTTP endpoints for all features
+- Validate request data with Pydantic
+- Handle streaming responses (SSE)
+- Implement authentication and authorization
+
+### infra/
+
+Infrastructure services that support the application.
+
+```
+infra/
+├── __init__.py
+├── config.py         # Configuration management
+├── health.py         # Health check endpoints
+├── logging.py        # Logging configuration
+└── crypto.py         # Encryption utilities
+```
+
+**Responsibilities:**
+- Load and validate environment configuration
+- Provide health check for all dependencies
+- Configure structured logging
+- Encrypt sensitive credentials
+
+### llm/
+
+LLM provider abstraction for multiple AI services.
+
+```
+llm/
+├── __init__.py
+├── provider.py       # Base provider interface
+├── litellm_provider.py
+├── model_resolver.py # Model name resolution
+└── schemas.py        # LLM request/response schemas
+```
+
+**Supported Providers:**
+- Anthropic Claude
+- OpenAI GPT models
+- Google Gemini
+- Any provider supported by LiteLLM
+
+**Responsibilities:**
+- Provide unified interface for LLM calls
+- Handle model name mapping
+- Implement retry logic and error handling
+- Support streaming responses
+
+### models/
+
+Pydantic models for type safety and validation.
+
+```
+models/
+├── __init__.py
+├── platform_connection.py  # Platform connection data
+├── channel.py              # Channel metadata
+├── message.py              # Message representations
+├── sync_job.py             # Sync job tracking
+└── llm_request.py          # LLM request/response models
+```
+
+**Responsibilities:**
+- Define data schemas for the entire application
+- Provide type hints and validation
+- Serialize/deserialize for storage
+- Generate OpenAPI documentation
+
+### retrieval/
+
+Hybrid semantic + graph search implementation.
+
+```
+retrieval/
+├── __init__.py
+├── hybrid_search.py  # Combined vector + graph search
+├── vector_search.py  # Weaviate vector operations
+├── graph_search.py   # Neo4j graph operations
+└── query_optimizer.py # Query optimization
+```
+
+**Responsibilities:**
+- Implement hybrid search combining vector and graph
+- Execute vector similarity queries
+- Execute graph traversal queries
+- Rank and merge results
+
+### services/
+
+Business logic layer that coordinates between modules.
+
+```
+services/
+├── __init__.py
+├── chat_history.py       # Chat history management
+├── file_processor.py     # File content extraction
+├── sync_runner.py        # Sync job orchestration
+├── query_service.py      # Query processing
+├── citation_service.py   # Citation generation
+└── platform_store.py     # Platform data persistence
+```
+
+**Responsibilities:**
+- Implement core business logic
+- Coordinate between adapters and stores
+- Handle complex multi-step operations
+- Provide transactional boundaries
+
+### stores/
+
+Data store clients for persistence layers.
+
+```
+stores/
+├── __init__.py
+├── weaviate.py       # Vector database client
+├── neo4j.py          # Graph database client
+├── mongodb.py        # Document database client
+├── redis.py          # Cache client
+└── platform.py       # Platform data store interface
+```
+
+**Responsibilities:**
+- Provide low-level database operations
+- Handle connection pooling
+- Implement caching strategies
+- Manage database migrations
+
+### wiki/
+
+Wiki generation engine for creating documentation.
+
+```
+wiki/
+├── __init__.py
+├── builder.py        # Wiki content generation
+├── compiler.py       # Wiki compilation and formatting
+├── cache.py          # Wiki version caching
+└── templates.py      # Wiki templates
+```
+
+**Responsibilities:**
+- Generate structured wiki content from conversations
+- Compile multi-language wikis
+- Cache generated content
+- Support multiple output formats
+
+## Bot Service
+
+The `bot/` directory contains the TypeScript bot service.
+
+```
+bot/
+├── src/
+│   ├── index.ts           # Bot entry point
+│   ├── chat-manager.ts    # Chat SDK wrapper
+│   ├── formatter.ts       # Slack Block Kit formatting
+│   ├── sse-client.ts      # SSE streaming client
+│   ├── webhook-buffer.ts  # Webhook buffering during transitions
+│   ├── bridge.ts          # Backend bridge endpoints
+│   └── slack-mrkdwn.ts    # Slack markdown conversion
+├── package.json
+└── tsconfig.json
+```
+
+**Responsibilities:**
+- Handle platform webhooks (Slack, Discord, Teams)
+- Format responses for each platform
+- Manage Chat SDK connections
+- Provide bridge API for Python backend
+
+## Data Flow
+
+### Message Sync Flow
+
+```
+Platform Adapter
+    ↓
+Normalized Message
+    ↓
+File Processor (if attachments)
+    ↓
+Vector Store (Weaviate) + Graph Store (Neo4j)
+    ↓
+Document Store (MongoDB) + Cache (Redis)
+```
+
+### Query Flow
+
+```
+API Request
+    ↓
+Query Service
+    ↓
+Retrieval (Hybrid Search)
+    ↓
+Vector Search + Graph Search
+    ↓
+LLM Provider
+    ↓
+Response + Citations
+    ↓
+API Response
+```
+
+## Key Patterns
+
+### Adapter Pattern
+
+Platform adapters implement `BaseAdapter` for consistent interface:
+
+```python
+class BaseAdapter(abc.ABC):
+    @abc.abstractmethod
+    async def fetch_history(self, channel_id: str) -> list[NormalizedMessage]:
+        pass
+```
+
+### Service Layer
+
+Business logic isolated in services, not route handlers:
+
+```python
+# In route handler
+result = await query_service.ask(channel_id, question)
+
+# In service
+async def ask(self, channel_id: str, question: str):
+    # Complex business logic
+    pass
+```
+
+### Repository Pattern
+
+Data access abstracted through store clients:
+
+```python
+# Use store interface
+messages = await stores.mongodb.get_messages(channel_id)
+
+# Implementation details hidden
+class MongoDBStore:
+    async def get_messages(self, channel_id: str):
+        # MongoDB-specific code
+        pass
+```
+
+## Dependency Injection
+
+Stores and services use dependency injection:
+
+```python
+# In conftest.py
+@pytest.fixture
+def mock_stores():
+    fake = MagicMock()
+    stores._stores = fake
+    yield fake
+```
+
+## Configuration
+
+Configuration loaded from environment with validation:
+
+```python
+# in infra/config.py
+class Settings(BaseSettings):
+    database_url: str
+    api_key: str | None = None
+    
+    class Config:
+        env_file = ".env"
+```
+
+## Testing Strategy
+
+```
+tests/
+├── conftest.py          # Shared fixtures
+├── test_adapters.py     # Adapter tests
+├── test_services.py     # Service tests
+├── agents/              # Agent tests
+│   ├── query/
+│   └── citations/
+└── api/                 # API endpoint tests
+```
+
+**Testing Principles:**
+- Mock external services (Slack, Discord, LLMs)
+- Use `MockAdapter` for adapter tests
+- Test stores with test databases
+- Integration tests use real infrastructure
+
+## Next Steps
+
+Now that you understand the architecture:
+
+- [ ] Set up your [Development Environment](./development-setup)
+- [ ] Explore the [Testing Guide](./testing-guide)
+- [ ] Read [How to Contribute](./index)
+
+Ready to contribute? Check the [Issues](https://github.com/beever-atlas/beever-atlas/issues) for open tasks.

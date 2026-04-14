@@ -1,0 +1,281 @@
+---
+title: Discord Integration
+description: Connect Beever Atlas to your Discord server for community knowledge retrieval
+---
+
+
+# Discord Integration
+
+Beever Atlas integrates with Discord through the Chat SDK, bringing intelligent knowledge retrieval to your community servers and guilds.
+
+## Features
+
+- **Slash commands**: Quick access via `/beever` command
+- **Message context**: Responds to questions with server message context
+- **Thread support**: Native Discord thread integration
+- **Forum channel indexing**: Knowledge from forum posts
+- **Role-based access**: Respect Discord permissions
+
+## Supported Channel Types
+
+| Type | Support |
+|------|---------|
+| Text channels | ✅ Full sync and retrieval |
+| Thread channels | ✅ Mapped to conversations |
+| Forum channels | ✅ Post indexing |
+| Voice channels | ⚠️ Text chat only |
+| DMs | ✅ Bot DM commands |
+
+## Bot Setup
+
+### Prerequisites
+
+1. Create a Discord application at [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Create a bot user under the "Bot" section
+3. Copy your bot token and public key
+
+### Required Bot Permissions
+
+Your bot needs these permissions in each server:
+
+<Steps>
+  <Step>
+    **Message Access**
+    
+    - **Read Messages/View Channels** - View accessible channels
+    - **Read Message History** - Access past messages
+    - **Add Reactions** - React to messages (optional)
+  </Step>
+  <Step>
+    **Message Actions**
+    
+    - **Send Messages** - Post responses
+    - **Embed Links** - Rich embed formatting
+    - **Attach Files** - File uploads (optional)
+    - **Use Slash Commands** - Command support
+  </Step>
+  <Step>
+    **Thread Support**
+    
+    - **Use Public Threads** - Create/respond in public threads
+    - **Use Private Threads** - Create/respond in private threads
+  </Step>
+  <Step>
+  **Management**
+    
+    - **Manage Webhooks** - For HTTP mode (optional)
+  </Step>
+</Steps>
+
+### Environment Configuration
+
+Set these environment variables:
+
+```bash
+# Discord Bot Token
+DISCORD_BOT_TOKEN=your-bot-token-here
+
+# Discord Public Key (for HTTP interactions)
+DISCORD_PUBLIC_KEY=your-public-key-here
+
+# Discord Application ID
+DISCORD_APPLICATION_ID=your-app-id-here
+```
+
+## Slash Commands
+
+The bot registers slash commands when invited to servers:
+
+### `/beever <question>`
+
+Ask a question with optional context:
+
+```
+/beever What is our deployment process?
+```
+
+### Context-Aware Responses
+
+The bot automatically considers:
+
+- Channel context where command was used
+- Recent messages in the conversation
+- Server-wide knowledge base
+- User permissions and roles
+
+## Thread Support
+
+Discord threads are mapped to conversations:
+
+- **Public threads**: Fully indexed and searchable
+- **Private threads**: Indexed based on bot permissions
+- **Thread hierarchy**: Maintains parent-child relationships
+- **Archive handling**: Archived threads handled gracefully
+
+### Thread ID Format
+
+```
+discord:GUILD_ID:CHANNEL_ID:MESSAGE_ID
+```
+
+## Forum Channels
+
+Forum posts are treated as knowledge documents:
+
+<Steps>
+  <Step>
+    **Post Metadata**
+    
+    - Title, tags, and content indexed
+    - Author and timestamp captured
+  </Step>
+  <Step>
+    **Post Comments**
+    
+    - Threaded replies linked to post
+    - Rich discussion context
+  </Step>
+  <Step>
+    **Search Integration**
+    
+    - Forum posts appear in search results
+    - Tag-based filtering available
+  </Step>
+</Steps>
+
+## Message Formatting
+
+Discord responses use embeds for rich formatting:
+
+- **Citations**: Clickable links to source messages
+- **Code blocks**: Syntax highlighting
+- **Embeds**: Rich content display
+- **Components**: Buttons and selects (if enabled)
+
+## Rate Limits
+
+Discord API rate limits:
+
+<Steps>
+  <Step>
+    **Global Limits**
+    
+    - 50 requests per second
+    - Burst allowance handled automatically
+  </Step>
+  <Step>
+    **Per-Channel Limits**
+    
+    - 5 messages per second per channel
+    - Message queue for bursts
+  </Step>
+  <Step>
+    **Slash Commands**
+    
+    - 200 commands per day per server
+    - Global 200 commands per day (for DMs)
+  </Step>
+</Steps>
+
+## Webhook Configuration
+
+### Gateway (Recommended)
+
+For real-time events:
+
+```bash
+# Gateway connects automatically
+# Bot token provides gateway access
+DISCORD_BOT_TOKEN=your-token
+```
+
+### HTTP Interactions
+
+For slash command validation:
+
+```bash
+# Public key for verify requests
+DISCORD_PUBLIC_KEY=your-public-key
+
+# Interaction endpoint
+https://your-domain.com/api/discord
+```
+
+## Server Invite
+
+Generate an invite URL with required permissions:
+
+```
+https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&permissions=274878024768&scope=bot%20applications.commands
+```
+
+Replace `YOUR_APP_ID` with your application ID.
+
+## Troubleshooting
+
+### Bot not responding
+
+- Verify `DISCORD_BOT_TOKEN` is correct
+- Check bot has required permissions
+- Confirm bot is online in Discord Developer Portal
+- Review server logs for errors
+
+### Commands not appearing
+
+- Verify `applications.commands` scope in invite
+- Check Discord application has commands registered
+- Try re-inviting the bot to the server
+
+### Missing message history
+
+- Check **Read Message History** permission
+- Verify bot can access the specific channel
+- Some channels may have role restrictions
+
+## Advanced Configuration
+
+### Command Customization
+
+Customize command names and options:
+
+```typescript
+// In bot/src/index.ts
+bot.registerCommand('ask', {
+  description: 'Ask a question',
+  options: [
+    {
+      name: 'question',
+      type: 'STRING',
+      description: 'Your question',
+      required: true,
+    },
+  ],
+});
+```
+
+### Role-Based Filtering
+
+Limit knowledge sources by role:
+
+- Configure via UI when adding connection
+- Set `DISCORD_ROLE_FILTER` environment variable
+- Use API to specify allowed roles
+
+### Multi-Server Setup
+
+Connect multiple Discord servers:
+
+1. Create one Discord application
+2. Invite bot to each server
+3. Configure per-server channel filters
+4. Each server gets unique connection ID
+
+## Next Steps
+
+- [ ] Create Discord application
+- [ ] Generate bot token and credentials
+- [ ] Configure bot permissions
+- [ ] Invite bot to your server
+- [ ] Test slash commands
+
+For more on bot development, see the [Development Setup](../contributing/development-setup) guide.

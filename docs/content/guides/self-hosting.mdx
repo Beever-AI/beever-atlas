@@ -1,0 +1,564 @@
+---
+title: Self-Hosting Guide
+description: Production deployment guide for self-hosting Beever Atlas with Docker Compose
+---
+
+
+This guide covers production deployment of Beever Atlas using Docker Compose, including persistence, scaling, security, and monitoring.
+
+## System Requirements
+
+**Minimum** (small team, `<10K` messages):
+- CPU: 4 cores
+- RAM: 8 GB
+- Disk: 50 GB SSD
+
+**Recommended** (medium team, `<100K` messages):
+- CPU: 8 cores
+- RAM: 16 GB
+- Disk: 200 GB SSD
+
+**Large Deployment** (enterprise, >100K messages):
+- CPU: 16+ cores
+- RAM: 32+ GB
+- Disk: 500+ GB SSD
+- Consider external databases (managed services)
+
+## Production Docker Compose
+
+Create a `docker-compose.prod.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    image: beever-atlas:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - BEEVER_API_URL=https://your-domain.com
+      - CORS_ORIGINS=https://your-domain.com
+    volumes:
+      - ./data/backend:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # Bot service
+  bot:
+    image: beever-atlas-bot:latest
+    environment:
+      - BRIDGE_URL=http://backend:8000
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # Weaviate (vector database)
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+    volumes:
+      - ./data/weaviate:/var/lib/weaviate
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # Neo4j (graph database)
+  neo4j:
+    image: neo4j:latest
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/your-strong-password
+      - NEO4J_dbms_memory_heap_initial__size=2G
+      - NEO4J_dbms_memory_heap_max__size=4G
+    volumes:
+      - ./data/neo4j:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 8G
+
+  # MongoDB (document store)
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=your-strong-password
+    volumes:
+      - ./data/mongodb:/data/db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
+  # Redis (cache & session state)
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Nginx (reverse proxy & TLS)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+```
+
+## TLS Termination
+
+Configure nginx for HTTPS:
+
+**nginx.conf**:
+```nginx
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream backend {
+        server backend:8000;
+    }
+
+    server {
+        listen 80;
+        server_name your-domain.com;
+        return 301 https://$server_name$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name your-domain.com;
+
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+        location / {
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
+```
+
+**Get SSL Certificates** (Let's Encrypt):
+```bash
+sudo certbot certonly --standalone -d your-domain.com
+sudo cp /etc/letsencrypt/live/your-domain.com/fullchain.pem ./ssl/
+sudo cp /etc/letsencrypt/live/your-domain.com/privkey.pem ./ssl/
+```
+
+## Backup & Restore
+
+<Tabs items={['Weaviate', 'Neo4j', 'MongoDB', 'Automated Backups']}>
+
+### Weaviate
+
+**Backup**:
+```bash
+docker exec weaviate weaviate backup create --backup-id backup-$(date +%Y%m%d)
+docker exec weaviate tar -czf /tmp/weaviate-backup.tar.gz /var/lib/weaviate/backups/backup-$(date +%Y%m%d)
+docker cp weaviate:/tmp/weaviate-backup.tar.gz ./backups/
+```
+
+**Restore**:
+```bash
+docker cp ./backups/weaviate-backup.tar.gz weaviate:/tmp/
+docker exec weaviate tar -xzf /tmp/weaviate-backup.tar.gz -C /var/lib/weaviate/
+docker restart weaviate
+```
+
+### Neo4j
+
+**Backup**:
+```bash
+docker exec neo4j neo4j-admin dump --to=/data/backup.dump
+docker cp neo4j:/data/backup.dump ./backups/neo4j-$(date +%Y%m%d).dump
+```
+
+**Restore**:
+```bash
+docker cp ./backups/neo4j-backup.dump neo4j:/data/backup.dump
+docker exec neo4j neo4j-admin load --from=/data/backup.dump
+docker restart neo4j
+```
+
+### MongoDB
+
+**Backup**:
+```bash
+docker exec mongodb mongodump --uri="mongodb://admin:password@localhost:27017" --archive=/data/backup.archive
+docker cp mongodb:/data/backup.archive ./backups/mongodb-$(date +%Y%m%d).archive
+```
+
+**Restore**:
+```bash
+docker cp ./backups/mongodb-backup.archive mongodb:/data/backup.archive
+docker exec mongodb mongorestore --uri="mongodb://admin:password@localhost:27017" --archive=/data/backup.archive
+```
+
+### Automated Backups
+
+Create a backup script `backup.sh`:
+
+```bash
+#!/bin/bash
+BACKUP_DIR=./backups/$(date +%Y%m%d)
+mkdir -p $BACKUP_DIR
+
+# Backup all stores
+echo "Backing up Weaviate..."
+docker exec weaviate weaviate backup create --backup-id backup-$(date +%Y%m%d)
+
+echo "Backing up Neo4j..."
+docker exec neo4j neo4j-admin dump --to=/data/backup.dump
+docker cp neo4j:/data/backup.dump $BACKUP_DIR/neo4j.dump
+
+echo "Backing up MongoDB..."
+docker exec mongodb mongodump --uri="mongodb://admin:password@localhost:27017" --archive=/data/backup.archive
+docker cp mongodb:/data/backup.archive $BACKUP_DIR/mongodb.archive
+
+echo "Backup complete: $BACKUP_DIR"
+```
+
+**Cron job** (daily at 3 AM):
+```bash
+0 3 * * * /path/to/backup.sh
+```
+
+</Tabs>
+
+## Scaling Considerations
+
+### Vertical Scaling (Single Server)
+
+**When to use**: < 100K messages, < 50 concurrent users
+
+**Upgrades**:
+- Increase CPU cores
+- Add RAM (especially for Weaviate and Neo4j)
+- Use faster SSD (NVMe preferred)
+
+### Horizontal Scaling (Multiple Servers)
+
+**When to use**: > 100K messages, > 50 concurrent users
+
+**Architecture**:
+1. **Load Balancer**: nginx or HAProxy
+2. **Multiple Backend Instances**: Stateless, can scale horizontally
+3. **External Databases**: Use managed services for better performance
+
+**Example Configuration**:
+```yaml
+services:
+  backend:
+    image: beever-atlas:latest
+    deploy:
+      replicas: 3  # Run 3 instances
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # Use external databases instead of local containers
+  # Point to managed Weaviate, Neo4j, MongoDB
+```
+
+### Database Scaling
+
+**Weaviate**:
+- Enable indexing: `INDEX_VECTORS=true`
+- Sharding for large datasets
+- Consider Weaviate Cloud for enterprise
+
+**Neo4j**:
+- Increase heap: `NEO4J_dbms_memory_heap_max__size=8G`
+- Enable clustering for HA
+- Consider Neo4j AuraDB for managed service
+
+**MongoDB**:
+- Enable replica sets for HA
+- Consider MongoDB Atlas for managed service
+
+## Security Hardening
+
+<Tabs items={['Environment Variables', 'Network Security', 'Credential Management']}>
+
+### Environment Variables
+
+**Never commit `.env` to version control**:
+```bash
+# .gitignore
+.env
+.env.local
+.env.production
+```
+
+**Use strong passwords**:
+```bash
+# Generate secure passwords
+openssl rand -base64 32
+```
+
+**Required secure variables**:
+```bash
+# Database credentials
+NEO4J_AUTH=neo4j/<strong-password>
+MONGODB_URI=mongodb://admin:<strong-password>@localhost:27017
+
+# API keys (if using external services)
+GOOGLE_API_KEY=<your-key>
+JINA_API_KEY=<your-key>
+
+# Credential encryption
+CREDENTIAL_MASTER_KEY=<strong-key>
+```
+
+### Network Security
+
+**Firewall rules** (UFW example):
+```bash
+# Allow SSH
+sudo ufw allow 22/tcp
+
+# Allow HTTP/HTTPS
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+
+# Deny database ports from external
+sudo ufw deny 27017/tcp  # MongoDB
+sudo ufw deny 7474/tcp  # Neo4j HTTP
+sudo ufw deny 7687/tcp  # Neo4j Bolt
+sudo ufw deny 8080/tcp  # Weaviate
+sudo ufw deny 6379/tcp  # Redis
+
+# Enable firewall
+sudo ufw enable
+```
+
+**Docker network isolation**:
+```yaml
+# Create internal network for databases
+networks:
+  internal:
+    internal: true
+
+services:
+  backend:
+    networks:
+      - internal
+      - external
+
+  weaviate:
+    networks:
+      - internal  # Only accessible internally
+```
+
+### Credential Management
+
+**Use Docker secrets** (Swarm mode):
+```yaml
+services:
+  backend:
+    secrets:
+      - google_api_key
+    environment:
+      - GOOGLE_API_KEY_FILE=/run/secrets/google_api_key
+
+secrets:
+  google_api_key:
+    external: true
+```
+
+**Or use vault** (HashiCorp Vault):
+```bash
+# Install vault agent
+# Inject secrets at runtime
+```
+
+</Tabs>
+
+## Monitoring Setup
+
+### Health Checks
+
+Built-in health endpoint:
+```bash
+curl http://localhost:8000/api/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {"ok": true},
+    "neo4j": {"ok": true},
+    "mongodb": {"ok": true},
+    "redis": {"ok": true}
+  }
+}
+```
+
+### Metrics Collection
+
+Beever Atlas emits OpenTelemetry metrics:
+
+**Prometheus configuration** (`prometheus.yml`):
+```yaml
+scrape_configs:
+  - job_name: 'beever-atlas'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: '/api/metrics'
+```
+
+**Grafana dashboards**:
+- Import dashboard for application metrics
+- Monitor: ingestion rate, query latency, error rates
+- Set up alerts for degraded performance
+
+### Logging
+
+**Structured JSON logging**:
+```yaml
+services:
+  backend:
+    environment:
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+    volumes:
+      - ./logs:/app/logs
+```
+
+**Log aggregation** (ELK stack):
+```bash
+# Filebeat to send logs to Elasticsearch
+# Kibana for visualization
+```
+
+## Performance Tuning
+
+<Tabs items={['Weaviate Tuning', 'Neo4j Tuning', 'Application Tuning']}>
+
+### Weaviate Tuning
+
+```yaml
+weaviate:
+  environment:
+    - QUERY_DEFAULTS_LIMIT=100
+    - INDEX_VECTORS=true
+    - VECTORS_PER_NODE=100000
+    - SHARDING_ENABLED=true
+```
+
+### Neo4j Tuning
+
+```yaml
+neo4j:
+  environment:
+    - NEO4J_dbms_memory_heap_initial__size=4G
+    - NEO4J_dbms_memory_heap_max__size=8G
+    - NEO4J_dbms_memory_pagecache_size=6G
+```
+
+### Application Tuning
+
+```bash
+# Batch processing
+SYNC_BATCH_SIZE=50          # Increase for faster sync
+SYNC_MAX_MESSAGES=10000     # More messages per batch
+
+# Caching
+REDIS_TTL=3600             # Cache for 1 hour
+CACHE_ENABLED=true
+
+# Connection pooling
+MONGODB_POOL_SIZE=10
+NEO4J_POOL_SIZE=50
+```
+
+</Tabs>
+
+## Troubleshooting
+
+<Callout type="warning">
+**Out of memory errors**: Check resource limits in docker-compose. Increase RAM for Weaviate and Neo4j.
+</Callout>
+
+**Common issues**:
+- Containers not starting: Check logs with `docker logs <container>`
+- Database connection errors: Verify network configuration
+- Slow queries: Add indexes, increase resources
+- Disk space: Clean old backups, increase storage
+
+## Production Checklist
+
+- [ ] Strong passwords for all databases
+- [ ] TLS/HTTPS enabled
+- [ ] Firewall configured
+- [ ] Automated backups scheduled
+- [ ] Monitoring and alerts set up
+- [ ] Log aggregation configured
+- [ ] Resource limits set
+- [ ] Health checks enabled
+- [ ] Disaster recovery tested
+- [ ] Security audit performed
+
+---
+
+## Next Steps
+
+- [Configuration Reference](/docs/guides/configuration)
+- [Observability Guide](/docs/guides/observability)
+- [Troubleshooting](/docs/guides/troubleshooting)

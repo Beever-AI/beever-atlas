@@ -1,0 +1,324 @@
+---
+title: Wiki API
+description: Generated wiki pages endpoints
+---
+
+# Wiki API
+
+## Overview
+
+Access and manage auto-generated wiki pages from team knowledge.
+
+## GET /api/wiki/structure
+
+Get the wiki navigation structure for a channel.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "channel_id": "C12345",
+  "channel_name": "#engineering",
+  "platform": "slack",
+  "generated_at": "2026-04-13T10:30:00Z",
+  "is_stale": false,
+  "pages": [
+    {
+      "id": "overview",
+      "title": "Overview",
+      "slug": "overview",
+      "section_number": "1",
+      "page_type": "fixed",
+      "memory_count": 0,
+      "children": []
+    },
+    {
+      "id": "people",
+      "title": "People",
+      "slug": "people",
+      "section_number": "2",
+      "page_type": "fixed",
+      "memory_count": 0,
+      "children": []
+    },
+    {
+      "id": "topic-authentication",
+      "title": "Authentication System",
+      "slug": "topic/authentication",
+      "section_number": "3",
+      "page_type": "topic",
+      "memory_count": 15,
+      "children": [
+        {
+          "id": "topic-auth--jwt-migration",
+          "title": "JWT Migration",
+          "slug": "topic/authentication/jwt-migration",
+          "section_number": "3.1",
+          "page_type": "sub-topic",
+          "memory_count": 8
+        }
+      ]
+    }
+  ]
+}
+```
+
+## `GET /api/wiki/pages/{page_id}`
+
+Get a specific wiki page content.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `page_id` | string | Yes | Page ID (`"overview"`, `"people"`, `"topic-xyz"`) |
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "id": "overview",
+  "slug": "overview",
+  "title": "Overview",
+  "page_type": "fixed",
+  "parent_id": null,
+  "section_number": "1",
+  "content": "# Engineering Channel\n\n## Purpose\n\nThis channel...",
+  "summary": "Overview of the Engineering team's activities and focus areas.",
+  "memory_count": 0,
+  "last_updated": "2026-04-13T10:30:00Z",
+  "citations": [
+    {
+      "id": "[1]",
+      "author": "Jane Smith",
+      "channel": "#engineering",
+      "timestamp": "2026-04-13T10:30:00Z",
+      "text_excerpt": "Our team focuses on backend API development...",
+      "permalink": "https://slack.com/archives/C12345/p1234567890",
+      "media_type": null,
+      "media_name": null
+    }
+  ],
+  "children": []
+}
+```
+
+## POST /api/wiki/refresh
+
+Trigger wiki regeneration for a channel.
+
+### Request Body
+
+```json
+{
+  "channel_id": "C12345",
+  "force": false
+}
+```
+
+### Response
+
+```json
+{
+  "status": "started",
+  "job_id": "wiki_job_123",
+  "estimated_duration_seconds": 120
+}
+```
+
+## GET /api/wiki/versions
+
+List all wiki versions for a channel.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `limit` | int | No | Max versions (default: 10) |
+
+### Response
+
+```json
+{
+  "versions": [
+    {
+      "version_number": 3,
+      "channel_id": "C12345",
+      "generated_at": "2026-04-13T10:30:00Z",
+      "archived_at": "2026-04-13T09:00:00Z",
+      "page_count": 12,
+      "model": "claude-3-5-sonnet-20241022"
+    }
+  ]
+}
+```
+
+## `GET /api/wiki/versions/{version_number}`
+
+Get a specific wiki version snapshot.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `version_number` | int | Yes | Version number |
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "version_number": 2,
+  "channel_id": "C12345",
+  "channel_name": "#engineering",
+  "platform": "slack",
+  "generated_at": "2026-04-12T10:30:00Z",
+  "archived_at": "2026-04-13T09:00:00Z",
+  "page_count": 10,
+  "model": "claude-3-5-sonnet-20241022",
+  "structure": {...},
+  "overview": {...},
+  "pages": {...},
+  "metadata": {...}
+}
+```
+
+## GET /api/wiki/activity
+
+Get recent wiki generation activity.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | No | Filter by channel |
+| `limit` | int | No | Max results (default: 20) |
+
+### Response
+
+```json
+{
+  "activities": [
+    {
+      "channel_id": "C12345",
+      "action": "generated",
+      "version_number": 3,
+      "page_count": 12,
+      "duration_ms": 85000,
+      "timestamp": "2026-04-13T10:30:00Z"
+    }
+  ]
+}
+```
+
+## GET /api/wiki/sync-history
+
+Get wiki generation sync history.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "history": [
+    {
+      "sync_id": "sync_123",
+      "started_at": "2026-04-13T10:28:00Z",
+      "completed_at": "2026-04-13T10:30:00Z",
+      "status": "completed",
+      "pages_generated": 12,
+      "facts_processed": 856,
+      "error": null
+    }
+  ]
+}
+```
+
+## GET /api/wiki/status
+
+Get wiki generation status for a channel.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "channel_id": "C12345",
+  "is_generating": false,
+  "is_stale": false,
+  "last_generated_at": "2026-04-13T10:30:00Z",
+  "current_version": 3,
+  "page_count": 12,
+  "next_generation_scheduled": null
+}
+```
+
+## Wiki Page Types
+
+### Fixed Pages
+
+Always available for every channel:
+
+- **overview** (`1`) - Channel overview and purpose
+- **people** (`2`) - Team members and roles
+- **decisions** (`3`) - Key decisions and outcomes
+- **faq** (`4`) - Frequently asked questions
+- **glossary** (`5`) - Domain terminology
+- **activity** (`6`) - Recent activity timeline
+- **topics** (`7`) - All topic clusters
+
+### Topic Pages
+
+Auto-generated from topic clusters:
+
+- **topic-`{slug}`** - Main topic page
+- **topic-`{slug}`--`{sub-slug}`** - Sub-topic pages
+
+### Example Page IDs
+
+```
+overview
+people
+decisions
+topic-authentication
+topic-authentication--jwt-migration
+topic-api-design
+topic-api-design--rest-vs-graphql
+```
+
+## Wiki Metadata
+
+### GET /api/wiki/metadata
+
+Get generation metadata for a channel's wiki.
+
+```json
+{
+  "member_count": 15,
+  "message_count": 15234,
+  "memory_count": 856,
+  "entity_count": 45,
+  "media_count": 23,
+  "page_count": 12,
+  "generation_cost_usd": 0.85,
+  "generation_duration_ms": 85000
+}
+```

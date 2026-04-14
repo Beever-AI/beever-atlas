@@ -1,0 +1,439 @@
+---
+title: Testing Guide
+description: Learn how to write and run tests for Beever Atlas
+---
+
+
+# Testing Guide
+
+This guide covers how to write, run, and understand tests in Beever Atlas.
+
+## Test Framework
+
+Beever Atlas uses **pytest** as its testing framework with these plugins:
+
+- `pytest-asyncio`: Async test support
+- `pytest-cov`: Coverage reporting
+
+## Running Tests
+
+### Basic Commands
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific file
+uv run pytest tests/test_adapters.py
+
+# Run specific test
+uv run pytest tests/test_adapters.py::test_mock_adapter
+
+# Run with coverage
+uv run pytest --cov=beever_atlas --cov-report=html
+```
+
+### Test Organization
+
+Tests are organized by module:
+
+```
+tests/
+├── conftest.py              # Shared fixtures
+├── test_adapters.py         # Adapter tests
+├── test_services.py         # Service tests
+├── test_config.py           # Configuration tests
+├── test_health.py           # Health endpoint tests
+├── agents/                  # Agent tests
+│   ├── query/               # Query agent tests
+│   └── citations/           # Citation tests
+└── api/                     # API endpoint tests
+```
+
+## Test Categories
+
+### Unit Tests
+
+Test individual functions and classes in isolation.
+
+```python
+# tests/test_adapters.py
+import pytest
+from beever_atlas.adapters.mock import MockAdapter
+
+@pytest.mark.asyncio
+async def test_mock_adapter_fetch_history():
+    adapter = MockAdapter()
+    messages = await adapter.fetch_history("C0123456789", limit=10)
+    
+    assert len(messages) <= 10
+    assert all(m.platform == "slack" for m in messages)
+```
+
+### Integration Tests
+
+Test interactions between components.
+
+```python
+# tests/api/test_ask_endpoint.py
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+@pytest.mark.asyncio
+async def test_ask_endpoint():
+    transport = ASGITransport(app=beever_atlas.server.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/channels/C0123456789/ask",
+            json={"question": "Test question"}
+        )
+        
+        assert response.status_code == 200
+```
+
+### Mock Mode Tests
+
+Use MockAdapter for tests without platform credentials.
+
+```python
+# tests/test_sync_runner.py
+import pytest
+from beever_atlas.adapters.mock import MockAdapter
+
+@pytest.mark.asyncio
+async def test_sync_with_mock_adapter():
+    adapter = MockAdapter()
+    result = await sync_runner.sync_channel(adapter, "C0123456789")
+    
+    assert result.messages_synced > 0
+```
+
+## Fixtures
+
+### Shared Fixtures
+
+In `tests/conftest.py`:
+
+```python
+import pytest
+from beever_atlas.models.platform_connection import PlatformConnection
+
+@pytest.fixture
+def mock_connection():
+    return PlatformConnection(
+        id="conn-mock",
+        platform="slack",
+        source="env",
+        display_name="mock-workspace",
+        status="connected",
+        selected_channels=[],
+        encrypted_credentials=b"",
+        credential_iv=b"",
+        credential_tag=b"",
+    )
+
+@pytest.fixture
+def mock_stores():
+    """Install mock store clients."""
+    import beever_atlas.stores as stores_mod
+    
+    fake = MagicMock()
+    stores_mod._stores = fake
+    yield fake
+    # Cleanup
+    stores_mod._stores = original
+```
+
+### Using Fixtures
+
+```python
+def test_with_fixture(mock_connection):
+    assert mock_connection.platform == "slack"
+    assert mock_connection.status == "connected"
+```
+
+## Mocking External Services
+
+### Mocking Slack API
+
+```python
+from unittest.mock import AsyncMock, patch
+
+@pytest.mark.asyncio
+async def test_slack_adapter_fetch():
+    with patch("beever_atlas.adapters.slack.SlackWebClient") as mock_client:
+        mock_client.return_value.conversations_history = AsyncMock(
+            return_value={"messages": [{"text": "test"}]}
+        )
+        
+        adapter = SlackAdapter(token="xoxb-test")
+        messages = await adapter.fetch_history("C0123456789")
+        
+        assert len(messages) == 1
+```
+
+### Mocking LLM Calls
+
+```python
+@pytest.mark.asyncio
+async def test_query_service_with_mock_llm():
+    with patch("beever_atlas.llm.litellm_provider.acompletion") as mock_llm:
+        mock_llm.return_value = {
+            "choices": [{"message": {"content": "Test response"}}]
+        }
+        
+        result = await query_service.ask("C0123456789", "Test question")
+        
+        assert "Test response" in result.answer
+```
+
+## Writing Tests
+
+### Test Structure
+
+Follow this pattern for new tests:
+
+```python
+import pytest
+from beever_atlas.module import ClassOrFunction
+
+@pytest.mark.asyncio  # For async tests
+async def test_descriptive_name():
+    # Arrange
+    input_value = "test"
+    
+    # Act
+    result = await function_under_test(input_value)
+    
+    # Assert
+    assert result == "expected"
+```
+
+### Test Naming
+
+Use descriptive names that describe what is being tested:
+
+```python
+# Good
+def test_mock_adapter_fetch_history_respects_limit()
+def test_slack_adapter_normalizes_user_mentions()
+def test_query_service_handles_empty_results()
+
+# Bad
+def test_adapter()
+def test_slack()
+def test_query()
+```
+
+### Async Tests
+
+Mark async tests with `@pytest.mark.asyncio`:
+
+```python
+@pytest.mark.asyncio
+async def test_async_function():
+    result = await async_function()
+    assert result is not None
+```
+
+## Test Marks
+
+Use marks to categorize tests:
+
+```python
+@pytest.mark.unit
+def test_unit_test():
+    pass
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_integration_test():
+    pass
+
+@pytest.mark.slow
+def test_slow_test():
+    pass
+```
+
+Run marked tests:
+
+```bash
+# Run only unit tests
+uv run pytest -m unit
+
+# Run only integration tests
+uv run pytest -m integration
+
+# Skip slow tests
+uv run pytest -m "not slow"
+```
+
+## Coverage
+
+### Generate Coverage Report
+
+```bash
+# Generate HTML coverage report
+uv run pytest --cov=beever_atlas --cov-report=html
+
+# View report
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
+start htmlcov/index.html  # Windows
+```
+
+### Coverage Goals
+
+Aim for:
+- **80%+** coverage for core modules (services, retrieval)
+- **70%+** coverage for API endpoints
+- **60%+** coverage for utilities
+
+### Excluding from Coverage
+
+Add `# pragma: no cover` for untestable code:
+
+```python
+def unreachable_code():
+    raise RuntimeError("This should never happen")  # pragma: no cover
+```
+
+## Debugging Tests
+
+### Print Debugging
+
+Use `pytest -s` to see print output:
+
+```bash
+uv run pytest -s tests/test_specific.py
+```
+
+### Dropping into PDB
+
+Add `import pdb; pdb.set_trace()` in tests:
+
+```python
+def test_with_breakpoint():
+    import pdb; pdb.set_trace()
+    result = function_under_test()
+    assert result
+```
+
+Or use `pytest --pdb`:
+
+```bash
+uv run pytest --pdb tests/test_failing.py
+```
+
+### Running Last Failed Tests
+
+```bash
+# Run only tests that failed last time
+uv run pytest --lf
+
+# Run tests that failed first, then others
+uv run pytest --ff
+```
+
+## CI/CD Integration
+
+Tests run automatically on:
+
+- **Pull Requests**: All tests must pass
+- **Main Branch**: Full test suite with coverage
+- **Scheduled**: Nightly builds for slow tests
+
+### CI Configuration
+
+```yaml
+# .github/workflows/test.yml
+- name: Run tests
+  run: |
+    uv sync
+    uv run pytest --cov=beever_atlas
+    
+- name: Upload coverage
+  uses: codecov/codecov-action@v3
+```
+
+## Best Practices
+
+<Steps>
+  <Step>
+    **Write Tests First**
+    
+    Write tests before implementation (TDD) when possible.
+  </Step>
+  <Step>
+    **Test Edge Cases**
+    
+    Test boundary conditions, empty inputs, and errors.
+  </Step>
+  <Step>
+    **Keep Tests Independent**
+    
+    Each test should be able to run alone.
+  </Step>
+  <Step>
+    **Use Descriptive Names**
+    
+    Test names should document expected behavior.
+  </Step>
+  <Step>
+    **Mock External Dependencies**
+    
+    Don't call external APIs in tests.
+  </Step>
+  <Step>
+    **Clean Up Resources**
+    
+    Use fixtures and teardown for cleanup.
+  </Step>
+</Steps>
+
+## Common Patterns
+
+### Testing Async Iterators
+
+```python
+@pytest.mark.asyncio
+async def test_async_iterator():
+    async for item in async_generator():
+        assert item is not None
+```
+
+### Testing Exceptions
+
+```python
+@pytest.mark.asyncio
+async def test_exception_handling():
+    with pytest.raises(ValueError) as exc_info:
+        function_that_raises()
+    
+    assert "specific message" in str(exc_info.value)
+```
+
+### Testing with Mock Stores
+
+```python
+@pytest.mark.asyncio
+async def test_with_mock_stores(mock_stores):
+    mock_stores.mongodb.get_channel_display_name = AsyncMock(
+        return_value="#engineering"
+    )
+    
+    result = await get_channel_name("C0123456789")
+    
+    assert result == "#engineering"
+```
+
+## Next Steps
+
+- [ ] Set up your [Development Environment](./development-setup)
+- [ ] Explore the [Architecture Tour](./architecture-tour)
+- [ ] Start contributing with [How to Contribute](./index)
+
+Ready to write tests? Check the [test suite](https://github.com/beever-atlas/beever-atlas/tree/main/tests) for examples.

@@ -1,0 +1,225 @@
+---
+title: Using the Ask Agent
+description: Learn how to ask effective questions and get accurate answers with full citations
+---
+
+
+The Ask Agent lets you query your synced knowledge using natural language. It retrieves relevant facts and synthesizes accurate answers with full source traceability.
+
+## Quick Start
+
+Open the Ask interface at [http://localhost:8000/ask](http://localhost:8000/ask)
+
+Type your question and press Enter. The agent will:
+1. Search for relevant facts across all channels
+2. Query the knowledge graph for related entities
+3. Synthesize an answer using retrieved context
+4. Provide citations linking to source messages
+
+<Steps>
+### Step 1: Ask effective questions
+
+The quality of answers depends on how you phrase questions.
+
+**Good Questions:**
+- "What was decided about the authentication system?"
+- "How does the payment flow work?"
+- "Who is responsible for the database migration?"
+- "What were the main issues with the API redesign?"
+
+**Less Effective Questions:**
+- "Tell me everything" (too broad)
+- "What should I do?" (too vague)
+- "Why?" (lacks context)
+
+**Question Tips:**
+- Be specific about what you want to know
+- Mention relevant entities (people, projects, technologies)
+- Specify the domain (architecture, process, decision)
+- Use complete sentences, not keywords
+
+### Step 2: Understand streaming responses
+
+Answers stream in real-time using Server-Sent Events (SSE).
+
+**What You'll See:**
+1. **Thinking indicator**: Agent is searching and reasoning
+2. **Answer text**: Streams word-by-word as generated
+3. **Citations**: Appear as `[1]`, `[2]` in the answer
+4. **Confidence score**: Shows how certain the agent is
+
+**Streaming Benefits:**
+- Faster perceived response time
+- See the answer take shape immediately
+- Can stop reading if it goes off-track
+
+<Tabs items={['High Confidence', 'Medium Confidence', 'Low Confidence']}>
+### High Confidence (>0.7)
+
+The agent found strong, relevant evidence.
+
+Example:
+```
+The authentication system uses JWT tokens with a 24-hour expiry.
+Tokens are refreshed using a refresh token stored in Redis. [1][2]
+
+Confidence: 0.89
+```
+
+### Medium Confidence (0.4-0.7)
+
+The answer is based on partial or indirect evidence.
+
+Example:
+```
+The payment flow appears to use Stripe based on discussions in March,
+but the final implementation wasn't explicitly documented. [3]
+
+Confidence: 0.52
+```
+
+### Low Confidence (&lt;0.4)
+
+The agent couldn't find sufficient evidence. It may say "I don't know" or provide a cautious answer.
+
+Example:
+```
+I couldn't find specific information about the database migration
+timeline in the synced channels. [4]
+
+Confidence: 0.21
+```
+
+</Tabs>
+
+### Step 3: Read citations
+
+Every claim in the answer is backed by citations.
+
+**Citation Format:**
+```
+The API rate limit is 100 requests per minute. [1]
+```
+
+Click `[1]` to see:
+- **Source message**: The original Slack/Discord message
+- **Sender**: Who wrote it
+- **Timestamp**: When it was sent
+- **Channel**: Where it was posted
+- **Context**: Surrounding messages for clarity
+
+<Callout type="info">
+**Why Citations Matter**: Citations let you verify the answer yourself. If something seems wrong, check the source message to understand the context.
+</Callout>
+
+### Step 4: Provide feedback
+
+Help the agent improve by rating answers.
+
+**Thumbs Up (👍)**
+- Answer was accurate and helpful
+- Reinforces good retrieval patterns
+
+**Thumbs Down (👎)**
+- Answer was wrong or unhelpful
+- Optionally provide feedback on what was wrong
+
+Feedback helps the system learn which retrieval strategies work best for your knowledge base.
+
+### Step 5: Use session continuity
+
+The Ask Agent maintains conversation context within a session.
+
+**Follow-up Questions:**
+```
+You: What was decided about authentication?
+Agent: [Answers about JWT tokens]
+
+You: Who made that decision?
+Agent: [Answers about specific people, remembers context of "authentication decision"]
+```
+
+**Session Memory:**
+- Remembers last 10 turns
+- Maintains context across related questions
+- Resets when you start a new session (click "New Chat")
+
+**Tips for Follow-ups:**
+- Use pronouns ("it", "that") to refer to previous topics
+- Ask for clarification ("Which team member?")
+- Drill deeper ("Tell me more about X")
+
+### Step 6: Example question patterns
+
+<Tabs items={['Decision Questions', 'Process Questions', 'Entity Questions', 'Comparison Questions']}>
+
+### Decision Questions
+
+"What was decided about X?"
+"Why did we choose Y over Z?"
+"When was the decision made to...?"
+
+Examples:
+- "What was decided about the microservices architecture?"
+- "Why did we choose PostgreSQL over MongoDB?"
+- "When did we decide to switch to TypeScript?"
+
+### Process Questions
+
+"How does X work?"
+"What's the process for Y?"
+"What are the steps to...?"
+
+Examples:
+- "How does the deployment pipeline work?"
+- "What's the process for code review?"
+- "How are user onboarding emails sent?"
+
+### Entity Questions
+
+"Who is responsible for X?"
+"What projects use technology Y?"
+"What teams are working on...?"
+
+Examples:
+- "Who is responsible for the payment integration?"
+- "What projects use GraphQL?"
+- "What teams are working on mobile app?"
+
+### Comparison Questions
+
+"What's the difference between X and Y?"
+"Compare X and Y"
+"X vs Y: which is better?"
+
+Examples:
+- "What's the difference between the staging and production environments?"
+- "Compare REST vs GraphQL in our API"
+- "Authentication tokens vs sessions: which do we use?"
+
+</Tabs>
+
+</Steps>
+
+---
+
+## Troubleshooting
+
+<Callout type="warning">
+**Agent says "I don't know"**: This usually means the information isn't in your synced channels. Try:
+- Syncing more channels
+- Rephrasing your question
+- Checking if the topic was discussed in a different context
+</Callout>
+
+**Low confidence answers**: The agent found some evidence but isn't certain. Always check citations before acting on the answer.
+
+**Slow responses**: Large knowledge bases take longer to search. Consider filtering by channel or date range in your question.
+
+---
+
+## Next Steps
+
+- Explore the [knowledge graph](/docs/tutorials/knowledge-graph) for visual exploration
+- Import [documents](/docs/tutorials/file-import) to expand your knowledge base
+- Learn about [prompt tuning](/docs/guides/prompt-tuning) for advanced configuration

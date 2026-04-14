@@ -1,0 +1,484 @@
+---
+title: Observability & Operations
+description: Monitor health, metrics, traces, and logs for your Beever Atlas deployment
+---
+
+
+Beever Atlas includes comprehensive observability features for production operations: health checks, metrics, distributed tracing, and structured logging.
+
+## Health Endpoints
+
+### System Health
+
+Check overall system health:
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {
+      "ok": true,
+      "latency_ms": 12
+    },
+    "neo4j": {
+      "ok": true,
+      "latency_ms": 8
+    },
+    "mongodb": {
+      "ok": true,
+      "latency_ms": 5
+    },
+    "redis": {
+      "ok": true,
+      "latency_ms": 2
+    },
+    "gemini": {
+      "ok": true,
+      "latency_ms": 234
+    },
+    "jina": {
+      "ok": true,
+      "latency_ms": 156
+    }
+  }
+}
+```
+
+**Status Values**:
+- `healthy`: All components passing
+- `degraded`: At least one critical component is up
+- `unhealthy`: All critical components are down
+
+### Component Health Checks
+
+Each component is checked with appropriate methods:
+
+<Tabs items={['Weaviate', 'Neo4j', 'MongoDB', 'Redis', 'Gemini', 'Jina']}>
+
+### Weaviate
+
+```python
+# Health check
+client.is_ready()
+
+# Measures: connectivity, collection availability
+```
+
+### Neo4j
+
+```python
+# Health check
+driver.verify_connectivity()
+
+# Measures: connectivity, authentication
+```
+
+### MongoDB
+
+```python
+# Health check
+client.admin.command('ping')
+
+# Measures: connectivity, authentication
+```
+
+### Redis
+
+```python
+# Health check
+redis.ping()
+
+# Measures: connectivity
+```
+
+### Gemini (Google AI)
+
+```python
+# Health check
+genai.list_models()  # with 5s timeout
+
+# Measures: API availability, authentication
+```
+
+### Jina (Embeddings)
+
+```python
+# Health check
+# Test embedding with 5s timeout
+
+# Measures: API availability, authentication
+```
+
+</Tabs>
+
+## Metrics
+
+Beever Atlas emits OpenTelemetry metrics for monitoring.
+
+### Key Metrics
+
+<Tabs items={['Ingestion Metrics', 'Retrieval Metrics', 'Store Metrics', 'LLM Metrics']}>
+
+### Ingestion Metrics
+
+| Metric | Type | Description | Alert Threshold |
+|--------|------|-------------|-----------------|
+| `ingestion.messages.processed` | Counter | Total messages processed | Rate drops > 50% |
+| `ingestion.quality_gate.rejected_ratio` | Gauge | Ratio of rejected facts | > 60% |
+| `ingestion.stage.duration_ms` | Histogram | Pipeline stage duration | p95 > 5s |
+| `ingestion.write_intent.pending_count` | Gauge | Pending write intents | > 100 |
+| `ingestion.dead_letter.count` | Counter | Failed messages | Any increase |
+
+### Retrieval Metrics
+
+| Metric | Type | Description | Alert Threshold |
+|--------|------|-------------|-----------------|
+| `retrieval.route.distribution` | Counter | Query routes (vector/graph/hybrid) | graph > 40% |
+| `retrieval.latency_ms` | Histogram | Query latency by route | p95 > 3s |
+| `retrieval.empty_results_ratio` | Gauge | Queries with no results | > 30% |
+
+### Store Metrics
+
+| Metric | Type | Description | Alert Threshold |
+|--------|------|-------------|-----------------|
+| `store.{name}.latency_ms` | Histogram | Store operation latency | p95 > 2s |
+| `store.{name}.error_rate` | Gauge | Store operation error rate | > 1% |
+| `store.neo4j.entity_count` | Gauge | Total entities in graph | Growth > 1K/day |
+| `store.orphan.count` | Gauge | Orphaned references | Any increase |
+
+### LLM Metrics
+
+| Metric | Type | Description | Alert Threshold |
+|--------|------|-------------|-----------------|
+| `llm.{site}.latency_ms` | Histogram | LLM request latency | p95 > 5s |
+| `llm.{site}.error_rate` | Gauge | LLM error rate | > 2% |
+| `llm.{site}.token_cost` | Counter | Token usage/cost | Daily > budget |
+
+</Tabs>
+
+### Accessing Metrics
+
+**Prometheus endpoint**:
+```bash
+curl http://localhost:8000/api/metrics
+```
+
+**OpenTelemetry export**:
+Metrics are exported via OTLP to configured endpoints (see Configuration).
+
+## Distributed Tracing
+
+Every operation carries a trace ID through all pipeline stages and stores.
+
+### Trace Structure
+
+```python
+@tracer.start_as_current_span("ingest_message")
+async def process_message(msg: NormalizedMessage):
+    span = trace.get_current_span()
+    span.set_attribute("message.id", msg.id)
+    span.set_attribute("message.channel", msg.channel_id)
+    span.set_attribute("message.platform", msg.platform)
+
+    with tracer.start_as_current_span("stage_2_extract"):
+        facts = await extract(msg)
+    with tracer.start_as_current_span("stage_3_entities"):
+        entities = await extract_entities(msg, facts)
+    with tracer.start_as_current_span("stage_7_persist"):
+        await persist(facts, entities, embeddings)
+```
+
+### Viewing Traces
+
+**Jaeger** (local development):
+```bash
+docker run -d -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:latest
+```
+
+Configure in `.env`:
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+View traces at: http://localhost:16686
+
+### Trace Examples
+
+**Message Ingestion Trace**:
+```
+ingest_message (2.3s)
+├── stage_2_extract (1.1s)
+│   └── llm_call (0.9s)
+├── stage_3_entities (0.4s)
+│   └── llm_call (0.3s)
+├── stage_5_embed (0.3s)
+│   └── jina_embedding (0.2s)
+└── stage_7_persist (0.5s)
+    ├── weaviate_write (0.3s)
+    └── neo4j_write (0.2s)
+```
+
+## Logging
+
+Beever Atlas uses structured JSON logging for production.
+
+### Log Format
+
+```json
+{
+  "timestamp": "2024-03-15T10:30:45Z",
+  "level": "INFO",
+  "message": "Message processed successfully",
+  "context": {
+    "message_id": "msg123",
+    "channel_id": "C12345",
+    "facts_extracted": 3,
+    "duration_ms": 1234
+  }
+}
+```
+
+### Log Levels
+
+- **DEBUG**: Detailed diagnostic information
+- **INFO**: General informational messages
+- **WARNING**: Warning messages (degraded functionality)
+- **ERROR**: Error messages (failed operations)
+- **CRITICAL**: Critical failures (service impact)
+
+### Configuration
+
+```bash
+# Log level
+LOG_LEVEL=info  # debug, info, warning, error, critical
+
+# Log format
+LOG_FORMAT=json  # json or text
+
+# Log output
+LOG_OUTPUT=stdout  # stdout or file path
+```
+
+## Monitoring Setup
+
+### Prometheus + Grafana
+
+**Prometheus configuration** (`prometheus.yml`):
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'beever-atlas'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: '/api/metrics'
+```
+
+**Grafana Dashboard**:
+1. Import dashboard for OpenTelemetry metrics
+2. Create panels for key metrics
+3. Set up alerts
+
+### Alerting Rules
+
+**Prometheus alerts** (`alerts.yml`):
+```yaml
+groups:
+  - name: beever_atlas
+    rules:
+      - alert: HighErrorRate
+        expr: rate(llm_error_rate[5m]) > 0.02
+        for: 5m
+        annotations:
+          summary: "High LLM error rate"
+
+      - alert: SlowQueries
+        expr: histogram_quantile(0.95, retrieval_latency_ms) > 3000
+        for: 5m
+        annotations:
+          summary: "95th percentile query latency > 3s"
+
+      - alert: PendingWrites
+        expr: ingestion_write_intent_pending_count > 100
+        for: 5m
+        annotations:
+          summary: "Too many pending write intents"
+```
+
+## Backup & Recovery
+
+### Backup Strategy
+
+| Store | Method | Frequency | Retention |
+|-------|--------|-----------|-----------|
+| Weaviate | `weaviate backup create` | Daily 3 AM UTC | 30 days |
+| Neo4j | `neo4j-admin dump` | Daily 3 AM UTC | 30 days |
+| MongoDB | `mongodump` | Daily 3 AM UTC | 30 days |
+
+<Callout type="warning">
+**Cross-Store Consistency**: Use the weekly consistency checker to detect orphaned references between stores.
+</Callout>
+
+### Automated Backup Script
+
+```bash
+#!/bin/bash
+# backup.sh
+
+BACKUP_DIR=/data/backups/$(date +%Y%m%d)
+mkdir -p $BACKUP_DIR
+
+# Weaviate
+docker exec weaviate weaviate backup create --backup-id backup-$(date +%Y%m%d)
+docker exec weaviate tar -czf /tmp/weaviate.tar.gz /var/lib/weaviate/backups/backup-$(date +%Y%m%d)
+docker cp weaviate:/tmp/weaviate.tar.gz $BACKUP_DIR/
+
+# Neo4j
+docker exec neo4j neo4j-admin dump --to=/data/backup.dump
+docker cp neo4j:/data/backup.dump $BACKUP_DIR/neo4j.dump
+
+# MongoDB
+docker exec mongodb mongodump --uri="mongodb://admin:password@localhost" --archive=/data/backup.archive
+docker cp mongodb:/data/backup.archive $BACKUP_DIR/mongodb.archive
+
+echo "Backup complete: $BACKUP_DIR"
+```
+
+**Cron job**:
+```bash
+0 3 * * * /path/to/backup.sh
+```
+
+### Restore Procedures
+
+<Tabs items={['Weaviate', 'Neo4j', 'MongoDB']}>
+
+### Weaviate
+
+```bash
+# Stop container
+docker stop weaviate
+
+# Restore backup
+docker cp $BACKUP_DIR/weaviate.tar.gz weaviate:/tmp/
+docker exec weaviate tar -xzf /tmp/weaviate.tar.gz -C /var/lib/weaviate/
+
+# Start container
+docker start weaviate
+```
+
+### Neo4j
+
+```bash
+# Stop container
+docker stop neo4j
+
+# Restore backup
+docker cp $BACKUP_DIR/neo4j.dump neo4j:/data/backup.dump
+docker start neo4j
+docker exec neo4j neo4j-admin load --from=/data/backup.dump
+```
+
+### MongoDB
+
+```bash
+# Restore backup
+docker cp $BACKUP_DIR/mongodb.archive mongodb:/tmp/backup.archive
+docker exec mongodb mongorestore --uri="mongodb://admin:password@localhost" --archive=/tmp/backup.archive
+```
+
+</Tabs>
+
+## Cross-Store Consistency
+
+Beever Atlas includes a weekly consistency checker:
+
+### What It Checks
+
+1. **Episodic Links**: Neo4j Event → Weaviate object references
+2. **Entity References**: Weaviate facts → Neo4j node references
+3. **Orphan Detection**: Unlinked entities or facts
+
+### Running Manually
+
+```bash
+curl -X POST http://localhost:8000/api/admin/consistency-check
+```
+
+**Response**:
+```json
+{
+  "status": "completed",
+  "orphaned_links": 0,
+  "orphaned_entities": 0,
+  "issues": []
+}
+```
+
+## Performance Tuning
+
+### Database Optimization
+
+<Tabs items={['Weaviate', 'Neo4j', 'MongoDB']}>
+
+### Weaviate
+
+```bash
+# Increase cache
+WEAVIATE_CACHE_SIZE=4GB
+
+# Enable indexing
+WEAVIATE_INDEX_VECTORS=true
+
+# Tune query limits
+QUERY_DEFAULTS_LIMIT=100
+```
+
+### Neo4j
+
+```bash
+# Increase heap
+NEO4J_dbms_memory_heap_max__size=8G
+
+# Tune page cache
+NEO4J_dbms_memory_pagecache_size=6G
+
+# Enable query caching
+NEO4J_dbms_query_cache_size=512M
+```
+
+### MongoDB
+
+```bash
+# Increase connection pool
+MONGODB_POOL_SIZE=50
+
+# Enable write concern
+MONGODB_WRITE_CONCERN=majority
+```
+
+</Tabs>
+
+## Troubleshooting
+
+**Health check fails**: Check individual component health, verify connectivity.
+
+**High latency**: Check database performance, increase resources, tune caches.
+
+**Metrics not appearing**: Verify Prometheus scraping, check OTLP configuration.
+
+**Traces missing**: Ensure OTLP exporter configured, check Jaeger endpoint.
+
+---
+
+## Next Steps
+
+- [Self-Hosting Guide](/docs/guides/self-hosting)
+- [Configuration Reference](/docs/guides/configuration)
+- [Troubleshooting](/docs/guides/troubleshooting)

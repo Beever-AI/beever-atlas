@@ -1,0 +1,380 @@
+---
+title: How to Contribute
+description: Join the Beever Atlas community and help build the future of knowledge retrieval
+---
+
+
+# How to Contribute
+
+Thank you for considering contributing to Beever Atlas! We welcome contributions from everyone, whether you're fixing bugs, adding features, improving documentation, or sharing ideas.
+
+## Ways to Contribute
+
+<Steps>
+  <Step>
+    **Code**
+    
+    - Fix bugs and implement features
+    - Write tests for new functionality
+    - Improve performance and code quality
+  </Step>
+  <Step>
+    **Documentation**
+    
+    - Improve existing documentation
+    - Write tutorials and guides
+    - Add code examples and use cases
+  </Step>
+  <Step>
+    **Bug Reports**
+    
+    - Report issues you encounter
+    - Provide reproduction steps
+    - Suggest potential fixes
+  </Step>
+  <Step>
+    **Feature Requests**
+    
+    - Propose new features
+    - Share use cases
+    - Provide feedback on proposals
+  </Step>
+  <Step>
+    **Community**
+    
+    - Help other users
+    - Share your experiences
+    - Participate in discussions
+  </Step>
+</Steps>
+
+## Getting Started
+
+### Fork and Clone
+
+1. **Fork the repository** on GitHub
+2. **Clone your fork**:
+
+```bash
+git clone https://github.com/your-username/beever-atlas.git
+cd beever-atlas
+```
+
+3. **Add upstream remote**:
+
+```bash
+git remote add upstream https://github.com/beever-atlas/beever-atlas.git
+```
+
+### Set Up Development Environment
+
+See the [Development Setup](./development-setup) guide for detailed instructions.
+
+Quick start:
+
+```bash
+# Install Python dependencies
+uv sync
+
+# Install bot dependencies
+cd bot && npm install
+
+# Start infrastructure
+docker compose up -d
+
+# Run the backend
+uv run uvicorn beever_atlas.server.app:app --reload
+
+# Run the frontend (in another terminal)
+cd web && npm run dev
+```
+
+## Making Changes
+
+### Branch Naming
+
+Use descriptive branch names:
+
+- `fix/description-of-bug` for bug fixes
+- `feature/description-of-feature` for new features
+- `docs/description-of-change` for documentation
+- `refactor/description-of-refactor` for refactoring
+
+### Commit Messages
+
+Follow conventional commits format:
+
+```
+type(scope): description
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+- `fix`: Bug fix
+- `feat`: New feature
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting)
+- `refactor`: Code refactoring
+- `test`: Adding or updating tests
+- `chore`: Build process or tooling changes
+
+**Examples:**
+```
+fix(slack): handle rate limit errors gracefully
+
+feat(api): add streaming support for ask endpoint
+
+docs(contributing): add pull request guidelines
+```
+
+### Code Style
+
+Follow the project's code style:
+
+<Steps>
+  <Step>
+    **Python**
+    
+    - Use `ruff` for linting and formatting
+    - Run `uv run ruff check .` to check
+    - Run `uv run ruff format .` to format
+  </Step>
+  <Step>
+    **TypeScript**
+    
+    - Use Prettier for formatting
+    - Run `npm run format` in bot/ directory
+  </Step>
+  <Step>
+    **Tests**
+    
+    - Write tests for new functionality
+    - Ensure all tests pass before submitting
+    - Aim for good test coverage
+  </Step>
+</Steps>
+
+## Pull Request Process
+
+### Before Submitting
+
+<Steps>
+  <Step>
+    **Update Documentation**
+    
+    - Document new features
+    - Update relevant guides
+    - Add examples if applicable
+  </Step>
+  <Step>
+    **Add Tests**
+    
+    - Write tests for your changes
+    - Ensure all tests pass
+    - Check coverage with `uv run pytest --cov`
+  </Step>
+  <Step>
+    **Run Linters**
+    
+    ```bash
+    # Python
+    uv run ruff check .
+    uv run ruff format .
+    
+    # TypeScript
+    cd bot && npm run lint && npm run format
+    ```
+  </Step>
+  <Step>
+    **Sync Your Branch**
+    
+    ```bash
+    git fetch upstream
+    git rebase upstream/main
+    ```
+  </Step>
+</Steps>
+
+### Submitting a PR
+
+1. **Push to your fork**:
+
+```bash
+git push origin feature/your-feature-name
+```
+
+2. **Create a Pull Request** on GitHub
+
+3. **Fill out the PR template**:
+
+- Description of changes
+- Related issues (fixes #123)
+- Testing steps
+- Screenshots (if applicable)
+
+4. **Wait for review**
+
+- Address review feedback
+- Make requested changes
+- Keep the conversation going
+
+### Review Guidelines
+
+As a contributor, you can also review PRs:
+
+- Be constructive and respectful
+- Ask questions if something is unclear
+- Suggest improvements
+- Test the changes if possible
+
+## Issue Templates
+
+### Bug Report
+
+When reporting a bug, include:
+
+**Description**
+- Clear description of the problem
+- Expected behavior
+- Actual behavior
+- Steps to reproduce
+
+**Environment**
+- OS and version
+- Python/Node version
+- Beever Atlas version
+- Related configuration
+
+**Reproduction**
+```bash
+# Commands or code to reproduce
+```
+
+**Expected behavior**
+What should happen
+
+**Actual behavior**
+What actually happens
+
+**Screenshots/logs**
+If applicable
+
+### Feature Request
+
+When proposing a feature:
+
+**Problem**
+- What problem does it solve?
+- Who is it for?
+
+**Proposed Solution**
+- Detailed description
+- API changes (if any)
+- UI/UX considerations
+
+**Alternatives**
+- Other approaches considered
+- Why this approach is best
+
+**Additional Context**
+- Examples
+- Mockups
+- References
+
+## Development Guidelines
+
+### Architecture Decisions
+
+For significant changes, start a discussion first:
+
+1. Open an issue with the `design` label
+2. Describe the problem and proposed solution
+3. Get feedback from maintainers
+4. Create an ADR (Architecture Decision Record) if needed
+
+### Breaking Changes
+
+Avoid breaking changes when possible. If necessary:
+
+1. Clearly document the breakage
+2. Provide migration guide
+3. Deprecate old functionality first
+4. Update all internal usage
+
+### Performance
+
+Consider performance impact:
+
+- Profile before optimizing
+- Add benchmarks for critical paths
+- Document trade-offs
+
+### Security
+
+- Never commit secrets or credentials
+- Follow security best practices
+- Report vulnerabilities privately
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test file
+uv run pytest tests/test_specific.py
+
+# Run with coverage
+uv run pytest --cov=beever_atlas --cov-report=html
+
+# Run specific test
+uv run pytest tests/test_specific.py::test_function
+```
+
+### Writing Tests
+
+Follow testing guidelines:
+
+- Use pytest fixtures for common setup
+- Mock external services (Slack, Discord, etc.)
+- Test both success and failure cases
+- Use descriptive test names
+
+## Communication
+
+### Channels
+
+- **GitHub Issues**: Bug reports, feature requests
+- **GitHub Discussions**: Questions, ideas
+- **Discord**: Community chat (if available)
+- **Email**: security@beever-atlas.com for security issues
+
+### Getting Help
+
+- Check existing issues and discussions
+- Read the documentation
+- Ask questions in discussions
+- Be patient and respectful
+
+## Recognition
+
+Contributors are recognized in:
+
+- CONTRIBUTORS.md file
+- Release notes
+- Project website (with permission)
+
+Thank you for contributing to Beever Atlas!
+
+## Code of Conduct
+
+Please read and follow our [Code of Conduct](./code-of-conduct).
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.

@@ -1,0 +1,346 @@
+---
+title: Data Models
+description: Core data model reference for Beever Atlas
+---
+
+# Data Models Reference
+
+## Overview
+
+Beever Atlas uses a hierarchical knowledge model with three tiers:
+
+- **Tier 0**: Channel Summary - Overall channel narrative
+- **Tier 1**: Topic Clusters - Grouped related facts
+- **Tier 2**: Atomic Facts - Individual extracted knowledge units
+- **Graph**: Entities and Relationships - Knowledge graph
+
+---
+
+## AtomicFact
+
+A single extracted fact stored in Weaviate (Tier 2).
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique fact identifier (UUID v5) |
+| `memory_text` | string | The extracted fact text |
+| `quality_score` | float | Quality score 0.0-1.0 |
+| `tier` | string | Always `"atomic"` for facts |
+| `cluster_id` | string \| null | Parent topic cluster ID |
+| `channel_id` | string | Source channel identifier |
+| `platform` | string | Platform name (e.g., "slack") |
+| `author_id` | string | Author's platform user ID |
+| `author_name` | string | Author's display name |
+| `message_ts` | string | Message timestamp |
+| `thread_ts` | string \| null | Thread root timestamp |
+| `source_message_id` | string | Platform message ID |
+| `topic_tags` | string[] | Topic category tags |
+| `entity_tags` | string[] | Mentioned entity names |
+| `action_tags` | string[] | Action item keywords |
+| `importance` | string | `"low" \| "medium" \| "high"` |
+| `graph_entity_ids` | string[] | Linked graph entity IDs |
+| `source_media_urls` | string[] | URLs of attached media |
+| `source_media_names` | string[] | Filenames of attached media |
+| `source_link_urls` | string[] | URLs of linked resources |
+| `source_link_titles` | string[] | Titles of linked resources |
+| `source_link_descriptions` | string[] | Descriptions of linked resources |
+| `valid_at` | datetime \| null | When fact became valid |
+| `invalid_at` | datetime \| null | When fact became invalid |
+| `superseded_by` | string \| null | ID of fact that replaced this |
+| `supersedes` | string \| null | ID of fact this replaced |
+| `potential_contradiction` | boolean | Flagged for conflict review |
+| `text_vector` | float[] \| null | Embedding vector |
+| `fact_type` | string | `"decision" \| "opinion" \| "observation" \| "action_item" \| "question"` |
+| `thread_context_summary` | string | Thread deliberation summary |
+| `source_lang` | string | BCP-47 language tag (e.g., "en", "zh-HK") |
+
+### Example
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "memory_text": "The team decided to use JWT tokens for authentication with a 1-hour expiration.",
+  "quality_score": 0.85,
+  "tier": "atomic",
+  "cluster_id": "cluster_123",
+  "channel_id": "C12345",
+  "platform": "slack",
+  "author_id": "U12345",
+  "author_name": "Jane Smith",
+  "message_ts": "2026-04-13T10:30:00Z",
+  "thread_ts": null,
+  "source_message_id": "1234567890.123456",
+  "topic_tags": ["authentication", "security"],
+  "entity_tags": ["JWT", "OAuth"],
+  "action_tags": [],
+  "importance": "high",
+  "graph_entity_ids": ["entity_jwt_decision"],
+  "fact_type": "decision",
+  "source_lang": "en"
+}
+```
+
+---
+
+## TopicCluster
+
+A Tier 1 topic cluster grouping related atomic facts.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique cluster identifier |
+| `tier` | string | Always `"topic"` |
+| `channel_id` | string | Channel identifier |
+| `title` | string | Short descriptive name (5-10 words) |
+| `summary` | string | Narrative of what happened (2-3 sentences) |
+| `current_state` | string | Where things stand now (1-2 sentences) |
+| `open_questions` | string | Unresolved tensions/debates |
+| `impact_note` | string | Scope and significance |
+| `topic_tags` | string[] | Topic category tags |
+| `member_ids` | string[] | Member fact IDs |
+| `member_count` | int | Number of member facts |
+| `centroid_vector` | float[] \| null | Cluster center embedding |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+| `key_entities` | object[] | Related entities `[{id, name, type}]` |
+| `key_relationships` | object[] | Key relationships `[{source, type, target, confidence}]` |
+| `date_range_start` | string | Earliest fact timestamp |
+| `date_range_end` | string | Latest fact timestamp |
+| `authors` | string[] | Contributors to this topic |
+| `media_refs` | string[] | Referenced media URLs |
+| `media_names` | string[] | Referenced media filenames |
+| `link_refs` | string[] | Referenced link URLs |
+| `high_importance_count` | int | Number of high-importance facts |
+| `related_cluster_ids` | string[] | Related topic clusters |
+| `staleness_score` | float | 0.0=fresh, 1.0=very stale |
+| `status` | string | `"active" \| "completed" \| "stale"` |
+| `fact_type_counts` | object | Counts by fact type `{decision: N, ...}` |
+| `key_facts` | object[] | Top facts with metadata |
+| `decisions` | object[] | Extracted decisions |
+| `people` | object[] | Involved people `[{name, role, entity_id}]` |
+| `technologies` | object[] | Technologies mentioned `[{name, category, champion}]` |
+| `projects` | object[] | Projects referenced `[{name, status, owner, blockers}]` |
+| `faq_candidates` | object[] | Q&A pairs `[{question, answer}]` |
+
+### Example
+
+```json
+{
+  "id": "topic_123",
+  "tier": "topic",
+  "channel_id": "C12345",
+  "title": "Authentication System Migration to JWT",
+  "summary": "The team migrated from session-based auth to JWT tokens. This decision was driven by scalability needs and better mobile support.",
+  "current_state": "Migration complete, JWT tokens in production with 1-hour expiration.",
+  "open_questions": "Token refresh strategy still under review.",
+  "impact_note": "Affects all API clients and requires re-authentication flow updates.",
+  "status": "active",
+  "member_count": 15,
+  "staleness_score": 0.1
+}
+```
+
+---
+
+## ChannelSummary
+
+A Tier 0 channel-level summary consolidating all topic clusters.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique summary identifier |
+| `tier` | string | Always `"summary"` |
+| `channel_id` | string | Channel identifier |
+| `channel_name` | string | Resolved display name |
+| `text` | string | Overall narrative overview |
+| `description` | string | One-line channel purpose (max 200 chars) |
+| `themes` | string | Main knowledge areas and interrelations |
+| `momentum` | string | Active vs completed vs stale |
+| `team_dynamics` | string | Decision drivers, collaboration patterns |
+| `cluster_count` | int | Number of topic clusters |
+| `fact_count` | int | Total number of facts |
+| `updated_at` | datetime | Last update timestamp |
+| `key_decisions` | object[] | Top decisions |
+| `key_entities` | object[] | Top entities |
+| `key_topics` | object[] | Top topics with metadata |
+| `date_range_start` | string | Earliest content |
+| `date_range_end` | string | Latest content |
+| `media_count` | int | Total media references |
+| `author_count` | int | Unique contributors |
+| `worst_staleness` | float | Highest staleness in clusters |
+| `top_decisions` | object[] | Key decisions across all topics |
+| `top_people` | object[] | Key people by expertise |
+| `tech_stack` | object[] | Technologies referenced |
+| `active_projects` | object[] | Ongoing projects |
+| `glossary_terms` | object[] | Domain terminology |
+| `recent_activity_summary` | object | Activity metrics |
+| `topic_graph_edges` | object[] | Topic relationships |
+
+---
+
+## GraphEntity
+
+An entity node in the Neo4j knowledge graph.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique entity identifier |
+| `name` | string | Entity name |
+| `type` | string | `"Person" \| "Decision" \| "Project" \| "Technology" \| "Team" \| "Meeting"` |
+| `scope` | string | `"global" \| "channel"` |
+| `channel_id` | string \| null | Channel scope (if channel-scoped) |
+| `properties` | object | Additional entity properties |
+| `aliases` | string[] | Alternative names |
+| `status` | string | `"active" \| "pending"` |
+| `pending_since` | datetime \| null | When status became pending |
+| `name_vector` | float[] \| null | Name embedding for fuzzy matching |
+| `source_fact_ids` | string[] | Source facts |
+| `source_message_id` | string | Originating message |
+| `message_ts` | string | Message timestamp |
+| `source_lang` | string | BCP-47 language tag |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+
+### Entity Types
+
+- **Person**: Team members, stakeholders
+- **Decision**: Decisions made, conclusions reached
+- **Project**: Projects, initiatives, work streams
+- **Technology**: Tools, frameworks, libraries
+- **Team**: Teams, groups, departments
+- **Meeting**: Meetings, standups, reviews
+
+---
+
+## GraphRelationship
+
+A relationship edge in the Neo4j knowledge graph.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique relationship identifier |
+| `type` | string | Relationship type (see below) |
+| `source` | string | Source entity name |
+| `target` | string | Target entity name |
+| `confidence` | float | Confidence score 0.0-1.0 |
+| `valid_from` | string \| null | When relationship became valid |
+| `valid_until` | string \| null | When relationship became invalid |
+| `context` | string | Relationship context |
+| `source_message_id` | string | Originating message |
+| `source_fact_id` | string | Source fact |
+| `created_at` | datetime | Creation timestamp |
+
+### Relationship Types
+
+- **DECIDED_BY**: Person decided Decision
+- **PARTICIPATED_IN**: Person participated in Meeting
+- **WORKS_ON**: Person works on Project
+- **USES**: Project uses Technology
+- **MEMBER_OF**: Person member of Team
+- **RELATED_TO**: General relationship
+
+---
+
+## WikiPage
+
+A generated wiki page with enhanced Markdown content.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Page ID (`"overview"`, `"people"`, `"topic-xyz"`) |
+| `slug` | string | URL slug |
+| `title` | string | Page title |
+| `page_type` | string | `"fixed" \| "topic" \| "sub-topic"` |
+| `parent_id` | string \| null | Parent page ID |
+| `section_number` | string | Section number (`"1"`, `"2.1"`, `"2.1.1"`) |
+| `content` | string | Enhanced Markdown content |
+| `summary` | string | 1-2 sentence summary |
+| `memory_count` | int | Number of source facts |
+| `last_updated` | datetime | Last update timestamp |
+| `citations` | WikiCitation[] | Source citations |
+| `children` | WikiPageRef[] | Child pages |
+
+### WikiPage Types
+
+- **fixed**: Standard pages (overview, people, decisions, etc.)
+- **topic**: Pages generated from topic clusters
+- **sub-topic**: Nested topic pages
+
+---
+
+## WikiCitation
+
+A source citation for wiki page content.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Citation reference (`"[1]"`, `"[2]"`) |
+| `author` | string | Message author |
+| `channel` | string | Channel name |
+| `timestamp` | string | Message timestamp |
+| `text_excerpt` | string | First 100 characters |
+| `permalink` | string | URL to original message |
+| `media_type` | string \| null | `"pdf" \| "image" \| "link" \| "video" \| "audio"` |
+| `media_name` | string \| null | Filename or domain |
+
+---
+
+## EntityKnowledgeCard
+
+Cross-channel aggregation of all knowledge about a single graph entity.
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique card identifier |
+| `tier` | string | Always `"entity_card"` |
+| `entity_id` | string | Graph entity ID |
+| `entity_name` | string | Entity name |
+| `entity_type` | string | Entity type |
+| `channel_ids` | string[] | Channels where entity appears |
+| `cluster_ids` | string[] | Related topic clusters |
+| `fact_count` | int | Number of related facts |
+| `fact_type_breakdown` | object | Fact counts by type |
+| `key_facts` | string[] | Most important facts |
+| `related_entities` | object[] | Related entities |
+| `last_mentioned_at` | string | Latest mention timestamp |
+| `staleness_score` | float | 0.0=fresh, 1.0=stale |
+| `summary` | string | Entity summary |
+| `updated_at` | datetime | Last update timestamp |
+
+---
+
+## Model Relationships
+
+```
+ChannelSummary (Tier 0)
+    ├─> TopicCluster[] (Tier 1)
+    │       └─> AtomicFact[] (Tier 2)
+    │               └─> GraphEntity (via graph_entity_ids)
+    │                       └─> GraphRelationship
+    └─> WikiPage
+            └─> WikiCitation (cites AtomicFact)
+```
+
+---
+
+## Storage
+
+- **Weaviate**: AtomicFact, TopicCluster (Tier 1-2)
+- **MongoDB**: WikiPage, WikiMetadata, ChannelSummary
+- **Neo4j**: GraphEntity, GraphRelationship (knowledge graph)

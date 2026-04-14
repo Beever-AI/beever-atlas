@@ -1,0 +1,285 @@
+---
+title: Connections API
+description: Platform connection management endpoints
+---
+
+# Connections API
+
+## Overview
+
+Manage platform connections (Slack, Discord, etc.) to sync messages.
+
+## GET /api/connections
+
+List all platform connections.
+
+### Response
+
+```json
+[
+  {
+    "id": "conn_123",
+    "name": "Engineering Workspace",
+    "platform": "slack",
+    "status": "connected",
+    "created_at": "2026-01-01T00:00:00Z",
+    "last_sync": "2026-04-13T10:30:00Z",
+    "channel_count": 15
+  }
+]
+```
+
+### Status Values
+
+- `connected` - Active connection
+- `disconnected` - Disconnected (can reconnect)
+- `error` - Error state (requires attention)
+
+## `GET /api/connections/{connection_id}`
+
+Get connection details.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `connection_id` | string | Yes | Connection UUID |
+
+### Response
+
+```json
+{
+  "id": "conn_123",
+  "name": "Engineering Workspace",
+  "platform": "slack",
+  "status": "connected",
+  "created_at": "2026-01-01T00:00:00Z",
+  "last_sync": "2026-04-13T10:30:00Z",
+  "channel_count": 15,
+  "settings": {
+    "sync_interval_minutes": 240,
+    "wiki_enabled": true,
+    "graph_enabled": true
+  }
+}
+```
+
+## POST /api/connections
+
+Create a new platform connection.
+
+### Request Body
+
+```json
+{
+  "platform": "slack",
+  "name": "Engineering Workspace",
+  "credentials": {
+    "bot_token": "xoxb-...",
+    "signing_secret": "..."
+  }
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `platform` | string | Yes | Platform name (`slack`, `discord`) |
+| `name` | string | Yes | Connection display name |
+| `credentials` | object | Yes | Platform-specific credentials |
+
+### Slack Credentials
+
+```json
+{
+  "bot_token": "xoxb-...",
+  "signing_secret": "..."
+}
+```
+
+### Discord Credentials
+
+```json
+{
+  "bot_token": "...",
+  "guild_id": "..."
+}
+```
+
+### Response
+
+```json
+{
+  "id": "conn_123",
+  "name": "Engineering Workspace",
+  "platform": "slack",
+  "status": "connected",
+  "created_at": "2026-04-13T10:30:00Z",
+  "channel_count": 15
+}
+```
+
+## `PUT /api/connections/{connection_id}`
+
+Update a connection.
+
+### Request Body
+
+```json
+{
+  "name": "Updated Name",
+  "credentials": {
+    "bot_token": "xoxb-...",
+    "signing_secret": "..."
+  }
+}
+```
+
+## `DELETE /api/connections/{connection_id}`
+
+Delete a connection.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `connection_id` | string | Yes | Connection UUID |
+
+### Response
+
+Status: `204 No Content`
+
+## `POST /api/connections/{connection_id}/validate`
+
+Validate connection credentials.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `connection_id` | string | Yes | Connection UUID |
+
+### Response
+
+```json
+{
+  "valid": true,
+  "connection": {
+    "id": "conn_123",
+    "status": "connected",
+    "validated_at": "2026-04-13T10:30:00Z"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "valid": false,
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Bot token is invalid or expired"
+  }
+}
+```
+
+## `GET /api/connections/{connection_id}/channels`
+
+Get channels for a connection.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `connection_id` | string | Yes | Connection UUID |
+
+### Response
+
+```json
+[
+  {
+    "id": "C12345",
+    "name": "#engineering",
+    "is_private": false,
+    "member_count": 15,
+    "sync_enabled": true
+  }
+]
+```
+
+## `PUT /api/connections/{connection_id}/channels`
+
+Update which channels to sync.
+
+### Request Body
+
+```json
+{
+  "channel_ids": ["C12345", "C67890"],
+  "sync_all": false
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_ids` | string[] | No | Specific channels to sync |
+| `sync_all` | boolean | No | Sync all public channels |
+
+## Connection Errors
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_CREDENTIALS` | Provided credentials are invalid |
+| `AUTH_EXPIRED` | Authentication token expired |
+| `RATE_LIMITED` | Platform rate limit |
+| `INSUFFICIENT_PERMISSIONS` | Bot lacks required scopes |
+| `NETWORK_ERROR` | Network connectivity issue |
+| `PLATFORM_ERROR` | Platform API error |
+
+### Example Error Response
+
+```json
+{
+  "valid": false,
+  "error": {
+    "code": "INSUFFICIENT_PERMISSIONS",
+    "message": "Bot lacks required scopes: channels:history, channels:read",
+    "required_scopes": [
+      "channels:history",
+      "channels:read",
+      "users:read"
+    ]
+  }
+}
+```
+
+## Best Practices
+
+1. **Secure Credentials**: Store credentials securely, never log them
+2. **Validate First**: Always validate connections before saving
+3. **Handle Errors**: Implement proper error handling for all connection operations
+4. **Check Permissions**: Ensure bot has required scopes
+5. **Monitor Status**: Regularly check connection status and re-authenticate when needed
+6. **Use Webhooks**: Configure webhooks for real-time updates (if supported)
+
+## Required Bot Scopes
+
+### Slack
+
+- `channels:history` - Read message history
+- `channels:read` - View channel information
+- `users:read` - View user information
+- `files:read` - Access file metadata
+- `links:read:write` - Unfurl links
+
+### Discord
+
+- `guild.messages` - Read guild messages
+- `guild.channels` - View guild channels
+- `guild.members` - View guild members

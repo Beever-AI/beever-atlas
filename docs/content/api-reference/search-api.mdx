@@ -1,0 +1,277 @@
+---
+title: Search API
+description: Hybrid semantic and keyword search endpoints
+---
+
+# Search API
+
+## Overview
+
+Hybrid search combining semantic vector search with keyword matching for optimal results.
+
+## POST /api/search
+
+Perform a hybrid search across memories and facts.
+
+### Request Body
+
+```json
+{
+  "query": "authentication JWT tokens",
+  "channel_id": "C12345",
+  "limit": 10,
+  "filters": {
+    "fact_types": ["decision"],
+    "importance": ["high", "medium"],
+    "date_range": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-04-13T23:59:59Z"
+    }
+  },
+  "include_citations": true
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | Yes | Natural language search query |
+| `channel_id` | string | Yes | Channel to search (or `null` for all channels) |
+| `limit` | int | No | Max results (default: 10, max: 50) |
+| `filters` | object | No | Search filters (see below) |
+| `include_citations` | boolean | No | Include source citations (default: true) |
+
+### Filters
+
+```json
+{
+  "fact_types": ["decision", "action_item"],
+  "importance": ["high", "medium"],
+  "topics": ["authentication", "security"],
+  "entities": ["JWT", "OAuth"],
+  "authors": ["Jane Smith", "Bob Jones"],
+  "date_range": {
+    "start": "2026-01-01T00:00:00Z",
+    "end": "2026-04-13T23:59:59Z"
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "results": [
+    {
+      "memory": {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "memory_text": "The team decided to use JWT tokens for authentication with 1-hour expiration.",
+        "quality_score": 0.85,
+        "author_name": "Jane Smith",
+        "message_ts": "2026-04-13T10:30:00Z",
+        "fact_type": "decision",
+        "importance": "high",
+        "topic_tags": ["authentication"],
+        "entity_tags": ["JWT"]
+      },
+      "score": 0.95,
+      "highlights": ["The team decided to use <mark>JWT</mark> tokens for <mark>authentication</mark>"],
+      "citation": {
+        "id": "[1]",
+        "permalink": "https://slack.com/archives/C12345/p1234567890",
+        "author": "Jane Smith",
+        "timestamp": "2026-04-13T10:30:00Z"
+      }
+    }
+  ],
+  "total": 15,
+  "query_time_ms": 45,
+  "search_method": "hybrid"
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results` | array | Search results with scores and highlights |
+| `total` | int | Total matching results |
+| `query_time_ms` | float | Query execution time |
+| `search_method` | string | `"vector" \| "keyword" \| "hybrid"` |
+
+## Search Methods
+
+### Hybrid Search (Default)
+
+Combines vector semantic search with BM25 keyword matching:
+
+```json
+{
+  "query": "How do we handle authentication?",
+  "search_mode": "hybrid",
+  "vector_weight": 0.7,
+  "keyword_weight": 0.3
+}
+```
+
+**Best for**: Most queries, balances semantic understanding with exact matching
+
+### Vector Search
+
+Pure semantic search using embeddings:
+
+```json
+{
+  "query": "security token management",
+  "search_mode": "vector"
+}
+```
+
+**Best for**: Conceptual queries, synonyms, paraphrases
+
+### Keyword Search
+
+Pure BM25 keyword matching:
+
+```json
+{
+  "query": "JWT OAuth2",
+  "search_mode": "keyword"
+}
+```
+
+**Best for**: Exact terms, codes, specific phrases
+
+## Advanced Features
+
+### Fuzzy Search
+
+Enable fuzzy matching for typos:
+
+```json
+{
+  "query": "authentiction",
+  "fuzzy": true,
+  "fuzziness": "AUTO"
+}
+```
+
+### Faceted Search
+
+Get aggregate counts:
+
+```json
+{
+  "query": "authentication",
+  "facets": ["fact_type", "importance", "topics"]
+}
+```
+
+Response includes:
+
+```json
+{
+  "facets": {
+    "fact_type": {
+      "decision": 8,
+      "opinion": 5,
+      "observation": 12
+    },
+    "importance": {
+      "high": 15,
+      "medium": 10
+    }
+  }
+}
+```
+
+### Proximity Search
+
+Find terms near each other:
+
+```json
+{
+  "query": "JWT authentication",
+  "proximity": 5
+}
+```
+
+Finds "JWT" and "authentication" within 5 words.
+
+## Search Examples
+
+### Find Decisions
+
+```bash
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "authentication",
+    "filters": {"fact_types": ["decision"]},
+    "limit": 20
+  }'
+```
+
+### Search by Author
+
+```json
+{
+  "query": "API design",
+  "filters": {
+    "authors": ["Jane Smith"]
+  }
+}
+```
+
+### Recent High-Importance Facts
+
+```json
+{
+  "query": "*",
+  "filters": {
+    "importance": ["high"],
+    "date_range": {
+      "start": "2026-04-01T00:00:00Z"
+    }
+  },
+  "limit": 50
+}
+```
+
+## Search Performance
+
+### Query Complexity
+
+| Query Type | Typical Latency |
+|------------|-----------------|
+| Keyword only | 10-50ms |
+| Vector only | 50-200ms |
+| Hybrid | 50-250ms |
+| With filters | +20-50ms |
+
+### Optimization Tips
+
+1. **Use filters**: Reduce result set early
+2. **Limit results**: Keep under 50 for fast responses
+3. **Channel scope**: Search single channel vs. all channels
+4. **Cache results**: Reuse search results when possible
+
+## Relevance Scoring
+
+Results are scored 0.0 to 1.0 based on:
+
+- **Semantic similarity** (vector search)
+- **Keyword match density** (BM25)
+- **Fact quality score**
+- **Recency boost** (recent facts score higher)
+- **Importance boost** (high importance scores higher)
+
+```javascript
+final_score = (
+  vector_score * 0.5 +
+  keyword_score * 0.3 +
+  quality_score * 0.15 +
+  recency_boost * 0.05
+) * importance_multiplier
+```

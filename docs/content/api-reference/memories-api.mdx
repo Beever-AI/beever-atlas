@@ -1,0 +1,201 @@
+---
+title: Memories API
+description: Extracted facts and knowledge endpoints
+---
+
+# Memories API
+
+## Overview
+
+Access and query extracted atomic facts (memories) from team communications.
+
+## GET /api/memories
+
+List all memories/facts with filtering and pagination.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `page` | int | No | Page number (default: 1) |
+| `limit` | int | No | Results per page (default: 20, max: 100) |
+| `topic` | string | No | Filter by topic tag |
+| `entity` | string | No | Filter by entity tag |
+| `importance` | string | No | Filter by importance (`low`, `medium`, `high`) |
+| `since` | string | No | ISO 8601 timestamp - facts since this date |
+| `until` | string | No | ISO 8601 timestamp - facts until this date |
+| `fact_type` | string | No | Filter by type (`decision`, `opinion`, `observation`, `action_item`, `question`) |
+
+### Response
+
+```json
+{
+  "memories": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "memory_text": "The team decided to use JWT tokens for authentication.",
+      "quality_score": 0.85,
+      "tier": "atomic",
+      "channel_id": "C12345",
+      "author_name": "Jane Smith",
+      "message_ts": "2026-04-13T10:30:00Z",
+      "topic_tags": ["authentication", "security"],
+      "entity_tags": ["JWT", "OAuth"],
+      "importance": "high",
+      "fact_type": "decision",
+      "source_message_id": "1234567890.123456",
+      "permalink": "https://slack.com/archives/..."
+    }
+  ],
+  "total": 856,
+  "page": 1,
+  "pages": 43
+}
+```
+
+## `GET /api/memories/{memory_id}`
+
+Get a specific memory by ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `memory_id` | string | Yes | Memory UUID |
+
+### Response
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "memory_text": "The team decided to use JWT tokens for authentication.",
+  "quality_score": 0.85,
+  "tier": "atomic",
+  "cluster_id": "topic_123",
+  "channel_id": "C12345",
+  "platform": "slack",
+  "author_id": "U12345",
+  "author_name": "Jane Smith",
+  "message_ts": "2026-04-13T10:30:00Z",
+  "thread_ts": null,
+  "source_message_id": "1234567890.123456",
+  "topic_tags": ["authentication", "security"],
+  "entity_tags": ["JWT", "OAuth"],
+  "action_tags": [],
+  "importance": "high",
+  "graph_entity_ids": ["entity_jwt_decision"],
+  "fact_type": "decision",
+  "thread_context_summary": "After discussing trade-offs...",
+  "valid_at": "2026-04-13T10:30:00Z",
+  "invalid_at": null,
+  "superseded_by": null,
+  "potential_contradiction": false,
+  "source_lang": "en"
+}
+```
+
+## POST /api/memories/search
+
+Advanced search across memories with filters.
+
+### Request Body
+
+```json
+{
+  "channel_id": "C12345",
+  "query": "authentication security",
+  "filters": {
+    "importance": ["high", "medium"],
+    "fact_types": ["decision"],
+    "entities": ["JWT"],
+    "date_range": {
+      "start": "2026-01-01T00:00:00Z",
+      "end": "2026-04-13T23:59:59Z"
+    }
+  },
+  "sort": "relevance",
+  "limit": 20
+}
+```
+
+### Response
+
+```json
+{
+  "results": [
+    {
+      "memory": {...},
+      "score": 0.95,
+      "highlights": ["The team decided to use <mark>JWT</mark> tokens..."]
+    }
+  ],
+  "total": 15,
+  "query_time_ms": 45
+}
+```
+
+## GET /api/memories/topics
+
+List all topic tags across memories.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "topics": [
+    {"tag": "authentication", "count": 45},
+    {"tag": "deployment", "count": 32},
+    {"tag": "api", "count": 28}
+  ]
+}
+```
+
+## GET /api/memories/entities
+
+List all entity tags across memories.
+
+### Response
+
+```json
+{
+  "entities": [
+    {"name": "JWT", "count": 23},
+    {"name": "PostgreSQL", "count": 18},
+    {"name": "Redis", "count": 15}
+  ]
+}
+```
+
+## Memory Quality Scores
+
+Memories are scored 0.0 to 1.0 based on:
+
+- **Information Density**: Specific vs. general content
+- **Actionability**: Contains decisions or action items
+- **Specificity**: Concrete details vs. vague statements
+- **Recency**: Adjusted for staleness over time
+
+### Quality Bands
+
+| Score | Quality | Description |
+|-------|---------|-------------|
+| 0.8-1.0 | High | Decisions, concrete action items, specific technical details |
+| 0.5-0.8 | Medium | Opinions, observations, contextual information |
+| 0.0-0.5 | Low | General statements, ambiguous content |
+
+## Memory Types
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `decision` | Decisions made, conclusions reached | "We chose PostgreSQL over MongoDB" |
+| `opinion` | Opinions, preferences, suggestions | "I think we should use TypeScript" |
+| `observation` | Observations, facts noted | "The API response time increased" |
+| `action_item` | Tasks to be done | "Need to update the documentation" |
+| `question` | Questions asked | "What's the token expiration time?" |

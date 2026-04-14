@@ -1,0 +1,287 @@
+---
+title: Slack Setup
+description: Connect Beever Atlas to your Slack workspace
+---
+
+# Slack Integration Setup
+
+Connect Beever Atlas to your Slack workspace to automatically ingest conversations, extract knowledge, and build a searchable wiki.
+
+## Prerequisites
+
+Before setting up Slack integration, ensure you have:
+
+- Beever Atlas installed and running (see [Installation](./installation))
+- Admin access to a Slack workspace
+- Ability to create Slack apps
+
+## Overview
+
+The Slack integration consists of two components:
+
+1. **Ingestion Pipeline**: Fetches historical and new messages from channels
+2. **Bot Service**: Responds to mentions and provides real-time updates
+
+<Callout type="info">
+**Mock Mode First**: If you're just exploring, start with [Quick Start](./quick-start) which uses mock data and requires no Slack credentials.
+</Callout>
+
+## Step 1: Create a Slack App
+
+### 1.1 Go to Slack API
+
+Navigate to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App**.
+
+### 1.2 Choose Creation Method
+
+Select **From scratch** and enter:
+
+- **App Name**: `Beever Atlas` (or your preferred name)
+- **Pick a workspace**: Select the workspace to connect
+
+Click **Create App**.
+
+## Step 2: Configure Bot Permissions
+
+### 2.1 Add a Bot
+
+In the app configuration sidebar, click **Bot** under **Features**, then click **Add a Bot**.
+
+Configure your bot:
+- **Display name**: `Beever Atlas`
+- **Default username**: `beever-atlas-bot`
+- Click **Add Bot**
+
+### 2.2 Configure Bot Token Scopes
+
+Under the **Bot** section, find **OAuth & Permissions** and add the following **Bot Token Scopes**:
+
+| Scope | Purpose |
+|-------|---------|
+| `channels:history` | Read messages from public channels |
+| `channels:read` | List public channels |
+| `groups:history` | Read messages from private channels |
+| `groups:read` | List private channels |
+| `im:history` | Read direct messages |
+| `im:read` | List direct messages |
+| `mpim:history` | Read group direct messages |
+| `mpim:read` | List group direct messages |
+| `users:read` | Read user information |
+| `files:read` | Access file metadata |
+| `links:read` | Resolve link previews |
+| `chat:write` | Send messages (for bot responses) |
+| `reactions:read` | Read reactions |
+
+<Callout type="warning">
+**Permission Note**: Only grant scopes for channels you want to ingest. For private channels, ensure your bot is invited to those channels.
+</Callout>
+
+## Step 3: Install and Authorize
+
+### 3.1 Install to Workspace
+
+In **OAuth & Permissions**, click **Install to Workspace**.
+
+Review the permissions and click **Allow**.
+
+### 3.2 Save Bot Token
+
+After installation, you'll see a **Bot User OAuth Token** starting with `xoxb-`.
+
+Copy this token — you'll need it to configure Beever Atlas.
+
+<Callout type="warning">
+**Security**: Treat your bot token like a password. Never commit it to version control or share it publicly.
+</Callout>
+
+## Step 4: Configure Beever Atlas
+
+### 4.1 Disable Mock Mode
+
+Edit your `.env` file:
+
+```bash
+ADAPTER_MOCK=false
+```
+
+### 4.2 Add Slack Token via Dashboard
+
+The recommended method is to add credentials through the web UI:
+
+1. Open [http://localhost:3000](http://localhost:3000)
+2. Navigate to **Settings** → **Connections**
+3. Click **Add Connection**
+4. Select **Slack**
+5. Paste your `xoxb-` bot token
+6. Click **Save**
+
+<Callout type="info">
+**Secure Storage**: Credentials are encrypted using AES-256-GCM and stored in MongoDB. The `CREDENTIAL_MASTER_KEY` in your `.env` is used for encryption.
+</Callout>
+
+### 4.3 Alternative: Environment Variable (Not Recommended)
+
+For development only, you can set the token directly in `.env`:
+
+```bash
+SLACK_BOT_TOKEN=xoxb-your-token-here
+```
+
+**Note**: This is less secure than using the dashboard.
+
+## Step 5: Restart Services
+
+After configuring Slack integration, restart the services:
+
+```bash
+docker compose restart beever-atlas bot
+```
+
+## Step 6: Sync Your Channels
+
+### 6.1 List Available Channels
+
+After restart, the bot will automatically fetch available channels. You can view them in the dashboard:
+
+1. Navigate to **Channels**
+2. See the list of public and private channels
+3. Channels appear once the bot has access
+
+### 6.2 Trigger a Sync
+
+To sync a channel:
+
+**Via Dashboard**:
+1. Go to **Channels**
+2. Find the channel you want to sync
+3. Click **Sync**
+4. Monitor progress in the **Sync Status** column
+
+**Via API**:
+
+```bash
+# Trigger sync for a channel
+curl -X POST http://localhost:8000/api/channels/C12345/sync
+
+# Check sync status
+curl http://localhost:8000/api/channels/C12345/sync/status
+```
+
+### 6.3 Monitor Sync Progress
+
+The sync process:
+1. Fetches historical messages (up to `SYNC_MAX_MESSAGES` per run)
+2. Processes through the 6-stage ingestion pipeline
+3. Extracts facts and entities
+4. Builds topic clusters
+5. Generates wiki pages
+
+<Callout type="info">
+**Large Channels**: For channels with thousands of messages, Atlas uses Gemini Batch API for efficient processing. Sync may take several minutes.
+</Callout>
+
+## Step 7: Enable Real-Time Updates (Optional)
+
+To receive real-time updates when new messages are posted:
+
+### 7.1 Enable Socket Mode
+
+In your Slack app configuration:
+
+1. Go to **Socket Mode** under **Features**
+2. Toggle **Socket Mode** to **On**
+3. Copy the **App-Level Token** (starts with `xapp-`)
+
+### 7.2 Configure in Atlas
+
+Add the App-Level Token to your `.env`:
+
+```bash
+SLACK_APP_TOKEN=xapp-your-app-token-here
+```
+
+Restart the bot service:
+
+```bash
+docker compose restart bot
+```
+
+The bot will now receive real-time events and trigger incremental syncs.
+
+## Troubleshooting
+
+### "Bot not in channel" Error
+
+The bot must be invited to private channels:
+
+1. Go to the channel in Slack
+2. Type `/invite @Beever Atlas`
+3. Allow the bot to join
+
+### "Invalid Auth" Error
+
+Check that:
+- Bot token is correct (starts with `xoxb-`)
+- Bot has required scopes
+- Bot hasn't been revoked or regenerated
+
+### No Channels Appearing
+
+Verify:
+1. Bot is running: `docker compose logs bot`
+2. Token is valid: Check in Slack app settings
+3. Required scopes are granted
+
+### Sync Not Completing
+
+Check logs:
+
+```bash
+docker compose logs beever-atlas --tail 100 -f
+```
+
+Common issues:
+- Rate limiting from Slack API
+- Insufficient API quota (Google/Jina)
+- Large channels taking time to process
+
+### Permission Errors
+
+Ensure the bot has:
+- `channels:history` or `groups:history` (for private channels)
+- `users:read` (to extract user information)
+- `files:read` (to process attachments)
+
+## Best Practices
+
+### Channel Selection
+
+Start with a few key channels:
+- Engineering discussions
+- Decision-making channels
+- Knowledge-sharing forums
+- Project-specific channels
+
+### Sync Frequency
+
+For large workspaces:
+- Sync channels incrementally
+- Use `SYNC_MAX_MESSAGES` to control batch size
+- Schedule syncs during off-hours
+
+### Privacy Considerations
+
+- Review bot permissions regularly
+- Only sync channels with appropriate access
+- Consider separate Atlas instances for sensitive data
+- Enable channel-level ACL for access control
+
+## What's Next?
+
+- [How It Works](./how-it-works) — Learn about the ingestion pipeline
+- [Quick Start](./quick-start) — Try mock mode first
+- [Deployment](./deployment) — Production setup guide
+
+<Callout type="success">
+**Connected successfully?** Try asking questions about your Slack conversations in the Q&A interface!
+</Callout>

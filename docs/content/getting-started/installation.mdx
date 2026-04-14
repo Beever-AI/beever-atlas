@@ -1,0 +1,293 @@
+---
+title: Installation
+description: Prerequisites and installation guide for Beever Atlas
+---
+
+# Installation
+
+Install Beever Atlas using Docker Compose for a complete, production-ready stack.
+
+## Prerequisites
+
+Before installing Beever Atlas, ensure you have:
+
+- **Docker** 20.10+ and **Docker Compose** 2.0+
+- **Python** 3.11+ (for local development)
+- **Node.js** 20+ (for local development)
+- **uv** (Python package manager, for local development)
+- **Google API Key** for Gemini (required for all LLM operations)
+- **Jina API Key** for embeddings (required)
+
+<Callout type="info">
+**Need API keys?** Both Google and Jina offer free tiers suitable for development:
+
+- [Get a Google API Key](https://aistudio.google.com/apikey) — Free tier available
+- [Get a Jina API Key](https://jina.ai) — Free tier available
+</Callout>
+
+## Quick Install (Docker Compose)
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/thomaschong/beever-atlas.git
+cd beever-atlas
+```
+
+### Step 2: Configure Environment
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your API keys. The minimum required configuration:
+
+```bash
+# Required - LLM and Embeddings
+GOOGLE_API_KEY=your_google_api_key_here
+JINA_API_KEY=your_jina_api_key_here
+
+# Optional - Development defaults
+BEEVER_API_URL=http://localhost:8000
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+```
+
+### Step 3: Configure Database Connections
+
+The default `.env.example` includes preconfigured values for Docker Compose:
+
+```bash
+# These are already set for Docker Compose
+WEAVIATE_URL=http://localhost:8080
+NEO4J_URI=bolt://localhost:7687
+NEO4J_AUTH=neo4j/beever_atlas_dev
+MONGODB_URI=mongodb://localhost:27017/beever_atlas
+REDIS_URL=redis://localhost:6379
+```
+
+### Step 4: Start Services
+
+```bash
+docker compose up -d
+```
+
+This starts all services:
+- **beever-atlas** (Python Backend) — Port 8000
+- **web** (React Frontend) — Port 3000
+- **bot** (Bot Service) — Port 3001
+- **weaviate** (Semantic Memory) — Port 8080
+- **neo4j** (Graph Memory) — Ports 7474 (HTTP), 7687 (Bolt)
+- **mongodb** (State & Cache) — Port 27017
+- **redis** (Sessions) — Port 6380
+
+<Callout type="warning">
+**First run** takes 2–3 minutes as Docker builds images and databases initialize. Check status with `docker compose ps`.
+</Callout>
+
+### Step 5: Verify Installation
+
+Check that all services are healthy:
+
+```bash
+docker compose ps
+```
+
+All services should show "healthy" status. Test the backend:
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {"status": "up"},
+    "neo4j": {"status": "up"},
+    "mongodb": {"status": "up"},
+    "redis": {"status": "up"}
+  }
+}
+```
+
+## Environment Variables
+
+### Core Application
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BEEVER_API_URL` | `http://localhost:8000` | Backend API URL |
+| `CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins (comma-separated) |
+| `VITE_API_URL` | `http://localhost:8000` | Frontend API URL target |
+
+### Databases
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONGODB_URI` | `mongodb://localhost:27017/beever_atlas` | MongoDB connection string |
+| `REDIS_URL` | `redis://localhost:6379` | Redis URL |
+| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate instance URL |
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j Bolt URI |
+| `NEO4J_AUTH` | `neo4j/beever_atlas_dev` | Neo4j auth (user/password) |
+
+### LLM & Embeddings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOOGLE_API_KEY` | — | Gemini API key (required) |
+| `LLM_FAST_MODEL` | `gemini-2.5-flash` | Model for extraction/classification |
+| `LLM_QUALITY_MODEL` | `gemini-2.5-flash` | Model for wiki synthesis |
+| `JINA_API_KEY` | — | Jina embeddings API key (required) |
+| `JINA_MODEL` | `jina-embeddings-v4` | Jina model to use |
+| `JINA_DIMENSIONS` | `2048` | Embedding dimensions |
+
+### Pipeline & Quality Gates
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SYNC_BATCH_SIZE` | `50` | Messages per ingestion batch |
+| `SYNC_MAX_MESSAGES` | `1000` | Max messages per sync run |
+| `QUALITY_THRESHOLD` | `0.5` | Minimum fact quality score (0.0–1.0) |
+| `ENTITY_THRESHOLD` | `0.6` | Minimum entity confidence (0.0–1.0) |
+| `MAX_FACTS_PER_MESSAGE` | `2` | Max facts extracted per message |
+
+### Integrations
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ADAPTER_MOCK` | `true` | Use fixture data (no platform credentials needed) |
+| `BOT_PORT` | `3001` | Bot HTTP server port |
+| `BACKEND_URL` | `http://localhost:8000` | Bot → Backend URL |
+| `BRIDGE_URL` | `http://localhost:3001` | Backend → Bot service URL |
+| `BRIDGE_API_KEY` | — | Shared secret for backend↔bot auth |
+
+### Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CREDENTIAL_MASTER_KEY` | — | 64-char hex key for AES-256-GCM encryption |
+
+<Callout type="info">
+**Generate secure keys**:
+
+```bash
+# Generate credential master key
+openssl rand -hex 32
+
+# Generate bridge API key
+openssl rand -hex 16
+```
+</Callout>
+
+## Alternative Graph Backend: NebulaGraph
+
+Atlas supports NebulaGraph as an alternative to Neo4j:
+
+```bash
+# Install NebulaGraph dependencies
+pip install ".[nebula]"
+
+# Configure in .env
+GRAPH_BACKEND=nebula
+NEBULA_HOSTS=127.0.0.1:9669
+NEBULA_USER=root
+NEBULA_PASSWORD=nebula
+NEBULA_SPACE=beever_atlas
+
+# Use NebulaGraph Docker Compose file
+docker compose -f docker-compose.nebula.yml up -d
+```
+
+## Local Development (Without Docker)
+
+For faster iteration, run services directly:
+
+### Start Databases Only
+
+```bash
+docker compose up weaviate neo4j mongodb redis
+```
+
+### Backend
+
+```bash
+# Install dependencies
+uv sync
+
+# Run FastAPI server
+uv run uvicorn beever_atlas.server.app:app --reload --port 8000
+```
+
+### Bot Service
+
+```bash
+cd bot
+npm install
+npm run dev
+```
+
+### Frontend
+
+```bash
+cd web
+npm install
+npm run dev  # Starts at http://localhost:5173
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+If a port is already in use, edit the `ports` mapping in `docker-compose.yml` or stop the conflicting service:
+
+```bash
+docker compose down
+```
+
+### Database Connection Errors
+
+Ensure databases are healthy:
+
+```bash
+docker compose logs weaviate
+docker compose logs neo4j
+docker compose logs mongodb
+```
+
+Restart specific services:
+
+```bash
+docker compose restart weaviate neo4j
+```
+
+### Weaviate Schema Errors
+
+If you see schema errors on startup, reset Weaviate's data volume:
+
+<Callout type="warning">
+**Warning**: This deletes all indexed data and requires re-syncing your channels.
+</Callout>
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+### Build Failures
+
+If Docker build fails, try rebuilding without cache:
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+## What's Next?
+
+- [Quick Start](./quick-start) — Try Atlas with mock mode in 5 minutes
+- [Slack Setup](./slack-setup) — Connect your real Slack workspace
+- [Deployment](./deployment) — Production deployment guide

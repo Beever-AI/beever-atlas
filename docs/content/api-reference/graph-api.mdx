@@ -1,0 +1,309 @@
+---
+title: Graph API
+description: Knowledge graph entities and relationships endpoints
+---
+
+# Graph API
+
+## Overview
+
+Access the knowledge graph of entities (people, decisions, projects, technologies) and their relationships.
+
+## GET /api/graph/entities
+
+List all entities in the knowledge graph.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `type` | string | No | Filter by entity type |
+| `status` | string | No | Filter by status (`active`, `pending`) |
+| `limit` | int | No | Max results (default: 50, max: 200) |
+
+### Entity Types
+
+- `Person` - Team members, stakeholders
+- `Decision` - Decisions made, conclusions
+- `Project` - Projects, initiatives
+- `Technology` - Tools, frameworks, libraries
+- `Team` - Teams, groups
+- `Meeting` - Meetings, standups
+
+### Response
+
+```json
+[
+  {
+    "id": "entity_123",
+    "name": "JWT Authentication",
+    "type": "Decision",
+    "scope": "channel",
+    "channel_id": "C12345",
+    "status": "active",
+    "properties": {
+      "decided_by": "Jane Smith",
+      "date": "2026-04-13",
+      "status": "implemented"
+    },
+    "aliases": ["JWT", "JWT Tokens"],
+    "source_fact_ids": ["fact_456"],
+    "created_at": "2026-04-13T10:30:00Z",
+    "updated_at": "2026-04-13T10:30:00Z"
+  }
+]
+```
+
+## `GET /api/graph/entities/{entity_id}`
+
+Get a specific entity by ID.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entity_id` | string | Yes | Entity UUID |
+
+### Response
+
+```json
+{
+  "id": "entity_123",
+  "name": "JWT Authentication",
+  "type": "Decision",
+  "scope": "channel",
+  "channel_id": "C12345",
+  "status": "active",
+  "properties": {
+    "decided_by": "Jane Smith",
+    "date": "2026-04-13",
+    "status": "implemented"
+  },
+  "aliases": ["JWT", "JWT Tokens"],
+  "source_fact_ids": ["fact_456"],
+  "source_message_id": "1234567890.123456",
+  "message_ts": "2026-04-13T10:30:00Z",
+  "created_at": "2026-04-13T10:30:00Z",
+  "updated_at": "2026-04-13T10:30:00Z"
+}
+```
+
+## `GET /api/graph/entities/{entity_id}/neighbors`
+
+Get entities connected to a specific entity.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entity_id` | string | Yes | Entity UUID |
+| `depth` | int | No | Traversal depth (default: 1, max: 3) |
+| `limit` | int | No | Max neighbors (default: 50) |
+
+### Response
+
+```json
+{
+  "nodes": [
+    {
+      "id": "entity_123",
+      "name": "JWT Authentication",
+      "type": "Decision"
+    },
+    {
+      "id": "entity_456",
+      "name": "Jane Smith",
+      "type": "Person"
+    }
+  ],
+  "edges": [
+    {
+      "id": "rel_789",
+      "type": "DECIDED_BY",
+      "source": "JWT Authentication",
+      "target": "Jane Smith",
+      "confidence": 0.95,
+      "context": "Jane decided to use JWT for authentication",
+      "valid_from": "2026-04-13",
+      "source_message_id": "1234567890.123456"
+    }
+  ]
+}
+```
+
+## GET /api/graph/relationships
+
+List all relationships in the knowledge graph.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `type` | string | No | Filter by relationship type |
+| `source` | string | No | Filter by source entity name |
+| `target` | string | No | Filter by target entity name |
+| `limit` | int | No | Max results (default: 50) |
+
+### Relationship Types
+
+- `DECIDED_BY` - Person → Decision
+- `PARTICIPATED_IN` - Person → Meeting
+- `WORKS_ON` - Person → Project
+- `USES` - Project → Technology
+- `MEMBER_OF` - Person → Team
+- `RELATED_TO` - Generic relationship
+
+### Response
+
+```json
+[
+  {
+    "id": "rel_789",
+    "type": "DECIDED_BY",
+    "source": "JWT Authentication",
+    "target": "Jane Smith",
+    "confidence": 0.95,
+    "valid_from": "2026-04-13",
+    "valid_until": null,
+    "context": "Jane decided to use JWT for authentication",
+    "source_message_id": "1234567890.123456",
+    "source_fact_id": "fact_456",
+    "created_at": "2026-04-13T10:30:00Z"
+  }
+]
+```
+
+## GET /api/graph/decisions
+
+List all decisions with metadata.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `status` | string | No | Filter by status |
+
+### Response
+
+```json
+[
+  {
+    "name": "JWT Authentication",
+    "decided_by": "Jane Smith",
+    "status": "implemented",
+    "superseded_by": null,
+    "date": "2026-04-13",
+    "context": "Decision to use JWT tokens for API authentication"
+  }
+]
+```
+
+## `GET /api/graph/entities/{entity_name}/card`
+
+Get an entity knowledge card (cross-channel aggregation).
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entity_name` | string | Yes | Entity name (URL-encoded) |
+
+### Response
+
+```json
+{
+  "id": "card_123",
+  "tier": "entity_card",
+  "entity_id": "entity_456",
+  "entity_name": "JWT Authentication",
+  "entity_type": "Decision",
+  "channel_ids": ["C12345", "C67890"],
+  "cluster_ids": ["topic_123"],
+  "fact_count": 15,
+  "fact_type_breakdown": {
+    "decision": 8,
+    "opinion": 4,
+    "observation": 3
+  },
+  "key_facts": [
+    "The team decided to use JWT tokens for authentication",
+    "JWT expiration set to 1 hour"
+  ],
+  "related_entities": [
+    {"name": "Jane Smith", "type": "Person", "relationship": "DECIDED_BY"},
+    {"name": "OAuth", "type": "Technology", "relationship": "USES"}
+  ],
+  "last_mentioned_at": "2026-04-13T10:30:00Z",
+  "staleness_score": 0.1,
+  "summary": "Decision to implement JWT authentication for the API",
+  "updated_at": "2026-04-13T10:30:00Z"
+}
+```
+
+## GET /api/graph/entities/cards
+
+List entity cards with filters.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | No | Filter by channel |
+| `entity_type` | string | No | Filter by entity type |
+| `limit` | int | No | Max results (default: 20) |
+
+### Response
+
+```json
+[
+  {
+    "entity_id": "entity_456",
+    "entity_name": "JWT Authentication",
+    "entity_type": "Decision",
+    "fact_count": 15,
+    "staleness_score": 0.1
+  }
+]
+```
+
+## Graph Queries
+
+### Subgraph
+
+Get a subgraph around entities:
+
+```bash
+GET /api/graph/subgraph?entities=JWT,Jane,Smith&depth=2
+```
+
+### Path Finding
+
+Find paths between entities:
+
+```bash
+GET /api/graph/path?source=JWT&target=PostgreSQL&max_depth=3
+```
+
+### Common Neighbors
+
+Find entities connected to multiple entities:
+
+```bash
+GET /api/graph/common-neighbors?entities=JWT,OAuth
+```
+
+## Entity Status
+
+- **active**: Entity is active and referenced
+- **pending**: Entity detected but awaiting confirmation
+
+## Relationship Confidence
+
+Relationships have a confidence score 0.0-1.0:
+
+- **0.8-1.0**: High confidence (explicit statements)
+- **0.5-0.8**: Medium confidence (strong implications)
+- **0.0-0.5**: Low confidence (weak connections)

@@ -1,0 +1,397 @@
+---
+title: Multi-Platform Adapters
+description: Configure and use different platform adapters for Slack, Discord, Microsoft Teams, and custom platforms
+---
+
+
+Beever Atlas uses a modular adapter system to integrate with different chat platforms. This guide explains how adapters work and how to configure them.
+
+## Adapter Architecture
+
+The adapter system provides a unified interface for fetching messages from different platforms:
+
+```
+┌─────────────────┐
+│  Beever Atlas   │
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │ Adapter │
+    │ Factory │
+    └────┬────┘
+         │
+    ┌────┴────────────────────┐
+    │      │      │      │    │
+  Slack Discord Teams Mock  Custom
+```
+
+**Key Components**:
+- **Adapter Interface**: Standard API for all platforms
+- **Adapter Factory**: Creates configured adapter instances
+- **Platform Bridge**: Connects adapters to Beever Atlas backend
+
+## Available Adapters
+
+<Tabs items={['Slack', 'Discord', 'Microsoft Teams', 'Mock', 'Custom']}>
+
+### Slack Adapter
+
+The Slack adapter uses the Slack Web API to fetch message history.
+
+**Configuration**:
+```bash
+ADAPTER_TYPE=slack
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_APP_TOKEN=xapp-your-app-token-here  # For Socket Mode
+```
+
+**Setup Steps**:
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Add OAuth scopes:
+   - `channels:history` - Read public channel history
+   - `channels:read` - View channel information
+   - `groups:history` - Read private channel history
+   - `groups:read` - View private channel information
+   - `im:history` - Read direct messages
+   - `im:read` - View DM information
+   - `mpim:history` - Read group DMs
+   - `mpim:read` - View group DM information
+3. Install app to workspace
+4. Copy Bot User OAuth Token and App Token
+5. Set environment variables
+
+**Features**:
+- Full message history with threads
+- User profiles and avatars
+- Channel and team information
+- File attachments (links only)
+- Reactions and edits
+
+### Discord Adapter
+
+The Discord adapter uses Discord's API to fetch messages.
+
+**Configuration**:
+```bash
+ADAPTER_TYPE=discord
+DISCORD_BOT_TOKEN=your-discord-bot-token-here
+```
+
+**Setup Steps**:
+1. Create a Discord application at [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Create a bot user
+3. Enable privileged intents:
+   - Message Content Intent
+   - Server Members Intent
+   - Message Intent
+4. Copy bot token
+5. Invite bot to servers with appropriate permissions
+
+**Features**:
+- Message history with threads
+- User profiles and avatars
+- Server and channel information
+- Embeds and attachments
+- Reactions
+
+### Microsoft Teams Adapter
+
+The Teams adapter uses Microsoft Graph API.
+
+**Configuration**:
+```bash
+ADAPTER_TYPE=teams
+TEAMS_TENANT_ID=your-tenant-id
+TEAMS_CLIENT_ID=your-client-id
+TEAMS_CLIENT_SECRET=your-client-secret
+```
+
+**Setup Steps**:
+1. Register app in Azure AD
+2. Configure API permissions:
+   - `ChannelMessage.Read.All`
+   - `Chat.Read`
+   - `User.Read.All`
+3. Grant admin consent
+4. Copy credentials
+
+**Features**:
+- Channel messages
+- Chat messages
+- User information
+- Team and channel structure
+
+### Mock Adapter
+
+The Mock adapter generates realistic test data without connecting to a real platform.
+
+**Configuration**:
+```bash
+ADAPTER_MOCK=true
+```
+
+**Features**:
+- Generates realistic messages
+- Simulates various conversation types
+- No authentication required
+- Perfect for testing and development
+
+**Use Cases**:
+- Local development
+- Testing without real data
+- Demonstrations
+- CI/CD pipelines
+
+### Custom Adapter
+
+Implement your own adapter for custom platforms.
+
+**Interface**:
+```python
+from beever_atlas.integrations.adapters.base import BaseAdapter
+
+class CustomAdapter(BaseAdapter):
+    async def get_channels(self):
+        """Return list of channels/teams."""
+        pass
+
+    async def get_messages(self, channel_id: str, limit: int):
+        """Fetch messages from a channel."""
+        pass
+
+    async def get_user(self, user_id: str):
+        """Get user profile."""
+        pass
+
+    def normalize_message(self, raw_message: dict) -> NormalizedMessage:
+        """Convert platform message to standard format."""
+        pass
+```
+
+**Register Adapter**:
+```python
+# src/beever_atlas/integrations/adapters/factory.py
+from .custom import CustomAdapter
+
+ADAPTER_REGISTRY["custom"] = CustomAdapter
+```
+
+</Tabs>
+
+## Adapter Configuration
+
+### Bot Service (Bridge)
+
+The bot service bridges platform adapters to Beever Atlas:
+
+**Configuration**:
+```bash
+BRIDGE_URL=http://localhost:3001
+BRIDGE_API_KEY=your-bridge-api-key
+```
+
+**Docker Compose**:
+```yaml
+services:
+  bot:
+    image: beever-atlas-bot:latest
+    environment:
+      - ADAPTER_TYPE=slack
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - BRIDGE_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+```
+
+### Adapter Selection
+
+Choose adapter via environment variable:
+
+```bash
+# Slack
+ADAPTER_TYPE=slack
+
+# Discord
+ADAPTER_TYPE=discord
+
+# Microsoft Teams
+ADAPTER_TYPE=teams
+
+# Mock (testing)
+ADAPTER_MOCK=true
+```
+
+## Message Normalization
+
+All adapters convert messages to a standard format:
+
+```python
+class NormalizedMessage:
+    id: str                    # Unique message ID
+    platform: str              # "slack", "discord", "teams"
+    channel_id: str            # Channel/team ID
+    channel_name: str          # Human-readable channel name
+    sender_id: str             # Sender's user ID
+    sender_name: str           # Sender's display name
+    text: str                  # Message text
+    timestamp: datetime        # When sent
+    thread_id: Optional[str]   # Thread parent ID (if threaded)
+    reply_count: int           # Number of replies
+    reactions: List[Reaction]  # Reactions
+    attachments: List[Attachment]  # File attachments
+```
+
+This uniform format allows the rest of the pipeline to work seamlessly regardless of the source platform.
+
+## Adding a New Platform
+
+### Step 1: Create Adapter Class
+
+```python
+# src/beever_atlas/integrations/adapters/my_platform.py
+from typing import List, Optional
+from datetime import datetime
+from ..base import BaseAdapter, NormalizedMessage, Reaction, Attachment
+
+class MyPlatformAdapter(BaseAdapter):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.client = MyPlatformClient(api_key)
+
+    async def get_channels(self) -> List[dict]:
+        """Fetch all channels/teams."""
+        channels = await self.client.get_channels()
+        return [
+            {
+                "id": ch.id,
+                "name": ch.name,
+                "platform": "my_platform",
+                "is_private": ch.is_private,
+            }
+            for ch in channels
+        ]
+
+    async def get_messages(
+        self,
+        channel_id: str,
+        limit: int = 1000,
+        after: Optional[datetime] = None,
+    ) -> List[NormalizedMessage]:
+        """Fetch messages from a channel."""
+        raw_messages = await self.client.get_messages(
+            channel_id, limit=limit, after=after
+        )
+        return [self.normalize_message(msg) for msg in raw_messages]
+
+    async def get_user(self, user_id: str) -> dict:
+        """Get user profile."""
+        user = await self.client.get_user(user_id)
+        return {
+            "id": user.id,
+            "name": user.name,
+            "avatar_url": user.avatar_url,
+            "platform": "my_platform",
+        }
+
+    def normalize_message(self, raw_message: dict) -> NormalizedMessage:
+        """Convert platform-specific message to standard format."""
+        return NormalizedMessage(
+            id=raw_message.id,
+            platform="my_platform",
+            channel_id=raw_message.channel_id,
+            channel_name=raw_message.channel_name,
+            sender_id=raw_message.sender.id,
+            sender_name=raw_message.sender.name,
+            text=raw_message.text,
+            timestamp=raw_message.created_at,
+            thread_id=raw_message.parent_id,
+            reply_count=raw_message.reply_count,
+            reactions=[
+                Reaction(emoji=r.emoji, count=r.count, users=r.users)
+                for r in raw_message.reactions
+            ],
+            attachments=[
+                Attachment(
+                    url=a.url,
+                    filename=a.filename,
+                    content_type=a.content_type,
+                )
+                for a in raw_message.attachments
+            ],
+        )
+```
+
+### Step 2: Register in Factory
+
+```python
+# src/beever_atlas/integrations/adapters/factory.py
+from .my_platform import MyPlatformAdapter
+
+ADAPTER_REGISTRY = {
+    "slack": SlackAdapter,
+    "discord": DiscordAdapter,
+    "teams": TeamsAdapter,
+    "my_platform": MyPlatformAdapter,  # Add here
+}
+```
+
+### Step 3: Add Configuration
+
+```python
+# src/beever_atlas/infra/config.py
+class Settings(BaseSettings):
+    # ... existing config ...
+
+    # My Platform
+    my_platform_api_key: str = Field(default="")
+```
+
+### Step 4: Test
+
+```python
+# Test your adapter
+import asyncio
+from beever_atlas.integrations.adapters import create_adapter
+
+async def test():
+    adapter = create_adapter(
+        platform="my_platform",
+        config={"api_key": "test-key"}
+    )
+    channels = await adapter.get_channels()
+    print(f"Found {len(channels)} channels")
+
+asyncio.run(test())
+```
+
+## Best Practices
+
+<Callout type="info">
+**Pagination**: Always handle pagination correctly when fetching messages. Platforms may return results in pages.
+</Callout>
+
+1. **Rate Limiting**: Respect platform rate limits
+2. **Error Handling**: Handle network failures gracefully
+3. **Caching**: Cache channel lists and user profiles
+4. **Pagination**: Handle large message sets
+5. **Thread Support**: Preserve thread structure
+6. **Attachments**: Handle files appropriately (links vs download)
+
+## Troubleshooting
+
+**Adapter not loading**: Check `ADAPTER_TYPE` is set correctly and adapter is registered.
+
+**Authentication errors**: Verify API keys/tokens are correct and have required permissions.
+
+**Missing messages**: Check rate limits, pagination, and API access scope.
+
+**User profiles missing**: Ensure user fetching is enabled and tokens have `users:read` scope.
+
+---
+
+## Next Steps
+
+- [Self-Hosting Guide](/docs/guides/self-hosting)
+- [Configuration Reference](/docs/guides/configuration)
+- [First Channel Sync](/docs/tutorials/first-channel-sync)

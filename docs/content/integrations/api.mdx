@@ -1,0 +1,673 @@
+---
+title: REST API Integration
+description: Use the Beever Atlas REST API for custom integrations and automation
+---
+
+
+# REST API
+
+Beever Atlas provides a comprehensive REST API for building custom integrations, automations, and workflows.
+
+## Base URL
+
+```
+http://localhost:8000/api
+```
+
+For production, replace with your domain:
+```
+https://your-domain.com/api
+```
+
+## Authentication
+
+### Development
+
+No authentication required by default in development mode.
+
+### Production
+
+Configure reverse proxy authentication:
+
+<Steps>
+  <Step>
+    **API Key Header**
+    
+    ```bash
+    curl -H "Authorization: Bearer your-api-key" \\
+      https://your-domain.com/api/channels
+    ```
+  </Step>
+  <Step>
+    **OAuth 2.0**
+    
+    Configure OAuth provider in reverse proxy (nginx, Traefik)
+  </Step>
+  <Step>
+    **Mutual TLS**
+    
+    For enterprise deployments with mTLS
+  </Step>
+</Steps>
+
+<Callout type="warning">
+  Always implement authentication in production environments. Never expose the API publicly without authentication.
+</Callout>
+
+## Core Endpoints
+
+### Health Check
+
+Check API health and status:
+
+```bash
+GET /health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "stores": {
+    "weaviate": "connected",
+    "neo4j": "connected",
+    "mongodb": "connected",
+    "redis": "connected"
+  },
+  "version": "0.1.0"
+}
+```
+
+### Channels
+
+List all synced channels:
+
+```bash
+GET /channels
+```
+
+**Response:**
+```json
+{
+  "channels": [
+    {
+      "id": "C0123456789",
+      "name": "engineering",
+      "platform": "slack",
+      "connection_id": "conn-1",
+      "is_member": true,
+      "message_count": 15234,
+      "last_synced": "2024-01-15T12:00:00Z"
+    }
+  ]
+}
+```
+
+### Channel Detail
+
+Get channel metadata:
+
+```bash
+GET /channels/{channel_id}
+```
+
+**Response:**
+```json
+{
+  "id": "C0123456789",
+  "name": "engineering",
+  "platform": "slack",
+  "topic": "Engineering team discussions",
+  "purpose": "Technical coordination",
+  "member_count": 42,
+  "is_member": true,
+  "is_private": false,
+  "created": "2023-06-01T10:00:00Z"
+}
+```
+
+### Messages
+
+List messages from a channel:
+
+```bash
+GET /channels/{channel_id}/messages?limit=100&before=1234567890.123456
+```
+
+**Parameters:**
+- `limit` (number): Max messages (default: 100)
+- `before` (string): Cursor for pagination
+- `after` (string): Cursor for pagination
+- `order` (string): `asc` or `desc` (default: `desc`)
+
+**Response:**
+```json
+{
+  "messages": [
+    {
+      "id": "1234567890.123456",
+      "content": "What's the status of the API migration?",
+      "author": "alice",
+      "author_name": "Alice Johnson",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "thread_id": null,
+      "reactions": [{"emoji": "thumbsup", "count": 3}],
+      "reply_count": 5
+    }
+  ],
+  "next_cursor": "1234567889.123455"
+}
+```
+
+## Knowledge Retrieval
+
+### Ask
+
+Ask a question with RAG:
+
+```bash
+POST /channels/{channel_id}/ask
+```
+
+**Request:**
+```json
+{
+  "question": "What's our deployment process?",
+  "conversation_id": "optional-conversation-id",
+  "stream": true
+}
+```
+
+**Response (streaming):**
+```
+data: {"type":"thinking","content":"Searching knowledge base..."}
+data: {"type":"answer","content":"The deployment process involves..."}
+data: {"type":"citation","type":"message","text":"...","permalink":"https://..."}
+data: {"type":"done","confidence":0.89,"cost_usd":0.023}
+```
+
+**Response (non-streaming):**
+```json
+{
+  "answer": "The deployment process involves...",
+  "citations": [
+    {
+      "type": "message",
+      "text": "Full message text...",
+      "permalink": "https://slack.com/...",
+      "timestamp": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "confidence": 0.89,
+  "route": "qa",
+  "cost_usd": 0.023
+}
+```
+
+### Search
+
+Hybrid semantic + keyword search:
+
+```bash
+POST /search
+```
+
+**Request:**
+```json
+{
+  "query": "database migration",
+  "channel_ids": ["C0123456789"],
+  "limit": 10,
+  "filters": {
+    "author": "alice",
+    "date_range": {
+      "start": "2024-01-01T00:00:00Z",
+      "end": "2024-01-31T23:59:59Z"
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "content": "We need to migrate the database...",
+      "score": 0.92,
+      "metadata": {
+        "channel_id": "C0123456789",
+        "channel_name": "engineering",
+        "author": "alice",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "message_id": "1234567890.123456"
+      }
+    }
+  ],
+  "total": 23
+}
+```
+
+## Sync Operations
+
+### Sync Channel
+
+Trigger sync for a channel:
+
+```bash
+POST /channels/{channel_id}/sync
+```
+
+**Request:**
+```json
+{
+  "since": "2024-01-01T00:00:00Z",
+  "batch_size": 100
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "messages_synced": 234,
+  "errors": [],
+  "duration_seconds": 12.3
+}
+```
+
+### Sync Status
+
+Check sync status:
+
+```bash
+GET /channels/{channel_id}/sync/status
+```
+
+**Response:**
+```json
+{
+  "status": "syncing",
+  "progress": 0.67,
+  "messages_processed": 1523,
+  "total_messages": 2270,
+  "started_at": "2024-01-15T12:00:00Z",
+  "estimated_completion": "2024-01-15T12:02:30Z"
+}
+```
+
+## Platform Connections
+
+### List Connections
+
+Get all platform connections:
+
+```bash
+GET /connections
+```
+
+**Response:**
+```json
+{
+  "connections": [
+    {
+      "id": "conn-1",
+      "platform": "slack",
+      "display_name": "Acme Corp Slack",
+      "status": "connected",
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+### Create Connection
+
+Add a platform connection:
+
+```bash
+POST /connections
+```
+
+**Request:**
+```json
+{
+  "platform": "slack",
+  "credentials": {
+    "bot_token": "xoxb-...",
+    "signing_secret": "..."
+  },
+  "selected_channels": ["C0123456789"]
+}
+```
+
+**Response:**
+```json
+{
+  "id": "conn-2",
+  "platform": "slack",
+  "status": "connected",
+  "selected_channels": ["C0123456789"]
+}
+```
+
+## Example Scripts
+
+### Python
+
+<Tabs items={['sync', 'ask', 'search']}>
+  <Tab value="sync">
+```python
+import httpx
+
+# Sync a channel
+async def sync_channel(channel_id: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"http://localhost:8000/api/channels/{channel_id}/sync",
+            json={"since": "2024-01-01T00:00:00Z"}
+        )
+        return response.json()
+
+# Usage
+result = await sync_channel("C0123456789")
+print(f"Synced {result['messages_synced']} messages")
+```
+  </Tab>
+  <Tab value="ask">
+```python
+import httpx
+import json
+
+# Ask a question with streaming
+async def ask_question(channel_id: str, question: str):
+    async with httpx.AsyncClient() as client:
+        async with client.stream(
+            "POST",
+            f"http://localhost:8000/api/channels/{channel_id}/ask",
+            json={"question": question, "stream": True}
+        ) as response:
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    if data["type"] == "answer":
+                        print(data["content"], end="", flush=True)
+                    elif data["type"] == "citation":
+                        print(f"\n[Source: {data['permalink']}]")
+
+# Usage
+await ask_question("C0123456789", "What's our deployment process?")
+```
+  </Tab>
+  <Tab value="search">
+```python
+import httpx
+
+# Search knowledge base
+async def search(query: str, channel_id: str | None = None):
+    async with httpx.AsyncClient() as client:
+        payload = {"query": query}
+        if channel_id:
+            payload["channel_ids"] = [channel_id]
+        
+        response = await client.post(
+            "http://localhost:8000/api/search",
+            json=payload
+        )
+        return response.json()
+
+# Usage
+results = await search("database migration", "C0123456789")
+for r in results["results"]:
+    print(f"{r['score']:.2f}: {r['content'][:50]}...")
+```
+  </Tab>
+</Tabs>
+
+### JavaScript/TypeScript
+
+<Tabs items={['sync', 'ask', 'search']}>
+  <Tab value="sync">
+```typescript
+interface SyncResponse {
+  status: string;
+  messages_synced: number;
+  errors: string[];
+  duration_seconds: number;
+}
+
+async function syncChannel(channelId: string): Promise<SyncResponse> {
+  const response = await fetch(
+    `http://localhost:8000/api/channels/${channelId}/sync`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ since: '2024-01-01T00:00:00Z' })
+    }
+  );
+  return response.json();
+}
+
+// Usage
+const result = await syncChannel('C0123456789');
+console.log(`Synced ${result.messages_synced} messages`);
+```
+  </Tab>
+  <Tab value="ask">
+```typescript
+async function* askQuestion(
+  channelId: string, 
+  question: string
+): AsyncGenerator<string> {
+  const response = await fetch(
+    `http://localhost:8000/api/channels/${channelId}/ask`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, stream: true })
+    }
+  );
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+
+  if (!reader) return;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const line = decoder.decode(value);
+    if (line.startsWith('data: ')) {
+      const data = JSON.parse(line.slice(6));
+      if (data.type === 'answer') {
+        yield data.content;
+      }
+    }
+  }
+}
+
+// Usage
+for await (const chunk of askQuestion('C0123456789', 'Deployment process?')) {
+  process.stdout.write(chunk);
+}
+```
+  </Tab>
+  <Tab value="search">
+```typescript
+interface SearchResult {
+  content: string;
+  score: number;
+  metadata: {
+    channel_name: string;
+    author: string;
+    timestamp: string;
+  };
+}
+
+interface SearchResponse {
+  results: SearchResult[];
+  total: number;
+}
+
+async function search(
+  query: string, 
+  channelId?: string
+): Promise<SearchResponse> {
+  const payload = { query };
+  if (channelId) {
+    (payload as any).channel_ids = [channelId];
+  }
+
+  const response = await fetch('http://localhost:8000/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return response.json();
+}
+
+// Usage
+const results = await search('database migration', 'C0123456789');
+results.results.forEach(r => {
+  console.log(`${r.score.toFixed(2)}: ${r.content.slice(0, 50)}...`);
+});
+```
+  </Tab>
+</Tabs>
+
+### cURL
+
+<Tabs items={['sync', 'ask', 'search']}>
+  <Tab value="sync">
+```bash
+# Sync a channel
+curl -X POST \\
+  http://localhost:8000/api/channels/C0123456789/sync \\
+  -H "Content-Type: application/json" \\
+  -d '{"since": "2024-01-01T00:00:00Z"}'
+```
+  </Tab>
+  <Tab value="ask">
+```bash
+# Ask a question (non-streaming)
+curl -X POST \\
+  http://localhost:8000/api/channels/C0123456789/ask \\
+  -H "Content-Type: application/json" \\
+  -d '{"question": "What is our deployment process?"}'
+
+# Ask with streaming
+curl -X POST \\
+  http://localhost:8000/api/channels/C0123456789/ask \\
+  -H "Content-Type: application/json" \\
+  -d '{"question": "What is our deployment process?", "stream": true}'
+```
+  </Tab>
+  <Tab value="search">
+```bash
+# Search knowledge base
+curl -X POST \\
+  http://localhost:8000/api/search \\
+  -H "Content-Type: application/json" \\
+  -d '{"query": "database migration", "channel_ids": ["C0123456789"]}'
+```
+  </Tab>
+</Tabs>
+
+## Rate Limiting
+
+Default rate limits (configurable):
+
+<Steps>
+  <Step>
+    **Per-IP Limits**
+    
+    - 100 requests per minute
+    - Burst allowance: 20 requests
+  </Step>
+  <Step>
+    **Per-Channel Limits**
+    
+    - 10 sync operations per hour
+    - Prevents API abuse
+  </Step>
+  <Step>
+  **Headers**
+    
+    ```http
+    X-RateLimit-Limit: 100
+    X-RateLimit-Remaining: 95
+    X-RateLimit-Reset: 1642252800
+    ```
+  </Step>
+</Steps>
+
+## Error Handling
+
+### Error Response Format
+
+```json
+{
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "Rate limit exceeded. Try again in 60 seconds.",
+    "details": {
+      "retry_after": 60
+    }
+  }
+}
+```
+
+### Common Error Codes
+
+| Code | HTTP | Description |
+|------|------|-------------|
+| `not_found` | 404 | Resource not found |
+| `invalid_request` | 400 | Invalid request parameters |
+| `unauthorized` | 401 | Missing or invalid authentication |
+| `rate_limit_exceeded` | 429 | Rate limit exceeded |
+| `internal_error` | 500 | Internal server error |
+
+## Webhooks
+
+Beever Atlas can send webhook notifications for events:
+
+### Configure Webhook
+
+```bash
+POST /webhooks
+```
+
+**Request:**
+```json
+{
+  "url": "https://your-domain.com/webhooks/beever",
+  "events": ["sync.completed", "sync.failed"],
+  "secret": "your-webhook-secret"
+}
+```
+
+### Webhook Payload
+
+```json
+{
+  "event": "sync.completed",
+  "timestamp": "2024-01-15T12:00:00Z",
+  "data": {
+    "channel_id": "C0123456789",
+    "messages_synced": 234,
+    "duration_seconds": 12.3
+  },
+  "signature": "sha256=..."
+}
+```
+
+## Next Steps
+
+- [ ] Set up authentication for production
+- [ ] Create API key for your application
+- [ ] Test with example scripts
+- [ ] Configure webhooks for events
+- [ ] Implement error handling
+
+For production deployment, see the [Development Setup](../contributing/development-setup) guide.

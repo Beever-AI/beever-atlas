@@ -1,0 +1,140 @@
+---
+title: Comparison
+description: Compare Beever Atlas with other LLM knowledge management tools
+---
+
+# Comparison
+
+Beever Atlas vs. Personal LLM Wiki and Knowledge Tools
+
+## Overview
+
+Beever Atlas is a **team-oriented LLM Wiki** that transforms team conversations into living, searchable knowledge bases. Unlike personal knowledge tools, Beever Atlas is designed from the ground up for team collaboration with automatic wiki generation, dual memory architecture, and multi-platform integration.
+
+## Feature Comparison
+
+| Feature | Beever Atlas | Mem0 | Khoj | Obsidian+LLM | Notion AI | Microsoft Copilot |
+|---------|--------------|------|------|--------------|-----------|-------------------|
+| **Team-oriented** | ✅ Yes (channel ACL) | ❌ No | ❌ No | ❌ No | ⚠️ Partial | ⚠️ Enterprise only |
+| **Dual Memory** | ✅ Semantic + Graph | ❌ Vector only | ❌ Vector only | ❌ None | ❌ Vector only | ❌ Vector only |
+| **Wiki Generation** | ✅ Auto from chat | ❌ No | ❌ No | ⚠️ Manual | ❌ No | ❌ No |
+| **Knowledge Graph** | ✅ Neo4j multi-hop | ❌ No | ⚠️ Limited | ❌ No | ❌ No | ❌ No |
+| **Multi-platform** | ✅ Slack/Discord/Teams | ❌ API only | ❌ API only | ⚠️ Local only | ⚠️ Web only | ⚠️ Microsoft only |
+| **Open Source** | ✅ Yes (MIT) | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
+| **Conversation Ingestion** | ✅ 6-stage pipeline | ⚠️ API only | ⚠️ Manual | ⚠️ Manual | ❌ No | ⚠️ Limited |
+| **Self-hosted** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No |
+| **MCP Support** | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ⚠️ Partial |
+
+## Key Differentiators
+
+### 1. Team-First, Not Personal
+
+**Beever Atlas** is built for teams from day one:
+- **Channel-level ACL**: Respect team permissions - users only search channels they have access to
+- **Multi-workspace**: Support for multiple Slack/Discord/Teams workspaces
+- **Permission-aware retrieval**: Search results respect platform permissions
+- **Multi-user collaboration**: Everyone contributes to the same knowledge base
+
+**Others** focus on personal knowledge:
+- Mem0, Khoj, Obsidian are single-user tools
+- Notion AI has team features but no conversation ingestion
+- Copilot is enterprise-focused but Microsoft-locked
+
+### 2. Wiki That Writes Itself
+
+**Beever Atlas** automatically generates wiki pages from team conversations:
+- **Hierarchical structure**: Auto-organized by topic and conversation clusters
+- **Incremental updates**: Wiki evolves as new conversations happen
+- **Context-aware**: Preserves conversation context and citations
+- **No manual curation**: Unlike Obsidian where you must write everything yourself
+
+**Others** require manual work:
+- Obsidian + LLM plugins: You write the notes, AI helps search
+- Notion AI: You create documents, AI assists editing
+- Mem0/Khoj: No wiki generation at all
+
+### 3. Dual Memory Architecture
+
+**Beever Atlas** combines two complementary memory systems:
+
+**Semantic Memory (Weaviate)**:
+- Vector embeddings for semantic search
+- Finds relevant content based on meaning
+- Great for "what did we discuss about X?"
+
+**Knowledge Graph (Neo4j)**:
+- Entity extraction and relationship mapping
+- Multi-hop reasoning through connections
+- Great for "how is X related to Y?" and "who worked on Z?"
+
+**Together**: Smart query routing uses LLM to choose the best tool for each question.
+
+**Others** use single memory systems:
+- Mem0, Khoj, Notion AI: Vector search only
+- Obsidian: Link-based graph (manual, no entity extraction)
+- Copilot: Microsoft Graph (proprietary)
+
+### 4. Real Ingestion Pipeline
+
+**Beever Atlas** has a production-grade 6-stage pipeline:
+
+1. **Sync**: Incremental conversation sync from platforms
+2. **Extract**: Message and thread extraction
+3. **Validate**: Quality gates and deduplication
+4. **Store**: Vector embeddings and graph storage
+5. **Cluster**: Topic clustering and organization
+6. **Wiki**: Hierarchical wiki page generation
+
+With Google ADK agents for orchestrated extraction and validation.
+
+**Others** have simpler approaches:
+- Mem0, Khoj: API-based ingestion (you call them)
+- Obsidian: Manual import or plugin-based
+- Notion AI: No conversation ingestion
+- Copilot: Microsoft Graph integration only
+
+### 5. MCP Native
+
+**Beever Atlas** is a first-class MCP server:
+- Works with Claude Desktop, Claude Code, and any MCP-compatible tool
+- Exposes tools for search, graph queries, and wiki retrieval
+- Streaming responses with citations
+- Multi-model support (Gemini, Claude via LiteLLM)
+
+**Others** lack MCP integration:
+- Mem0, Khoj, Obsidian, Notion: No MCP support
+- Copilot: Microsoft-only protocols
+
+## When to Choose Beever Atlas
+
+Choose **Beever Atlas** if:
+- ✅ Your team uses Slack, Discord, or Microsoft Teams
+- ✅ You want automatic knowledge capture from conversations
+- ✅ You need both semantic search AND knowledge graph queries
+- ✅ You want to self-host and control your data
+- ✅ You need MCP integration for LLM tools
+- ✅ You care about open source and extensibility
+
+Choose **Alternatives** if:
+- ❌ You only need personal knowledge management (Obsidian, Mem0)
+- ❌ You want a simple API-based memory layer (Mem0, Khoj)
+- ❌ You're already locked into Microsoft ecosystem (Copilot)
+- ❌ You prefer manual wiki curation over automation (Notion AI)
+
+## Open Source Commitment
+
+Beever Atlas is **100% open source** (MIT License):
+- All core features are free forever
+- No enterprise-only paywalls
+- Community-driven development
+- Self-hosting friendly
+- Extensible architecture for custom adapters
+
+Compare with:
+- **Notion AI**: Proprietary, no self-hosting
+- **Microsoft Copilot**: Proprietary, Microsoft-locked
+- **Mem0, Khoj, Obsidian**: Open source but personal-focused
+
+## Conclusion
+
+Beever Atlas fills a unique gap: **team-oriented, automatic wiki generation from conversations**, with dual memory architecture and MCP integration. It's not for everyone, but if you're a team using chat platforms and want your knowledge to write itself, Beever Atlas is the only tool designed for you.

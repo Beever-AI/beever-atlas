@@ -1,0 +1,328 @@
+---
+title: MCP Integration with Claude Desktop
+description: Use Beever Atlas as an MCP server for Claude Desktop and other MCP-compatible clients
+---
+
+
+Beever Atlas exposes a Model Context Protocol (MCP) server, allowing Claude Desktop and other MCP-compatible clients to query your knowledge base directly.
+
+## What is MCP?
+
+MCP (Model Context Protocol) is a standard for AI assistants to access external tools and data. With MCP, Claude can:
+- Search your organization's knowledge
+- Ask questions about decisions and processes
+- Retrieve wiki pages with citations
+- Explore the knowledge graph
+
+<Steps>
+### Step 1: Ensure Beever Atlas is running
+
+Start the Beever Atlas backend:
+
+```bash
+cd /path/to/beever-atlas
+docker-compose up -d
+```
+
+Verify it's running:
+```bash
+curl http://localhost:8000/api/health
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {"ok": true},
+    "neo4j": {"ok": true},
+    "mongodb": {"ok": true}
+  }
+}
+```
+
+The MCP server runs on the same backend at `http://localhost:8000/mcp`.
+
+### Step 2: Configure Claude Desktop
+
+**For macOS:**
+1. Quit Claude Desktop if running
+2. Open `~/Library/Application Support/Claude/claude_desktop_config.json`
+3. Add Beever Atlas to `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+**For Windows:**
+1. Quit Claude Desktop if running
+2. Open `%APPDATA%\Claude\claude_desktop_config.json`
+3. Add the same configuration
+
+**Restart Claude Desktop** after saving the config.
+
+### Step 3: Verify connection
+
+In Claude Desktop, start a new conversation. You should see Beever Atlas tools available:
+
+**Available Tools:**
+- `search_knowledge`: Semantic search across all synced knowledge
+- `ask_question`: Ask natural language questions with citations
+- `get_wiki_page`: Retrieve specific wiki pages
+- `get_entity`: Get entity details from knowledge graph
+- `traverse_graph`: Explore graph relationships
+
+**Test Connection:**
+```
+User: What can you search for in my Beever Atlas knowledge?
+
+Claude: I can search your organization's chat history, decisions,
+projects, and more. Try asking me about specific topics, people,
+or decisions that have been discussed in your synced channels.
+```
+
+### Step 4: Use available tools
+
+<Tabs items={['search_knowledge', 'ask_question', 'get_wiki_page', 'get_entity', 'traverse_graph']}>
+
+### search_knowledge
+
+Semantic search for relevant facts.
+
+**Usage:**
+```
+User: Search for information about authentication tokens
+
+Claude: [Uses search_knowledge tool]
+Found 12 relevant facts about authentication tokens:
+
+1. "JWT tokens expire after 24 hours" (from #engineering)
+2. "Refresh tokens stored in Redis for 7 days" (from #api-team)
+3. "Token validation happens on every request" (from #backend)
+...
+```
+
+**Parameters:**
+- `query`: Search query (required)
+- `limit`: Max results (default: 10)
+- `channel_id`: Filter by channel (optional)
+
+### ask_question
+
+Ask natural language questions with citations.
+
+**Usage:**
+```
+User: How does our API authentication work?
+
+Claude: [Uses ask_question tool]
+Based on your team's discussions, the API authentication works as follows:
+
+1. Clients authenticate using JWT tokens [1]
+2. Tokens are obtained via OAuth2 flow [2]
+3. Tokens expire after 24 hours [3]
+4. Refresh tokens allow renewal [4]
+
+[Sources]
+[1] #engineering, @alex, March 15
+[2] #api-team, @sarah, March 18
+[3] #engineering, @mike, March 20
+[4] #api-team, @sarah, March 22
+```
+
+**Parameters:**
+- `question`: Your question (required)
+- `channel_id`: Filter by channel (optional)
+
+### get_wiki_page
+
+Retrieve specific wiki pages.
+
+**Usage:**
+```
+User: Show me the wiki page about API design
+
+Claude: [Uses get_wiki_page tool]
+# API Design
+
+## Overview
+The API follows REST principles with resource-based endpoints.
+
+## Key Facts (45 total)
+- "API versioning uses URL prefixes" [src:msg123]
+- "Rate limiting set to 100 req/min" [src:msg456]
+...
+```
+
+**Parameters:**
+- `page_id`: Wiki page ID (required)
+- `include_citations`: Include source citations (default: true)
+
+### get_entity
+
+Get entity details from knowledge graph.
+
+**Usage:**
+```
+User: Tell me about @sarah
+
+Claude: [Uses get_entity tool]
+# Sarah Johnson
+
+**Role**: Backend Lead
+**Active in**: #engineering, #api-team, #architecture
+
+## Related Facts (127)
+- "Sarah designed the new auth system" [src:msg789]
+- "Sarah is leading the migration project" [src:msg456]
+...
+
+## Connections
+- Works with: @mike, @alex
+- Part of: API Redesign team
+- Uses: Python, PostgreSQL, Redis
+```
+
+**Parameters:**
+- `entity_id`: Entity ID or name (required)
+- `include_facts`: Include related facts (default: true)
+
+### traverse_graph
+
+Explore graph relationships.
+
+**Usage:**
+```
+User: Who works with @sarah on the API project?
+
+Claude: [Uses traverse_graph tool]
+Based on the knowledge graph, Sarah works with:
+
+1. **Mike** - Frontend development
+2. **Alex** - Architecture decisions
+3. **Jamie** - Testing and QA
+
+These collaborations appear in 43 messages across #engineering and #api-team.
+```
+
+**Parameters:**
+- `entity_id`: Starting entity (required)
+- `relationship_type`: Filter by relationship type (optional)
+- `max_depth**: How many hops to explore (default: 2)
+
+</Tabs>
+
+### Step 5: Example prompts to use
+
+<Tabs items={['Knowledge Retrieval', 'Decision Making', 'Process Understanding']}>
+
+### Knowledge Retrieval
+
+```
+"What have we discussed about database migrations?"
+"Show me all mentions of PostgreSQL in the engineering channels"
+"What are the known issues with the payment API?"
+"Who has experience with Kubernetes in our team?"
+```
+
+### Decision Making
+
+```
+"What was decided about the microservices architecture?"
+"Why did we choose React over Vue for the frontend?"
+"When did we decide to switch to TypeScript?"
+"What were the arguments for and against using GraphQL?"
+```
+
+### Process Understanding
+
+```
+"How does our deployment pipeline work?"
+"What's the process for code review?"
+"How do we handle on-call rotations?"
+"What's the workflow for feature requests?"
+```
+
+</Tabs>
+
+### Step 6: Use with other MCP clients
+
+Beever Atlas MCP works with any MCP-compatible client:
+
+**Cursor IDE:**
+1. Settings → MCP Servers
+2. Add server: `http://localhost:8000/mcp`
+3. Use in chat with `@beever-atlas`
+
+**Windsurf IDE:**
+1. Settings → Extensions → MCP
+2. Add server URL
+3. Access via command palette
+
+**Cline (VS Code):**
+1. Settings → MCP Servers
+2. Add Beever Atlas
+4. Use in Cline conversations
+
+<Callout type="info">
+**Development Mode**: The MCP server uses HTTP without authentication. For production, enable HTTPS and API key authentication in the configuration.
+</Callout>
+
+</Steps>
+
+---
+
+## MCP API Reference
+
+The MCP server exposes the following endpoints:
+
+**Base URL:** `http://localhost:8000/mcp`
+
+**Tools:**
+- `search_knowledge`: Semantic search
+- `ask_question`: Q&A with citations
+- `get_wiki_page`: Wiki page retrieval
+- `get_entity`: Entity details
+- `traverse_graph`: Graph traversal
+
+**Resources:**
+- `wiki://`: All wiki pages
+- `entity://`: All entities
+- `graph://`: Knowledge graph
+
+**Prompts:**
+- `ask_beever_atlas`: Pre-configured prompt for querying
+
+---
+
+## Troubleshooting
+
+**Claude Desktop can't connect:**
+- Verify Beever Atlas is running: `curl http://localhost:8000/api/health`
+- Check config file path and syntax
+- Restart Claude Desktop after changing config
+- Check firewall isn't blocking localhost:8000
+
+**Tools not available:**
+- Verify MCP server is running: Check logs for "MCP server started"
+- Ensure URL in config is correct
+- Try restarting Claude Desktop
+
+**Search returns no results:**
+- Ensure channels are synced
+- Check knowledge base has data
+- Try broader search terms
+
+---
+
+## Next Steps
+
+- Learn about [self-hosting](/docs/guides/self-hosting) for production deployment
+- Read [configuration guide](/docs/guides/configuration) for all options
+- Set up [document import](/docs/tutorials/file-import) to expand your knowledge

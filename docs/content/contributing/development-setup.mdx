@@ -1,0 +1,481 @@
+---
+title: Development Setup
+description: Set up your local development environment for Beever Atlas
+---
+
+
+# Development Setup
+
+This guide will help you set up a complete development environment for Beever Atlas.
+
+## Prerequisites
+
+<Steps>
+  <Step>
+    **Required Tools**
+    
+    - **Python 3.11+**: Download from [python.org](https://python.org)
+    - **Node.js 20+**: Download from [nodejs.org](https://nodejs.org)
+    - **Docker**: Download from [docker.com](https://docker.com)
+    - **Git**: Download from [git-scm.com](https://git-scm.com)
+    - **uv**: Python package installer (`pip install uv`)
+  </Step>
+  <Step>
+    **Verify Installations**
+    
+    ```bash
+    python --version  # Should be 3.11+
+    node --version    # Should be 20+
+    docker --version
+    git --version
+    uv --version
+    ```
+  </Step>
+  <Step>
+    **Optional Tools**
+    
+    - **VS Code**: Recommended IDE with extensions
+    - **Postman**: For API testing
+    - **Redis Commander**: Redis GUI (optional)
+  </Step>
+</Steps>
+
+## Quick Start
+
+### 1. Fork and Clone
+
+```bash
+# Fork the repository on GitHub
+git clone https://github.com/your-username/beever-atlas.git
+cd beever-atlas
+git remote add upstream https://github.com/beever-atlas/beever-atlas.git
+```
+
+### 2. Install Python Dependencies
+
+```bash
+# Install dependencies with uv
+uv sync
+
+# Activate virtual environment (optional)
+source .venv/bin/activate  # On macOS/Linux
+# .venv\\Scripts\\activate  # On Windows
+```
+
+### 3. Install Bot Dependencies
+
+```bash
+cd bot
+npm install
+cd ..
+```
+
+### 4. Configure Environment
+
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit with your settings
+# Default values work for local development
+```
+
+### 5. Start Infrastructure
+
+```bash
+# Start Docker services (Weaviate, Neo4j, MongoDB, Redis)
+docker compose up -d
+
+# Verify services are running
+docker compose ps
+```
+
+<Callout type="info">
+  **Tip**: Use `docker compose logs -f` to view logs from all services.
+</Callout>
+
+### 6. Run the Backend
+
+```bash
+# Terminal 1: Start FastAPI backend
+uv run uvicorn beever_atlas.server.app:app --reload
+```
+
+Backend will be available at http://localhost:8000
+
+### 7. Run the Frontend (Optional)
+
+```bash
+# Terminal 2: Start frontend development server
+cd web
+npm run dev
+```
+
+Frontend will be available at http://localhost:5173
+
+### 8. Run the Bot (Optional)
+
+```bash
+# Terminal 3: Start bot service
+cd bot
+npm run dev
+```
+
+Bot will listen on port 3001
+
+## Verify Installation
+
+### Health Check
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "stores": {
+    "weaviate": "connected",
+    "neo4j": "connected",
+    "mongodb": "connected",
+    "redis": "connected"
+  }
+}
+```
+
+### Run Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test
+uv run pytest tests/test_health.py
+
+# Run with coverage
+uv run pytest --cov=beever_atlas --cov-report=html
+```
+
+## IDE Setup
+
+### VS Code
+
+Recommended extensions:
+
+<Steps>
+  <Step>
+    **Python Extensions**
+    
+    - Python (Microsoft)
+    - Pylance
+    - Python Test Explorer
+  </Step>
+  <Step>
+    **TypeScript Extensions**
+    
+    - TypeScript and JavaScript Language Features
+    - ESLint
+    - Prettier
+  </Step>
+  <Step>
+    **General Extensions**
+    
+    - Docker
+    - GitLens
+    - Error Lens
+    - Auto Rename Tag
+  </Step>
+</Steps>
+
+### VS Code Settings
+
+Create `.vscode/settings.json`:
+
+```json
+{
+  "python.defaultInterpreterPath": ".venv/bin/python",
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": false,
+  "python.linting.ruffEnabled": true,
+  "python.formatting.provider": "black",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": true
+  },
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  }
+}
+```
+
+## Development Workflow
+
+### Making Changes
+
+<Steps>
+  <Step>
+    **Create a Branch**
+    
+    ```bash
+    git checkout -b feature/your-feature-name
+    ```
+  </Step>
+  <Step>
+    **Make Changes**
+    
+    - Edit files
+    - Add tests
+    - Update documentation
+  </Step>
+  <Step>
+    **Format and Lint**
+    
+    ```bash
+    # Python
+    uv run ruff format .
+    uv run ruff check .
+    
+    # TypeScript
+    cd bot && npm run format && npm run lint
+    ```
+  </Step>
+  <Step>
+    **Run Tests**
+    
+    ```bash
+    uv run pytest
+    ```
+  </Step>
+  <Step>
+    **Commit**
+    
+    ```bash
+    git add .
+    git commit -m "type(scope): description"
+    ```
+  </Step>
+  <Step>
+    **Push and PR**
+    
+    ```bash
+    git push origin feature/your-feature-name
+    # Create PR on GitHub
+    ```
+  </Step>
+</Steps>
+
+## Running Tests
+
+### Unit Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific file
+uv run pytest tests/test_adapters.py
+
+# Run specific test
+uv run pytest tests/test_adapters.py::test_mock_adapter
+```
+
+### Integration Tests
+
+```bash
+# Run integration tests only
+uv run pytest -m integration
+
+# Requires infrastructure running
+docker compose up -d
+uv run pytest -m integration
+```
+
+### Test Coverage
+
+```bash
+# Generate coverage report
+uv run pytest --cov=beever_atlas --cov-report=html
+
+# View report
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
+start htmlcov/index.html  # Windows
+```
+
+## Debugging
+
+### Backend Debugging
+
+```bash
+# Run with debugger
+uv run uvicorn beever_atlas.server.app:app --reload --log-level debug
+```
+
+### Bot Debugging
+
+```bash
+# Run with debug logs
+cd bot
+LOG_LEVEL=debug npm run dev
+```
+
+### Database Debugging
+
+```bash
+# View logs
+docker compose logs -f weaviate
+docker compose logs -f neo4j
+docker compose logs -f mongodb
+docker compose logs -f redis
+
+# Connect to Redis
+docker compose exec redis redis-cli
+
+# Connect to MongoDB
+docker compose exec mongodb mongosh
+
+# Connect to Neo4j
+docker compose exec neo4j cypher-shell
+```
+
+## Common Issues
+
+### Port Already in Use
+
+```bash
+# Find process using port
+lsof -i :8000  # macOS/Linux
+netstat -ano | findstr :8000  # Windows
+
+# Kill process
+kill -9 <PID>  # macOS/Linux
+taskkill /PID <PID> /F  # Windows
+```
+
+### Docker Issues
+
+```bash
+# Rebuild containers
+docker compose down
+docker compose up -d --build
+
+# Clean restart
+docker compose down -v
+docker compose up -d
+```
+
+### Dependency Issues
+
+```bash
+# Reinstall Python dependencies
+uv sync --reinstall
+
+# Clear cache
+uv cache clean
+
+# Reinstall bot dependencies
+cd bot
+rm -rf node_modules
+npm install
+```
+
+### Virtual Environment Issues
+
+```bash
+# Recreate virtual environment
+rm -rf .venv
+uv sync
+```
+
+## Performance Profiling
+
+### Python Profiling
+
+```bash
+# Profile with cProfile
+uv run python -m cProfile -o profile.stats -m pytest
+
+# View with snakeviz
+pip install snakeviz
+snakeviz profile.stats
+```
+
+### API Response Times
+
+Enable request timing in logs:
+
+```bash
+# Set log level
+LOG_LEVEL=info uv run uvicorn beever_atlas.server.app:app
+```
+
+## Mock Mode Development
+
+Use mock mode for development without platform credentials:
+
+```bash
+# Enable mock mode
+export ADAPTER_MOCK=true
+# or add to .env: ADAPTER_MOCK=true
+```
+
+Mock mode uses fixture files from `tests/fixtures/`:
+
+<Steps>
+  <Step>
+    **Create Fixtures**
+    
+    ```bash
+    mkdir -p tests/fixtures
+    ```
+  </Step>
+  <Step>
+    **Add Messages**
+    
+    ```json
+    // tests/fixtures/slack_conversations.json
+    {
+      "channels": [
+        {
+          "channel_id": "C0123456789",
+          "name": "test-channel",
+          "platform": "slack",
+          "is_member": true
+        }
+      ],
+      "messages": {
+        "C0123456789": [
+          {
+            "message_id": "1234567890.123456",
+            "content": "Test message",
+            "author": "test-user",
+            "timestamp": "2024-01-15T10:30:00Z"
+          }
+        ]
+      }
+    }
+    ```
+  </Step>
+  <Step>
+    **Run with Mock**
+    
+    ```bash
+    ADAPTER_MOCK=true uv run uvicorn beever_atlas.server.app:app
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+- [ ] Read the [Architecture Tour](./architecture-tour)
+- [ ] Explore the [Testing Guide](./testing-guide)
+- [ ] Check out [How to Contribute](./index)
+
+Ready to build something? See the [Tutorials](../tutorials) section for ideas.

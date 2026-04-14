@@ -1,0 +1,22 @@
+{
+  "title": "API Reference",
+  "root": true,
+  "pages": [
+    "index",
+    "---Endpoints---",
+    "ask-api",
+    "channels-api",
+    "memories-api",
+    "wiki-api",
+    "search-api",
+    "graph-api",
+    "sync-api",
+    "connections-api",
+    "stats-api",
+    "---Protocols---",
+    "sse-protocol",
+    "---Reference---",
+    "mcp-tools",
+    "data-models"
+  ]
+}

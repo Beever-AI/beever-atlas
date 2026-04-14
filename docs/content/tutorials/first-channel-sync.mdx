@@ -1,0 +1,131 @@
+---
+title: First Channel Sync
+description: Step-by-step tutorial to sync your first Slack channel and generate an auto-organized knowledge wiki
+---
+
+
+<Steps>
+### Step 1: Connect your Slack workspace
+
+Start the Beever Atlas backend service:
+
+```bash
+docker-compose up -d
+```
+
+You have two options:
+
+**Option A: Real Slack Integration**
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Add required OAuth scopes (channels:history, channels:read, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read)
+3. Install the app to your workspace
+4. Copy the Bot User OAuth Token
+5. Set environment variable:
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-your-token-here
+   ```
+
+**Option B: Mock Mode (Quick Start)**
+No Slack token needed. Set in your `.env`:
+```bash
+ADAPTER_MOCK=true
+```
+
+This generates realistic mock messages for testing.
+
+### Step 2: Select a channel to sync
+
+Via the **Web Dashboard**:
+1. Open [http://localhost:8000](http://localhost:8000)
+2. Navigate to "Channels" section
+3. Browse available channels
+4. Click "Sync" next to your desired channel
+
+Or via the **API**:
+```bash
+curl -X POST http://localhost:8000/api/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel_id": "C1234567890",
+    "platform": "slack",
+    "max_messages": 1000
+  }'
+```
+
+### Step 3: Trigger the sync
+
+The sync begins immediately after triggering. The pipeline will:
+1. Fetch message history from the channel
+2. Extract facts, entities, and topics using LLMs
+3. Build semantic embeddings for search
+4. Construct knowledge graph relationships
+5. Generate wiki page structure
+
+### Step 4: Monitor sync progress
+
+Check sync status in real-time:
+
+**API:**
+```bash
+curl http://localhost:8000/api/sync/status/{sync_id}
+```
+
+**Response:**
+```json
+{
+  "sync_id": "uuid-here",
+  "status": "in_progress",
+  "stage": "extracting_facts",
+  "messages_processed": 342,
+  "total_messages": 1000,
+  "facts_extracted": 156,
+  "entities_created": 45
+}
+```
+
+### Step 5: View the generated wiki pages
+
+Once complete, navigate to the Wiki section:
+
+1. Open [http://localhost:8000](http://localhost:8000)
+2. Click "Wiki" in the sidebar
+3. Browse the auto-generated structure:
+   - **Channel Overview**: Summary of what the channel discusses
+   - **Topics**: Major themes discovered (e.g., "Product Launch", "API Design")
+   - **Subtopics**: Nested within topics (e.g., "API Design" → "Authentication")
+   - **Timeline**: Chronological view of decisions and events
+
+Each wiki page includes:
+- **Citations**: Every fact links to source messages
+- **Related Topics**: Semantic connections
+- **Entity Cards**: People, projects, technologies mentioned
+
+### Step 6: Explore extracted topics and facts
+
+Navigate to the **Topics Explorer**:
+
+1. Click "Topics" in the sidebar
+2. See topic clusters with fact counts
+3. Click any topic to view:
+   - All facts within that topic
+   - Source message citations
+   - Related entities
+   - Temporal evolution (how the topic changed over time)
+
+**Example Topic Structure:**
+```
+Product Launch (127 facts)
+├── Planning Phase (34 facts)
+├── Development Phase (52 facts)
+└── Release Announcement (41 facts)
+```
+
+</Steps>
+
+---
+
+## Next Steps
+
+- Learn how to [navigate the wiki](/docs/tutorials/exploring-the-wiki)
+- Try [asking questions](/docs/tutorials/ask-agent) against your synced knowledge
+- Explore the [knowledge graph visualization](/docs/tutorials/knowledge-graph)

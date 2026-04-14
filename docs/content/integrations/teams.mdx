@@ -1,0 +1,314 @@
+---
+title: Microsoft Teams Integration
+description: Connect Beever Atlas to Microsoft Teams for enterprise knowledge retrieval
+---
+
+
+# Microsoft Teams Integration
+
+Beever Atlas integrates with Microsoft Teams via the Microsoft Graph API and Bot Framework, bringing intelligent knowledge retrieval to your enterprise Teams environment.
+
+## Features
+
+- **Channel messages**: Index and query Teams channel conversations
+- **Chat support**: Direct 1:1 and group chat queries
+- **Adaptive Cards**: Rich response formatting
+- **Enterprise-grade**: Azure AD integration
+- **Multi-tenant**: Support for multiple organizations
+
+## Supported Channel Types
+
+| Type | Support |
+|------|---------|
+| Team channels | ✅ Full sync and retrieval |
+| Private channels | ✅ Based on permissions |
+| Shared channels | ✅ Cross-tenant support |
+| Meeting chat | ✅ Meeting conversations |
+| Group chats | ✅ Small group discussions |
+| 1:1 chats | ✅ Personal knowledge access |
+
+## Bot Setup
+
+### Prerequisites
+
+1. **Azure Account**: Access to [Azure Portal](https://portal.azure.com)
+2. **App Registration**: Register a new app in Azure AD
+3. **Bot Framework**: Configure via [Bot Framework Portal](https://dev.botframework.com/bots)
+
+### Required Permissions
+
+Your app needs these Microsoft Graph permissions:
+
+<Steps>
+  <Step>
+    **Channel Access**
+    
+    - `ChannelMessage.Read.All` - Read all channel messages
+    - `ChannelSettings.Read.All` - Access channel metadata
+  </Step>
+  <Step>
+  **Chat Access**
+    
+    - `Chat.Read` - Read 1:1 and group chats
+    - `Chat.ReadBasic` - Basic chat information
+  </Step>
+  <Step>
+    **Team Access**
+    
+    - `Team.ReadBasic.All` - Access team information
+    - `TeamMember.Read.All` - Read team membership
+  </Step>
+  <Step>
+  **User Context**
+    
+    - `User.Read` - Basic user profile
+    - `User.ReadBasic.All` - User directory access
+  </Step>
+</Steps>
+
+### Environment Configuration
+
+Set these environment variables:
+
+```bash
+# Azure AD Application ID
+TEAMS_APP_ID=your-app-id-here
+
+# Azure AD Client Secret (or certificate thumbprint)
+TEAMS_APP_PASSWORD=your-client-secret-here
+
+# Azure AD Tenant ID
+TEAMS_TENANT_ID=your-tenant-id-here
+
+# Bot Framework endpoint (if using bot)
+BOT_FRAMEWORK_ENDPOINT=https://your-bot-endpoint.com/api/messages
+```
+
+## App Registration
+
+### Step 1: Register in Azure AD
+
+1. Go to **Azure Portal** → **Azure Active Directory**
+2. **App registrations** → **New registration**
+3. Enter name, select account type
+4. Note the **Application (client) ID**
+
+### Step 2: Configure Authentication
+
+1. **Certificates & secrets** → **New client secret**
+2. Copy the secret value (you won't see it again)
+3. Add redirect URIs if needed
+
+### Step 3: Configure API Permissions
+
+1. **API permissions** → **Add a permission**
+2. **Microsoft Graph** → **Application permissions**
+3. Add required permissions (see above)
+4. **Grant admin consent** for your organization
+
+### Step 4: Configure Bot Framework (Optional)
+
+For interactive bot features:
+
+1. Go to [Bot Framework Portal](https://dev.botframework.com/bots)
+2. Create a new bot or link existing Azure AD app
+3. Configure messaging endpoint
+4. Enable Microsoft Teams channel
+
+## Message Types
+
+Beever Atlas processes these Teams message types:
+
+<Steps>
+  <Step>
+    **Channel Messages**
+    
+    - Regular posts in team channels
+    - Replies and threaded discussions
+    - @mentions for bot activation
+  </Step>
+  <Step>
+    **Chat Messages**
+    
+    - 1:1 conversations with bot
+    - Group chat interactions
+    - Meeting chat discussions
+  </Step>
+  <Step>
+    **Attachments**
+    
+    - Files uploaded to channels/chats
+    - Images and documents
+    - Code snippets
+  </Step>
+</Steps>
+
+## Adaptive Cards
+
+Responses use Microsoft Adaptive Cards for rich formatting:
+
+- **Citations**: Clickable links to source messages
+- **Images**: Embedded content display
+- **Tables**: Structured data presentation
+- **Actions**: Quick action buttons
+
+## Thread Handling
+
+Teams conversations map to threads:
+
+- **Channel posts**: Top-level messages become thread starters
+- **Replies**: Linked to parent message
+- **Chat messages**: Sequenced by timestamp
+- **Meeting chat**: Temporal grouping by meeting ID
+
+### Thread ID Format
+
+```
+teams:TEAM_ID:CHANNEL_ID:MESSAGE_ID
+```
+
+For chats:
+```
+teams:CHAT_ID:MESSAGE_ID
+```
+
+## Rate Limits
+
+Microsoft Graph API limits:
+
+<Steps>
+  <Step>
+    **Service Limits**
+    
+    - 10,000 requests per 10 seconds per tenant
+    - Throttled at 4,000 requests per 10 seconds sustained
+  </Step>
+  <Step>
+    **Per-User Limits**
+    
+    - Limited by user license type
+    - Higher limits for enterprise licenses
+  </Step>
+  <Step>
+    **Retry Handling**
+    
+    - Automatic retry with `Retry-After` header
+    - Exponential backoff implementation
+  </Step>
+</Steps>
+
+## Deployment Considerations
+
+### Azure Hosting
+
+For production deployment to Azure:
+
+<Steps>
+  <Step>
+    **Azure App Service**
+    
+    - Managed hosting for backend
+    - Auto-scaling capabilities
+    - Easy deployment via Git/CI
+  </Step>
+  <Step>
+    **Azure Functions**
+    
+    - Serverless bot hosting
+    - Pay-per-use pricing
+    - Automatic scaling
+  </Step>
+  <Step>
+    **Azure Container Instances**
+    
+    - Containerized deployment
+    - Flexible configuration
+    - VNet integration
+  </Step>
+  <Step>
+    **Azure Bot Service**
+    
+    - Managed bot framework
+    - Built-in authentication
+    - Multi-channel support
+  </Step>
+</Steps>
+
+### Self-Hosted
+
+For on-premises or private cloud:
+
+```bash
+# Reverse proxy configuration
+# Place behind corporate firewall/gateway
+
+# Set environment variables
+TEAMS_APP_ID=your-app-id
+TEAMS_APP_PASSWORD=your-secret
+TEAMS_TENANT_ID=your-tenant
+
+# Bot endpoint (must be publicly accessible)
+BOT_FRAMEWORK_ENDPOINT=https://your-public-endpoint.com/api/messages
+```
+
+## Troubleshooting
+
+### Authentication failures
+
+- Verify app ID and client secret are correct
+- Check API permissions are granted admin consent
+- Ensure tenant ID matches your organization
+- Review Azure AD sign-in logs
+
+### Missing messages
+
+- Verify service principal has correct permissions
+- Check privacy settings in Teams admin center
+- Ensure channels aren't excluded by policy
+- Review Graph API audit logs
+
+### Bot not responding
+
+- Verify bot framework endpoint is accessible
+- Check bot is enabled for Teams channel
+- Review bot framework portal for errors
+- Test with Bot Framework Emulator locally
+
+## Advanced Configuration
+
+### Multi-Tenant Setup
+
+Support multiple Azure AD tenants:
+
+1. Configure app as **Multi-tenant**
+2. Each tenant requires admin consent
+3. Implement tenant discovery logic
+4. Use tenant-specific tokens
+
+### On-Premises SharePoint
+
+For Teams with on-premises SharePoint:
+
+- Use Azure AD Connect for identity sync
+- Configure hybrid SharePoint search
+- May require additional connectors
+- Check Microsoft 365 roadmap for support
+
+### Compliance & Governance
+
+Enterprise features:
+
+- **Retention policies**: Respect Teams retention settings
+- **Sensitivity labels**: Honor data classification
+- **DLP policies**: Adhere to data loss prevention rules
+- **Audit logging**: Track all access and queries
+
+## Next Steps
+
+- [ ] Register app in Azure AD
+- [ ] Configure API permissions
+- [ ] Set up bot framework (optional)
+- [ ] Grant admin consent
+- [ ] Test channel access
+
+For enterprise deployment guidance, see the [Development Setup](../contributing/development-setup) guide.

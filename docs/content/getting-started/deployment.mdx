@@ -1,0 +1,600 @@
+---
+title: Docker Compose Deployment
+description: Production deployment guide for Beever Atlas
+---
+
+# Docker Compose Deployment
+
+Deploy Beever Atlas to production using Docker Compose with persistent storage, health checks, and monitoring.
+
+<Callout type="warning">
+**Production Notice**: This guide covers single-server deployment. For high-availability or multi-region deployments, consider Kubernetes or cloud-native solutions.
+</Callout>
+
+## Overview
+
+The production Docker Compose setup includes:
+
+- **Persistent volumes** for all databases
+- **Resource limits** to prevent resource exhaustion
+- **Health checks** for automatic restarts
+- **Security best practices** for credentials and networking
+- **Backup strategies** for data protection
+
+## Prerequisites
+
+- Docker 20.10+ and Docker Compose 2.0+
+- At least 4GB RAM (8GB recommended for large workspaces)
+- 20GB+ disk space for databases and logs
+- SSL certificate (for production HTTPS)
+
+## Production Configuration
+
+### Step 1: Create Production Compose File
+
+Create `docker-compose.prod.yml` based on the default `docker-compose.yml`:
+
+```yaml
+services:
+  beever-atlas:
+    build: .
+    ports: ["8000:8000"]
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      WEAVIATE_URL: http://weaviate:8080
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-beever_atlas_prod}
+      MONGODB_URI: mongodb://mongodb:27017/beever_atlas
+      REDIS_URL: redis://redis:6379
+      BRIDGE_URL: http://bot:3001
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_API_URL: https://api.yourdomain.com
+    ports: ["443:443"]
+    depends_on:
+      - beever-atlas
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    ports: ["8080:8080", "50051:50051"]
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      CLUSTER_HOSTNAME: node1
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:5.26-community
+    ports: ["7474:7474", "7687:7687"]
+    volumes:
+      - neo4j_data:/data
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-beever_atlas_prod}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2G
+      NEO4J_dbms_memory_pagecache_size: 1G
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  mongodb:
+    image: mongo:7.0
+    ports: ["27017:27017"]
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  bot:
+    build: ./bot
+    ports: ["3001:3001"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      beever-atlas:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      BACKEND_URL: http://beever-atlas:8000
+      REDIS_URL: redis://redis:6379
+      BOT_PORT: "3001"
+      BRIDGE_API_KEY: ${BRIDGE_API_KEY}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  weaviate_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  mongo_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+```
+
+### Step 2: Configure Production Environment
+
+Create `.env.prod` with production values:
+
+```bash
+# Core
+BEEVER_API_URL=https://api.yourdomain.com
+CORS_ORIGINS=https://yourdomain.com
+
+# Database Passwords (set strong, unique passwords)
+NEO4J_PASSWORD=your_strong_neo4j_password
+MONGO_PASSWORD=your_strong_mongo_password
+REDIS_PASSWORD=your_strong_redis_password
+
+# Security (REQUIRED for production)
+CREDENTIAL_MASTER_KEY=your_64_char_hex_key
+BRIDGE_API_KEY=your_random_bridge_secret
+
+# LLM Providers
+GOOGLE_API_KEY=your_google_api_key
+JINA_API_KEY=your_jina_api_key
+
+# Adapter
+ADAPTER_MOCK=false
+
+# Pipeline
+SYNC_BATCH_SIZE=50
+SYNC_MAX_MESSAGES=1000
+QUALITY_THRESHOLD=0.5
+ENTITY_THRESHOLD=0.6
+```
+
+<Callout type="warning">
+**Security**: Never commit `.env.prod` to version control. Generate secure passwords for all databases.
+</Callout>
+
+### Step 3: Set Up SSL/TLS
+
+For production HTTPS, configure nginx in the web service:
+
+**nginx.conf**:
+
+```nginx
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream backend {
+        server beever-atlas:8000;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name yourdomain.com;
+
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+
+        location / {
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /ws {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+}
+```
+
+<Callout type="info">
+**SSL Certificates**: Use Let's Encrypt for free SSL certificates:
+
+```bash
+# Install certbot
+sudo apt install certbot
+
+# Generate certificates
+sudo certbot certonly --standalone -d yourdomain.com
+
+# Copy to project
+sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem ./ssl/cert.pem
+sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem ./ssl/key.pem
+```
+</Callout>
+
+### Step 4: Deploy
+
+```bash
+# Build and start with production configuration
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+# Check service health
+docker compose -f docker-compose.prod.yml ps
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+## Backup Strategy
+
+### MongoDB Backups
+
+```bash
+# Backup MongoDB
+docker compose exec mongodb mongodump --archive=/data/db/backup-$(date +%Y%m%d).gz
+
+# Restore MongoDB
+docker compose exec mongodb mongorestore --archive=/data/db/backup-20231215.gz
+```
+
+### Neo4j Backups
+
+```bash
+# Backup Neo4j
+docker compose exec neo4j neo4j-admin database dump neo4j --to-path=/data/backup
+
+# Restore Neo4j
+docker compose exec neo4j neo4j-admin database load neo4j --from-path=/data/backup --force
+```
+
+### Weaviate Backups
+
+Weaviate backups require enabling the backup module:
+
+```bash
+WEAVIATE_BACKUP_ENABLED=true
+```
+
+```bash
+# Create backup
+curl -X POST http://localhost:8080/v1/backups/s3 \
+  -H "Content-Type: application/json" \
+  -d '{"id": "my-backup"}'
+```
+
+### Automated Backup Script
+
+Create `backup.sh`:
+
+```bash
+#!/bin/bash
+BACKUP_DIR=/backups/beever-atlas/$(date +%Y%m%d)
+mkdir -p $BACKUP_DIR
+
+# MongoDB
+docker compose exec mongodb mongodump --archive=/data/db/backup.gz
+docker cp mongodb:/data/db/backup.gz $BACKUP_DIR/mongodb.gz
+
+# Neo4j
+docker compose exec neo4j neo4j-admin database dump neo4j --to-path=/data/backup
+docker cp neo4j:/data/backup $BACKUP_DIR/neo4j
+
+# Weaviate (if configured)
+# Add Weaviate backup commands here
+
+# Compress
+tar -czf $BACKUP_DIR.tar.gz $BACKUP_DIR
+rm -rf $BACKUP_DIR
+
+# Keep last 30 days
+find /backups/beever-atlas -name "*.tar.gz" -mtime +30 -delete
+```
+
+Add to crontab:
+
+```bash
+# Daily backup at 2 AM
+0 2 * * * /path/to/backup.sh
+```
+
+## Monitoring
+
+### Health Checks
+
+All services include health checks. Monitor them:
+
+```bash
+# Check all health statuses
+docker compose ps
+
+# Check specific service
+docker compose exec beever-atlas curl http://localhost:8000/api/health
+```
+
+### Logs
+
+Aggregate logs for monitoring:
+
+```bash
+# Follow all logs
+docker compose logs -f
+
+# Follow specific service
+docker compose logs -f beever-atlas
+
+# Export logs
+docker compose logs > logs-$(date +%Y%m%d).log
+```
+
+### Metrics (Optional)
+
+For production monitoring, consider:
+
+- **Prometheus**: Expose metrics from all services
+- **Grafana**: Visualize metrics and create dashboards
+- **Sentry**: Error tracking and alerting
+- **DataDog**: Infrastructure monitoring
+
+## Scaling Considerations
+
+### Vertical Scaling
+
+Increase resource limits in `docker-compose.prod.yml`:
+
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: '4'
+      memory: 8G
+```
+
+### Horizontal Scaling
+
+For larger deployments, consider:
+
+- **Multiple backend instances** behind a load balancer
+- **Separate database servers** for improved performance
+- **Redis Cluster** for distributed caching
+- **Weaviate cluster** for distributed semantic search
+
+### Performance Tuning
+
+**Weaviate**:
+```bash
+QUERY_DEFAULTS_LIMIT=100
+ENABLE_MODULES=text2vec-contextionary
+```
+
+**Neo4j**:
+```bash
+NEO4J_dbms_memory_heap_max__size=4G
+NEO4J_dbms_memory_pagecache_size=2G
+```
+
+**MongoDB**:
+```bash
+MONGO_INITDB_WT_ENGINE_CONFIG=wiredTigerCacheSizeGB=2
+```
+
+## Security Hardening
+
+### Network Isolation
+
+Run databases on an internal network:
+
+```yaml
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+services:
+  web:
+    networks:
+      - frontend
+      - backend
+
+  mongodb:
+    networks:
+      - backend
+```
+
+### Secrets Management
+
+Use Docker Secrets or external secret managers:
+
+```bash
+# Using Docker Secrets
+echo "your_password" | docker secret create mongo_password -
+
+# Reference in compose file
+services:
+  mongodb:
+    secrets:
+      - mongo_password
+    environment:
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_password
+```
+
+### Firewall Rules
+
+Restrict access to services:
+
+```bash
+# Only allow necessary ports
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow 22/tcp
+ufw enable
+```
+
+## Troubleshooting
+
+### Service Won't Start
+
+Check logs and health status:
+
+```bash
+docker compose logs beever-atlas
+docker compose ps
+```
+
+Common issues:
+- Port conflicts: Check with `netstat -tulpn`
+- Resource limits: Increase RAM/CPU allocation
+- Database connection: Verify database health
+
+### Database Corruption
+
+If a database becomes corrupted:
+
+1. Stop services: `docker compose down`
+2. Restore from backup (see Backup Strategy)
+3. Restart: `docker compose up -d`
+
+### Performance Issues
+
+Monitor resource usage:
+
+```bash
+docker stats
+```
+
+Common fixes:
+- Increase resource limits
+- Add indexes to databases
+- Scale horizontally (multiple instances)
+
+## What's Next?
+
+- [Quick Start](./quick-start) — Get started locally
+- [Slack Setup](./slack-setup) — Connect your team data
+- [Installation](./installation) — Local development setup
+
+<Callout type="success">
+**Deployed successfully?** Monitor your deployment health and set up automated backups for data protection!
+</Callout>

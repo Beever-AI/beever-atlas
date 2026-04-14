@@ -1,0 +1,297 @@
+---
+title: Discord Setup
+description: Connect Beever Atlas to your Discord server
+---
+
+# Discord Integration Setup
+
+Connect Beever Atlas to your Discord server to automatically ingest conversations and build a searchable knowledge base.
+
+<Callout type="warning">
+**Beta Status**: Discord integration is in beta. Features may change as we improve the integration.
+</Callout>
+
+## Prerequisites
+
+Before setting up Discord integration, ensure you have:
+
+- Beever Atlas installed and running (see [Installation](./installation))
+- Admin access to a Discord server
+- Ability to create Discord applications
+
+## Overview
+
+The Discord integration consists of two components:
+
+1. **Ingestion Pipeline**: Fetches historical and new messages from channels
+2. **Bot Service**: Responds to commands and provides real-time updates
+
+## Step 1: Create a Discord Application
+
+### 1.1 Go to Discord Developer Portal
+
+Navigate to [discord.com/developers/applications](https://discord.com/developers/applications) and click **New Application**.
+
+### 1.2 Configure Application
+
+Enter:
+- **NAME**: `Beever Atlas` (or your preferred name)
+- Agree to terms and click **Create**
+
+## Step 2: Create a Bot
+
+### 2.1 Add Bot to Application
+
+In the application dashboard:
+
+1. Click **Bot** in the left sidebar
+2. Click **Add Bot**
+3. Confirm by clicking **Yes, do it!**
+
+### 2.2 Configure Bot Settings
+
+Under the **Bot** section:
+
+- **Display Name**: `Beever Atlas`
+- **Username**: `beever-atlas-bot` (auto-generated)
+- **Public Bot**: Toggle OFF (recommended for private use)
+- **Require OAuth2 Code Grant**: Toggle OFF
+- **Intents**: Configure in next step
+
+## Step 3: Configure Bot Intents
+
+<Callout type="info">
+**Privileged Intents**: Some intents require enabling in the Discord Developer Portal under "Privileged Gateway Intents."
+</Callout>
+
+Enable the following intents:
+
+### Standard Intents
+
+- **Guilds**: Required for server information
+- **Guild Messages**: Read messages in servers
+- **Message Content**: Read message content (privileged intent)
+
+### Privileged Intents
+
+Under **Privileged Gateway Intents**, enable:
+
+- **Message Content Intent**: Required to read actual message content
+- **Server Members Intent**: Required to read user information
+
+<Callout type="warning">
+**Message Content Intent**: This is a privileged intent that requires verification for bots in 100+ servers. For smaller servers, it works immediately.
+</Callout>
+
+## Step 4: Generate Bot Token
+
+### 4.1 Reset/Reveal Token
+
+In the **Bot** section:
+
+1. Click **Reset Token** (or **Reset Secret** if changing)
+2. Copy the generated token (starts with a random string)
+
+<Callout type="warning">
+**Security**: Copy this token immediately — you won't be able to see it again. Treat it like a password.
+</Callout>
+
+## Step 5: Configure OAuth2 Scopes
+
+### 5.1 OAuth2 URL Generator
+
+In the application dashboard:
+
+1. Click **OAuth2** → **URL Generator**
+2. Under **Scopes**, select:
+   - `bot`
+   - `applications.commands`
+
+### 5.2 Bot Permissions
+
+Under **Bot Permissions**, select:
+
+| Permission | Purpose |
+|------------|---------|
+| Read Messages/View Channels | Read messages in channels |
+| Send Messages | Send bot responses |
+| Read Message History | Access historical messages |
+| Add Reactions | React to messages |
+| Embed Links | Send embedded content |
+| Attach Files | Send file attachments |
+| Use Slash Commands | Use bot commands |
+
+### 5.3 Generate Invite Link
+
+Copy the generated URL at the bottom and open it in your browser to invite the bot to your server.
+
+## Step 6: Configure Beever Atlas
+
+### 6.1 Disable Mock Mode
+
+Edit your `.env` file:
+
+```bash
+ADAPTER_MOCK=false
+```
+
+### 6.2 Add Discord Token
+
+The recommended method is to add credentials through the web UI:
+
+1. Open [http://localhost:3000](http://localhost:3000)
+2. Navigate to **Settings** → **Connections**
+3. Click **Add Connection**
+4. Select **Discord**
+5. Paste your bot token
+6. Click **Save**
+
+<Callout type="info">
+**Alternative**: Set the token directly in `.env` (not recommended for production):
+
+```bash
+DISCORD_BOT_TOKEN=your_discord_bot_token_here
+```
+</Callout>
+
+## Step 7: Restart Services
+
+After configuring Discord integration, restart the services:
+
+```bash
+docker compose restart beever-atlas bot
+```
+
+## Step 8: Sync Your Channels
+
+### 8.1 Invite Bot to Channels
+
+The bot must be in channels to read messages:
+
+1. Go to your Discord server
+2. For each channel you want to sync:
+   - Right-click the channel
+   - Go to **Permissions**
+   - Add the bot role
+   - Grant **Read Messages** and **Read Message History** permissions
+
+### 8.2 Trigger a Sync
+
+**Via Dashboard**:
+1. Navigate to **Channels**
+2. Find the Discord channel you want to sync
+3. Click **Sync**
+4. Monitor progress in the **Sync Status** column
+
+**Via API**:
+
+```bash
+# Trigger sync for a channel
+curl -X POST http://localhost:8000/api/channels/12345/sync
+
+# Check sync status
+curl http://localhost:8000/api/channels/12345/sync/status
+```
+
+<Callout type="info">
+**Discord Channel IDs**: In Discord, right-click a channel and select **Copy ID** (requires Developer Mode enabled in Discord settings).
+</Callout>
+
+## Bot Commands
+
+Once the bot is in your server, you can use these commands:
+
+- `/atlas ask <question>`: Ask a question about the server
+- `/atlas sync`: Trigger a sync for the current channel
+- `/atlas wiki`: Get a link to the wiki for this channel
+
+<Callout type="warning">
+**Slash Commands**: Commands may require a few minutes to appear after bot invite due to Discord's propagation delay.
+</Callout>
+
+## Troubleshooting
+
+### "Invalid Token" Error
+
+Check that:
+- Bot token is correct (no extra spaces)
+- Bot hasn't been deleted or regenerated
+- Token is copied correctly from Discord Developer Portal
+
+### "Missing Access" Error
+
+The bot lacks permissions for the channel:
+
+1. Check bot role permissions
+2. Ensure bot has **Read Messages** and **Read Message History**
+3. Verify bot is actually in the channel
+
+### No Channels Appearing
+
+Verify:
+1. Bot is running: `docker compose logs bot`
+2. Token is valid: Check in Discord Developer Portal
+3. Bot has server permissions
+4. Message Content Intent is enabled
+
+### Commands Not Working
+
+Slash commands may take time to propagate:
+
+1. Wait 5–10 minutes after bot invite
+2. Try re-inviting the bot
+3. Check that **applications.commands** scope was granted
+4. Verify bot is online in Discord
+
+### Rate Limiting
+
+Discord has rate limits on API calls:
+
+- Large servers may experience rate limiting
+- Atlas automatically handles rate limits with exponential backoff
+- Consider syncing fewer channels for very large servers
+
+## Best Practices
+
+### Server Structure
+
+- Use category-specific channels (e.g., `#engineering`, `#design`)
+- Create dedicated channels for knowledge sharing
+- Archive old channels separately
+
+### Bot Permissions
+
+- Grant minimum required permissions
+- Use channel-specific overrides for fine-grained control
+- Regularly audit bot access
+
+### Sync Strategy
+
+- Start with key knowledge-sharing channels
+- Use `SYNC_MAX_MESSAGES` to control initial sync size
+- Schedule syncs during low-activity periods
+
+### Privacy Considerations
+
+- Discord channels may contain sensitive information
+- Review channel permissions before syncing
+- Consider separate Atlas instances for different server types
+
+## Limitations
+
+Current limitations of Discord integration:
+
+- **Forum posts**: Limited support for forum channel posts
+- **Thread support**: Basic thread support (improving)
+- **Voice channels**: No voice transcription support
+- **Large files**: File attachment size limits apply
+
+## What's Next?
+
+- [How It Works](./how-it-works) — Learn about the ingestion pipeline
+- [Slack Setup](./slack-setup) — Also connect Slack for multi-platform knowledge
+- [Deployment](./deployment) — Production setup guide
+
+<Callout type="success">
+**Connected successfully?** Try asking questions about your Discord conversations in the Q&A interface!
+</Callout>

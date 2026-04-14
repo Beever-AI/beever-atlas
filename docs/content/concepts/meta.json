@@ -1,0 +1,15 @@
+{
+  "title": "Concepts",
+  "root": true,
+  "pages": [
+    "architecture",
+    "llm-wiki-pattern",
+    "dual-memory",
+    "ingestion-pipeline",
+    "query-router",
+    "wiki-generation",
+    "agent-architecture",
+    "access-control",
+    "resilience"
+  ]
+}

@@ -1,0 +1,233 @@
+---
+title: Document Import
+description: Import external documents (PDF, TXT, MD, DOCX) into your knowledge base
+---
+
+
+Document import lets you add external knowledge to your Beever Atlas instance. Imported documents are processed, indexed, and integrated with your chat-based knowledge.
+
+## Supported File Types
+
+| Format | Description | Max Size |
+|--------|-------------|----------|
+| **PDF** | Portable Document Format | 100 MB, 100 pages |
+| **TXT** | Plain text | 20 MB |
+| **MD** | Markdown | 20 MB |
+| **DOCX** | Microsoft Word | 20 MB |
+
+<Steps>
+### Step 1: Prepare your documents
+
+Before importing, ensure your documents are well-structured:
+
+**Best Practices:**
+- Use clear headings and subheadings
+- Include metadata (title, author, date)
+- Avoid formatting that obscures meaning
+- For PDFs, use text-based PDFs (not scanned images)
+- Break large documents into smaller, focused files
+
+**Document Structure Tips:**
+```markdown
+# Document Title
+Author: John Doe
+Date: 2024-03-15
+Tags: architecture, api, rest
+
+## Section 1
+Content here...
+
+## Section 2
+More content...
+```
+
+### Step 2: Upload via web dashboard
+
+**To Upload:**
+1. Navigate to [http://localhost:8000/import](http://localhost:8000/import)
+2. Click "Upload Documents" or drag-and-drop files
+3. Wait for processing to complete
+4. Preview extracted content
+5. Click "Import" to commit to knowledge base
+
+**Processing Steps:**
+1. **Text extraction**: Extract plain text from document
+2. **Chunking**: Split into manageable sections
+3. **Fact extraction**: Identify key facts and entities
+4. **Embedding**: Create semantic embeddings for search
+5. **Indexing**: Add to Weaviate and Neo4j
+
+**Processing Time:**
+- TXT/MD: ~1 second per MB
+- PDF: ~5 seconds per page
+- DOCX: ~2 seconds per MB
+
+### Step 3: Use the import API
+
+For automation or bulk imports, use the API:
+
+```bash
+curl -X POST http://localhost:8000/api/imports \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@document.pdf" \
+  -F "channel_id=imported-docs" \
+  -F "platform=import"
+```
+
+**Response:**
+```json
+{
+  "import_id": "uuid-here",
+  "status": "processing",
+  "filename": "document.pdf",
+  "pages": 42,
+  "estimated_time_seconds": 210
+}
+```
+
+**Check Status:**
+```bash
+curl http://localhost:8000/api/imports/{import_id}/status
+```
+
+**Response:**
+```json
+{
+  "import_id": "uuid-here",
+  "status": "completed",
+  "progress": 100,
+  "facts_extracted": 127,
+  "entities_created": 34,
+  "chunks_processed": 42
+}
+```
+
+### Step 4: Preview before committing
+
+After processing, you can preview before committing:
+
+**Preview Features:**
+- **Extracted text**: Verify text extraction quality
+- **Detected entities**: See people, technologies, decisions found
+- **Topic clusters**: Preview how content will be organized
+- **Sample facts**: Check fact extraction accuracy
+
+**To Commit or Reject:**
+- If preview looks good → Click "Import"
+- If issues detected → Click "Reject" and fix document
+- You can adjust extraction parameters and reprocess
+
+### Step 5: Query imported documents
+
+Once imported, documents are fully integrated:
+
+**Via Ask Agent:**
+```
+"What does the API documentation say about authentication?"
+"According to the architecture doc, how do we handle errors?"
+```
+
+**Via Search:**
+- Search for specific terms from documents
+- Filter by "Imported Documents" channel
+- See document citations in results
+
+**Via Wiki:**
+- Imported documents appear as a special channel
+- Document structure becomes topics/subtopics
+- Entities from documents link to chat-based entities
+
+### Step 6: Understand integration
+
+Imported documents integrate seamlessly:
+
+<Tabs items={['Entity Linking', 'Topic Clustering', 'Citation Behavior']}>
+
+### Entity Linking
+
+Entities in documents link to entities from chat:
+
+**Example:**
+- Chat mentions "@sarah" working on "API redesign"
+- Imported doc mentions "Sarah Johnson" and "API v2"
+- System links these as the same entity
+
+**Benefits:**
+- Unified entity profile across all sources
+- See document context alongside chat context
+- Discover connections between docs and discussions
+
+### Topic Clustering
+
+Documents are clustered with chat content:
+
+**Example:**
+- Chat has topic "Payment Integration" with 45 facts
+- Imported doc adds 30 facts about payment flow
+- Topic expands to 75 facts from both sources
+
+**Benefits:**
+- Topics are comprehensive across all knowledge
+- See discussions + documentation in one place
+- Natural knowledge organization
+
+### Citation Behavior
+
+Document citations include section reference:
+
+**Format:**
+```
+According to the API docs [src:api-docs.pdf#page23], tokens expire after 24h.
+```
+
+**Click Citation:**
+- Opens document viewer
+- Jumps to specific page/section
+- Highlights relevant text
+
+</Tabs>
+
+</Steps>
+
+---
+
+## Advanced Configuration
+
+Configure import behavior via environment variables:
+
+```bash
+# File import settings
+FILE_IMPORT_MAX_ROWS=100000          # Max table rows to process
+FILE_IMPORT_STAGING_DIR=.omc/imports # Temp storage for uploads
+FILE_IMPORT_STAGING_TTL_SECONDS=3600 # Cleanup time
+PDF_CHUNK_PAGES=4                    # Pages per chunk
+PDF_MAX_PAGES=100                    # Max pages per document
+```
+
+**PDF Processing:**
+- Large PDFs are chunked for better extraction
+- Chunk size controls extraction granularity
+- Set `PDF_CHUNK_PAGES` higher for faster processing (less accuracy)
+- Set `PDF_CHUNK_PAGES` lower for better accuracy (slower)
+
+---
+
+## Troubleshooting
+
+<Callout type="warning">
+**PDF extraction fails**: Ensure PDF is text-based, not scanned images. Scanned PDFs require OCR preprocessing.
+</Callout>
+
+**No facts extracted**: Document may be too short or lack clear structure. Try breaking into smaller sections.
+
+**Entities not linking**: Check entity names are consistent across docs and chat. Use canonical names.
+
+**Slow processing**: Large files take time. Check import status API for progress.
+
+---
+
+## Next Steps
+
+- Set up [MCP integration](/docs/tutorials/mcp-integration) to query from external tools
+- Learn about [prompt tuning](/docs/guides/prompt-tuning) for better extraction
+- Read [configuration guide](/docs/guides/configuration) for all options

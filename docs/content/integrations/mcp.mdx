@@ -1,0 +1,431 @@
+---
+title: MCP Ecosystem
+description: Use Beever Atlas as a Model Context Protocol server for AI-enhanced workflows
+---
+
+
+# Model Context Protocol (MCP)
+
+Beever Atlas implements the [Model Context Protocol](https://modelcontextprotocol.io), enabling it to serve as an MCP server for MCP-compatible AI clients like Claude Desktop, Cursor, and Windsurf.
+
+## What is MCP?
+
+MCP is an open protocol that standardizes how AI applications connect to external data sources and tools. It provides:
+
+- **Standardized interfaces**: Common way to expose resources and tools
+- **Transport flexibility**: Works over stdio, SSE, or HTTP
+- **Type safety**: JSON-RPC with schema validation
+- **Bi-directional**: Clients can both query and receive updates
+
+## Beever Atlas as MCP Server
+
+Beever Atlas exposes its knowledge retrieval capabilities as MCP tools:
+
+<Cards>
+  <Card title="Ask" icon="💬">
+    Query your knowledge base with natural language questions
+  </Card>
+  <Card title="Search" icon="🔍">
+    Hybrid semantic + keyword search across indexed content
+  </Card>
+  <Card title="Channels" icon="📺">
+    List and inspect synced conversation channels
+  </Card>
+  <Card title="Sync" icon="🔄">
+    Trigger message sync for specific channels
+  </Card>
+</Cards>
+
+## Available Tools
+
+### `ask`
+
+Ask questions about your knowledge base with citation support.
+
+**Parameters:**
+- `channel_id` (string): Channel to query
+- `question` (string): Your question
+- `conversation_id` (string, optional): Continue a conversation
+
+**Returns:**
+```json
+{
+  "answer": "The deployment process involves...",
+  "citations": [
+    {
+      "type": "message",
+      "text": "Full message text...",
+      "permalink": "https://...",
+      "timestamp": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "confidence": 0.89,
+  "route": "qa"
+}
+```
+
+### `search`
+
+Search your knowledge base with hybrid semantic + graph retrieval.
+
+**Parameters:**
+- `query` (string): Search query
+- `channel_id` (string, optional): Scope to channel
+- `limit` (number, optional): Max results (default: 10)
+
+**Returns:**
+```json
+{
+  "results": [
+    {
+      "content": "Relevant message text...",
+      "score": 0.92,
+      "metadata": {
+        "channel": "engineering",
+        "author": "alice",
+        "timestamp": "2024-01-15T10:30:00Z"
+      }
+    }
+  ]
+}
+```
+
+### `list_channels`
+
+List all synced channels with metadata.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "channels": [
+    {
+      "id": "C0123456789",
+      "name": "engineering",
+      "platform": "slack",
+      "message_count": 15234,
+      "last_synced": "2024-01-15T12:00:00Z"
+    }
+  ]
+}
+```
+
+### `sync_channel`
+
+Trigger sync for a specific channel.
+
+**Parameters:**
+- `channel_id` (string): Channel to sync
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "messages_synced": 234,
+  "duration_seconds": 12.3
+}
+```
+
+## Compatible Clients
+
+### Claude Desktop
+
+Native MCP support in Claude Desktop app.
+
+**Configuration:**
+
+```json
+// ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)
+// %APPDATA%\Claude\claude_desktop_config.json (Windows)
+
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/beever-atlas",
+        "run", 
+        "mcp",
+        "--transport", "stdio"
+      ],
+      "env": {
+        "BEever_ATLAS_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+**Usage in Claude Desktop:**
+
+```
+You: What did we decide about the database migration?
+
+Claude: [Uses MCP tool to query Beever Atlas]
+Based on the engineering discussions, the team decided to...
+[Sources: #engineering, 2024-01-15]
+```
+
+### Cursor
+
+AI code editor with MCP support.
+
+**Configuration:**
+
+1. Open Cursor Settings → MCP Servers
+2. Add new server:
+   - Name: `beever-atlas`
+   - Command: `uv run mcp --transport stdio`
+   - Working directory: `/path/to/beever-atlas`
+
+**Usage in Cursor:**
+
+- Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows)
+- Select "MCP: Beever Atlas"
+- Ask questions about your codebase conversations
+
+### Windsurf
+
+IDE with AI assistant and MCP integration.
+
+**Configuration:**
+
+```json
+// ~/.windsurf/mcp_servers.json
+
+{
+  "servers": [
+    {
+      "name": "beever-atlas",
+      "command": "uv",
+      "args": ["run", "mcp", "--transport", "stdio"],
+      "cwd": "/path/to/beever-atlas",
+      "env": {
+        "BEever_ATLAS_URL": "http://localhost:8000"
+      }
+    }
+  ]
+}
+```
+
+### Continue
+
+VS Code extension for AI with MCP support.
+
+**Configuration:**
+
+```json
+// ~/.continue/config.json
+
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "command": "uv run mcp",
+      "args": ["--transport", "stdio"],
+      "cwd": "/path/to/beever-atlas"
+    }
+  }
+}
+```
+
+## Transport Types
+
+### Stdio (Recommended for local)
+
+Standard input/output for local development:
+
+```bash
+uv run mcp --transport stdio
+```
+
+**Pros:**
+- Simple setup
+- No network overhead
+- Built-in to most clients
+
+**Cons:**
+- Local only
+- One client per server instance
+
+### Server-Sent Events (SSE)
+
+HTTP-based for remote connections:
+
+```bash
+uv run mcp --transport sse --port 3000
+```
+
+**Pros:**
+- Remote access
+- Multiple concurrent clients
+- Firewall-friendly
+
+**Cons:**
+- Requires network setup
+- Additional latency
+
+## Environment Variables
+
+Configure MCP server behavior:
+
+```bash
+# Backend API URL
+BEever_ATLAS_URL=http://localhost:8000
+
+# API authentication (if required)
+BEever_ATLAS_API_KEY=your-api-key
+
+# Log level
+LOG_LEVEL=info
+
+# Cache configuration
+MCP_CACHE_TTL=300  # seconds
+```
+
+## MCP Protocol Details
+
+### JSON-RPC Messages
+
+MCP uses JSON-RPC 2.0 over the transport:
+
+```json
+// Request
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "ask",
+    "arguments": {
+      "channel_id": "C0123456789",
+      "question": "What's the deployment process?"
+    }
+  }
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "answer": "The deployment process...",
+    "citations": [...]
+  }
+}
+```
+
+### Tool Discovery
+
+Clients can discover available tools:
+
+```json
+// Request
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list"
+}
+
+// Response
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "ask",
+        "description": "Ask a question about your knowledge base",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "channel_id": {"type": "string"},
+            "question": {"type": "string"}
+          },
+          "required": ["channel_id", "question"]
+        }
+      }
+    ]
+  }
+}
+```
+
+## Advanced Usage
+
+### Custom Tools
+
+Extend Beever Atlas with custom MCP tools:
+
+```python
+# src/beever_atlas/api/mcp.py
+
+@mcp.tool()
+def custom_analytics(query: str, time_range: str) -> dict:
+    """Custom analytics query."""
+    return {
+        "metrics": [...],
+        "summary": "..."
+    }
+```
+
+### Resource Access
+
+Expose data as MCP resources:
+
+```python
+@mcp.resource("channels://{channel_id}")
+async def get_channel_resource(channel_id: str) -> str:
+    """Get channel metadata as a resource."""
+    channel = await get_channel(channel_id)
+    return json.dumps({
+        "name": channel.name,
+        "stats": channel.stats
+    })
+```
+
+### Prompt Templates
+
+Define reusable prompt templates:
+
+```python
+@mcp.prompt("analyze-decision")
+def analyze_decision_prompt(channel_id: str) -> str:
+    """Analyze a technical decision."""
+    return f"""
+    Review the decision-making process in {channel_id}.
+    Consider:
+    1. What problem was being solved?
+    2. What alternatives were considered?
+    3. What was the final decision?
+    """
+```
+
+## Troubleshooting
+
+### Connection issues
+
+- Verify Beever Atlas backend is running
+- Check `BEever_ATLAS_URL` is correct
+- Ensure firewall allows connection
+- Review client logs for errors
+
+### Tool not found
+
+- Restart MCP server after code changes
+- Clear client cache
+- Verify tool is registered in `mcp.py`
+
+### Authentication errors
+
+- Check API key configuration
+- Verify backend authentication settings
+- Review server logs for details
+
+## Next Steps
+
+- [ ] Configure MCP in your preferred client
+- [ ] Test with a simple query
+- [ ] Explore available tools
+- [ ] Integrate into your workflow
+
+For more on extending Beever Atlas, see the [Development Setup](../contributing/development-setup) guide.
