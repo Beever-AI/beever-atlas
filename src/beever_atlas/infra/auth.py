@@ -34,11 +34,18 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 def require_user(authorization: Optional[str] = Header(default=None)) -> str:
     """Validate Bearer token against configured API keys.
 
+    Accepts either a user-facing API key (from `BEEVER_API_KEYS`) or the
+    internal bridge shared secret (`BRIDGE_API_KEY`) used by the Discord/Slack
+    bot service. Endpoints with additional internal-only checks (e.g.
+    /api/internal/*) re-verify `BRIDGE_API_KEY` explicitly, so accepting it
+    here just unblocks the first-layer gate without weakening those routes.
+
     Returns a user identifier string on success, raises HTTP 401 otherwise.
     """
     settings = get_settings()
     keys = _parse_keys(settings.api_keys)
-    if not keys:
+    bridge_key = (settings.bridge_api_key or "").strip()
+    if not keys and not bridge_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API authentication not configured",
@@ -56,6 +63,9 @@ def require_user(authorization: Optional[str] = Header(default=None)) -> str:
     for key in keys:
         if hmac.compare_digest(token, key):
             return f"user:{key[:6]}"
+
+    if bridge_key and hmac.compare_digest(token, bridge_key):
+        return "service:bridge"
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
