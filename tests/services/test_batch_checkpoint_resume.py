@@ -63,6 +63,7 @@ def _make_mock_settings():
         language_detection_enabled=False,
         default_target_language="en",
         language_detection_confidence_threshold=0.8,
+        llm_outage_breaker_threshold=100,  # effectively disabled for checkpoint tests
     )
 
 
@@ -176,4 +177,114 @@ async def test_checkpoint_reloaded_on_httpx_error_retry():
         assert c.kwargs.get("sync_job_id") == "job-abc" or c.args[0] == "job-abc"
 
     # The pipeline eventually succeeded (no errors in result).
+    assert result.errors == [], f"Unexpected errors: {result.errors}"
+
+
+# ---------------------------------------------------------------------------
+# A4: Parametrized resume test — all 4 resumable exception types
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+import pytest
+from google.genai.errors import ServerError
+from pydantic import ValidationError as PydanticValidationError
+from pydantic import BaseModel
+
+
+def _make_server_error() -> ServerError:
+    err = ServerError.__new__(ServerError)
+    Exception.__init__(err, "503 UNAVAILABLE")
+    return err
+
+
+def _make_pydantic_validation_error() -> PydanticValidationError:
+    class _M(BaseModel):
+        x: int
+
+    try:
+        _M.model_validate({"x": "not-an-int-that-passes"})
+    except Exception:
+        pass
+    # Force a real ValidationError via __init__ path
+    try:
+        _M(x="bad")  # type: ignore[arg-type]
+    except PydanticValidationError as exc:
+        return exc
+    raise RuntimeError("could not create PydanticValidationError")
+
+
+def _make_json_decode_error() -> _json.JSONDecodeError:
+    try:
+        _json.loads("{bad json}")
+    except _json.JSONDecodeError as exc:
+        return exc
+    raise RuntimeError("could not create JSONDecodeError")
+
+
+_RESUMABLE_EXCEPTIONS = [
+    pytest.param(_make_http_status_error, id="httpx_500"),
+    pytest.param(_make_server_error, id="server_error"),
+    pytest.param(_make_pydantic_validation_error, id="pydantic_validation_error"),
+    pytest.param(_make_json_decode_error, id="json_decode_error"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_factory", _RESUMABLE_EXCEPTIONS)
+async def test_checkpoint_reloaded_on_resumable_exception(exc_factory):
+    """For each resumable exception type, load_pipeline_checkpoint is called on retry.
+
+    A4 acceptance: all 4 types (ServerError, httpx 500, ValidationError,
+    JSONDecodeError) trigger checkpoint-aware retry, not just httpx.HTTPStatusError.
+    """
+    from beever_atlas.services.batch_processor import BatchProcessor
+
+    stores = _make_mock_stores()
+    settings = _make_mock_settings()
+    session = _make_session()
+
+    attempt_count = 0
+
+    async def _fake_run_async(**kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        if attempt_count == 1:
+            raise exc_factory()
+        yield SimpleNamespace(author="persister", actions=None)
+
+    mock_runner = MagicMock()
+    mock_runner.run_async = _fake_run_async
+
+    mock_final_session = MagicMock()
+    mock_final_session.state = session.state
+
+    mock_session_service = AsyncMock()
+    mock_session_service.get_session = AsyncMock(return_value=mock_final_session)
+
+    messages = [{"text": "hello", "ts": "1000.0", "user": "U1"}]
+
+    with (
+        patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
+        patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
+        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch("beever_atlas.services.batch_processor.create_runner", return_value=mock_runner),
+        patch("beever_atlas.services.batch_processor.create_session", return_value=session),
+        patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
+        patch("beever_atlas.agents.runner.get_session_service", return_value=mock_session_service),
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
+        processor = BatchProcessor()
+        result = await processor.process_messages(
+            messages=messages,
+            channel_id="C123",
+            channel_name="test-channel",
+            sync_job_id="job-abc",
+        )
+
+    load_calls = stores.mongodb.load_pipeline_checkpoint.call_args_list
+    assert len(load_calls) >= 2, (
+        f"[{exc_factory.__name__}] Expected load_pipeline_checkpoint >=2 times on retry, "
+        f"got {len(load_calls)}. Exception type not triggering checkpoint resume."
+    )
     assert result.errors == [], f"Unexpected errors: {result.errors}"

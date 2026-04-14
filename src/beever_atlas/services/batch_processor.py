@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
+import json
 from google.genai import types
 from google.genai.errors import ServerError
+from pydantic import ValidationError as PydanticValidationError
 
 from beever_atlas.agents.ingestion import create_ingestion_pipeline
 from beever_atlas.models.sync_policy import IngestionConfig
@@ -26,8 +29,19 @@ from beever_atlas.llm import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
-_LLM_MAX_RETRIES = 3
-_LLM_RETRY_BACKOFF = [10, 30, 60]  # seconds between retries
+# ── Provider outage circuit breaker ──────────────────────────────────────────
+_consecutive_503_count: int = 0
+_consecutive_503_lock: asyncio.Lock = asyncio.Lock()
+
+
+class ProviderOutageError(Exception):
+    """Raised when consecutive cross-batch 5xx from Gemini exceeds the configured threshold."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+_LLM_MAX_RETRIES = 5
+_LLM_RETRY_BACKOFF = [30, 60, 120, 240, 480]  # seconds between retries
 
 # Map ADK agent names to human-readable stage descriptions with step numbers.
 _STAGE_LABELS: dict[str, str] = {
@@ -127,6 +141,22 @@ def _is_truncation_error(exc: Exception) -> bool:
     )
 
 
+def _is_resumable(exc: Exception) -> bool:
+    """Return True if ``exc`` should trigger checkpoint-aware retry.
+
+    These exception types warrant a full retry from the last checkpoint rather
+    than the truncation-reduce-halve path: provider 5xx (ServerError, HTTP 5xx),
+    pydantic ValidationError (malformed LLM JSON), and json.JSONDecodeError.
+    """
+    if isinstance(exc, ServerError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
+        return True
+    if isinstance(exc, (PydanticValidationError, json.JSONDecodeError)):
+        return True
+    return False
+
+
 @dataclass
 class BatchBreakdown:
     """Per-batch extraction breakdown with sample data."""
@@ -216,6 +246,7 @@ class BatchProcessor:
                 time_window_seconds=settings.batch_time_window_seconds,
                 max_output_tokens=_output_budget,
                 max_facts_per_message=_max_facts_for_batching,
+                max_messages=settings.batch_max_messages,
             )
         else:
             batches = _thread_aware_batches(messages, batch_size)
@@ -247,6 +278,26 @@ class BatchProcessor:
         ) -> tuple[BatchBreakdown, dict[str, float], bool]:
             """Run one batch. Returns (breakdown, stage_timings, entities_were_persisted)."""
             async with sem:
+                # ── Circuit breaker: fail fast if provider is down ────────────
+                global _consecutive_503_count
+                async with _consecutive_503_lock:
+                    _current_count = _consecutive_503_count
+                _threshold = settings.llm_outage_breaker_threshold
+                try:
+                    _breaker_tripped = _current_count >= _threshold
+                except TypeError:
+                    _breaker_tripped = False
+                if _breaker_tripped:
+                    logger.error(
+                        "BatchProcessor: provider outage breaker tripped count=%d threshold=%d",
+                        _current_count,
+                        _threshold,
+                    )
+                    raise ProviderOutageError(
+                        f"Provider outage: {_current_count} consecutive Gemini 5xx failures"
+                    )
+                # ─────────────────────────────────────────────────────────────
+
                 logger.info(
                     "BatchProcessor: start batch=%d/%d job_id=%s channel=%s messages=%d",
                     batch_index,
@@ -383,20 +434,21 @@ class BatchProcessor:
                         # may have partially mutated the previous one.
                         if attempt > 0:
                             # Sleep between retries OUTSIDE the timeout scope
-                            wait = _LLM_RETRY_BACKOFF[attempt - 1]
+                            base = _LLM_RETRY_BACKOFF[attempt - 1]
+                            jittered = base * (1 + random.uniform(-0.25, 0.25))
                             logger.warning(
                                 "BatchProcessor: retrying job_id=%s batch=%d/%d "
                                 "attempt=%d/%d after %ds sleep",
                                 sync_job_id, batch_index, max_batches,
-                                attempt + 1, _LLM_MAX_RETRIES + 1, wait,
+                                attempt + 1, _LLM_MAX_RETRIES + 1, base,
                             )
                             await stores.mongodb.update_sync_progress(
                                 job_id=sync_job_id,
                                 processed=0,
                                 current_batch=batch_index,
-                                current_stage=f"Step 0/6 — Retrying in {wait}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1})",
+                                current_stage=f"Step 0/6 — Retrying in {base}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1})",
                             )
-                            await asyncio.sleep(wait)
+                            await asyncio.sleep(jittered)
                             # Phase 1 Step 2 (ingestion-pipeline-hardening): unconditionally
                             # re-consult the checkpoint store before every retry, regardless of
                             # which exception class triggered the retry. Without this, an
@@ -747,16 +799,15 @@ class BatchProcessor:
                             )
                         except Exception:
                             pass
+                        # Reset breaker on any successful batch
+                        async with _consecutive_503_lock:
+                            _consecutive_503_count = 0
                         break  # success
-                    except (ServerError, httpx.HTTPStatusError) as exc:
-                        # Phase 1 Step 2: httpx.HTTPStatusError (e.g. embedder 500) is
-                        # retryable just like ServerError. Checkpoint resume (above) ensures
-                        # completed stages are not re-run on retry.
-                        is_http_5xx = (
-                            isinstance(exc, httpx.HTTPStatusError)
-                            and exc.response.status_code >= 500
-                        )
-                        if not isinstance(exc, ServerError) and not is_http_5xx:
+                    except (ServerError, httpx.HTTPStatusError, PydanticValidationError, json.JSONDecodeError) as exc:
+                        # A4: broaden checkpoint-aware retry to cover ValidationError and
+                        # JSONDecodeError in addition to provider 5xx. _is_resumable gates
+                        # which sub-types actually retry (e.g. httpx 4xx still re-raises).
+                        if not _is_resumable(exc):
                             raise
                         if attempt < _LLM_MAX_RETRIES:
                             logger.warning(
@@ -767,6 +818,9 @@ class BatchProcessor:
                             )
                             # Sleep and retry happen at the top of the next loop iteration
                         else:
+                            # Terminal failure after all retries — increment breaker counter once
+                            async with _consecutive_503_lock:
+                                _consecutive_503_count += 1
                             raise
                     except Exception as exc:
                         # Catch ValidationError (truncated LLM JSON) and similar parse failures.
@@ -937,11 +991,18 @@ class BatchProcessor:
             batch = batches[idx]
             batch_index = idx + 1
             if isinstance(raw, BaseException):
-                err_text = _summarize_exception(raw)  # type: ignore[arg-type]
-                logger.error(
-                    "BatchProcessor: unexpected gather failure batch=%d job_id=%s: %s",
-                    batch_index, sync_job_id, err_text,
-                )
+                if isinstance(raw, ProviderOutageError):
+                    err_text = f"Provider outage: {raw}"
+                    logger.error(
+                        "BatchProcessor: provider outage batch=%d job_id=%s: %s",
+                        batch_index, sync_job_id, err_text,
+                    )
+                else:
+                    err_text = _summarize_exception(raw)  # type: ignore[arg-type]
+                    logger.error(
+                        "BatchProcessor: unexpected gather failure batch=%d job_id=%s: %s",
+                        batch_index, sync_job_id, err_text,
+                    )
                 failed_breakdown = BatchBreakdown(batch_num=batch_index, error=err_text)
                 result.errors.append({"batch_num": batch_index, "error": err_text})
                 result.batch_breakdowns.append(failed_breakdown)
