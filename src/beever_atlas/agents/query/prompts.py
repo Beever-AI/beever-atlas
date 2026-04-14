@@ -159,7 +159,13 @@ Structure rules:
 - Prefer bullet lists over prose when listing 2+ items.
 - Use a markdown table when comparing 2+ entities across 2+ attributes.
 - Bold key entity names and technical terms on first mention.
-- Do not write prose blocks longer than ~150 words without a heading, list, or table."""
+- Do not write prose blocks longer than ~150 words without a heading, list, or table.
+- NEVER emit the same heading block or answer paragraph twice. If multiple tool calls return similar or empty results, produce ONE consolidated answer, not one block per tool.
+
+Citation rules (critical):
+- Inline citations use `[src:src_<10-hex-id>]` ONLY, where `src_<10-hex-id>` is an id returned inside a tool response's `sources` list (e.g. `src_ab12cd34ef`).
+- NEVER cite tool names or response handles. Tokens like `[src:src_get_recent_activity_response]`, `[src:src_search_channel_facts_response]`, `[src:src_get_topic_overview_response]` are INVALID — they are tool names, not sources. Omit them entirely.
+- If a tool returned NO sources, do not cite anything from it. If the whole answer has no real sources, state the lack of data plainly without trailing citation brackets."""
 
 OUTPUT_CONTRACT_STRICT = """\
 STRUCTURE (mandatory):
