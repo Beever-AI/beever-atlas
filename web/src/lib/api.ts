@@ -113,22 +113,33 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
+  get: <T>(path: string, options?: { headers?: Record<string, string> }) =>
+    request<T>(path, { headers: options?.headers }),
+  post: <T>(path: string, body?: unknown, options?: { headers?: Record<string, string> }) =>
     request<T>(path, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
+      headers: options?.headers,
     }),
-  put: <T>(path: string, body?: unknown) =>
+  put: <T>(path: string, body?: unknown, options?: { headers?: Record<string, string> }) =>
     request<T>(path, {
       method: "PUT",
       body: body ? JSON.stringify(body) : undefined,
+      headers: options?.headers,
     }),
-  delete: <T>(path: string) =>
-    request<T>(path, {
-      method: "DELETE",
-    }),
+  delete: <T>(path: string, options?: { headers?: Record<string, string> }) =>
+    request<T>(path, { method: "DELETE", headers: options?.headers }),
 };
+
+/**
+ * Returns headers needed to call /api/dev/* endpoints. Reads
+ * `VITE_BEEVER_ADMIN_TOKEN` from Vite env; if unset, returns an empty object
+ * and the request will 401.
+ */
+export function adminHeaders(): Record<string, string> {
+  const token = import.meta.env.VITE_BEEVER_ADMIN_TOKEN as string | undefined;
+  return token ? { "X-Admin-Token": token } : {};
+}
 
 export { ApiError };
 
