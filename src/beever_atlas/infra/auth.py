@@ -89,6 +89,34 @@ def require_user(
     )
 
 
+def require_user_optional(
+    authorization: Optional[str] = Header(default=None),
+    access_token: Optional[str] = Query(default=None),
+) -> Optional[str]:
+    """Like `require_user` but returns None instead of 401 on missing/invalid bearer.
+
+    Used by `/api/ask/shared/{token}` where auth is conditional on the share's
+    visibility tier. The endpoint handler inspects the return value and enforces
+    the appropriate tier requirement.
+    """
+    settings = get_settings()
+    keys = _parse_keys(settings.api_keys)
+    bridge_key = (settings.bridge_api_key or "").strip()
+
+    token = _extract_bearer(authorization)
+    if not token and access_token:
+        token = access_token.strip() or None
+    if not token:
+        return None
+
+    for key in keys:
+        if hmac.compare_digest(token, key):
+            return f"user:{key[:6]}"
+    if bridge_key and hmac.compare_digest(token, bridge_key):
+        return "service:bridge"
+    return None
+
+
 def require_admin(
     x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
 ) -> str:

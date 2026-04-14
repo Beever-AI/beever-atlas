@@ -270,6 +270,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "hypothesis" },
+    { name = "markdown-it-py" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -297,6 +298,7 @@ requires-dist = [
     { name = "jellyfish", specifier = ">=1.0.0" },
     { name = "langdetect", specifier = ">=1.0.9" },
     { name = "litellm", specifier = ">=1.75.5" },
+    { name = "markdown-it-py", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "motor", specifier = ">=3.6.0" },
     { name = "nebula3-python", marker = "extra == 'nebula'", specifier = ">=3.4.0" },
     { name = "neo4j", specifier = ">=5.26.0" },

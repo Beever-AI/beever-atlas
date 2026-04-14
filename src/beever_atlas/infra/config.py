@@ -95,8 +95,10 @@ class Settings(BaseSettings):
     gemini_rpm: int = Field(default=300)
     jina_rpm: int = Field(default=500)
 
-    # Bounded inter-batch concurrency (1–8)
-    ingest_batch_concurrency: int = Field(default=2, ge=1, le=8)
+    # Bounded inter-batch concurrency (1–8).
+    # Default 4: live telemetry showed p95 semaphore_wait ~518s at concurrency=2
+    # on 11-batch syncs — the semaphore was the dominant bottleneck, not Gemini quota.
+    ingest_batch_concurrency: int = Field(default=4, ge=1, le=8)
 
     # Intra-batch contradiction detection concurrency (1–16)
     contradiction_concurrency: int = Field(default=4, ge=1, le=16)

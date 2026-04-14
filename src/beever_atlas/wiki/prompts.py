@@ -2,9 +2,22 @@
 
 Design philosophy: STRUCTURE FIRST — diagrams, tables, bullet points, then supporting text.
 Domain-agnostic — works for tech, community, research, personal, and enterprise channels.
+
+Phase 4 (wiki_compiler_v2): the Key Facts table becomes a deterministic,
+compiler-rendered block. The v2 prompts emit the literal marker
+`<<KEY_FACTS_TABLE>>` on its own line; the compiler splices the rendered
+table after `_postprocess_content`. The legacy (pre-v2) prompts are kept
+intact below so `wiki_compiler_v2=OFF` behavior stays byte-identical.
 """
 
 from __future__ import annotations
+
+# Instruction fragment that replaces the Key Facts table instruction in v2.
+_KEY_FACTS_MARKER_INSTRUCTION = (
+    "3. **Key Facts** — leave the single literal token `<<KEY_FACTS_TABLE>>` "
+    "on its own line. The compiler will replace it with a deterministic "
+    "table. Do NOT write the table yourself."
+)
 
 OVERVIEW_PROMPT = """You are a knowledge wiki compiler. Create an **Overview** page for this channel.
 
@@ -137,6 +150,60 @@ Knowledge graph relationships in this topic: {key_relationships_json}
 All facts (for citation sourcing): {member_facts_json}
 Media: {media_json}
 Related topics (for "See Also" section): {related_topics_json}
+"""
+
+# ---------------------------------------------------------------------------
+# Phase 4 v2 variants (used when wiki_compiler_v2=ON). Byte-identical to the
+# legacy prompts above EXCEPT the Key Facts section instruction (3.) is
+# replaced with the `<<KEY_FACTS_TABLE>>` marker directive and the
+# "maximum 8 rows in Key Facts" rule is removed.
+# ---------------------------------------------------------------------------
+
+# Phase 5: when delimited response mode is active, the prompt suffix uses
+# ###CONTENT### as a structural marker. Forbid the LLM from echoing it inside
+# the body so the parser's rsplit semantics still recover the intended content.
+_NO_MARKER_ECHO_INSTRUCTION = (
+    "- Do NOT write the literal token `###CONTENT###`, `###SUMMARY###`, or `###END###` "
+    "inside the body or summary text — those tokens are reserved structural markers."
+)
+
+TOPIC_PROMPT_V2 = TOPIC_PROMPT.replace(
+    "3. **Key Facts** — GFM table with columns: Fact, Source, Type, Importance — showing the most important facts with [N] citations",
+    _KEY_FACTS_MARKER_INSTRUCTION,
+).replace(
+    "- Keep the page focused: maximum 8 rows in Key Facts; avoid duplicate facts across Key Facts and Details.",
+    "- Avoid duplicate facts across Key Facts and Details.\n" + _NO_MARKER_ECHO_INSTRUCTION,
+)
+
+# Thin-topic prompt: TL;DR + 3-sentence summary only. No diagram, no
+# Open Questions, no See Also. Still includes the marker so the deterministic
+# table (even if empty) substitutes cleanly.
+THIN_TOPIC_PROMPT = """You are a knowledge wiki compiler. Create a **thin Topic** page — the
+cluster has too few facts to justify the full topic template.
+
+Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
+
+## Content structure (strict — only these three blocks, in order)
+1. **TL;DR** — A single bold sentence summarizing the key insight. THIS MUST BE THE VERY FIRST LINE.
+2. **Key Facts** — leave the single literal token `<<KEY_FACTS_TABLE>>` on its own line. The compiler will replace it with a deterministic table. Do NOT write the table yourself.
+3. **Summary** — exactly 3 sentences giving context and significance.
+
+## Rules
+- Do NOT start with a # heading (title rendered separately).
+- Do NOT include a mermaid diagram, chart, Open Questions section, See Also section, Contributors list, Decisions table, or Media section.
+- Do NOT produce placeholder text like "No decisions recorded" — just omit.
+- Add [N] citation markers on every factual claim. Maximum 3 citations per sentence.
+- Do NOT use @, #, or $ prefixes — write names normally.
+- Use ONLY inline [N] markers for citations. Do NOT emit `## Sources` or any reference list.
+- Do NOT write the literal token `###CONTENT###`, `###SUMMARY###`, or `###END###` inside the body or summary text — those tokens are reserved structural markers.
+
+## Topic data
+Title: {title}
+Summary: {summary}
+Fact count: {fact_count}
+
+Key facts: {key_facts_json}
+All facts (for citation sourcing): {member_facts_json}
 """
 
 PEOPLE_PROMPT = """You are a knowledge wiki compiler. Create a **People & Experts** page.
@@ -436,3 +503,9 @@ Fact count: {fact_count}
 {member_facts_json}
 Media: {media_json}
 """
+
+# Phase 4 v2 variant of SUBTOPIC_PROMPT.
+SUBTOPIC_PROMPT_V2 = SUBTOPIC_PROMPT.replace(
+    "3. **Key Facts** — GFM table with columns: Fact, Source, Type, Importance — the most important facts with [N] citations",
+    _KEY_FACTS_MARKER_INSTRUCTION,
+) + "\n\n" + _NO_MARKER_ECHO_INSTRUCTION + "\n"

@@ -1,0 +1,11 @@
+{
+  "commit_sha": "a46e66320a80b336ecc9c5def1907a7dde986d58",
+  "recorded_at": "2026-04-14T15:50:21.635530+00:00",
+  "n_runs": 5,
+  "page_count": 7,
+  "duration_ms_p50": 1,
+  "duration_ms_p95": 3,
+  "parse_failures_total": 0,
+  "empty_content_total": 0,
+  "dash_wall_pages_total": 15
+}

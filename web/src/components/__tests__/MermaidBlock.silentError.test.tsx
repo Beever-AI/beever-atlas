@@ -39,7 +39,7 @@ describe("MermaidBlock silent-error regression", () => {
     render(<MermaidBlock code={"graph TD; A -- invalid ---"} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
 
     // The <pre> fallback should contain the original source text.

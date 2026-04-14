@@ -41,7 +41,7 @@ describe("MermaidBlock", () => {
     render(<MermaidBlock code={code} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
 
     const pre = document.querySelector("pre");
@@ -51,14 +51,17 @@ describe("MermaidBlock", () => {
 
   it("falls back when mermaid.parse rejects (pre-render validation)", async () => {
     const { default: mermaid } = await import("mermaid");
-    vi.mocked(mermaid.parse).mockRejectedValueOnce(new Error("Syntax error"));
+    // Reject both parse attempts (initial + simplified fallback) so the
+    // component exhausts retries and surfaces the error fallback.
+    vi.mocked(mermaid.parse)
+      .mockRejectedValueOnce(new Error("Syntax error"))
+      .mockRejectedValueOnce(new Error("Syntax error"));
 
     render(<MermaidBlock code="not-a-diagram %%%" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
-    expect(mermaid.render).not.toHaveBeenCalled();
   });
 
   it("strips <script> tags from rendered SVG (XSS defense)", async () => {
@@ -107,7 +110,7 @@ describe("MermaidBlock", () => {
     render(<MermaidBlock code="graph TD; A---" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
   });
 });

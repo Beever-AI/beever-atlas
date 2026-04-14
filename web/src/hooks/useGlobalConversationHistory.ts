@@ -125,7 +125,13 @@ export function useGlobalConversationHistory() {
   }, []);
 
   const loadSession = useCallback(
-    async (sessionId: string): Promise<{ messages: SessionMessage[]; channel_ids: string[] }> => {
+    async (
+      sessionId: string,
+    ): Promise<{
+      messages: SessionMessage[];
+      channel_ids: string[];
+      status: "ok" | "forbidden" | "not_found" | "error";
+    }> => {
       try {
         const res = await authFetch(`${API_BASE}/api/ask/sessions/${sessionId}`);
         if (res.ok) {
@@ -133,12 +139,15 @@ export function useGlobalConversationHistory() {
           return {
             messages: data.messages ?? [],
             channel_ids: data.channel_ids ?? [],
+            status: "ok",
           };
         }
+        if (res.status === 403) return { messages: [], channel_ids: [], status: "forbidden" };
+        if (res.status === 404) return { messages: [], channel_ids: [], status: "not_found" };
       } catch (err) {
         console.error("Failed to load session", err);
       }
-      return { messages: [], channel_ids: [] };
+      return { messages: [], channel_ids: [], status: "error" };
     },
     [],
   );
