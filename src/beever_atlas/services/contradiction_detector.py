@@ -6,6 +6,7 @@ contradictions and trigger fact supersession via ADK agent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -78,63 +79,63 @@ async def check_and_supersede(
 
     settings = get_settings()
     stores = get_stores()
+    sem = asyncio.Semaphore(settings.contradiction_concurrency)
 
-    for new_fact in new_facts:
+    async def _check_one(new_fact: AtomicFact) -> None:
         if not new_fact.entity_tags and not new_fact.topic_tags:
-            continue
+            return
+        async with sem:
+            try:
+                existing: list[AtomicFact] = []
+                if new_fact.entity_tags:
+                    result = await stores.weaviate.list_facts(
+                        channel_id=channel_id,
+                        filters=MemoryFilters(entity=new_fact.entity_tags[0]),
+                        limit=10,
+                    )
+                    existing.extend(result.memories)
 
-        # Query existing facts with overlapping tags
-        try:
-            existing: list[AtomicFact] = []
-            if new_fact.entity_tags:
-                result = await stores.weaviate.list_facts(
-                    channel_id=channel_id,
-                    filters=MemoryFilters(entity=new_fact.entity_tags[0]),
-                    limit=10,
+                # Deduplicate and exclude self
+                seen_ids: set[str] = set()
+                candidates: list[AtomicFact] = []
+                for ef in existing:
+                    if ef.id != new_fact.id and ef.id not in seen_ids and ef.invalid_at is None:
+                        seen_ids.add(ef.id)
+                        candidates.append(ef)
+
+                if not candidates:
+                    return
+
+                contradictions = await detect_contradictions(new_fact, candidates[:10])
+
+                for contradiction in contradictions:
+                    fact_id = contradiction.get("existing_fact_id", "")
+                    confidence = float(contradiction.get("confidence", 0))
+
+                    if confidence >= settings.contradiction_confidence_threshold:
+                        await stores.weaviate.supersede_fact(
+                            old_fact_id=fact_id,
+                            new_fact_id=new_fact.id,
+                        )
+                        logger.info(
+                            "ContradictionDetector: superseded fact %s with %s (confidence=%.2f)",
+                            fact_id,
+                            new_fact.id,
+                            confidence,
+                        )
+                    elif confidence >= settings.contradiction_flag_threshold:
+                        await stores.weaviate.flag_potential_contradiction(new_fact.id)
+                        logger.info(
+                            "ContradictionDetector: flagged potential contradiction on %s (confidence=%.2f)",
+                            new_fact.id,
+                            confidence,
+                        )
+
+            except Exception:
+                logger.warning(
+                    "ContradictionDetector: check failed for fact %s",
+                    new_fact.id,
+                    exc_info=True,
                 )
-                existing.extend(result.memories)
 
-            # Deduplicate and exclude self
-            seen_ids: set[str] = set()
-            candidates: list[AtomicFact] = []
-            for ef in existing:
-                if ef.id != new_fact.id and ef.id not in seen_ids and ef.invalid_at is None:
-                    seen_ids.add(ef.id)
-                    candidates.append(ef)
-
-            if not candidates:
-                continue
-
-            contradictions = await detect_contradictions(new_fact, candidates[:10])
-
-            for contradiction in contradictions:
-                fact_id = contradiction.get("existing_fact_id", "")
-                confidence = float(contradiction.get("confidence", 0))
-
-                if confidence >= settings.contradiction_confidence_threshold:
-                    # Auto-supersede
-                    await stores.weaviate.supersede_fact(
-                        old_fact_id=fact_id,
-                        new_fact_id=new_fact.id,
-                    )
-                    logger.info(
-                        "ContradictionDetector: superseded fact %s with %s (confidence=%.2f)",
-                        fact_id,
-                        new_fact.id,
-                        confidence,
-                    )
-                elif confidence >= settings.contradiction_flag_threshold:
-                    # Flag as potential contradiction
-                    await stores.weaviate.flag_potential_contradiction(new_fact.id)
-                    logger.info(
-                        "ContradictionDetector: flagged potential contradiction on %s (confidence=%.2f)",
-                        new_fact.id,
-                        confidence,
-                    )
-
-        except Exception:
-            logger.warning(
-                "ContradictionDetector: check failed for fact %s",
-                new_fact.id,
-                exc_info=True,
-            )
+    await asyncio.gather(*(_check_one(f) for f in new_facts), return_exceptions=True)
