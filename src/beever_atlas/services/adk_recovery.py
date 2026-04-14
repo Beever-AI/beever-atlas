@@ -119,6 +119,10 @@ def wrap_with_recovery(
         _mark_failed(callback_context, output_key, raw, model)
 
     agent.after_agent_callback = _recovery_callback
+    # Strip output_schema so ADK does not invoke model_validate_json before
+    # the callback runs — that internal validation is the EOF cliff we are fixing.
+    # The callback above is now the sole validation path.
+    agent.output_schema = None
     return agent
 
 
