@@ -239,14 +239,7 @@ export function AskPage() {
 
   return (
     <div className="relative h-full">
-      {sessionSwitchLoading && (
-        <div
-          className="absolute inset-0 z-10 flex items-center justify-center bg-background text-muted-foreground/60 text-sm"
-          aria-busy="true"
-        >
-          Loading conversation…
-        </div>
-      )}
+      {sessionSwitchLoading && <ConversationSkeleton />}
       <AskCore
       // Remount when a fresh `?q=` or `?new=1` arrives so AskCorePicker's
       // internal `initialQuerySent` / `sessionIdRef` reset and the fresh
@@ -286,6 +279,68 @@ export function AskPage() {
         }
       }}
     />
+    </div>
+  );
+}
+
+function ConversationSkeleton() {
+  // Shimmer palette matches the chat surface so the skeleton reads as "the
+  // same conversation is loading" rather than a different empty page.
+  const bubble =
+    "rounded-2xl bg-muted/60 motion-safe:animate-pulse";
+  const line = "h-3 rounded bg-muted/70 motion-safe:animate-pulse";
+  return (
+    <div
+      className="absolute inset-0 z-10 bg-background flex flex-col"
+      aria-busy="true"
+      aria-label="Loading conversation"
+      role="status"
+    >
+      <div className="flex-1 overflow-hidden">
+        <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 py-6 space-y-6">
+          {/* User bubble (right) */}
+          <div className="flex justify-end">
+            <div className={`${bubble} px-4 py-3 w-[55%] max-w-[420px]`}>
+              <div className={`${line} w-[80%] mb-2`} />
+              <div className={`${line} w-[45%]`} />
+            </div>
+          </div>
+
+          {/* Assistant bubble (left, wider) */}
+          <div className="flex justify-start">
+            <div className={`${bubble} px-4 py-3 w-[80%] max-w-[640px]`}>
+              <div className={`${line} w-[95%] mb-2`} />
+              <div className={`${line} w-[88%] mb-2`} />
+              <div className={`${line} w-[72%] mb-2`} />
+              <div className={`${line} w-[60%]`} />
+            </div>
+          </div>
+
+          {/* User bubble (right) */}
+          <div className="flex justify-end">
+            <div className={`${bubble} px-4 py-3 w-[40%] max-w-[320px]`}>
+              <div className={`${line} w-[70%]`} />
+            </div>
+          </div>
+
+          {/* Assistant bubble (left) */}
+          <div className="flex justify-start">
+            <div className={`${bubble} px-4 py-3 w-[70%] max-w-[560px]`}>
+              <div className={`${line} w-[90%] mb-2`} />
+              <div className={`${line} w-[65%]`} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Composer placeholder at the bottom matches AskCore's input bar. */}
+      <div className="border-t border-border/60 px-4 sm:px-6 py-4">
+        <div className="mx-auto w-full max-w-3xl">
+          <div className="h-11 rounded-full bg-muted/50 motion-safe:animate-pulse" />
+        </div>
+      </div>
+
+      <span className="sr-only">Loading conversation…</span>
     </div>
   );
 }
