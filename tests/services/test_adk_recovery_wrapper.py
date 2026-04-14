@@ -151,3 +151,24 @@ def test_already_valid_dict_no_failed_recoverable() -> None:
     agent.after_agent_callback(ctx)
 
     assert "failed_recoverable" not in ctx.state
+
+
+def test_output_schema_stripped_after_wrap() -> None:
+    """wrap_with_recovery must set output_schema=None so ADK does not validate before callback."""
+    from google.adk.agents import LlmAgent
+
+    agent = LlmAgent(
+        name="test_strip",
+        model="gemini-2.0-flash",
+        instruction="test",
+        output_key="result",
+        output_schema=_SimpleResult,
+    )
+    assert agent.output_schema is _SimpleResult, "precondition: output_schema was set"
+
+    wrap_with_recovery(agent, _recovery_fn, _SimpleResult)
+
+    assert agent.output_schema is None, (
+        "wrap_with_recovery must strip output_schema to prevent ADK's internal "
+        "model_validate_json from raising before the recovery callback runs"
+    )
