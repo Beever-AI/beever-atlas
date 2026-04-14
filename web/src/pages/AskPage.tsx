@@ -184,7 +184,15 @@ export function AskPage() {
   const sessionSwitchLoading =
     !!paramSessionId &&
     paramSessionId !== mintedSessionId &&
-    loadStatus === "idle";
+    // Two overlapping windows to hide:
+    //   1. URL has jumped ahead of the context (activeSessionId is still the
+    //      previous session) — this is the render right after the click, when
+    //      loadStatus is still the stale "ok" from the previous conversation.
+    //   2. Context is in sync but loadSession hasn't resolved yet — loadStatus
+    //      is "idle" (just cleared) and messages are about to stream in.
+    // loadStatus terminals ("ok", "forbidden", "not_found", "error") end the
+    // overlay.
+    (activeSessionId !== paramSessionId || loadStatus === "idle");
 
   if (channels.length === 0) {
     return <NoChannelsState />;
