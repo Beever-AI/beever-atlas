@@ -43,6 +43,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
     "hypothesis>=6.100.0",
+    "markdown-it-py>=3.0.0",
 ]
 test = [
     "tiktoken>=0.7",

@@ -21,7 +21,7 @@ from beever_atlas.infra.auth import require_user
 
 from beever_atlas.adapters import close_adapter
 from beever_atlas.infra.rate_limit import limiter
-from beever_atlas.api.ask import router as ask_router
+from beever_atlas.api.ask import router as ask_router, public_router as ask_public_router
 from beever_atlas.api.channels import router as channels_router
 from beever_atlas.api.connections import router as connections_router
 from beever_atlas.api.imports import router as imports_router
@@ -183,6 +183,9 @@ app.add_middleware(
 # All routers require Bearer auth except /api/health (declared below) and MCP mount.
 _auth = [Depends(require_user)]
 app.include_router(ask_router, dependencies=_auth)
+# Public shared-conversation GET — auth handled inside the endpoint based on
+# the share's visibility tier (owner/auth/public). Must NOT inherit `_auth`.
+app.include_router(ask_public_router)
 app.include_router(channels_router, dependencies=_auth)
 app.include_router(connections_router, dependencies=_auth)
 app.include_router(imports_router, dependencies=_auth)

@@ -6,6 +6,9 @@ import asyncio
 import functools
 import inspect
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -78,7 +81,22 @@ class Neo4jStore:
     flexible relationship types."""
 
     def __init__(self, uri: str, user: str, password: str) -> None:
-        self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        # Filter informational Neo4j notifications (e.g. SUPERSEDES relationship
+        # type missing on OPTIONAL MATCH — pre-existing harmless noise). The
+        # kwargs below landed in neo4j-driver 5.7+; fall back to a plain driver
+        # if they are unsupported by the installed driver version.
+        try:
+            from neo4j import NotificationDisabledCategory, NotificationMinimumSeverity
+
+            self._driver = AsyncGraphDatabase.driver(
+                uri,
+                auth=(user, password),
+                notifications_min_severity=NotificationMinimumSeverity.WARNING,
+                notifications_disabled_categories=[NotificationDisabledCategory.UNRECOGNIZED],
+            )
+        except (ImportError, TypeError):  # pragma: no cover - defensive
+            # TODO: neo4j-driver < 5.7 lacks notification filtering kwargs.
+            self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -279,7 +297,11 @@ class Neo4jStore:
     async def upsert_relationship(self, rel: GraphRelationship) -> str:
         """MERGE a relationship between two entities using apoc.merge.relationship.
 
-        Returns the relationship element ID.
+        Returns the relationship element ID, or empty string when either
+        endpoint entity does not exist in the graph (the MATCH yields no
+        row, apoc.merge is skipped, and result.single() is None). Can
+        happen under concurrent batches or cross-batch validator dedup —
+        we log and skip rather than crash the whole batch.
         """
         now_iso = datetime.now(tz=UTC).isoformat()
         async with self._driver.session() as session:
@@ -317,11 +339,37 @@ class Neo4jStore:
                 now=now_iso,
             )
             record = await result.single()
-            return record["eid"]  # type: ignore[index]
+            if record is None:
+                logger.warning(
+                    "Neo4jStore: relationship skipped — entity not found (source=%s target=%s type=%s)",
+                    rel.source, rel.target, rel.type,
+                )
+                return ""
+            return record["eid"]
 
     async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
-        """Upsert multiple relationships in parallel. Returns element IDs."""
-        return list(await asyncio.gather(*[self.upsert_relationship(r) for r in rels]))
+        """Upsert multiple relationships in parallel.
+
+        Uses return_exceptions=True so one failing relationship does not
+        poison the whole batch — the failure is logged, its slot in the
+        returned list is an empty string, and sibling relationships still
+        persist.
+        """
+        results = await asyncio.gather(
+            *[self.upsert_relationship(r) for r in rels],
+            return_exceptions=True,
+        )
+        ids: list[str] = []
+        for rel, res in zip(rels, results):
+            if isinstance(res, BaseException):
+                logger.warning(
+                    "Neo4jStore: relationship upsert failed (source=%s target=%s type=%s): %s",
+                    rel.source, rel.target, rel.type, res,
+                )
+                ids.append("")
+            else:
+                ids.append(res)
+        return ids
 
     # ------------------------------------------------------------------
     # Write — episodic links

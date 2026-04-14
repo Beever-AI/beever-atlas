@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _coerce_str_list(value):
+    """Coerce LLM-emitted string into list[str] when the model expects a list.
+
+    Gemini/other LLMs occasionally emit comma- or newline-separated text
+    for a list[str] field despite schema instructions. Split and strip
+    instead of hard-failing Pydantic validation — losing the field is worse
+    than normalising it.
+    """
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.replace("\n", ",").split(",")]
+        return [p for p in parts if p]
+    return value
 
 
 class SummaryResult(BaseModel):
@@ -27,6 +41,8 @@ class GlossaryTerm(BaseModel):
     definition: str = ""
     first_mentioned_by: str = ""
     related_topics: list[str] = Field(default_factory=list)
+
+    _coerce_related_topics = field_validator("related_topics", mode="before")(_coerce_str_list)
 
 
 # -- Structured output schemas --
@@ -55,6 +71,8 @@ class TopicSummaryResult(BaseModel):
 
     faq_candidates: list[FaqCandidate] = Field(default_factory=list)
     """0-3 Q&A pairs from cluster content."""
+
+    _coerce_topic_tags = field_validator("topic_tags", mode="before")(_coerce_str_list)
 
 
 class ChannelSummaryResult(BaseModel):

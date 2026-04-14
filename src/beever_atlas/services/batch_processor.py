@@ -507,6 +507,22 @@ class BatchProcessor:
                             )
                         batch_stage_timings = {}
                         activity_log: list[dict[str, Any]] = []
+
+                        async def _push_activity(entry: dict[str, Any]) -> None:
+                            """Append locally and atomically push to MongoDB so the UI feed updates live."""
+                            activity_log.append(entry)
+                            try:
+                                await stores.mongodb.push_activity_log_entry(
+                                    job_id=sync_job_id,
+                                    batch_idx=batch_index,
+                                    entry=entry,
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "push_activity_log_entry failed job_id=%s batch=%d: %s",
+                                    sync_job_id, batch_index, exc,
+                                )
+
                         _logged_outputs: set[str] = set()  # Track which state keys we already logged
                         _last_stage = ""
                         _stage_start = time.monotonic()
@@ -549,7 +565,7 @@ class BatchProcessor:
                                     _stage_model = None
                                 else:
                                     _stage_model = _provider.get_model_string(author)
-                                activity_log.append({
+                                await _push_activity({
                                     "agent": author,
                                     "stage": label,
                                     "type": "stage_start",
@@ -688,7 +704,7 @@ class BatchProcessor:
                                             if link_count:
                                                 summary_parts.append(f"{link_count} links")
                                             elapsed = round(time.monotonic() - _stage_start, 1)
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "preprocessor",
                                                 "message": " · ".join(summary_parts),
                                                 "metrics": {
@@ -718,7 +734,7 @@ class BatchProcessor:
                                                 })
                                             elapsed = round(time.monotonic() - _stage_start, 1)
                                             avg_quality = sum(f.get('quality_score', 0) for f in facts_list) / len(facts_list) if facts_list else 0
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "fact_extractor",
                                                 "message": f"Extracted {len(facts_list)} facts (avg quality {avg_quality:.2f})",
                                                 "model": get_llm_provider().get_model_string("fact_extractor"),
@@ -746,7 +762,7 @@ class BatchProcessor:
                                                 for r in rels[:5]
                                             ]
                                             elapsed = round(time.monotonic() - _stage_start, 1)
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "entity_extractor",
                                                 "message": f"Found {len(entities)} entities, {len(rels)} relationships",
                                                 "model": get_llm_provider().get_model_string("entity_extractor"),
@@ -765,7 +781,7 @@ class BatchProcessor:
                                         if count > 0:
                                             _logged_outputs.add("embedded_facts")
                                             elapsed = round(time.monotonic() - _stage_start, 1)
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "embedder",
                                                 "message": f"Embedded {count} facts",
                                                 "model": get_llm_provider().embedding_model,
@@ -785,7 +801,7 @@ class BatchProcessor:
                                                 for mg in merges[:5]
                                             ]
                                             elapsed = round(time.monotonic() - _stage_start, 1)
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "cross_batch_validator_agent",
                                                 "message": f"Validated {len(entities)} entities" + (f", {len(merges)} merges" if merges else ""),
                                                 "model": get_llm_provider().get_model_string("cross_batch_validator_agent"),
@@ -803,7 +819,7 @@ class BatchProcessor:
                                         if wv_count > 0 or neo_count > 0:
                                             _logged_outputs.add("persist_result")
                                             elapsed = round(time.monotonic() - _stage_start, 1)
-                                            activity_log.append({
+                                            await _push_activity({
                                                 "type": "stage_output", "agent": "persister",
                                                 "message": f"Saved {wv_count} facts → Weaviate, {neo_count} entities + {rel_count} rels → Neo4j",
                                                 "metrics": {"weaviate_facts": wv_count, "neo4j_entities": neo_count, "neo4j_rels": rel_count},
