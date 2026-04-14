@@ -168,6 +168,33 @@ export function AskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextChannelId]);
 
+  // Session-switch loading state. When the URL carries a :sessionId we did not
+  // just mint in this tab and loadStatus hasn't settled yet, overlay a neutral
+  // skeleton on top of AskCore so the user doesn't see a brief "new chat"
+  // flash before the conversation's messages paint. AskCore still mounts
+  // underneath so its picker fires loadSession and advances loadStatus.
+  // Hooks must run before any conditional early return below.
+  const rawSessionSwitchLoading =
+    !!paramSessionId &&
+    paramSessionId !== mintedSessionId &&
+    (activeSessionId !== paramSessionId || loadStatus === "idle");
+  // Hold the overlay visible for a short tail after the conditions above
+  // clear. loadStatus flips to "ok" inside the context's loadSession (before
+  // AskCore's .then callback commits the fetched messages to its local
+  // state) — without the tail, the overlay vanishes one render before the
+  // messages paint and the user sees the empty-composer flash.
+  const [tailActive, setTailActive] = useState(false);
+  useEffect(() => {
+    if (rawSessionSwitchLoading) {
+      setTailActive(false);
+      return;
+    }
+    setTailActive(true);
+    const t = setTimeout(() => setTailActive(false), 120);
+    return () => clearTimeout(t);
+  }, [rawSessionSwitchLoading]);
+  const sessionSwitchLoading = rawSessionSwitchLoading || tailActive;
+
   if (loading || (!paramSessionId && bareResolved === "pending")) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground/60 text-sm">
@@ -175,24 +202,6 @@ export function AskPage() {
       </div>
     );
   }
-
-  // Session-switch loading state. When the URL carries a :sessionId we did not
-  // just mint in this tab and loadStatus hasn't settled yet, overlay a neutral
-  // skeleton on top of AskCore so the user doesn't see a brief "new chat"
-  // flash before the conversation's messages paint. AskCore still mounts
-  // underneath so its picker fires loadSession and advances loadStatus.
-  const sessionSwitchLoading =
-    !!paramSessionId &&
-    paramSessionId !== mintedSessionId &&
-    // Two overlapping windows to hide:
-    //   1. URL has jumped ahead of the context (activeSessionId is still the
-    //      previous session) — this is the render right after the click, when
-    //      loadStatus is still the stale "ok" from the previous conversation.
-    //   2. Context is in sync but loadSession hasn't resolved yet — loadStatus
-    //      is "idle" (just cleared) and messages are about to stream in.
-    // loadStatus terminals ("ok", "forbidden", "not_found", "error") end the
-    // overlay.
-    (activeSessionId !== paramSessionId || loadStatus === "idle");
 
   if (channels.length === 0) {
     return <NoChannelsState />;
