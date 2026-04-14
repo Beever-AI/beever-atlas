@@ -54,7 +54,7 @@ def create_cross_batch_validator(model=None) -> LlmAgent:
         output_key="validated_entities",
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            max_output_tokens=65536,
+            max_output_tokens=63000,
         ),
         before_agent_callback=_skip_if_no_work,
     )

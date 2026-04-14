@@ -170,7 +170,9 @@ class Settings(BaseSettings):
     # ceiling (entity=65536, fact=131072). Default ~70% of entity ceiling
     # leaves headroom for schema overhead and estimator drift.
     # Set to 0 to disable output-aware batching (input-only, legacy behaviour).
-    batch_max_output_tokens: int = Field(default=45000, alias="BATCH_MAX_OUTPUT_TOKENS")
+    batch_max_output_tokens: int = Field(default=24000, alias="BATCH_MAX_OUTPUT_TOKENS")
+    batch_max_messages: int = Field(default=30, ge=5, le=60, description="Hard cap on messages per batch. Derived from observed bench data — successful batches had ≤65 msgs; failure cluster started at 89. Prevents output truncation at the source.")
+    llm_outage_breaker_threshold: int = Field(default=3, ge=1, le=10, description="After this many consecutive cross-batch Gemini 5xx, fail fast instead of burning per-batch retry budget.")
     fact_max_retries: int = Field(default=3)
     stale_job_threshold_hours: float = Field(default=1.0)
 
