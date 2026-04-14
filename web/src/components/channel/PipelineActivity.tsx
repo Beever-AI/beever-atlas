@@ -180,6 +180,11 @@ export function ActivityLog({ details }: { details?: { activity_log?: ActivityEn
                       <span className="text-[10px] uppercase tracking-wider font-semibold text-foreground/70">
                         {entry.agent.replace(/_/g, " ")}
                       </span>
+                      {entry.batch_idx != null && (
+                        <span className="text-[9px] px-1 py-px rounded bg-muted text-muted-foreground border border-border/50 font-mono">
+                          Batch {entry.batch_idx}
+                        </span>
+                      )}
                       {entry.model && (
                         <span className="text-[9px] px-1.2 py-px rounded bg-primary/5 text-primary/60 border border-primary/10 font-mono">
                           {entry.model}
