@@ -1,0 +1,246 @@
+---
+title: MCP Tools
+description: Model Context Protocol server tools reference
+---
+
+# MCP Tools Reference
+
+## Overview
+
+Beever Atlas exposes a Model Context Protocol (MCP) server at `/mcp` that provides tools for searching channel knowledge, retrieving wiki pages, and finding domain experts.
+
+## MCP Tools
+
+### search_channel_knowledge
+
+Search the channel knowledge base using BM25 + vector hybrid retrieval.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `channel_id` | string | Yes | The channel to search |
+| `query` | string | Yes | Natural language search query |
+| `include_graph` | boolean | No | If True, traverses knowledge graph for entity relationships (slower but richer) |
+
+**Returns:**
+
+```typescript
+{
+  facts: Array<{
+    id: string
+    memory_text: string
+    author_name: string
+    message_ts: string
+    quality_score: number
+    topic_tags: string[]
+    entity_tags: string[]
+    importance: "low" | "medium" | "high"
+  }>
+  relationships?: Array<{
+    source: string
+    type: string
+    target: string
+    confidence: number
+    context: string
+  }>
+}
+```
+
+**Example:**
+
+```typescript
+const result = await mcp.call("search_channel_knowledge", {
+  channel_id: "C12345",
+  query: "authentication JWT tokens",
+  include_graph: true
+});
+
+console.log(`Found ${result.facts.length} facts`);
+result.facts.forEach(fact => {
+  console.log(`- ${fact.memory_text} (by ${fact.author_name})`);
+});
+```
+
+---
+
+### get_wiki_page
+
+Retrieve a compiled wiki page from the MongoDB wiki cache.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `channel_id` | string | Yes | The channel whose wiki to retrieve |
+| `page_type` | string | No | Page type: `overview`, `faq`, `decisions`, `people`, `glossary`, `activity`, `topics` |
+
+**Returns:**
+
+```typescript
+{
+  content: string           // Markdown content
+  generated_at: string      // ISO timestamp or null
+}
+```
+
+**Example:**
+
+```typescript
+const page = await mcp.call("get_wiki_page", {
+  channel_id: "C12345",
+  page_type: "decisions"
+});
+
+console.log(page.content);
+```
+
+**Page Types:**
+
+- `overview` - Channel overview and summary
+- `faq` - Frequently asked questions
+- `decisions` - Key decisions and their status
+- `people` - Team members and their roles
+- `glossary` - Domain-specific terminology
+- `activity` - Recent activity and updates
+- `topics` - Topic clusters overview
+
+---
+
+### find_experts
+
+Find team members with the most expertise on a given topic.
+
+Uses Neo4j Person node rankings based on fact count and decision involvement.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel scope for expertise search |
+| `topic` | string | Yes | Topic or keyword to rank experts against |
+
+**Returns:**
+
+```typescript
+{
+  experts: Array<{
+    name: string
+    score: number          // Expertise score
+    evidence: string[]     // Supporting facts/messages
+  }>
+}
+```
+
+**Example:**
+
+```typescript
+const experts = await mcp.call("find_experts", {
+  channel_id: "C12345",
+  topic: "authentication"
+});
+
+experts.experts.forEach(expert => {
+  console.log(`${expert.name} (score: ${expert.score})`);
+  expert.evidence.forEach(e => console.log(`  - ${e}`));
+});
+```
+
+---
+
+## MCP Server Connection
+
+The MCP server is mounted under `/mcp` on the main FastAPI app and uses FastMCP for protocol implementation.
+
+### Server Info
+
+```typescript
+{
+  name: "beever-atlas",
+  instructions: "Beever Atlas knowledge API. Search channel facts, retrieve wiki pages, and find domain experts from team communication history."
+}
+```
+
+### Authentication
+
+Auth inherits from FastAPI middleware — unauthenticated requests are rejected before reaching these tools.
+
+### Usage from Claude Desktop
+
+Configure in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "command": "node",
+      "args": ["path/to/mcp-client.js"],
+      "env": {
+        "BEEVER_ATLAS_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+### Usage from Code
+
+```typescript
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const transport = new StdioClientTransport({
+  command: "python",
+  args: ["-m", "beever_atlas.api.mcp"]
+});
+
+const client = new Client({
+  name: "beever-atlas-client",
+  version: "1.0.0"
+}, {
+  capabilities: {}
+});
+
+await client.connect(transport);
+
+// List available tools
+const { tools } = await client.listTools();
+
+// Call a tool
+const result = await client.callTool({
+  name: "search_channel_knowledge",
+  arguments: {
+    channel_id: "C12345",
+    query: "authentication",
+    include_graph: false
+  }
+});
+```
+
+---
+
+## Tool Semantics
+
+### Fact Quality
+
+Facts are ranked by `quality_score` (0.0 to 1.0) based on:
+- Information density
+- Specificity
+- Actionability
+- Recency (adjusted for staleness)
+
+### Graph Traversal
+
+When `include_graph: true`:
+- Extracts entity keywords from query
+- Traverses Neo4j relationships
+- Returns connected entities and relationships
+- Higher latency but richer context
+
+### Expert Ranking
+
+Expertise scores computed from:
+- Number of facts authored by person
+- Decision involvement (decided, contributed, mentioned)
+- Recency of contributions
+- Citations by others

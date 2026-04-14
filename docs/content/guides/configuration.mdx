@@ -1,0 +1,378 @@
+---
+title: Configuration Reference
+description: Complete reference of all environment variables for configuring Beever Atlas
+---
+
+
+Beever Atlas is configured via environment variables. This is a comprehensive reference of all available configuration options.
+
+## Quick Start
+
+Create a `.env` file in the project root:
+
+```bash
+# Minimum required configuration
+GOOGLE_API_KEY=your-google-api-key
+BEEVER_API_URL=http://localhost:8000
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+```
+
+All other variables have sensible defaults. For production, review the sections below.
+
+## Configuration Categories
+
+<Tabs items={['Core Application', 'Databases', 'LLM Providers', 'Pipeline Settings', 'Integrations', 'QA Agent', 'Security']}>
+
+### Core Application
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `BEEVER_API_URL` | string | `http://localhost:8000` | Public URL of the backend API |
+| `CORS_ORIGINS` | string | `http://localhost:5173,http://localhost:3000` | Comma-separated list of allowed CORS origins |
+| `BEEVER_API_KEY` | string | `""` | Optional API key for authentication |
+
+**Example**:
+```bash
+BEEVER_API_URL=https://beever-atlas.example.com
+CORS_ORIGINS=https://docs.example.com,https://app.example.com
+```
+
+### Databases
+
+#### Weaviate (Vector Database)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `WEAVIATE_URL` | string | `http://localhost:8080` | Weaviate server URL |
+| `WEAVIATE_API_KEY` | string | `""` | Weaviate API key (if authentication enabled) |
+| `WEAVIATE_HYBRID_ALPHA` | float | `0.6` | Hybrid search alpha (0.0 = BM25, 1.0 = vector) |
+
+#### Neo4j (Graph Database)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `NEO4J_URI` | string | `bolt://localhost:7687` | Neo4j Bolt connection URI |
+| `NEO4J_AUTH` | string | `neo4j/beever_atlas_dev` | Authentication in format `user/password` |
+
+**Example**:
+```bash
+NEO4J_URI=bolt://neo4j.example.com:7687
+NEO4J_AUTH=neo4j/strong-password-here
+```
+
+#### NebulaGraph (Alternative Graph DB)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `GRAPH_BACKEND` | string | `"neo4j"` | Graph database: `neo4j`, `nebula`, or `none` |
+| `NEBULA_HOSTS` | string | `"127.0.0.1:9669"` | NebulaGraph hosts |
+| `NEBULA_USER` | string | `"root"` | NebulaGraph username |
+| `NEBULA_PASSWORD` | string | `"nebula"` | NebulaGraph password |
+| `NEBULA_SPACE` | string | `"beever_atlas"` | NebulaGraph space name |
+
+#### MongoDB (Document Store)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `MONGODB_URI` | string | `mongodb://localhost:27017/beever_atlas` | MongoDB connection URI |
+
+#### Redis (Cache)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `REDIS_URL` | string | `redis://localhost:6379` | Redis server URL |
+
+### LLM Providers
+
+#### Google (Gemini)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `GOOGLE_API_KEY` | string | `""` | Google AI API key for Gemini |
+| `LLM_FAST_MODEL` | string | `"gemini-2.5-flash"` | Model for fast operations |
+| `LLM_QUALITY_MODEL` | string | `"gemini-2.5-flash"` | Model for quality operations |
+| `USE_BATCH_API` | bool | `false` | Enable Gemini Batch API |
+| `BATCH_MAX_WAIT_SECONDS` | int | `3600` | Max wait time for batch completion |
+| `BATCH_MAX_PROMPT_TOKENS` | int | `6000` | Max tokens per batch request |
+| `BATCH_TIME_WINDOW_SECONDS` | int | `600` | Time window for batching requests |
+
+#### Jina (Embeddings)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `JINA_API_KEY` | string | `""` | Jina AI API key for embeddings |
+| `JINA_API_URL` | string | `"https://api.jina.ai/v1/embeddings"` | Jina embeddings endpoint |
+| `JINA_MODEL` | string | `"jina-embeddings-v4"` | Embedding model to use |
+| `JINA_DIMENSIONS` | int | `2048` | Embedding dimensions |
+
+#### Tavily (Search)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `TAVILY_API_KEY` | string | `""` | Tavily API key for web search |
+
+#### Ollama (Local Models)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OLLAMA_ENABLED` | bool | `false` | Enable Ollama for local models |
+| `OLLAMA_API_BASE` | string | `"http://localhost:11434"` | Ollama API endpoint |
+
+#### OpenAI (Multimedia)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OPENAI_API_KEY` | string | `""` | OpenAI API key for Whisper/vision |
+
+### Pipeline Settings
+
+#### Sync Configuration
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SYNC_BATCH_SIZE` | int | `10` | Messages per batch for processing |
+| `SYNC_MAX_MESSAGES` | int | `1000` | Max messages to sync per channel |
+| `SYNC_BATCH_TIMEOUT_SECONDS` | int | `600` | Timeout per batch |
+
+#### Quality Thresholds
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `QUALITY_THRESHOLD` | float | `0.5` | Minimum confidence for fact extraction |
+| `ENTITY_THRESHOLD` | float | `0.6` | Minimum confidence for entity extraction |
+| `MAX_FACTS_PER_MESSAGE` | int | `2` | Maximum facts to extract per message |
+
+#### Entity Processing
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ENTITY_SIMILARITY_THRESHOLD` | float | `0.85` | Similarity threshold for entity merging |
+| `MERGE_REJECTION_TTL_DAYS` | int | `30` | Days to remember rejected merges |
+| `COREF_ENABLED` | bool | `true` | Enable coreference resolution |
+| `COREF_HISTORY_LIMIT` | int | `20` | Messages to consider for coreference |
+
+#### Consolidation
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CLUSTER_SIMILARITY_THRESHOLD` | float | `0.6` | Similarity threshold for clustering |
+| `CLUSTER_MERGE_THRESHOLD` | float | `0.85` | Similarity threshold for merging clusters |
+| `CLUSTER_MAX_SIZE` | int | `100` | Maximum facts per cluster |
+| `CONSOLIDATION_ENABLED` | bool | `true` | Enable consolidation pipeline |
+| `CONSOLIDATION_MAX_CONCURRENT_LLM` | int | `5` | Max concurrent LLM calls during consolidation |
+
+#### Semantic Search
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SEMANTIC_SEARCH_MIN_SIMILARITY` | float | `0.7` | Minimum similarity for semantic search |
+
+#### Fact Lifecycle
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CONTRADICTION_CONFIDENCE_THRESHOLD` | float | `0.8` | Confidence threshold for flagging contradictions |
+| `CONTRADICTION_FLAG_THRESHOLD` | float | `0.5` | Threshold to mark a fact as contradicted |
+
+#### Thread Context
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CROSS_BATCH_THREAD_CONTEXT_ENABLED` | bool | `true` | Enable cross-batch thread context |
+| `THREAD_CONTEXT_MAX_LENGTH` | int | `200` | Max messages in thread context |
+
+#### Orphan Handling
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ORPHAN_GRACE_PERIOD_DAYS` | int | `7` | Grace period for soft orphan handling |
+
+#### Reconciler
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `RECONCILER_INTERVAL_MINUTES` | int | `15` | Reconciler run interval in minutes |
+
+### Integrations
+
+#### Platform Adapter
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ADAPTER_TYPE` | string | `"slack"` | Platform: `slack`, `discord`, `teams`, `mock` |
+| `ADAPTER_MOCK` | bool | `false` | Use mock adapter for testing |
+
+#### Bot Service (Bridge)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `BRIDGE_URL` | string | `"http://localhost:3001"` | Bot service bridge URL |
+| `BRIDGE_API_KEY` | string | `""` | Bridge authentication key |
+
+#### Slack Configuration
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SLACK_BOT_TOKEN` | string | `""` | Slack bot token (starts with `xoxb-`) |
+| `SLACK_APP_TOKEN` | string | `""` | Slack app token for Socket Mode |
+
+### QA Agent
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `QA_CONFIDENCE_THRESHOLD` | float | `0.4` | Minimum confidence for QA answers |
+| `EXTERNAL_MCP_SERVERS` | string | `""` | Comma-separated external MCP servers |
+| `QA_NEW_PROMPT` | bool | `false` | Use new QA prompt format |
+| `QA_ONBOARDING_LENGTH_MONITOR` | bool | `true` | Warn on long onboarding responses |
+| `QA_HISTORY_NEGATIVE_FILTER` | bool | `false` | Filter out negative QA history |
+| `QA_ADK_STREAMING_SSE` | bool | `false` | Enable SSE streaming for QA |
+
+### Security
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CREDENTIAL_MASTER_KEY` | string | `""` | Master key for credential encryption |
+
+**Generate a secure key**:
+```bash
+openssl rand -base64 32
+```
+
+### Advanced Features
+
+#### Citation Registry
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CITATION_REGISTRY_ENABLED` | bool | `true` | Enable enterprise citation architecture |
+
+#### LLM Structured Output
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `USE_LLM_STRUCTURED_OUTPUT` | bool | `true` | Enable schema-constrained decoding |
+
+#### File Import
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `FILE_IMPORT_STAGING_DIR` | string | `".omc/imports"` | Staging directory for imports |
+| `FILE_IMPORT_STAGING_TTL_SECONDS` | int | `3600` | TTL for staged files |
+| `FILE_IMPORT_MAX_ROWS` | int | `100000` | Max rows for tabular imports |
+
+#### Media Processing
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `MEDIA_MAX_FILE_SIZE_MB` | int | `20` | Max file size for media processing |
+| `MEDIA_VISION_TIMEOUT_SECONDS` | int | `180` | Timeout for vision processing |
+| `MEDIA_VISION_MODEL` | string | `"gemini-2.5-flash"` | Model for vision tasks |
+| `MEDIA_SUPPORTED_IMAGE_TYPES` | string | `"png,jpg,jpeg,gif,webp"` | Supported image types |
+| `MEDIA_SUPPORTED_DOC_TYPES` | string | `"pdf"` | Supported document types |
+| `MEDIA_DIGEST_ENABLED` | bool | `true` | Enable LLM-based media digest |
+
+#### PDF Processing
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `PDF_CHUNK_PAGES` | int | `4` | Pages per chunk for PDF extraction |
+| `PDF_MAX_PAGES` | int | `100` | Maximum pages to process |
+| `PDF_SUMMARIZE_LARGE_DOCS` | bool | `false` | Summarize large PDFs |
+| `PDF_LARGE_DOC_THRESHOLD` | int | `50` | Page threshold for large docs |
+
+#### Multilingual
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `LANGUAGE_DETECTION_ENABLED` | bool | `false` | Enable language detection |
+| `DEFAULT_TARGET_LANGUAGE` | string | `"en"` | Default target language |
+| `SUPPORTED_LANGUAGES` | string | `"en,zh-HK,zh-TW,zh-CN,ja,ko,..."` | Supported BCP-47 languages |
+| `LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD` | float | `0.6` | Confidence threshold for detection |
+
+</Tabs>
+
+## Configuration File Example
+
+Complete `.env.example`:
+
+```bash
+# ============================================================================
+# Core Application
+# ============================================================================
+BEEVER_API_URL=http://localhost:8000
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+
+# ============================================================================
+# Databases
+# ============================================================================
+WEAVIATE_URL=http://localhost:8080
+NEO4J_URI=bolt://localhost:7687
+NEO4J_AUTH=neo4j/beever_atlas_dev
+MONGODB_URI=mongodb://localhost:27017/beever_atlas
+REDIS_URL=redis://localhost:6379
+
+# ============================================================================
+# LLM Providers
+# ============================================================================
+GOOGLE_API_KEY=your-google-api-key-here
+JINA_API_KEY=your-jina-api-key-here
+TAVILY_API_KEY=your-tavily-api-key-here
+LLM_FAST_MODEL=gemini-2.5-flash
+LLM_QUALITY_MODEL=gemini-2.5-flash
+
+# ============================================================================
+# Pipeline Settings
+# ============================================================================
+SYNC_BATCH_SIZE=10
+SYNC_MAX_MESSAGES=1000
+QUALITY_THRESHOLD=0.5
+ENTITY_THRESHOLD=0.6
+MAX_FACTS_PER_MESSAGE=2
+
+# ============================================================================
+# QA Agent
+# ============================================================================
+QA_CONFIDENCE_THRESHOLD=0.4
+
+# ============================================================================
+# Security
+# ============================================================================
+CREDENTIAL_MASTER_KEY=change-me-to-a-strong-key
+```
+
+## Validation
+
+The application validates configuration on startup. Invalid values will cause a startup error with details.
+
+**Test your configuration**:
+```bash
+python -c "from beever_atlas.infra.config import get_settings; print(get_settings())"
+```
+
+## Best Practices
+
+<Callout type="info">
+**Security**: Never commit `.env` files to version control. Use `.env.example` as a template.
+</Callout>
+
+1. **Use environment-specific files**: `.env.development`, `.env.production`
+2. **Document non-default values**: Comment why you changed a value
+3. **Validate before deploying**: Test configuration in staging first
+4. **Rotate secrets regularly**: Update API keys and passwords
+5. **Use strong defaults**: Start secure, relax if needed
+
+## Troubleshooting
+
+**Configuration not loading**: Check file is named `.env` (not `.env.txt`) and is in the project root.
+
+**Invalid values**: Check type matches (integers for numbers, `true`/`false` for booleans).
+
+**Missing required values**: The app will error on startup with the missing variable name.
+
+---
+
+## Next Steps
+
+- [Self-Hosting Guide](/docs/guides/self-hosting)
+- [Prompt Tuning](/docs/guides/prompt-tuning)
+- [Troubleshooting](/docs/guides/troubleshooting)

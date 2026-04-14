@@ -1,0 +1,38 @@
+---
+title: Changelog
+description: Release history and changes for Beever Atlas
+---
+
+# Changelog
+
+## v0.1.0 (April 2026) - Initial Open Source Release
+
+### Added
+- **Dual Memory Architecture**: Semantic memory (Weaviate) + knowledge graph (Neo4j)
+- **6-Stage Ingestion Pipeline**: Sync → Extract → Validate → Store → Cluster → Wiki
+- **Multi-Platform Support**: Slack, Discord, Microsoft Teams adapters
+- **MCP Server**: Model Context Protocol for LLM tool integration
+- **Wiki Generation**: Auto-generated hierarchical wiki pages from conversations
+- **Smart Query Router**: LLM-powered routing between semantic, graph, and web search
+- **Knowledge Graph**: Entity extraction and relationship mapping with Neo4j
+- **Web Dashboard**: React-based UI with graph visualization (cytoscape.js)
+- **Google ADK Agents**: Orchestrated extraction, validation, and generation agents
+- **Mock Mode**: Zero-API-key development with fixture data
+- **Docker Compose**: Full stack deployment with one command
+- **Multilingual Support**: Language detection and cross-language memory
+- **Observability**: OpenTelemetry tracing, health checks, structured logging
+
+### Technical Details
+- **Backend**: Python/FastAPI with 16 API route groups
+- **Bot**: TypeScript with Vercel Chat SDK
+- **Frontend**: React 19 + TypeScript + Vite + shadcn/ui
+- **Embeddings**: Jina v4 (2048-dim, multimodal)
+- **LLM**: Gemini 2.0 Flash (primary), Claude via LiteLLM (fallback)
+
+### Documentation
+- Comprehensive getting started guides
+- Interactive tutorials for common workflows
+- In-depth concept documentation
+- API reference with examples
+- Integration guides for all platforms
+- Contributing guidelines and development setup

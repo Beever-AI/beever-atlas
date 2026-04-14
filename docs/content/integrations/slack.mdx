@@ -1,0 +1,239 @@
+---
+title: Slack Integration
+description: Connect Beever Atlas to your Slack workspace for intelligent knowledge retrieval
+---
+
+
+# Slack Integration
+
+Beever Atlas provides native Slack integration through the Chat SDK, enabling your workspace to query organizational knowledge directly from channels where conversations happen.
+
+## Features
+
+- **@mention responses**: Ask questions by mentioning the bot in any channel or DM
+- **Thread-aware conversations**: Follow-up questions maintain conversation context
+- **File attachment processing**: Extracts and indexes content from shared files
+- **Message sync**: Automatically ingests channel messages for knowledge base
+- **Multi-workspace support**: Connect multiple Slack workspaces simultaneously
+
+## Supported Message Types
+
+| Type | Support |
+|------|---------|
+| Regular messages | ✅ Full sync and retrieval |
+| Threaded replies | ✅ Mapped to conversations |
+| File attachments | ✅ PDF, DOCX, images, text files |
+| Reactions | ✅ Metadata captured |
+| Edited messages | ✅ Version tracking |
+| Deleted messages | ✅ Handled gracefully |
+
+## Bot Setup
+
+### Prerequisites
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Install the app to your workspace
+3. Enable Socket Mode (recommended) or configure HTTP endpoints
+
+### Required OAuth Scopes
+
+Your Slack app needs these bot token scopes:
+
+<Steps>
+  <Step>
+    **Channel Access**
+    
+    - `channels:read` - View public channels
+    - `channels:history` - Read public channel messages
+    - `groups:read` - View private channels
+    - `groups:history` - Read private channel messages
+  </Step>
+  <Step>
+    **File Access**
+    
+    - `files:read` - Access shared file content
+    - `files:write` - Upload files (optional, for sharing results)
+  </Step>
+  <Step>
+    **Message Actions**
+    
+    - `chat:write` - Post messages and responses
+    - `chat:write.customize` - Format messages with blocks
+    - `reactions:write` - Add emoji reactions (optional)
+  </Step>
+  <Step>
+    **User Context**
+    
+    - `users:read` - Resolve user information
+    - `users:read.email` - User email resolution (optional)
+  </Step>
+</Steps>
+
+### Environment Configuration
+
+Set these environment variables in your `.env` file (or configure via the UI):
+
+```bash
+# Slack Bot Token (starts with xoxb-)
+SLACK_BOT_TOKEN=xoxb-your-token-here
+
+# Slack Signing Secret (for HTTP mode)
+SLACK_SIGNING_SECRET=your-signing-secret-here
+
+# App-Level Token (for Socket Mode)
+SLACK_APP_LEVEL_TOKEN=xapp-your-token-here
+```
+
+## Thread Handling
+
+Beever Atlas maps Slack threads to conversations for better context management:
+
+- **Thread parent messages** become conversation starters
+- **Thread replies** are linked to the parent message
+- **@mentions in threads** create new conversation branches
+- **Follow-up questions** maintain context within the thread
+
+### Thread ID Format
+
+```
+slack:CHANNEL_ID:THREAD_TS
+```
+
+Example: `slack:C0123456789:1234567890.123456`
+
+## File Processing
+
+When files are shared in connected channels:
+
+<Steps>
+  <Step>
+    **Download**
+    
+    Files are fetched from Slack's servers using the `files:info` API.
+  </Step>
+  <Step>
+    **Extract**
+    
+    Content is extracted based on file type:
+    - PDF: Text extraction with layout preservation
+    - DOCX: Document text extraction
+    - Images: OCR via vision models
+    - Code: Syntax-aware parsing
+  </Step>
+  <Step>
+    **Chunk & Embed**
+    
+    Extracted text is chunked and embedded into the vector store.
+  </Step>
+  <Step>
+    **Link**
+    
+    File metadata links chunks to the original message for citation.
+  </Step>
+</Steps>
+
+## Rate Limits
+
+Slack imposes rate limits on API calls. Beever Atlas handles this through:
+
+- **Pagination**: Automatic cursor-based pagination for history fetching
+- **Backoff**: Exponential backoff on rate limit errors
+- **Batching**: Optimized batch sizes for concurrent requests
+- **Caching**: Channel metadata cached to reduce API calls
+
+### Tier 1 Limits (default)
+
+- 1 message per second per workspace
+- Burst allowance: ~200 messages
+- Auto-retry with exponential backoff
+
+## Message Formatting
+
+Beever Atlas responds with Slack Block Kit for rich formatting:
+
+- **Citations**: Clickable links to source messages
+- **Code blocks**: Syntax-highlighted code snippets
+- **Lists**: Structured information display
+- **Buttons**: Quick actions (if enabled)
+
+## Webhook Configuration
+
+### Socket Mode (Recommended)
+
+For development and small deployments:
+
+```bash
+# Enable Socket Mode in your Slack app
+# Set environment variable
+SLACK_SOCKET_MODE=true
+```
+
+### HTTP Mode (Production)
+
+For production deployments with proper endpoints:
+
+1. Configure your Slack app with Request URL:
+   ```
+   https://your-domain.com/api/slack
+   ```
+
+2. Set in your bot service:
+   ```bash
+   BOT_PORT=3001
+   BACKEND_URL=https://your-backend.com
+   ```
+
+## Troubleshooting
+
+### Bot not responding
+
+- Verify `SLACK_BOT_TOKEN` starts with `xoxb-`
+- Check bot has required scopes
+- Confirm bot is invited to the channel
+- Review logs for connection errors
+
+### Files not being processed
+
+- Verify `files:read` scope is granted
+- Check file size limits (Slack: 1GB max)
+- Ensure file type is supported
+
+### Rate limit errors
+
+- Reduce sync frequency in settings
+- Use pagination for large channels
+- Check Slack workspace tier limits
+
+## Advanced Configuration
+
+### Multi-Workspace Setup
+
+Connect multiple Slack workspaces:
+
+1. Create separate Slack apps for each workspace
+2. Configure each with unique credentials
+3. Add connections via the API or UI
+
+```bash
+# Each connection gets a unique ID
+connection_id: slack-workspace-1
+connection_id: slack-workspace-2
+```
+
+### Channel Filtering
+
+Limit which channels are synced:
+
+- Via UI: Select channels when adding connection
+- Via API: Use `selected_channels` parameter
+- Via config: Set `SLACK_CHANNEL_FILTER` regex pattern
+
+## Next Steps
+
+- [ ] Create your Slack app
+- [ ] Configure OAuth scopes
+- [ ] Set environment variables
+- [ ] Invite bot to channels
+- [ ] Test @mention functionality
+
+For full setup instructions, see the [Slack Setup Guide](../../getting-started/slack-setup).

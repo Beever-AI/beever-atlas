@@ -1,0 +1,68 @@
+---
+title: API Reference
+description: Complete REST API reference for Beever Atlas
+---
+
+# API Reference
+
+## Base URL
+
+`http://localhost:8000` (default)
+
+## Authentication
+
+Currently no authentication required for local development. Production deployments should use a reverse proxy with auth.
+
+## Rate Limiting
+
+No built-in rate limiting. Use a reverse proxy (nginx/traefik) for production rate limiting.
+
+## Response Format
+
+All responses are JSON. Standard error format:
+
+```json
+{ "detail": "Error description" }
+```
+
+## HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200  | Success |
+| 201  | Created |
+| 400  | Bad Request |
+| 404  | Not Found |
+| 422  | Validation Error |
+| 500  | Internal Server Error |
+
+## API Route Groups
+
+The API is organized into 16 route groups covering all aspects of Beever Atlas:
+
+- **Channels** (`/api/channels`) - Manage connected channels
+- **Sync** (`/api/sync`) - Trigger and monitor message synchronization
+- **Wiki** (`/api/wiki`) - Browse and manage generated wiki pages
+- **Ask** (`/api/ask`) - Ask questions with streaming responses
+- **Search** (`/api/search`) - Hybrid semantic + keyword search
+- **Graph** (`/api/graph`) - Knowledge graph exploration
+- **Topics** (`/api/topics`) - Topic cluster management
+- **Memories** (`/api/memories`) - Browse extracted facts
+- **Connections** (`/api/connections`) - Platform connection management
+- **Imports** (`/api/imports`) - Document import pipeline
+- **Policies** (`/api/policies`) - Data retention policies
+- **Models** (`/api/models`) - LLM model configuration
+- **Config** (`/api/config`) - Application configuration
+- **Stats** (`/api/stats`) - System statistics
+- **Dev** (`/api/dev`) - Development tools
+- **MCP** (`/mcp`) - Model Context Protocol server
+
+## OpenAPI Spec
+
+The full OpenAPI specification is available at `http://localhost:8000/openapi.json`.
+
+## Interactive API Docs
+
+When the server is running, visit:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`

@@ -1,0 +1,12 @@
+{
+  "title": "Tutorials",
+  "root": true,
+  "pages": [
+    "first-channel-sync",
+    "exploring-the-wiki",
+    "ask-agent",
+    "knowledge-graph",
+    "file-import",
+    "mcp-integration"
+  ]
+}

@@ -1,0 +1,233 @@
+---
+title: Quick Start
+description: Get Beever Atlas running in 5 minutes with mock mode
+---
+
+# Quick Start (5-Minute Mock Mode)
+
+Get Beever Atlas running in **5 minutes** with zero API keys using mock mode. This is the fastest way to explore the features and UI before connecting your real team data.
+
+<Callout type="success">
+**Mock mode** uses fixture data to simulate real conversations, wiki pages, and knowledge graphs. No Slack credentials or API keys required!
+</Callout>
+
+## Prerequisites
+
+- Docker & Docker Compose installed
+- Git (to clone the repository)
+- 5 minutes ⏱️
+
+## Step 1: Clone and Enter Directory
+
+```bash
+git clone https://github.com/thomaschong/beever-atlas.git
+cd beever-atlas
+```
+
+## Step 2: Copy Environment Configuration
+
+```bash
+cp .env.example .env
+```
+
+## Step 3: Enable Mock Mode
+
+Edit `.env` and ensure mock mode is enabled:
+
+```bash
+ADAPTER_MOCK=true
+```
+
+<Callout type="info">
+**What is mock mode?** When `ADAPTER_MOCK=true`, Atlas uses sample data instead of connecting to real platforms. You'll see sample conversations, generated wiki pages, and a knowledge graph without needing any credentials.
+</Callout>
+
+## Step 4: Start All Services
+
+```bash
+docker compose up -d
+```
+
+This starts:
+- **beever-atlas** (Backend API) on port 8000
+- **web** (React Dashboard) on port 3000
+- **bot** (Bot Service) on port 3001
+- **weaviate** (Semantic Memory) on port 8080
+- **neo4j** (Graph Memory) on ports 7474/7687
+- **mongodb** (State & Cache) on port 27017
+- **redis** (Sessions) on port 6380
+
+<Callout type="warning">
+**First run** takes 2–3 minutes as Docker builds images. Grab a coffee! ☕
+</Callout>
+
+## Step 5: Open the Dashboard
+
+Navigate to: **[http://localhost:3000](http://localhost:3000)**
+
+You'll see the Beever Atlas dashboard with:
+
+- **Sample channels** with mock conversations
+- **Generated wiki pages** (Overview, Topics, People, Decisions)
+- **Knowledge graph** visualization
+- **Q&A interface** for asking questions
+
+## Step 6: Ask a Question
+
+Try the web UI or use the API directly:
+
+### Via Web UI
+
+1. Click on the **Q&A** tab
+2. Enter a question like:
+   - "What topics were discussed in the engineering channel?"
+   - "Who decided on the authentication strategy?"
+   - "What technologies are being used?"
+3. Watch the streaming response with citations
+
+### Via API
+
+```bash
+curl -X POST http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What topics were discussed in the engineering channel?"}'
+```
+
+You'll receive a streaming response with:
+- **Thinking** — Agent reasoning trace
+- **Tool calls** — Database queries as they happen
+- **Response** — Answer streamed in real-time
+- **Citations** — Source message links
+- **Metadata** — Route used, cost, confidence
+
+## What Happens Next
+
+With mock mode enabled, Atlas:
+
+1. **Generates sample conversations** simulating real team discussions
+2. **Extracts facts and entities** using the LLM pipeline
+3. **Builds a knowledge graph** with people, decisions, and technologies
+4. **Creates wiki pages** organized by topics
+5. **Enables Q&A** with cited sources
+
+All of this happens automatically — no manual setup required!
+
+## Explore the Features
+
+### 📚 Browse the Wiki
+
+Click on the **Wiki** tab to explore:
+- **Overview**: Channel summary and key topics
+- **Topics**: Hierarchical topic pages
+- **People**: Team members and contributions
+- **Decisions**: Track decisions with context
+- **Tech Stack**: Technologies and tools
+- **Projects**: Active projects and status
+
+### 🕸️ Visualize the Knowledge Graph
+
+Click on the **Graph** tab to see:
+- Entity nodes (people, decisions, projects)
+- Relationship edges
+- Interactive visualization with Cytoscape.js
+
+### 💬 Explore Sample Conversations
+
+Browse the **Channels** tab to see:
+- Sample messages from different channels
+- Threaded conversations
+- Media attachments (simulated)
+
+## Next Steps
+
+Once you've explored mock mode:
+
+### Connect Real Slack
+
+1. Get a Slack bot token from [api.slack.com](https://api.slack.com)
+2. Set `ADAPTER_MOCK=false` in `.env`
+3. Add your Slack token in the dashboard (Settings → Connections)
+4. Sync your real channels
+
+See [Slack Setup](./slack-setup) for detailed instructions.
+
+### Add Real API Keys
+
+For production use with real data:
+
+```bash
+# Edit .env
+GOOGLE_API_KEY=your_real_google_api_key
+JINA_API_KEY=your_real_jina_api_key
+CREDENTIAL_MASTER_KEY=$(openssl rand -hex 32)
+BRIDGE_API_KEY=$(openssl rand -hex 16)
+```
+
+Restart services:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+### Deploy to Production
+
+When you're ready for production deployment:
+
+- Configure persistent volumes
+- Set up TLS/SSL with nginx
+- Implement secrets management
+- Enable monitoring and backups
+
+See [Deployment Guide](./deployment) for production setup.
+
+## Troubleshooting
+
+### Dashboard Won't Load
+
+Check if services are running:
+
+```bash
+docker compose ps
+```
+
+All services should show "healthy". If not, check logs:
+
+```bash
+docker compose logs beever-atlas
+docker compose logs web
+```
+
+### Port Conflicts
+
+If ports 3000, 8000, or 8080 are already in use, edit the `ports` mapping in `docker-compose.yml`:
+
+```yaml
+services:
+  web:
+    ports: ["3001:80"]  # Change to 3001
+```
+
+### Reset Everything
+
+If something goes wrong, reset and start fresh:
+
+<Callout type="warning">
+**Warning**: This deletes all data and requires re-syncing.
+</Callout>
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+## What's Next?
+
+- [How It Works](./how-it-works) — Learn about the architecture
+- [Slack Setup](./slack-setup) — Connect your real Slack workspace
+- [Installation](./installation) — Full installation guide
+- [Deployment](./deployment) — Production deployment
+
+<Callout type="success">
+**Enjoying mock mode?** When you're ready, connect your real team data to unlock Atlas's full potential!
+</Callout>

@@ -1,0 +1,222 @@
+---
+title: Ask API
+description: Q&A endpoints with streaming responses and citations
+---
+
+# Ask API
+
+## Overview
+
+The Ask API provides natural language query capabilities over your team's knowledge base with streaming responses and source citations.
+
+## POST /api/ask
+
+Ask a question and receive a streaming SSE (Server-Sent Events) response with real-time token generation and source citations.
+
+### Request Body
+
+```typescript
+{
+  question: string,              // Required: The question to ask
+  include_citations?: boolean,   // Default: true
+  max_results?: number,          // Default: 10, Range: 1-50
+  session_id?: string,           // Resume an existing session
+  mode?: "quick" | "deep" | "summarize",  // Default: "deep"
+  attachments?: Array<{          // File attachments
+    name: string,
+    content_type: string,
+    data: string                // Base64 encoded
+  }>
+}
+```
+
+### Response
+
+Streaming SSE with the following event types:
+
+#### `token` - Response Text
+```json
+{
+  "type": "token",
+  "content": "Hello",
+  "message_id": "msg_123"
+}
+```
+
+#### `citation` - Source Reference
+```json
+{
+  "type": "citation",
+  "citation": {
+    "id": "[1]",
+    "author": "John Doe",
+    "timestamp": "2026-04-13T10:30:00Z",
+    "text_excerpt": "First 100 chars of source message...",
+    "permalink": "https://slack.com/archives/...",
+    "source_message_id": "1234567890.123456"
+  }
+}
+```
+
+#### `done` - Stream Complete
+```json
+{
+  "type": "done",
+  "message_id": "msg_123",
+  "session_id": "sess_456",
+  "tokens_used": 1234,
+  "citations_count": 3
+}
+```
+
+#### `error` - Error Occurred
+```json
+{
+  "type": "error",
+  "error": "Error description"
+}
+```
+
+### Example (JavaScript)
+
+```javascript
+const response = await fetch('http://localhost:8000/api/ask', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    question: 'What decisions were made about authentication?',
+    mode: 'deep',
+    max_results: 15
+  })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const chunk = decoder.decode(value);
+  const lines = chunk.split('\n');
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const data = JSON.parse(line.slice(6));
+      
+      if (data.type === 'token') {
+        process.stdout.write(data.content);
+      } else if (data.type === 'citation') {
+        console.log('\n[Citation]', data.citation);
+      } else if (data.type === 'done') {
+        console.log('\n[Complete]', data);
+      }
+    }
+  }
+}
+```
+
+### Example (curl)
+
+```bash
+curl -N http://localhost:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What is the current architecture?",
+    "mode": "deep"
+  }'
+```
+
+## POST /api/ask/feedback
+
+Submit feedback on a response to improve future answers.
+
+### Request Body
+
+```typescript
+{
+  session_id: string,
+  message_id: string,
+  rating: "up" | "down",
+  comment?: string
+}
+```
+
+## POST /api/ask/upload
+
+Upload a file (PDF, image, doc) for analysis with the question.
+
+### Request
+
+- **Method**: `POST`
+- **Content-Type**: `multipart/form-data`
+- **Max Size**: 10MB
+
+### Form Data
+
+```
+question: string
+file: File (PDF, PNG, JPEG, DOCX, TXT, CSV)
+```
+
+### Supported MIME Types
+
+- `application/pdf`
+- `image/png`, `image/jpeg`
+- `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (DOCX)
+- `text/plain`, `text/csv`
+
+## GET /api/ask/sessions
+
+List all Q&A sessions.
+
+### Response
+
+```json
+[
+  {
+    "session_id": "sess_123",
+    "created_at": "2026-04-13T10:00:00Z",
+    "message_count": 5,
+    "last_activity": "2026-04-13T10:30:00Z"
+  }
+]
+```
+
+## `GET /api/ask/sessions/{session_id}`
+
+Get details of a specific session including all messages.
+
+### Response
+
+```json
+{
+  "session_id": "sess_123",
+  "created_at": "2026-04-13T10:00:00Z",
+  "messages": [
+    {
+      "message_id": "msg_456",
+      "role": "user" | "assistant",
+      "content": "Message text...",
+      "citations": [...],
+      "timestamp": "2026-04-13T10:05:00Z"
+    }
+  ]
+}
+```
+
+## `DELETE /api/ask/sessions/{session_id}`
+
+Delete a session and all associated messages.
+
+## Channel-Scoped Endpoints
+
+All Ask endpoints have channel-scoped variants:
+
+- `POST /api/channels/{channel_id}/ask` - Ask within a specific channel
+- `POST /api/channels/{channel_id}/ask/feedback` - Feedback for channel-specific query
+- `POST /api/channels/{channel_id}/ask/upload` - Upload for channel-specific query
+- `GET /api/channels/{channel_id}/ask/history` - Query history for channel
+- `GET /api/channels/{channel_id}/ask/sessions` - Sessions for channel
+- `GET /api/channels/{channel_id}/ask/sessions/{session_id}` - Specific channel session
+- `DELETE /api/channels/{channel_id}/ask/sessions/{session_id}` - Delete channel session

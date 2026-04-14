@@ -58,6 +58,9 @@ bot/dist/
 web/node_modules/
 web/dist/
 
+# Development worktrees
+.dev/
+
 # Tooling state (OMC, agents, etc.)
 **/.omc/
 .agents/

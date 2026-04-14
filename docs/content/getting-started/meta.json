@@ -1,0 +1,16 @@
+{
+  "title": "Getting Started",
+  "root": true,
+  "pages": [
+    "index",
+    "how-it-works",
+    "installation",
+    "quick-start",
+    "---Platform Setup---",
+    "slack-setup",
+    "discord-setup",
+    "teams-setup",
+    "---Deployment---",
+    "deployment"
+  ]
+}

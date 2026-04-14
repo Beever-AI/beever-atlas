@@ -1,0 +1,289 @@
+---
+title: Stats API
+description: System statistics and metrics endpoints
+---
+
+# Stats API
+
+## Overview
+
+Access system statistics, metrics, and health information.
+
+## GET /api/stats
+
+Get overall system statistics.
+
+### Response
+
+```json
+{
+  "total_facts": 856,
+  "total_entities": 45,
+  "total_channels": 15,
+  "total_decisions": 23,
+  "wiki_pages": 12,
+  "total_messages": 15234,
+  "total_authors": 18
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_facts` | int | Total atomic facts across all channels |
+| `total_entities` | int | Total knowledge graph entities |
+| `total_channels` | int | Total connected channels |
+| `total_decisions` | int | Total decisions extracted |
+| `wiki_pages` | int | Total wiki pages generated |
+| `total_messages` | int | Total messages indexed |
+| `total_authors` | int | Total unique authors |
+
+## GET /api/stats/health
+
+Get system health status.
+
+### Response
+
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {
+      "status": "up",
+      "latency_ms": 5.2
+    },
+    "mongodb": {
+      "status": "up",
+      "latency_ms": 2.1
+    },
+    "neo4j": {
+      "status": "up",
+      "latency_ms": 8.5
+    },
+    "llm_provider": {
+      "status": "up",
+      "latency_ms": 150.0
+    }
+  },
+  "checked_at": "2026-04-13T10:30:00Z"
+}
+```
+
+### Status Values
+
+- `healthy` - All components operational
+- `degraded` - Some components degraded
+- `unhealthy` - One or more components down
+
+## `GET /api/stats/channel/{channel_id}`
+
+Get statistics for a specific channel.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+
+### Response
+
+```json
+{
+  "channel_id": "C12345",
+  "message_count": 15234,
+  "fact_count": 856,
+  "entity_count": 45,
+  "decision_count": 23,
+  "author_count": 15,
+  "wiki_page_count": 12,
+  "date_range": {
+    "earliest": "2026-01-01T00:00:00Z",
+    "latest": "2026-04-13T10:30:00Z"
+  },
+  "activity": {
+    "messages_last_7d": 234,
+    "messages_last_30d": 1234,
+    "facts_added_last_7d": 45,
+    "facts_added_last_30d": 156
+  }
+}
+```
+
+## GET /api/stats/activity
+
+Get recent system activity.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | int | No | Max results (default: 20) |
+
+### Response
+
+```json
+{
+  "activities": [
+    {
+      "type": "sync_completed",
+      "channel_id": "C12345",
+      "message_count": 150,
+      "timestamp": "2026-04-13T10:30:00Z"
+    },
+    {
+      "type": "wiki_generated",
+      "channel_id": "C12345",
+      "page_count": 12,
+      "timestamp": "2026-04-13T10:28:00Z"
+    },
+    {
+      "type": "connection_established",
+      "connection_id": "conn_123",
+      "timestamp": "2026-04-13T09:00:00Z"
+    }
+  ]
+}
+```
+
+### Activity Types
+
+- `sync_completed` - Message sync completed
+- `wiki_generated` - Wiki pages generated
+- `connection_established` - New connection created
+- `connection_failed` - Connection error
+- `fact_extracted` - Facts extracted
+- `entity_created` - Graph entity created
+
+## GET /api/stats/metrics
+
+Get detailed metrics for monitoring.
+
+### Response
+
+```json
+{
+  "performance": {
+    "avg_query_latency_ms": 45,
+    "avg_sync_duration_seconds": 120,
+    "avg_wiki_generation_seconds": 85
+  },
+  "storage": {
+    "weaviate_objects": 856,
+    "mongodb_documents": 45,
+    "neo4j_nodes": 123,
+    "neo4j_relationships": 234
+  },
+  "usage": {
+    "total_llm_calls": 1234,
+    "total_llm_tokens": 567890,
+    "estimated_cost_usd": 12.34
+  },
+  "quality": {
+    "avg_fact_quality_score": 0.72,
+    "high_importance_facts": 234,
+    "decision_count": 45
+  }
+}
+```
+
+## GET /api/stats/top-authors
+
+Get top contributors across all channels.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | int | No | Max results (default: 10) |
+| `channel_id` | string | No | Filter by channel |
+
+### Response
+
+```json
+[
+  {
+    "author_id": "U12345",
+    "author_name": "Jane Smith",
+    "message_count": 2341,
+    "fact_count": 156,
+    "decision_count": 12,
+    "channels": ["C12345", "C67890"]
+  }
+]
+```
+
+## GET /api/stats/top-topics
+
+Get most discussed topics.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | int | No | Max results (default: 10) |
+| `channel_id` | string | No | Filter by channel |
+
+### Response
+
+```json
+[
+  {
+    "topic": "authentication",
+    "fact_count": 45,
+    "channels": ["C12345", "C67890"],
+    "trend": "rising"
+  }
+]
+```
+
+## GET /api/stats/export
+
+Export statistics as CSV or JSON.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `format` | string | No | `csv` or `json` (default: `json`) |
+| `channel_id` | string | No | Filter by channel |
+| `since` | string | No | ISO 8601 start date |
+
+### Response
+
+Returns CSV or JSON file with statistics.
+
+## Metrics Definitions
+
+### Query Latency
+
+Time to process a search or query request.
+
+| Range | Quality |
+|-------|---------|
+| < 50ms | Excellent |
+| 50-100ms | Good |
+| 100-200ms | Fair |
+| > 200ms | Poor |
+
+### Fact Quality Score
+
+Average quality score of extracted facts (0.0-1.0).
+
+| Range | Quality |
+|-------|---------|
+| > 0.8 | Excellent |
+| 0.6-0.8 | Good |
+| 0.4-0.6 | Fair |
+| < 0.4 | Poor |
+
+### Sync Duration
+
+Time to sync messages from a channel.
+
+| Range | Quality |
+|-------|---------|
+| < 60s | Excellent |
+| 60-120s | Good |
+| 120-300s | Fair |
+| > 300s | Poor |

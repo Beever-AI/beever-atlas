@@ -1,0 +1,175 @@
+---
+title: Exploring the Wiki
+description: Learn how to navigate and use the auto-generated knowledge wiki
+---
+
+
+The Beever Atlas wiki transforms your chat history into a navigable knowledge base. This tutorial shows you how to explore it effectively.
+
+## Wiki Structure
+
+The wiki is organized hierarchically:
+
+```
+Channel
+├── Topics
+│   ├── Subtopics
+│   └── Facts
+└── Entity Cards
+```
+
+<Steps>
+### Step 1: Navigate the sidebar
+
+Open the wiki at [http://localhost:8000/wiki](http://localhost:8000/wiki).
+
+The sidebar shows:
+- **Channels**: All synced channels/teams
+- **Topics**: Major themes within each channel
+- **Recent**: Recently updated pages
+
+Click any channel to expand its topic tree.
+
+### Step 2: Browse topic clusters
+
+Topics are auto-discovered using semantic clustering. Each topic page contains:
+
+**Topic Header**
+- Name and description
+- Fact count (e.g., "127 facts")
+- Temporal range (e.g., "Jan 2024 - Mar 2024")
+
+**Fact List**
+- Facts ordered by relevance
+- Each fact has a **citation** linking to source message
+- Filter by date, entity, or subtopic
+
+**Example:**
+```
+Topic: API Authentication (45 facts)
+├── "JWT token expires after 24 hours" [src:msg123]
+├── "OAuth2 flow implemented for third-party apps" [src:msg456]
+└── "Session tokens stored in Redis" [src:msg789]
+```
+
+### Step 3: Explore entity cards
+
+Entity cards are auto-generated profiles for:
+- **People**: Team members, stakeholders
+- **Decisions**: Architectural decisions, approvals
+- **Projects**: Initiatives, sprints
+- **Technologies**: Tools, frameworks, libraries
+- **Teams**: Departments, working groups
+
+Click any entity name (highlighted in text) to open its card.
+
+**Entity Card Contents:**
+- **Summary**: What this entity is about
+- **Related Facts**: All facts mentioning this entity
+- **Relationships**: Connections to other entities
+- **Timeline**: When this entity was discussed
+
+### Step 4: Use the decision timeline
+
+The **Decision Timeline** shows chronological view of:
+
+1. Navigate to your channel
+2. Click "Timeline" tab
+3. See decisions plotted over time
+4. Click any decision for details:
+   - What was decided
+   - Who decided it
+   - Rationale (extracted from messages)
+   - Outcome (if available)
+   - Related decisions
+
+**Timeline Features:**
+- Zoom in/out to adjust granularity
+- Filter by decision type (technical, product, process)
+- See decision chains (decisions that led to other decisions)
+
+### Step 5: Follow citations
+
+Every fact includes citations to source messages.
+
+**To view source message:**
+1. Click the `[src:msg123]` link
+2. Modal opens with:
+   - Original message text
+   - Sender, timestamp, channel
+   - Thread context (if part of a thread)
+   - Link to open in Slack/Discord
+
+This ensures **full traceability** — you can always verify where information came from.
+
+### Step 6: Search within wiki
+
+Use the search bar (top of wiki page):
+
+**Search Types:**
+- **Keyword**: "authentication token"
+- **Entity**: "@john" or "Project Phoenix"
+- **Topic**: "API design"
+- **Question**: "How do we handle user sessions?"
+
+**Search Results Show:**
+- Matching facts with highlighted keywords
+- Source channel/topic
+- Citation links
+- Relevance score
+
+<Tabs items={['Basic Search', 'Advanced Search']}>
+### Basic Search
+
+Simply type your query:
+```
+database migration
+```
+
+Results include all facts mentioning database or migration.
+
+### Advanced Search
+
+Use operators:
+```
+# Topics
+topic:"api authentication"
+
+# Entities
+entity:@sarah
+entity:"Project Alpha"
+
+# Citations
+cite:msg123
+
+# Boolean
+authentication AND token
+migration OR rollout
+database -performance
+```
+
+</Tabs>
+
+</Steps>
+
+---
+
+## Tips for Effective Wiki Navigation
+
+<Callout type="info">
+**Pro Tip**: Start with entity cards when exploring a new domain. Entities provide a high-level map of people, projects, and technologies before diving into specific facts.
+</Callout>
+
+1. **Follow your curiosity**: Click entity names to explore connections
+2. **Use citations**: Always verify important facts by viewing source messages
+3. **Check timelines**: Understand temporal context — when were things discussed?
+4. **Leverage search**: Don't browse manually; search for specific concepts
+5. **Bookmark key pages**: Save frequently-accessed topics or decisions
+
+---
+
+## Next Steps
+
+- Learn how to [ask questions](/docs/tutorials/ask-agent) against your wiki
+- Explore the [knowledge graph](/docs/tutorials/knowledge-graph) for visual exploration
+- Import [external documents](/docs/tutorials/file-import) to enrich your wiki

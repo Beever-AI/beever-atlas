@@ -1,0 +1,12 @@
+{
+  "title": "Guides",
+  "root": true,
+  "pages": [
+    "prompt-tuning",
+    "self-hosting",
+    "configuration",
+    "multi-platform",
+    "observability",
+    "troubleshooting"
+  ]
+}

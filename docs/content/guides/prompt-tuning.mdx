@@ -1,0 +1,344 @@
+---
+title: Prompt Tuning Guide
+description: Optimize fact extraction, entity recognition, and topic discovery for your organization's communication patterns
+---
+
+
+Beever Atlas uses LLMs to extract structured knowledge from unstructured chat. Tuning the prompts can significantly improve extraction quality for your organization's specific communication patterns.
+
+## Understanding the Pipeline
+
+The knowledge extraction pipeline has multiple stages, each with tunable prompts:
+
+<Tabs items={['Stage 2: Extract', 'Stage 3: Entities', 'Stage 6: Consolidate']}>
+
+### Stage 2: Extract (Facts)
+
+**Purpose**: Extract atomic facts from messages
+
+**Default Prompt**:
+```
+Extract factual claims from the following message. Each fact should:
+- Be atomic (single claim)
+- Stand alone without context
+- Be verifiable from the message
+- Exclude opinions, questions, and vague statements
+
+Return only clear, factual statements.
+```
+
+**What to Tune For**:
+- Fact granularity (one claim vs compound claims)
+- Threshold for what counts as "factual"
+- Handling of technical jargon
+- Temporal expressions (dates, times, durations)
+
+### Stage 3: Entities
+
+**Purpose**: Identify and classify entities (people, projects, technologies)
+
+**Default Prompt**:
+```
+Identify entities in the message. Classify as:
+- Person (team members, stakeholders)
+- Project (initiatives, features)
+- Technology (tools, frameworks)
+- Decision (architectural choices)
+
+Extract canonical names and aliases.
+```
+
+**What to Tune For**:
+- Entity recognition sensitivity
+- Alias detection (e.g., "Sarah" vs "Sarah Johnson")
+- Technology vs project classification
+- Decision detection criteria
+
+### Stage 6: Consolidate
+
+**Purpose**: Merge similar facts and form coherent topics
+
+**Default Prompt**:
+```
+Given a set of facts, group them into topics. Each topic should:
+- Be semantically coherent
+- Have a clear title
+- Contain 3-100 facts
+- Be distinguishable from other topics
+
+Merge redundant facts and resolve contradictions.
+```
+
+**What to Tune For**:
+- Topic granularity (broad vs specific)
+- Similarity threshold for merging
+- Contradiction resolution strategy
+- Topic naming conventions
+
+</Tabs>
+
+## Configuration Variables
+
+Key environment variables for prompt tuning:
+
+```bash
+# LLM model selection (affects prompt adherence)
+LLM_FAST_MODEL=gemini-2.5-flash        # For extraction stages
+LLM_QUALITY_MODEL=gemini-2.5-flash     # For consolidation
+
+# Quality thresholds
+QUALITY_THRESHOLD=0.5                  # Minimum fact confidence
+ENTITY_THRESHOLD=0.6                   # Minimum entity confidence
+
+# Extraction limits
+MAX_FACTS_PER_MESSAGE=2                # Prevent over-extraction
+```
+
+## Common Patterns
+
+### Pattern 1: Over-extraction
+
+**Symptom**: Too many low-quality facts, noise in wiki
+
+**Solution**:
+```bash
+# Increase quality threshold
+QUALITY_THRESHOLD=0.7
+
+# Reduce max facts per message
+MAX_FACTS_PER_MESSAGE=1
+
+# Use more capable model for extraction
+LLM_QUALITY_MODEL=gemini-2.5-pro
+```
+
+### Pattern 2: Under-extraction
+
+**Symptom**: Missing important facts, sparse wiki
+
+**Solution**:
+```bash
+# Lower quality threshold
+QUALITY_THRESHOLD=0.3
+
+# Increase max facts
+MAX_FACTS_PER_MESSAGE=5
+
+# Enable fact recovery retries
+FACT_MAX_RETRIES=3
+```
+
+### Pattern 3: Poor Entity Recognition
+
+**Symptom**: Entities not detected or misclassified
+
+**Solution**:
+```bash
+# Increase entity threshold
+ENTITY_THRESHOLD=0.8
+
+# Enable entity similarity matching
+ENTITY_SIMILARITY_THRESHOLD=0.85
+
+# Use higher-quality model
+LLM_QUALITY_MODEL=gemini-2.5-pro
+```
+
+### Pattern 4: Generic Topic Names
+
+**Symptom**: Topics named "General", "Misc", "Other"
+
+**Solution**:
+```bash
+# Adjust consolidation thresholds
+CLUSTER_SIMILARITY_THRESHOLD=0.7
+CLUSTER_MERGE_THRESHOLD=0.9
+
+# This creates more specific topics
+```
+
+## Custom Prompt Templates
+
+For advanced tuning, you can modify prompt templates directly in the codebase:
+
+**Location**: `src/beever_atlas/llm/prompts.py`
+
+**Example: Custom Fact Extraction**
+
+```python
+# Original
+EXTRACT_FACTS_PROMPT = """
+Extract factual claims from the message.
+Return only clear, factual statements.
+"""
+
+# Custom for technical teams
+EXTRACT_FACTS_PROMPT = """
+Extract technical facts from the message, including:
+- Implementation details
+- Configuration values
+- API endpoints and parameters
+- Error messages and solutions
+- Performance metrics
+
+Prioritize specific, actionable information over general statements.
+"""
+```
+
+## Testing Prompt Changes
+
+After modifying prompts:
+
+1. **Clear existing data** (if starting fresh):
+   ```bash
+   docker-compose down -v
+   docker-compose up -d
+   ```
+
+2. **Sync a test channel**:
+   ```bash
+   curl -X POST http://localhost:8000/api/sync \
+     -H "Content-Type: application/json" \
+     -d '{"channel_id": "test", "max_messages": 100}'
+   ```
+
+3. **Evaluate quality**:
+   - Check extracted facts in the wiki
+   - Verify entity recognition
+   - Review topic coherence
+   - Compare to baseline
+
+4. **Iterate**:
+   - Adjust thresholds
+   - Refine prompts
+   - Re-test
+
+## A/B Testing Prompts
+
+To test different prompt configurations:
+
+```bash
+# Configuration A
+QUALITY_THRESHOLD=0.5
+MAX_FACTS_PER_MESSAGE=2
+
+# Configuration B
+QUALITY_THRESHOLD=0.7
+MAX_FACTS_PER_MESSAGE=3
+```
+
+Run sync with each config on the same channel, then compare:
+- Fact count
+- Entity count
+- Topic quality
+- User feedback
+
+## Domain-Specific Tuning
+
+<Tabs items={['Engineering Teams', 'Product Teams', 'Customer Support']}>
+
+### Engineering Teams
+
+**Characteristics**: Technical jargon, code snippets, specific tools
+
+**Recommended Settings**:
+```bash
+QUALITY_THRESHOLD=0.4              # Lower threshold for technical details
+MAX_FACTS_PER_MESSAGE=5            # More facts per message
+ENTITY_SIMILARITY_THRESHOLD=0.9    # High precision for entities
+```
+
+**Prompt Focus**:
+- Extract code snippets and commands
+- Recognize technology names
+- Capture architectural decisions
+- Include error messages and solutions
+
+### Product Teams
+
+**Characteristics**: Feature discussions, user feedback, timelines
+
+**Recommended Settings**:
+```bash
+QUALITY_THRESHOLD=0.6              # Medium threshold
+MAX_FACTS_PER_MESSAGE=3            # Balanced extraction
+CLUSTER_SIMILARITY_THRESHOLD=0.5   # Broader topics
+```
+
+**Prompt Focus**:
+- Extract feature requirements
+- Capture user pain points
+- Identify decisions and rationale
+- Track timeline commitments
+
+### Customer Support
+
+**Characteristics**: Issue descriptions, solutions, customer feedback
+
+**Recommended Settings**:
+```bash
+QUALITY_THRESHOLD=0.7              # High threshold for verified info
+MAX_FACTS_PER_MESSAGE=2            # Conservative extraction
+ENTITY_THRESHOLD=0.8               # Precise entity recognition
+```
+
+**Prompt Focus**:
+- Extract verified solutions
+- Capture common issues
+- Identify product feedback
+- Track resolution patterns
+
+</Tabs>
+
+## Monitoring Quality
+
+Track these metrics to assess prompt effectiveness:
+
+**Fact Quality**:
+- `ingestion.quality_gate.rejected_ratio` - Should be < 60%
+- Average fact confidence score
+- Fact redundancy rate
+
+**Entity Quality**:
+- Entity count per message
+- Entity merge rate
+- Entity classification accuracy
+
+**Topic Quality**:
+- Topic count
+- Facts per topic distribution
+- Topic specificity
+
+Access metrics via:
+```bash
+curl http://localhost:8000/api/metrics
+```
+
+## Troubleshooting
+
+<Callout type="warning">
+**Poor extraction quality**: Start by adjusting `QUALITY_THRESHOLD`. Too high = missing facts, too low = noise.
+</Callout>
+
+**Common Issues**:
+
+1. **Facts too generic**: Increase threshold, improve prompt specificity
+2. **Facts too verbose**: Add conciseness to prompt, reduce max facts
+3. **Missing entities**: Lower entity threshold, improve entity prompt
+4. **Too many topics**: Increase merge threshold, adjust similarity
+5. **Topics too broad**: Decrease similarity threshold, refine consolidate prompt
+
+## Best Practices
+
+1. **Start with defaults**: Default prompts work well for most cases
+2. **Change one variable at a time**: Isolate the effect of each change
+3. **Measure before/after**: Quantify impact of changes
+4. **Test on representative data**: Use real messages from your org
+5. **Iterate gradually**: Small adjustments, not wholesale rewrites
+6. **Document changes**: Keep a log of what you changed and why
+
+## Further Reading
+
+- [Configuration Reference](/docs/guides/configuration)
+- [Observability Guide](/docs/guides/observability)
+- [Troubleshooting](/docs/guides/troubleshooting)

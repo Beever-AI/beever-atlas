@@ -1,0 +1,172 @@
+---
+title: Channels API
+description: Channel management endpoints
+---
+
+# Channels API
+
+## Overview
+
+Manage and monitor connected communication channels (Slack, Discord, etc.).
+
+## GET /api/channels
+
+List all channels across all connected platforms.
+
+### Response
+
+```json
+[
+  {
+    "id": "C12345",
+    "name": "#engineering",
+    "platform": "slack",
+    "connected": true,
+    "last_sync": "2026-04-13T10:30:00Z",
+    "message_count": 15234,
+    "fact_count": 856
+  }
+]
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Platform channel ID |
+| `name` | string | Channel name |
+| `platform` | string | Platform name (`slack`, `discord`) |
+| `connected` | boolean | Connection status |
+| `last_sync` | string | Last sync timestamp (ISO 8601) |
+| `message_count` | int | Total messages indexed |
+| `fact_count` | int | Total facts extracted |
+
+## `GET /api/channels/{channel_id}`
+
+Get detailed information about a specific channel.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Platform channel ID |
+
+### Response
+
+```json
+{
+  "id": "C12345",
+  "name": "#engineering",
+  "platform": "slack",
+  "connected": true,
+  "last_sync": "2026-04-13T10:30:00Z",
+  "created_at": "2026-01-01T00:00:00Z",
+  "message_count": 15234,
+  "fact_count": 856,
+  "entity_count": 45,
+  "topic_count": 23,
+  "wiki_page_count": 12,
+  "settings": {
+    "sync_enabled": true,
+    "wiki_enabled": true,
+    "graph_enabled": true
+  }
+}
+```
+
+## `GET /api/channels/{channel_id}/messages`
+
+List messages from a channel with pagination.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Platform channel ID |
+| `limit` | int | No | Max results (default: 50, max: 200) |
+| `before` | string | No | Pagination cursor (message timestamp) |
+| `after` | string | No | Get messages after timestamp |
+
+### Response
+
+```json
+{
+  "messages": [
+    {
+      "id": "1234567890.123456",
+      "text": "Message content...",
+      "author": {
+        "id": "U12345",
+        "name": "Jane Smith"
+      },
+      "timestamp": "2026-04-13T10:30:00Z",
+      "thread_ts": null,
+      "reactions": [
+        {"emoji": "thumbsup", "count": 3, "users": ["U123", "U456"]}
+      ],
+      "attachments": [],
+      "has_media": false
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "2026-04-13T10:25:00Z"
+}
+```
+
+## `DELETE /api/channels/{channel_id}/data`
+
+Delete all data for a channel (messages, facts, wiki). Use with caution.
+
+### Response
+
+```json
+{
+  "deleted_facts": 856,
+  "deleted_entities": 45,
+  "deleted_wiki_pages": 12
+}
+```
+
+## Channel Statistics
+
+### `GET /api/channels/{channel_id}/stats`
+
+Get statistics for a specific channel.
+
+```json
+{
+  "message_count": 15234,
+  "fact_count": 856,
+  "entity_count": 45,
+  "decision_count": 23,
+  "author_count": 15,
+  "date_range": {
+    "earliest": "2026-01-01T00:00:00Z",
+    "latest": "2026-04-13T10:30:00Z"
+  },
+  "top_authors": [
+    {"name": "Alice Johnson", "message_count": 2341},
+    {"name": "Bob Smith", "message_count": 1876}
+  ]
+}
+```
+
+## Channel Settings
+
+### `GET /api/channels/{channel_id}/settings`
+
+Get channel-specific settings.
+
+### `PUT /api/channels/{channel_id}/settings`
+
+Update channel settings.
+
+```json
+{
+  "sync_enabled": true,
+  "wiki_enabled": true,
+  "graph_enabled": true,
+  "fact_extraction_enabled": true,
+  "retention_days": 365
+}
+```

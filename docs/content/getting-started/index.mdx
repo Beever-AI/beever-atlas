@@ -1,0 +1,88 @@
+---
+title: Introduction
+description: What is Beever Atlas and who it's for
+---
+
+# Welcome to Beever Atlas
+
+Beever Atlas is a **team-oriented LLM Wiki** that turns your team's conversations into a living, searchable knowledge base — automatically.
+
+## What Is Beever Atlas?
+
+Beever Atlas continuously ingests conversations from Slack, Discord, and Microsoft Teams, then builds an automatically maintained wiki that anyone can query in natural language. Unlike personal chatbots, Atlas is designed for **team knowledge** with channel-level access control, multi-workspace support, and persistent wiki pages.
+
+<Callout type="info">
+**Inspired by Andrej Karpathy's LLM Wiki concept**, Beever Atlas extends the idea to team environments with dual-memory architecture, multi-platform support, and production-ready infrastructure.
+</Callout>
+
+## Who Is It For?
+
+- **Engineering teams**: Transform design discussions, debugging sessions, and architectural decisions into searchable documentation
+- **Research labs**: Capture experimental findings, methodology discussions, and literature reviews
+- **OSS communities**: Archive contributor discussions, RFC debates, and project decisions
+- **Enterprises**: Preserve institutional knowledge across Slack/Discord/Teams with proper access controls
+
+## Key Differentiators
+
+### 1. Team-Oriented, Not Personal
+
+Atlas is built from the ground up for team collaboration:
+
+- **Channel-level ACL**: Users only see knowledge from channels they have access to
+- **Multi-workspace support**: Connect multiple Slack workspaces or Discord servers
+- **Persistent wiki pages**: Knowledge isn't just retrieved — it's organized into browseable pages
+
+### 2. Dual Memory Architecture
+
+Atlas stores knowledge in two complementary systems:
+
+| Memory System | Purpose | Query Share |
+|---------------|---------|-------------|
+| **Semantic Memory** (Weaviate) | Vector search for topics, facts, summaries | ~80% of queries |
+| **Graph Memory** (Neo4j) | Entity relationships and connections | ~20% of queries |
+
+This hybrid approach means you get fast semantic search **plus** the ability to query relationships like "Who decided on RS256?" or "What projects is Alice working on?"
+
+### 3. Wiki-First Design
+
+Unlike retrieval-only systems, Atlas generates persistent wiki pages:
+
+- **10+ page types**: Overview, Topics, People, Decisions, Tech Stack, Projects, FAQ, Glossary
+- **Automatic clustering**: Related facts are grouped into topic pages
+- **Cited answers**: Every response links back to source messages
+- **Markdown export**: Download your entire wiki as static documentation
+
+### 4. Multi-Platform Support
+
+Connect your team wherever they communicate:
+
+| Platform | Status | Features |
+|----------|--------|----------|
+| **Slack** | Stable | Messages, threads, files, images, PDFs |
+| **Discord** | Beta | Messages, threads, reactions |
+| **Microsoft Teams** | Beta | Messages, channels via Graph API |
+
+### 5. Google ADK-Powered Pipeline
+
+Atlas uses a **6-stage ingestion pipeline** built on Google's Agent Development Kit:
+
+1. **Sync**: Fetch messages from platforms
+2. **Extract**: Pull text, images, PDFs, links
+3. **Validate**: Quality gates for facts and entities
+4. **Store**: Write to Weaviate + Neo4j + MongoDB
+5. **Cluster**: Group related facts into topics
+6. **Wiki**: Generate structured wiki pages
+
+Quality gates ensure only high-confidence knowledge enters your wiki.
+
+## What's Next?
+
+<Callout type="success">
+**New to Atlas?** Start with the [Quick Start](./quick-start) — it takes 5 minutes and requires zero API keys.
+</Callout>
+
+- [Installation](./installation) — Prerequisites and setup
+- [Quick Start](./quick-start) — 5-minute mock mode demo
+- [How It Works](./how-it-works) — Architecture and pipeline overview
+- [Platform Setup](./slack-setup) — Connect Slack, Discord, or Teams
+- [Deployment](./deployment) — Production deployment guide

@@ -1,0 +1,297 @@
+---
+title: Microsoft Teams Setup
+description: Connect Beever Atlas to Microsoft Teams
+---
+
+# Microsoft Teams Integration Setup
+
+Connect Beever Atlas to Microsoft Teams to automatically ingest conversations and build a searchable knowledge base.
+
+<Callout type="warning">
+**Beta Status**: Teams integration is in beta. Features may change as we improve the integration. Requires Azure AD admin access.
+</Callout>
+
+## Prerequisites
+
+Before setting up Teams integration, ensure you have:
+
+- Beever Atlas installed and running (see [Installation](./installation))
+- Azure AD admin access
+- Ability to register applications in Azure Portal
+- Teams admin permissions (optional, for bot installation)
+
+## Overview
+
+The Teams integration uses Microsoft Graph API to:
+
+1. **Ingest Messages**: Fetch historical and new messages from channels
+2. **Extract Attachments**: Process files and images shared in Teams
+3. **Build Knowledge Graph**: Extract entities and relationships
+
+## Step 1: Register Application in Azure Portal
+
+### 1.1 Go to Azure Portal
+
+Navigate to [portal.azure.com](https://portal.azure.com) and sign in with your Microsoft account.
+
+### 1.2 Register New App
+
+1. Search for **App registrations** in the search bar
+2. Click **New registration**
+3. Enter:
+   - **Name**: `Beever Atlas`
+   - **Supported account types**: Select appropriate type:
+     - *Single tenant* (for your organization only)
+     - *Multi-tenant* (for multiple organizations)
+   - **Redirect URI**: Leave blank for now
+4. Click **Register**
+
+## Step 2: Configure API Permissions
+
+### 2.1 Add Microsoft Graph Permissions
+
+In the application overview:
+
+1. Click **API permissions** in the left sidebar
+2. Click **Add a permission**
+3. Select **Microsoft Graph**
+4. Select **Application permissions** (for background sync):
+
+Add the following permissions:
+
+| Permission | Purpose |
+|------------|---------|
+| `ChannelMessage.Read.All` | Read all channel messages |
+| `Chat.Read` | Read chat messages |
+| `User.Read.All` | Read user information |
+| `Files.Read.All` | Access file attachments |
+
+<Callout type="warning">
+**Application vs Delegated**: We use Application permissions for background sync (no user interaction required). This requires admin consent.
+</Callout>
+
+### 2.2 Grant Admin Consent
+
+1. After adding permissions, click **Grant admin consent** for your organization
+2. Confirm the consent dialog
+3. Wait for consent to be granted (status shows ✓)
+
+## Step 3: Create Client Secret
+
+### 3.1 Generate Secret
+
+In the application configuration:
+
+1. Click **Certificates & secrets** in the left sidebar
+2. Under **Client secrets**, click **New client secret**
+3. Enter:
+   - **Description**: `Beever Atlas Secret`
+   - **Expires**: Select expiration period (recommended: 180 days)
+4. Click **Add**
+
+### 3.2 Copy Secret Value
+
+Copy the **Value** (not the Secret ID):
+
+<Callout type="warning">
+**Critical**: Copy the secret value immediately — you won't be able to see it again. Store it securely.
+</Callout>
+
+## Step 4: Get Application Credentials
+
+From the application overview, copy:
+
+1. **Application (client) ID** — Your app's unique identifier
+2. **Directory (tenant) ID** — Your Azure AD tenant ID
+3. **Client secret value** — From Step 3.2
+
+## Step 5: Configure Beever Atlas
+
+### 5.1 Disable Mock Mode
+
+Edit your `.env` file:
+
+```bash
+ADAPTER_MOCK=false
+```
+
+### 5.2 Add Teams Credentials
+
+Add the following to your `.env`:
+
+```bash
+# Microsoft Teams / Graph API
+TEAMS_TENANT_ID=your_tenant_id_here
+TEAMS_CLIENT_ID=your_client_id_here
+TEAMS_CLIENT_SECRET=your_client_secret_here
+```
+
+<Callout type="info">
+**Alternative**: Add credentials through the web UI (Settings → Connections) for encrypted storage.
+</Callout>
+
+## Step 6: Restart Services
+
+After configuring Teams integration, restart the services:
+
+```bash
+docker compose restart beever-atlas
+```
+
+## Step 7: Sync Your Teams
+
+### 7.1 List Available Teams/Channels
+
+After restart, Atlas will attempt to fetch available teams and channels. You can view them in the dashboard:
+
+1. Navigate to **Channels**
+2. See the list of Teams and channels
+3. Only channels where the service principal has access will appear
+
+### 7.2 Trigger a Sync
+
+**Via Dashboard**:
+1. Go to **Channels**
+2. Find the Teams channel you want to sync
+3. Click **Sync**
+4. Monitor progress in the **Sync Status** column
+
+**Via API**:
+
+```bash
+# Trigger sync for a channel
+curl -X POST http://localhost:8000/api/channels/19:abc123@thread.tacv2/sync
+
+# Check sync status
+curl http://localhost:8000/api/channels/19:abc123@thread.tacv2/sync/status
+```
+
+<Callout type="info">
+**Channel IDs**: Teams channel IDs are long strings like `19:abc123@thread.tacv2`. These are automatically discovered by Atlas.
+</Callout>
+
+## Troubleshooting
+
+### "Invalid Client Secret" Error
+
+Check that:
+- Client secret is correct (no extra spaces or newlines)
+- Secret hasn't expired
+- You copied the **Value**, not the Secret ID
+
+### "Insufficient Privileges" Error
+
+The application lacks required permissions:
+
+1. Verify all required permissions are added
+2. Ensure admin consent was granted
+3. Check that permissions are **Application** permissions, not Delegated
+
+### No Teams/Channels Appearing
+
+Verify:
+1. Service principal is a member of the Team
+2. Application has correct Graph API permissions
+3. Admin consent was granted for all permissions
+4. Tenant ID is correct
+
+Add service principal to a Team:
+
+1. Go to Teams admin center
+2. Navigate to **Manage teams**
+3. Select the team
+4. Click **Members** → **Add member**
+5. Search for your application name
+6. Add as a member
+
+### Rate Limiting
+
+Microsoft Graph API has rate limits:
+
+- Large organizations may experience rate limiting
+- Atlas automatically handles rate limits with exponential backoff
+- Consider syncing fewer channels for very large teams
+
+### Authentication Errors
+
+Common authentication issues:
+
+- **Expired secret**: Regenerate client secret and update `.env`
+- **Wrong tenant ID**: Verify you're using the correct tenant
+- **App registration disabled**: Check app status in Azure Portal
+
+## Best Practices
+
+### Application Security
+
+- Use client secrets with appropriate expiration
+- Rotate secrets regularly
+- Use Azure Key Vault for secret management in production
+- Monitor app usage in Azure Portal
+
+### Permission Model
+
+- Grant minimum required permissions
+- Use security groups for access control
+- Regularly audit app permissions
+- Consider creating separate apps for different environments
+
+### Sync Strategy
+
+- Start with key knowledge-sharing teams
+- Use `SYNC_MAX_MESSAGES` to control initial sync size
+- Schedule syncs during off-hours for large teams
+
+### Privacy Considerations
+
+- Teams may contain sensitive organizational information
+- Review channel permissions before syncing
+- Consider separate Atlas instances for different departments
+- Enable channel-level ACL for access control
+
+## Limitations
+
+Current limitations of Teams integration:
+
+- **1:1 Chats**: Limited support for private chats
+- **Channel Meetings**: No meeting transcription support
+- **Large Files**: File attachment size limits apply
+- **Guest Access**: May have limitations with guest users
+
+## Advanced Configuration
+
+### Service Principal Authentication
+
+For production deployments, consider using certificate-based authentication instead of client secrets:
+
+1. Upload a certificate to the app registration
+2. Configure Atlas to use the certificate
+3. More secure but requires additional setup
+
+### Multi-Tenant Support
+
+If you selected **Multi-tenant** during registration:
+
+- Each organization must separately install the app
+- Requires admin consent from each tenant
+- Configure Atlas with multiple credential sets
+
+### Custom Graph API Endpoints
+
+For custom deployments (e.g., sovereign clouds):
+
+```bash
+GRAPH_API_BASE_URL=https://graph.microsoft.com  # Default
+# For government clouds:
+# GRAPH_API_BASE_URL=https://graph.microsoft.us
+```
+
+## What's Next?
+
+- [How It Works](./how-it-works) — Learn about the ingestion pipeline
+- [Slack Setup](./slack-setup) — Connect multiple platforms
+- [Deployment](./deployment) — Production setup guide
+
+<Callout type="success">
+**Connected successfully?** Try asking questions about your Teams conversations in the Q&A interface!
+</Callout>

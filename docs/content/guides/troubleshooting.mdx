@@ -1,0 +1,475 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Beever Atlas deployment and usage
+---
+
+
+This guide covers common issues and their solutions when deploying and using Beever Atlas.
+
+## Quick Diagnostics
+
+Start here if something isn't working:
+
+```bash
+# Check system health
+curl http://localhost:8000/api/health
+
+# Check service status
+docker-compose ps
+
+# View logs
+docker-compose logs -f backend
+docker-compose logs -f bot
+```
+
+## Common Issues
+
+<Tabs items={['Bot Returns 503', 'Wiki Not Generating', 'Weaviate Connection Errors', 'Neo4j Connection Errors', 'Missing API Keys', 'Sync Failures', 'Docker Issues', 'Performance Issues']}>
+
+### Bot Returns 503
+
+**Symptoms**:
+- Bot responds with 503 errors
+- Messages not syncing
+- "Service unavailable" errors
+
+**Solutions**:
+
+1. **Check bridge URL**:
+   ```bash
+   # Verify BRIDGE_URL is correct
+   echo $BRIDGE_URL
+   curl $BRIDGE_URL/api/health
+   ```
+
+2. **Verify backend is running**:
+   ```bash
+   docker-compose ps backend
+   docker-compose logs backend
+   ```
+
+3. **Check bridge connectivity**:
+   ```bash
+   # From bot container
+   docker-compose exec bot ping backend
+   ```
+
+4. **Verify API key** (if configured):
+   ```bash
+   # Check BRIDGE_API_KEY matches
+   grep BRIDGE_API_KEY .env
+   ```
+
+**Expected Output**:
+```
+backend                Up      0.0.0.0:8000->8000/tcp
+bot                    Up
+```
+
+### Wiki Not Generating
+
+**Symptoms**:
+- Channel sync completes but wiki is empty
+- No topics or facts visible
+- Wiki pages show "No content"
+
+**Solutions**:
+
+1. **Check quality threshold**:
+   ```bash
+   # Lower threshold if too high
+   QUALITY_THRESHOLD=0.3
+   ```
+
+2. **Verify LLM API key**:
+   ```bash
+   # Test API key
+   curl -H "x-goog-api-key: $GOOGLE_API_KEY" \
+     https://generativelanguage.googleapis.com/v1/models
+   ```
+
+3. **Check sync status**:
+   ```bash
+   curl http://localhost:8000/api/sync/status/{sync_id}
+   ```
+
+4. **Review logs for errors**:
+   ```bash
+   docker-compose logs backend | grep -i error
+   ```
+
+**Expected**: Sync status should show `facts_extracted > 0`.
+
+### Weaviate Connection Errors
+
+**Symptoms**:
+- "Connection refused" errors
+- "Weaviate not ready" in health check
+- Vector search fails
+
+**Solutions**:
+
+1. **Verify Weaviate is running**:
+   ```bash
+   docker-compose ps weaviate
+   ```
+
+2. **Check Weaviate URL**:
+   ```bash
+   # Should match docker-compose service name
+   WEAVIATE_URL=http://weaviate:8080  # for container-to-container
+   WEAVIATE_URL=http://localhost:8080  # for local development
+   ```
+
+3. **Test Weaviate directly**:
+   ```bash
+   curl http://localhost:8080/v1/.well-known/ready
+   # Should return: {"status":"ready"}
+   ```
+
+4. **Check Docker network**:
+   ```bash
+   # Verify services on same network
+   docker network inspect beever-atlas_default
+   ```
+
+### Neo4j Connection Errors
+
+**Symptoms**:
+- "Failed to connect to Neo4j"
+- Graph queries fail
+- Knowledge graph empty
+
+**Solutions**:
+
+1. **Verify Neo4j is running**:
+   ```bash
+   docker-compose ps neo4j
+   ```
+
+2. **Check authentication**:
+   ```bash
+   # Format: user/password
+   NEO4J_AUTH=neo4j/beever_atlas_dev
+   ```
+
+3. **Test Neo4j directly**:
+   ```bash
+   # Using cypher-shell
+   docker exec -it neo4j cypher-shell -u neo4j -p beever_atlas_dev
+   # Enter: MATCH (n) RETURN count(n);
+   ```
+
+4. **Verify URI format**:
+   ```bash
+   # Bolt protocol
+   NEO4J_URI=bolt://neo4j:7687  # container-to-container
+   NEO4J_URI=bolt://localhost:7687  # local
+   ```
+
+### Missing API Key Errors
+
+**Symptoms**:
+- "API key not configured"
+- LLM calls fail
+- Embeddings fail
+
+**Solutions**:
+
+1. **Google API Key**:
+   ```bash
+   # Required for Gemini models
+   GOOGLE_API_KEY=your-key-here
+
+   # Get key from: https://makersuite.google.com/app/apikey
+   ```
+
+2. **Jina API Key**:
+   ```bash
+   # Required for embeddings
+   JINA_API_KEY=your-key-here
+
+   # Get key from: https://jina.ai/
+   ```
+
+3. **Verify keys work**:
+   ```bash
+   # Test Google
+   curl -H "x-goog-api-key: $GOOGLE_API_KEY" \
+     https://generativelanguage.googleapis.com/v1/models
+
+   # Test Jina
+   curl -H "Authorization: Bearer $JINA_API_KEY" \
+     https://api.jina.ai/v1/embeddings
+   ```
+
+### Sync Failures
+
+**Symptoms**:
+- Sync stops midway
+- "Batch processing failed"
+- Partial data only
+
+**Solutions**:
+
+1. **Check if using mock mode**:
+   ```bash
+   # Set if not using real Slack
+   ADAPTER_MOCK=true
+   ```
+
+2. **Verify Slack token**:
+   ```bash
+   # Token should start with xoxb-
+   SLACK_BOT_TOKEN=xoxb-your-token-here
+   ```
+
+3. **Adjust batch size**:
+   ```bash
+   # Reduce if hitting rate limits
+   SYNC_BATCH_SIZE=5
+   ```
+
+4. **Check logs for specific error**:
+   ```bash
+   docker-compose logs backend | tail -100
+   ```
+
+### Docker Issues
+
+**Symptoms**:
+- Containers won't start
+- "Port already in use"
+- Volume permission errors
+
+**Solutions**:
+
+1. **Port conflicts**:
+   ```bash
+   # Check what's using the port
+   lsof -i :8000
+
+   # Change ports in docker-compose.yml
+   ports:
+     - "8001:8000"  # Use 8001 instead
+   ```
+
+2. **Volume permissions**:
+   ```bash
+   # Fix volume permissions
+   sudo chown -R $USER:$USER ./data
+   ```
+
+3. **Clean restart**:
+   ```bash
+   # Stop and remove containers
+   docker-compose down
+
+   # Remove volumes (WARNING: deletes data)
+   docker-compose down -v
+
+   # Start fresh
+   docker-compose up -d
+   ```
+
+4. **Docker resource limits**:
+   ```bash
+   # Check Docker has enough resources
+   docker info
+   ```
+
+### Performance Issues
+
+**Symptoms**:
+- Slow sync times
+- High latency queries
+- System sluggish
+
+**Solutions**:
+
+1. **Check resource usage**:
+   ```bash
+   docker stats
+   ```
+
+2. **Increase Docker resources**:
+   - Docker Desktop → Settings → Resources
+   - Increase memory to 8GB+ (16GB recommended)
+   - Increase CPUs to 4+ (8 recommended)
+
+3. **Tune batch sizes**:
+   ```bash
+   # Increase for faster processing
+   SYNC_BATCH_SIZE=50
+   ```
+
+4. **Enable caching**:
+   ```bash
+   # Redis caching
+   REDIS_URL=redis://redis:6379
+   CACHE_ENABLED=true
+   ```
+
+5. **Check database performance**:
+   ```bash
+   # Slow query logs
+   docker-compose logs neo4j | grep "slow"
+   ```
+
+</Tabs>
+
+## Diagnostic Commands
+
+### Health Check
+
+```bash
+# Full health check
+curl http://localhost:8000/api/health | jq
+```
+
+**Expected output**:
+```json
+{
+  "status": "healthy",
+  "components": {
+    "weaviate": {"ok": true},
+    "neo4j": {"ok": true},
+    "mongodb": {"ok": true},
+    "redis": {"ok": true}
+  }
+}
+```
+
+### Service Status
+
+```bash
+# Check all services
+docker-compose ps
+
+# Check specific service
+docker-compose top backend
+```
+
+### Log Inspection
+
+```bash
+# All logs
+docker-compose logs
+
+# Specific service
+docker-compose logs backend
+
+# Follow logs
+docker-compose logs -f backend
+
+# Last 100 lines
+docker-compose logs --tail=100 backend
+
+# Filter errors
+docker-compose logs backend | grep -i error
+```
+
+### Database Checks
+
+<Tabs items={['Weaviate', 'Neo4j', 'MongoDB', 'Redis']}>
+
+### Weaviate
+
+```bash
+# Check readiness
+curl http://localhost:8080/v1/.well-known/ready
+
+# List collections
+curl http://localhost:8080/v1/schema
+
+# Check object count
+curl http://localhost:8080/v1/objects?limit=1
+```
+
+### Neo4j
+
+```bash
+# Enter shell
+docker exec -it neo4j cypher-shell -u neo4j -p beever_atlas_dev
+
+# Run queries
+MATCH (n) RETURN count(n);  # Count nodes
+MATCH ()-[r]->() RETURN count(r);  # Count relationships
+```
+
+### MongoDB
+
+```bash
+# Enter shell
+docker exec -it mongodb mongosh
+
+# Run queries
+use beever_atlas
+db.sync_jobs.find().pretty()
+```
+
+### Redis
+
+```bash
+# Enter CLI
+docker exec -it redis redis-cli
+
+# Run commands
+PING  # Should return PONG
+DBSIZE  # Count keys
+```
+
+</Tabs>
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Check the logs**:
+   ```bash
+   docker-compose logs > beever-atlas-logs.txt
+   ```
+
+2. **Gather diagnostics**:
+   ```bash
+   curl http://localhost:8000/api/health > health-check.json
+   docker-compose ps > services.txt
+   ```
+
+3. **Review configuration**:
+   ```bash
+   # Check environment variables (sanitize secrets!)
+   env | grep BEEVER > config.txt
+   ```
+
+4. **Search issues**:
+   - Check [GitHub Issues](https://github.com/your-org/beever-atlas/issues)
+   - Search for similar problems
+
+5. **Create a bug report** with:
+   - What you were trying to do
+   - What happened instead
+   - Logs and diagnostics
+   - Your configuration (sanitized)
+
+## Prevention Tips
+
+<Callout type="info">
+**Best Practice**: Run health checks regularly and set up monitoring to catch issues early.
+</Callout>
+
+1. **Monitor resources**: Don't let disk/memory fill up
+2. **Backup regularly**: Automated daily backups
+3. **Test restores**: Verify backups work
+4. **Update dependencies**: Keep Docker images updated
+5. **Review logs**: Check for warnings before they become errors
+6. **Rate limiting**: Respect API rate limits
+7. **Resource limits**: Set appropriate limits in docker-compose
+
+---
+
+## Next Steps
+
+- [Observability Guide](/docs/guides/observability)
+- [Configuration Reference](/docs/guides/configuration)
+- [Self-Hosting Guide](/docs/guides/self-hosting)

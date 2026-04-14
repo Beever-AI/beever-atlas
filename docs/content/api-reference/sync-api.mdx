@@ -1,0 +1,212 @@
+---
+title: Sync API
+description: Message synchronization endpoints
+---
+
+# Sync API
+
+## Overview
+
+Trigger and monitor message synchronization from connected platforms.
+
+## POST /api/sync
+
+Trigger synchronization for a channel.
+
+### Request Body
+
+```json
+{
+  "channel_id": "C12345",
+  "force": false
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel to sync |
+| `force` | boolean | No | Force full re-sync (default: false) |
+
+### Response
+
+```json
+{
+  "status": "started",
+  "job_id": "sync_123",
+  "channel_id": "C12345",
+  "estimated_messages": 150,
+  "started_at": "2026-04-13T10:30:00Z"
+}
+```
+
+## GET /api/sync/status
+
+Get sync status for a channel.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `job_id` | string | No | Specific sync job ID |
+
+### Response
+
+```json
+{
+  "job_id": "sync_123",
+  "channel_id": "C12345",
+  "status": "running",
+  "progress": {
+    "total_messages": 150,
+    "processed_messages": 75,
+    "failing_messages": 0,
+    "percentage": 50
+  },
+  "started_at": "2026-04-13T10:30:00Z",
+  "estimated_completion": "2026-04-13T10:32:00Z",
+  "current_stage": "fetching_messages"
+}
+```
+
+### Status Values
+
+- `queued` - Job is queued
+- `running` - Sync in progress
+- `completed` - Sync finished successfully
+- `failed` - Sync failed
+- `cancelled` - Sync was cancelled
+
+### Stages
+
+1. `fetching_messages` - Retrieving messages from platform
+2. `extracting_facts` - Extracting atomic facts
+3. `building_graph` - Updating knowledge graph
+4. `generating_wiki` - Regenerating wiki pages
+
+## GET /api/sync/history
+
+Get sync history for a channel.
+
+### Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `channel_id` | string | Yes | Channel identifier |
+| `limit` | int | No | Max results (default: 10) |
+
+### Response
+
+```json
+{
+  "history": [
+    {
+      "job_id": "sync_123",
+      "channel_id": "C12345",
+      "status": "completed",
+      "started_at": "2026-04-13T10:30:00Z",
+      "completed_at": "2026-04-13T10:32:00Z",
+      "duration_seconds": 120,
+      "messages_synced": 150,
+      "facts_extracted": 45,
+      "entities_created": 8,
+      "error": null
+    }
+  ]
+}
+```
+
+## POST /api/sync/cancel
+
+Cancel a running sync job.
+
+### Request Body
+
+```json
+{
+  "job_id": "sync_123"
+}
+```
+
+### Response
+
+```json
+{
+  "status": "cancelled",
+  "job_id": "sync_123",
+  "cancelled_at": "2026-04-13T10:31:00Z"
+}
+```
+
+## Sync Schedules
+
+### GET /api/sync/schedules
+
+List sync schedules for channels.
+
+### Response
+
+```json
+{
+  "schedules": [
+    {
+      "channel_id": "C12345",
+      "schedule": "0 */4 * * *",  # Every 4 hours
+      "enabled": true,
+      "next_sync": "2026-04-13T14:00:00Z",
+      "last_sync": "2026-04-13T10:00:00Z"
+    }
+  ]
+}
+```
+
+### PUT /api/sync/schedules
+
+Update sync schedule.
+
+```json
+{
+  "channel_id": "C12345",
+  "schedule": "0 */2 * * *",  # Every 2 hours
+  "enabled": true
+}
+```
+
+## Sync Errors
+
+### Error Response
+
+```json
+{
+  "status": "failed",
+  "job_id": "sync_123",
+  "error": {
+    "code": "PLATFORM_ERROR",
+    "message": "Failed to fetch messages: rate limit exceeded",
+    "details": {
+      "retry_after": 60,
+      "failing_message_id": "1234567890.123456"
+    }
+  }
+}
+```
+
+### Error Codes
+
+| Code | Description | Retry |
+|------|-------------|-------|
+| `PLATFORM_ERROR` | Platform API error | Yes (after retry_after) |
+| `AUTH_ERROR` | Authentication failed | No (re-auth required) |
+| `RATE_LIMIT` | Rate limit exceeded | Yes (after retry_after) |
+| `CHANNEL_NOT_FOUND` | Channel doesn't exist | No |
+| `INTERNAL_ERROR` | Internal server error | Yes |
+
+## Best Practices
+
+1. **Check Status**: Always check sync status before triggering new syncs
+2. **Handle Rate Limits**: Respect `retry_after` on rate limit errors
+3. **Use Schedules**: Set up recurring syncs instead of manual triggers
+4. **Monitor Progress**: Track progress for long-running syncs
+5. **Handle Failures**: Implement error handling and retry logic
