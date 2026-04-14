@@ -15,6 +15,7 @@ export interface SyncState {
   stage_timings?: Record<string, number>;
   stage_details?: {
     activity_log?: import("@/lib/types").ActivityEntry[];
+    batch_stages?: Record<string, string>;
     [key: string]: unknown;
   };
   batch_results?: BatchResultEntry[];
@@ -60,7 +61,7 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
         processed_messages: status.processed_messages,
         current_batch: status.current_batch,
         total_batches: status.total_batches,
-        batches_completed: (status as SyncStatusResponse & { batches_completed?: number }).batches_completed,
+        batches_completed: status.batches_completed,
         current_stage: status.current_stage,
         stage_timings: status.stage_timings,
         stage_details: status.stage_details,

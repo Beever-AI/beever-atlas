@@ -165,6 +165,8 @@ export interface ActivityEntry {
   samples?: ActivitySample[];
   elapsed?: number;
   model?: string;
+  /** Present under concurrent batching; identifies which batch emitted this entry. */
+  batch_idx?: number;
 }
 
 export interface SyncStatusResponse {
@@ -175,10 +177,13 @@ export interface SyncStatusResponse {
   processed_messages?: number;
   current_batch?: number;
   total_batches?: number;
+  batches_completed?: number;
   current_stage?: string | null;
   stage_timings?: Record<string, number>;
   stage_details?: {
     activity_log?: ActivityEntry[];
+    /** Per-batch current stage labels keyed by batch_idx (string). Present only under concurrent batching. */
+    batch_stages?: Record<string, string>;
     [key: string]: unknown;
   };
   batch_results?: BatchResultEntry[];
@@ -608,6 +613,7 @@ export interface SyncHistoryEntry {
   stage_timings: Record<string, number>;
   stage_details: {
     activity_log?: ActivityEntry[];
+    batch_stages?: Record<string, string>;
     [key: string]: unknown;
   };
   batch_results: BatchResultEntry[];
