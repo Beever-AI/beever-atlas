@@ -6,7 +6,10 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from motor.motor_asyncio import AsyncIOMotorClient  # re-exported for test patching
 from pymongo import DESCENDING, ReturnDocument
+
+__all__ = ["AsyncIOMotorClient", "WikiVersionStore", "MAX_VERSIONS_DEFAULT"]
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +29,20 @@ class WikiVersionStore:
     async def _ensure_db(self) -> None:
         """Resolve the shared Motor client (singleton from cache module).
 
-        Short-circuits if _collection has already been set (e.g. by test
-        fixtures that inject a mock collection directly).
+        Short-circuits if ``_collection`` has already been set (e.g. by
+        test fixtures that inject a mock collection directly). In that
+        case ``_counters`` defaults to the same injected collection so
+        the race-safe counter path still works against the mock.
         """
-        if self._collection is not None and self._counters is not None:
+        if self._collection is not None:
+            if self._counters is None:
+                self._counters = self._collection
             return
         # Reuse the same singleton registry as WikiCache to avoid a second pool.
         from beever_atlas.wiki.cache import _get_motor_client
         client = await _get_motor_client(self._mongodb_uri)
         self._db = client[self._db_name]
-        if self._collection is None:
-            self._collection = self._db["wiki_versions"]
+        self._collection = self._db["wiki_versions"]
         if self._counters is None:
             self._counters = self._db["wiki_version_counters"]
 

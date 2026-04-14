@@ -49,16 +49,15 @@ def _make_resolved() -> ResolvedPolicy:
 def _clear_state():
     from beever_atlas.services import pipeline_orchestrator
     pipeline_orchestrator._consolidation_tasks.clear()
-    pipeline_orchestrator._consolidation_locks.clear()
     yield
     pipeline_orchestrator._consolidation_tasks.clear()
-    pipeline_orchestrator._consolidation_locks.clear()
 
 
 @pytest.mark.asyncio
 async def test_concurrent_spawn_only_creates_one_task():
-    """N concurrent ``_spawn_consolidation`` calls for the same channel
-    must yield exactly one running task."""
+    """N back-to-back ``_spawn_consolidation`` calls for the same channel
+    must yield exactly one running task. Dedup is synchronous dict
+    membership with no ``await`` between check and insert."""
     from beever_atlas.services import pipeline_orchestrator
 
     started = asyncio.Event()
@@ -74,9 +73,8 @@ async def test_concurrent_spawn_only_creates_one_task():
     with patch.object(
         pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation
     ):
-        await asyncio.gather(
-            *[pipeline_orchestrator._spawn_consolidation("C123") for _ in range(25)]
-        )
+        for _ in range(25):
+            pipeline_orchestrator._spawn_consolidation("C123")
         await started.wait()
         # Exactly one task should have been created.
         assert len([t for t in pipeline_orchestrator._consolidation_tasks.values()
@@ -149,11 +147,9 @@ async def test_different_channels_spawn_independent_tasks():
     with patch.object(
         pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation
     ):
-        await asyncio.gather(
-            pipeline_orchestrator._spawn_consolidation("C1"),
-            pipeline_orchestrator._spawn_consolidation("C2"),
-            pipeline_orchestrator._spawn_consolidation("C3"),
-        )
+        pipeline_orchestrator._spawn_consolidation("C1")
+        pipeline_orchestrator._spawn_consolidation("C2")
+        pipeline_orchestrator._spawn_consolidation("C3")
         # Yield so the created tasks can begin executing.
         await asyncio.sleep(0)
         release.set()

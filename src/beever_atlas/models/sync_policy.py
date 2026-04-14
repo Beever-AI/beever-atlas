@@ -105,7 +105,7 @@ class GlobalPolicyDefaults(BaseModel):
             trigger_mode=SyncTriggerMode.MANUAL,
             sync_type="auto",
             max_messages=1000,
-            min_sync_interval_minutes=1,
+            min_sync_interval_minutes=5,
         )
     )
     ingestion: IngestionConfig = Field(

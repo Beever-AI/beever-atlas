@@ -72,6 +72,7 @@ class TestWikiVersionStoreArchive:
     async def test_first_version_gets_number_1(self, store):
         s, col = store
         col.find_one = AsyncMock(return_value=None)
+        col.find_one_and_update = AsyncMock(return_value={"_id": "C001", "seq": 1})
         col.insert_one = AsyncMock()
 
         wiki = _make_wiki_doc()
@@ -87,7 +88,8 @@ class TestWikiVersionStoreArchive:
     @pytest.mark.anyio
     async def test_subsequent_version_increments(self, store):
         s, col = store
-        col.find_one = AsyncMock(return_value={"version_number": 3})
+        col.find_one = AsyncMock(return_value={"_id": "C001", "seq": 3})
+        col.find_one_and_update = AsyncMock(return_value={"_id": "C001", "seq": 4})
         col.insert_one = AsyncMock()
 
         wiki = _make_wiki_doc()
@@ -99,6 +101,7 @@ class TestWikiVersionStoreArchive:
     async def test_archive_preserves_page_count(self, store):
         s, col = store
         col.find_one = AsyncMock(return_value=None)
+        col.find_one_and_update = AsyncMock(return_value={"_id": "C001", "seq": 1})
         col.insert_one = AsyncMock()
 
         wiki = _make_wiki_doc()

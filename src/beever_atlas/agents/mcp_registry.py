@@ -97,23 +97,20 @@ class ExternalMCPRegistry:
 
     async def _connect_one(self, cfg: _MCPServerConfig) -> None:
         """Connect to a single MCP server and register its tools."""
-        from beever_atlas.infra.config import get_settings
-        from beever_atlas.infra.http_safe import safe_get
+        import httpx
 
         headers: dict[str, str] = {}
         if cfg.auth_token:
             headers["Authorization"] = f"Bearer {cfg.auth_token}"
 
-        allowlist = get_settings().external_mcp_allowlist or None
         # Probe the server — fetch its tool list via MCP initialize handshake
-        resp = await safe_get(
-            f"{cfg.url.rstrip('/')}/tools",
-            allowlist=allowlist,
-            timeout=5.0,
-            headers=headers,
-        )
-        resp.raise_for_status()
-        tools_data = resp.json()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{cfg.url.rstrip('/')}/tools",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            tools_data = resp.json()
 
         tool_names: list[str] = []
         for tool_def in tools_data.get("tools", []):
@@ -160,22 +157,15 @@ def _make_remote_tool(
     The returned function is named after the remote tool and includes the
     description in its docstring so ADK can use it for routing.
     """
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.infra.http_safe import safe_post
+    import httpx
 
     url = f"{server_url.rstrip('/')}/tools/{tool_name}"
 
     async def remote_tool(**kwargs: Any) -> Any:
-        allowlist = get_settings().external_mcp_allowlist or None
-        resp = await safe_post(
-            url,
-            allowlist=allowlist,
-            timeout=15.0,
-            headers=headers,
-            json=kwargs,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=kwargs)
+            resp.raise_for_status()
+            return resp.json()
 
     remote_tool.__name__ = f"{server_name}__{tool_name}"
     remote_tool.__doc__ = f"[External MCP: {server_name}] {description}"

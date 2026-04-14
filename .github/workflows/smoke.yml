@@ -59,6 +59,10 @@ jobs:
           echo "$RESP" | jq -e '.checked_at | length > 0' > /dev/null
           echo "Health check passed: status=$STATUS"
 
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+
       - name: Tear down
         if: always()
         run: docker compose down -v

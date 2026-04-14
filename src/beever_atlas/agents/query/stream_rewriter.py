@@ -153,14 +153,12 @@ class StreamRewriter:
             out.append(self._buffer)
             self._buffer = ""
             break
-        # Streaming-time safety net: strip any `[src:...]` / `[External: ...]`
-        # literal that survived because its inner id did not match the strict
-        # 10-hex memory-id format (e.g. the agent fabricated a citation to a
-        # tool name like `[src:src_get_recent_activity_response]`). Without
-        # this, such tags reach the client verbatim and only the FLUSH pass
-        # cleans the trailing tail — the middle of the response stays dirty.
-        joined = "".join(out)
-        return _LEFTOVER_TAG_RE.sub("", joined)
+        # Malformed tags (inner id not matching strict 10-hex memory-id
+        # format, or `[External: ...]` literals) pass through the streaming
+        # pass untouched. The flush pass (`_strip_leftovers`) is the sole
+        # cleaner for these shapes so the `leftover_stripped_count`
+        # observability counter reflects reality.
+        return "".join(out)
 
     def _find_next_src_bracket(self) -> re.Match[str] | None:
         """Return the next `[...]` in the buffer whose content carries a src tag."""
