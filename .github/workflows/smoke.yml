@@ -61,7 +61,15 @@ jobs:
 
       - name: Dump container logs on failure
         if: failure()
-        run: docker compose logs --no-color --timestamps
+        run: |
+          echo '== docker compose ps =='
+          docker compose ps -a || true
+          echo '== docker compose logs (all services, --tail=all) =='
+          docker compose logs --no-color --timestamps --tail=all || true
+          echo '== raw docker ps -a =='
+          docker ps -a || true
+          echo '== raw beever-atlas logs =='
+          docker logs beever-atlas-beever-atlas-1 2>&1 || true
 
       - name: Tear down
         if: always()

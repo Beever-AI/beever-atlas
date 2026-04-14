@@ -1,7 +1,8 @@
 """Concurrent archive() must produce distinct, monotonically-increasing version numbers.
 
-Emulates MongoDB's atomic ``$inc`` semantics with an async lock so the shared
-counter is incremented serially even under ``asyncio.gather`` fan-out.
+Emulates MongoDB's atomic ``find_one_and_update`` ``$inc`` semantics with an
+async lock so the shared counter is incremented serially even under
+``asyncio.gather`` fan-out.
 """
 
 from __future__ import annotations
@@ -14,65 +15,58 @@ import pytest
 from beever_atlas.wiki.version_store import WikiVersionStore
 
 
-class AtomicCollectionMock:
-    """Fake Motor collection where find_one / insert_one are atomic together."""
-
-    def __init__(self) -> None:
-        self._latest: int = 0
-        self._lock = asyncio.Lock()
-        self._inserts: list[dict] = []
-
-    async def find_one(self, *_args, **_kwargs) -> dict | None:
-        # NOTE: find_one is NOT atomic with insert_one in real Mongo — so the
-        # test is pessimistic. We simulate the atomic guarantee _next_version
-        # relies on by holding the lock across both calls from archive().
-        if self._latest == 0:
-            return None
-        return {"version_number": self._latest}
-
-    async def insert_one(self, doc: dict) -> None:
-        self._inserts.append(doc)
-
-    async def __aenter__(self):
-        await self._lock.acquire()
-        return self
-
-    async def __aexit__(self, *_args):
-        self._lock.release()
-
-
 @pytest.mark.asyncio
 async def test_concurrent_archive_assigns_distinct_monotonic_versions():
+    # State shared between the mocked collection and counters collection.
+    state = {"seq": 0, "inserts": [], "lock": asyncio.Lock()}
+
+    # --- primary wiki_versions collection ---
     collection = MagicMock()
-    state = {"latest": 0, "inserts": [], "lock": asyncio.Lock()}
 
-    async def find_one(*_args, **_kwargs):
-        if state["latest"] == 0:
-            return None
-        return {"version_number": state["latest"]}
+    async def col_find_one(*_args, **_kwargs):
+        # Used by the backfill branch of _next_version_number to discover the
+        # highest existing version_number. Always None here — fresh channel.
+        return None
 
-    async def insert_one(doc):
+    async def col_insert_one(doc):
         state["inserts"].append(doc)
-        # Atomic $inc analogue: bump the counter to this version number.
-        state["latest"] = max(state["latest"], doc["version_number"])
 
-    collection.find_one = AsyncMock(side_effect=find_one)
-    collection.insert_one = AsyncMock(side_effect=insert_one)
+    collection.find_one = AsyncMock(side_effect=col_find_one)
+    collection.insert_one = AsyncMock(side_effect=col_insert_one)
+
+    # --- wiki_version_counters collection (atomic $inc target) ---
+    counters = MagicMock()
+
+    async def counters_find_one(*_args, **_kwargs):
+        # First call per channel returns None so the backfill upsert runs.
+        # After that the counter doc exists (seq tracked in state).
+        if state["seq"] == 0 and not state["inserts"]:
+            return None
+        return {"_id": "C1", "seq": state["seq"]}
+
+    async def counters_update_one(*_args, **_kwargs):
+        # Backfill $max upsert — no state change required for this test
+        # (seed is 0 because col_find_one returned None).
+        return MagicMock(acknowledged=True)
+
+    async def counters_find_one_and_update(*_args, **_kwargs):
+        # Emulate atomic $inc: hold a lock so concurrent callers serialize
+        # exactly as Mongo would.
+        async with state["lock"]:
+            state["seq"] += 1
+            return {"_id": "C1", "seq": state["seq"]}
+
+    counters.find_one = AsyncMock(side_effect=counters_find_one)
+    counters.update_one = AsyncMock(side_effect=counters_update_one)
+    counters.find_one_and_update = AsyncMock(side_effect=counters_find_one_and_update)
 
     store = WikiVersionStore("mongodb://test")
     store._collection = collection  # bypass _ensure_db
-
-    # Wrap archive() so find_one + insert_one run under a lock — matches how
-    # the production code relies on Mongo's atomic $inc for version numbering.
-    original = store.archive
-
-    async def locked_archive(channel_id, wiki_doc, target_lang="en"):
-        async with state["lock"]:
-            return await original(channel_id, wiki_doc, target_lang)
+    store._counters = counters
 
     wiki = {"pages": {}, "metadata": {}}
     results = await asyncio.gather(
-        *[locked_archive("C1", wiki) for _ in range(20)]
+        *[store.archive("C1", wiki) for _ in range(20)]
     )
 
     assert len(results) == 20
