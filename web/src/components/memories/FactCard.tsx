@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, ImageIcon, FileText, Film, ArrowRight } from "lucide-react";
 import type { MemoryTier2 } from "@/lib/types";
 import { MediaModal } from "@/components/graph/MediaModal";
+import { buildLoaderUrl } from "@/lib/api";
 
 interface FactCardProps {
   fact: MemoryTier2;
@@ -137,7 +138,7 @@ export function FactCard({ fact }: FactCardProps) {
           {(fact.source_media_urls?.length > 0 || fact.source_media_url) && (
             <div className="flex flex-wrap gap-2">
               {(fact.source_media_urls?.length > 0 ? fact.source_media_urls : [fact.source_media_url].filter(Boolean)).map((url, i) => {
-                const proxyUrl = `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/files/proxy?url=${encodeURIComponent(url)}`;
+                const proxyUrl = buildLoaderUrl(`/api/files/proxy?url=${encodeURIComponent(url)}`);
                 const isImage = fact.source_media_type === "image" || url.match(/\.(png|jpg|jpeg|gif|webp)(\?|$)/i);
                 if (isImage) {
                   return (

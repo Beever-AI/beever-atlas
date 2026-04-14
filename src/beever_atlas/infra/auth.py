@@ -11,7 +11,7 @@ import hmac
 import logging
 from typing import Optional
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Query, status
 
 from beever_atlas.infra.config import get_settings
 
@@ -31,7 +31,14 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
     return parts[1].strip() or None
 
 
-def require_user(authorization: Optional[str] = Header(default=None)) -> str:
+def require_user(
+    authorization: Optional[str] = Header(default=None),
+    access_token: Optional[str] = Query(
+        default=None,
+        description="Fallback auth for URLs consumed by browser loaders "
+        "(<img src>, <a href>) that cannot carry custom headers.",
+    ),
+) -> str:
     """Validate Bearer token against configured API keys.
 
     Accepts either a user-facing API key (from `BEEVER_API_KEYS`) or the
@@ -39,6 +46,12 @@ def require_user(authorization: Optional[str] = Header(default=None)) -> str:
     bot service. Endpoints with additional internal-only checks (e.g.
     /api/internal/*) re-verify `BRIDGE_API_KEY` explicitly, so accepting it
     here just unblocks the first-layer gate without weakening those routes.
+
+    The token may be provided via `Authorization: Bearer <token>` header
+    (preferred) OR via `?access_token=<token>` query string (only for URLs
+    consumed by browser-native loaders like <img> / <a href> that cannot
+    set headers). The query-string path is equally validated but emits an
+    info log so operators can audit.
 
     Returns a user identifier string on success, raises HTTP 401 otherwise.
     """
@@ -53,6 +66,8 @@ def require_user(authorization: Optional[str] = Header(default=None)) -> str:
         )
 
     token = _extract_bearer(authorization)
+    if not token and access_token:
+        token = access_token.strip() or None
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

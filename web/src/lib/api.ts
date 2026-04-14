@@ -131,3 +131,19 @@ export const api = {
 };
 
 export { ApiError };
+
+/**
+ * Build a URL for browser-native loaders (<img src>, <a href>) that cannot
+ * carry custom Authorization headers. Appends `?access_token=<key>` so
+ * `require_user` can validate the request via query string.
+ *
+ * Use for /api/files/proxy and other endpoints consumed by <img>/<a>.
+ * DO NOT use for programmatic fetch() calls — use authFetch / api.get there.
+ */
+export function buildLoaderUrl(path: string): string {
+  const base = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const apiKey = currentApiKey();
+  if (!apiKey) return base;
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}access_token=${encodeURIComponent(apiKey)}`;
+}
