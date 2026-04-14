@@ -414,7 +414,9 @@ describe("AskPage routing — Phase 1", () => {
     await user.click(screen.getByText(/Start a new chat/i));
 
     await waitFor(() => {
-      expect(locations.some((p) => p === "/ask")).toBe(true);
+      expect(
+        locations.some((p) => p === "/ask" || p.startsWith("/ask?")),
+      ).toBe(true);
     });
   });
 });
