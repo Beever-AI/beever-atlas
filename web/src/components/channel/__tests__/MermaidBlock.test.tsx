@@ -41,7 +41,7 @@ describe("MermaidBlock", () => {
     render(<MermaidBlock code={code} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
 
     const pre = document.querySelector("pre");
@@ -51,14 +51,52 @@ describe("MermaidBlock", () => {
 
   it("falls back when mermaid.parse rejects (pre-render validation)", async () => {
     const { default: mermaid } = await import("mermaid");
-    vi.mocked(mermaid.parse).mockRejectedValueOnce(new Error("Syntax error"));
+    // Reject both parse attempts (initial + simplified fallback) so the
+    // component exhausts retries and surfaces the error fallback.
+    vi.mocked(mermaid.parse)
+      .mockRejectedValueOnce(new Error("Syntax error"))
+      .mockRejectedValueOnce(new Error("Syntax error"));
 
     render(<MermaidBlock code="not-a-diagram %%%" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
-    expect(mermaid.render).not.toHaveBeenCalled();
+  });
+
+  it("strips <script> tags from rendered SVG (XSS defense)", async () => {
+    const { default: mermaid } = await import("mermaid");
+    vi.mocked(mermaid.render).mockResolvedValueOnce({
+      svg: '<svg><script>window.__xss=1</script><text>ok</text></svg>',
+      bindFunctions: undefined,
+      diagramType: "flowchart",
+    });
+
+    render(<MermaidBlock code="graph TD; A-->B" />);
+
+    await waitFor(() => {
+      expect(document.querySelector("svg")).not.toBeNull();
+    });
+    expect(document.querySelector("svg script")).toBeNull();
+    // biome-ignore lint/suspicious/noExplicitAny: test-only global check
+    expect((window as any).__xss).toBeUndefined();
+  });
+
+  it("strips onerror attributes from rendered SVG (XSS defense)", async () => {
+    const { default: mermaid } = await import("mermaid");
+    vi.mocked(mermaid.render).mockResolvedValueOnce({
+      svg: '<svg><image href="x" onerror="window.__xss2=1"/></svg>',
+      bindFunctions: undefined,
+      diagramType: "flowchart",
+    });
+
+    render(<MermaidBlock code="graph TD; A-->B" />);
+
+    await waitFor(() => {
+      expect(document.querySelector("svg")).not.toBeNull();
+    });
+    const img = document.querySelector("svg image");
+    expect(img?.getAttribute("onerror")).toBeNull();
   });
 
   it("falls back when render returns a syntax-error SVG (v11 swallow)", async () => {
@@ -72,7 +110,7 @@ describe("MermaidBlock", () => {
     render(<MermaidBlock code="graph TD; A---" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Could not render diagram.")).toBeInTheDocument();
+      expect(screen.getByText(/Diagram could not be rendered/i)).toBeInTheDocument();
     });
   });
 });

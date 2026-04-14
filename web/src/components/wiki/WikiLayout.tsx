@@ -8,6 +8,7 @@ import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { WikiRegenerateButton } from "@/components/channel/WikiRegenerateButton";
 import type { WikiStructure, WikiPage, WikiVersionSummary } from "@/lib/types";
 import { wikiT } from "@/lib/wikiI18n";
+import { authFetch, API_BASE } from "@/lib/api";
 
 interface WikiLayoutProps {
   channelId: string;
@@ -342,15 +343,36 @@ export function WikiLayout({
           )}
           {/* Secondary actions: Download + Version History. */}
           <div className="flex gap-1.5">
-            <a
-              href={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/channels/${channelId}/wiki/download`}
-              download
+            <button
+              onClick={async () => {
+                try {
+                  const res = await authFetch(`${API_BASE}/api/channels/${channelId}/wiki/download`);
+                  if (!res.ok) {
+                    console.error("[wiki] download failed", res.status);
+                    alert(`Download failed (${res.status})`);
+                    return;
+                  }
+                  const blob = await res.blob();
+                  const disposition = res.headers.get("Content-Disposition") || "";
+                  const nameMatch = disposition.match(/filename[^;=\n]*=["']?([^"';\n]+)/);
+                  const filename = nameMatch ? nameMatch[1].trim() : `${channelId}-wiki.md`;
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = filename;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (err) {
+                  console.error("[wiki] download error", err);
+                  alert("Download failed. Please try again.");
+                }
+              }}
               className="flex items-center justify-center gap-1.5 flex-1 rounded-md px-3 py-1.5 text-xs font-medium border border-border/50 bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               title="Download as Markdown"
             >
               <Download className="h-3.5 w-3.5" />
               {wikiT(currentLang, "download")}
-            </a>
+            </button>
             <button
               onClick={() => setShowVersionHistory(!showVersionHistory)}
               disabled={versionCount === 0}

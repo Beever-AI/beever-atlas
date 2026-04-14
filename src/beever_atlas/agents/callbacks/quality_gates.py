@@ -157,9 +157,24 @@ def fact_extraction_with_recovery(callback_context: CallbackContext) -> None:
 
     # If raw is a string (LLM returned text instead of parsed JSON), try recovery
     if isinstance(raw, str):
-        from beever_atlas.services.json_recovery import recover_facts_from_truncated
-        recovered = recover_facts_from_truncated(raw)
-        if recovered and "facts" in recovered:
+        from beever_atlas.services.json_recovery import (
+            TruncationReport,
+            recover_truncated_json_with_report,
+        )
+        result, report = recover_truncated_json_with_report(raw)
+        recovered = None
+        if isinstance(result, dict) and "facts" in result:
+            recovered = result
+        logger.warning(
+            "truncation_report agent=fact_extractor recovered=%d lost_estimate=%d "
+            "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
+            report.recovered_count,
+            report.estimated_lost,
+            report.raw_bytes,
+            report.last_boundary_offset,
+            callback_context.state.get("batch_num", "?"),
+        )
+        if recovered:
             logger.info(
                 "fact_extraction_with_recovery: recovered %d facts from truncated output",
                 len(recovered["facts"]),
@@ -181,8 +196,19 @@ def entity_extraction_with_recovery(callback_context: CallbackContext) -> None:
         return entity_quality_gate_callback(callback_context)
 
     if isinstance(raw, str):
-        from beever_atlas.services.json_recovery import recover_entities_from_truncated
-        recovered = recover_entities_from_truncated(raw)
+        from beever_atlas.services.json_recovery import recover_truncated_json_with_report
+
+        result, report = recover_truncated_json_with_report(raw)
+        recovered = result if isinstance(result, dict) and ("entities" in result or "relationships" in result) else None
+        logger.warning(
+            "truncation_report agent=entity_extractor recovered=%d lost_estimate=%d "
+            "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
+            report.recovered_count,
+            report.estimated_lost,
+            report.raw_bytes,
+            report.last_boundary_offset,
+            callback_context.state.get("batch_num", "?"),
+        )
         if recovered:
             logger.info(
                 "entity_extraction_with_recovery: recovered %d entities from truncated output",

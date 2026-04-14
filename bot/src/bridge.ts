@@ -7,6 +7,10 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import type { SlackAdapter } from "@chat-adapter/slack";
 import { cleanSlackMrkdwn } from "./slack-mrkdwn.js";
 import type { ChatManager } from "./chat-manager.js";
@@ -64,17 +68,107 @@ interface PlatformBridge {
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY || "";
+const BRIDGE_HMAC_DUAL = process.env.BEEVER_BRIDGE_HMAC_DUAL === "true";
+const IS_PROD =
+  process.env.BEEVER_ENV === "production" ||
+  process.env.NODE_ENV === "production";
+
+if (!BRIDGE_API_KEY && IS_PROD) {
+  console.error(
+    "FATAL: BRIDGE_API_KEY is required in production (BEEVER_ENV/NODE_ENV=production)",
+  );
+  process.exit(1);
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
 
 function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
   if (!BRIDGE_API_KEY) return true; // No key configured = no auth required (dev mode)
 
   const authHeader = req.headers.authorization || "";
-  if (authHeader !== `Bearer ${BRIDGE_API_KEY}`) {
+  const expected = `Bearer ${BRIDGE_API_KEY}`;
+  if (!constantTimeEqual(authHeader, expected)) {
+    if (BRIDGE_HMAC_DUAL && authHeader === expected) {
+      console.warn(
+        "Bridge auth: accepted via legacy == path (BEEVER_BRIDGE_HMAC_DUAL). Retire flag next release.",
+      );
+      return true;
+    }
     res.writeHead(401, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Unauthorized", code: "AUTH_FAILED" }));
     return false;
   }
   return true;
+}
+
+// ── SSRF guard for proxyFile: block RFC1918, loopback, link-local, cloud metadata ──
+
+const PRIVATE_V4_RANGES: Array<[number, number]> = [
+  [0x0a000000, 0xff000000], // 10/8
+  [0xac100000, 0xfff00000], // 172.16/12
+  [0xc0a80000, 0xffff0000], // 192.168/16
+  [0x7f000000, 0xff000000], // 127/8
+  [0xa9fe0000, 0xffff0000], // 169.254/16 (incl. 169.254.169.254)
+  [0x64400000, 0xffc00000], // 100.64/10 CGNAT
+  [0x00000000, 0xff000000], // 0/8
+];
+
+function ipv4ToInt(ip: string): number {
+  const parts = ip.split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return -1;
+  }
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+function isPrivateIP(ip: string): boolean {
+  const family = isIP(ip);
+  if (family === 4) {
+    const n = ipv4ToInt(ip);
+    if (n < 0) return true;
+    for (const [base, mask] of PRIVATE_V4_RANGES) {
+      if ((n & mask) >>> 0 === (base & mask) >>> 0) return true;
+    }
+    return false;
+  }
+  if (family === 6) {
+    const lc = ip.toLowerCase();
+    if (lc === "::1" || lc === "::") return true;
+    if (lc.startsWith("fe80") || lc.startsWith("fc") || lc.startsWith("fd")) return true;
+    if (lc.includes(".")) {
+      const tail = lc.slice(lc.lastIndexOf(":") + 1);
+      if (isIP(tail) === 4 && isPrivateIP(tail)) return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+async function assertPublicUrl(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported scheme: ${parsed.protocol}`);
+  }
+  const host = parsed.hostname;
+  if (!host) throw new Error("missing host");
+  if (isIP(host)) {
+    if (isPrivateIP(host)) throw new Error(`blocked private IP literal: ${host}`);
+    return;
+  }
+  const { address } = await dnsLookup(host);
+  if (isPrivateIP(address)) {
+    throw new Error(`host ${host} resolved to private IP ${address}`);
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -89,11 +183,22 @@ function parseQuery(url: string): URLSearchParams {
   return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : "");
 }
 
+/**
+ * Shape of a Slack/Discord/etc. platform SDK error. The SDK wraps the raw
+ * HTTP payload under `data` and exposes a semantic `code` at the top level.
+ * All fields are optional because upstream SDKs disagree on what they set.
+ */
+interface PlatformErrorShape {
+  code?: string;
+  data?: { error?: string };
+}
+
 /** Classify a platform SDK error into an appropriate HTTP status code. */
-function classifyPlatformError(err: unknown): { status: number; code: string } {
+export function classifyPlatformError(err: unknown): { status: number; code: string } {
   const msg = String(err).toLowerCase();
-  const errData = (err as any)?.data?.error || "";
-  const errCode = (err as any)?.code || "";
+  const shape = (err ?? {}) as PlatformErrorShape;
+  const errData = shape.data?.error ?? "";
+  const errCode = shape.code ?? "";
 
   // Not-found errors (Slack: channel_not_found, file_not_found; Discord: 404; generic)
   if (
@@ -115,7 +220,7 @@ function classifyPlatformError(err: unknown): { status: number; code: string } {
     errData === "token_revoked" ||
     errData === "missing_scope" ||
     errData === "not_allowed_token_type" ||
-    errCode === "slack_webapi_platform_error" && errData === "not_in_channel" ||
+    (errCode === "slack_webapi_platform_error" && errData === "not_in_channel") ||
     msg.includes("forbidden") ||
     msg.includes(": 403")
   ) {
@@ -423,6 +528,7 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
+    await assertPublicUrl(decodedUrl);
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
     let response = await fetch(decodedUrl, {
@@ -713,6 +819,7 @@ class DiscordBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
+    await assertPublicUrl(decodedUrl);
 
     // Discord CDN signed URLs expire. Try the URL as-is first.
     let response = await fetch(decodedUrl);
@@ -808,7 +915,9 @@ class TeamsBridge implements PlatformBridge {
   }
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
-    const response = await fetch(decodeURIComponent(url));
+    const decodedUrl = decodeURIComponent(url);
+    await assertPublicUrl(decodedUrl);
+    const response = await fetch(decodedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
     }
@@ -874,7 +983,9 @@ class TelegramBridge implements PlatformBridge {
   }
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
-    const response = await fetch(decodeURIComponent(url));
+    const decodedUrl = decodeURIComponent(url);
+    await assertPublicUrl(decodedUrl);
+    const response = await fetch(decodedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
     }

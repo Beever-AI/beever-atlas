@@ -118,10 +118,23 @@ def register_health_checks() -> None:
     async def check_neo4j() -> None:
         from neo4j import AsyncGraphDatabase
 
-        driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
-        )
+        driver_kwargs: dict = {"auth": (settings.neo4j_user, settings.neo4j_password)}
+        try:
+            from neo4j import NotificationDisabledCategory, NotificationMinimumSeverity
+
+            driver_kwargs["notifications_min_severity"] = NotificationMinimumSeverity.WARNING
+            driver_kwargs["notifications_disabled_categories"] = [
+                NotificationDisabledCategory.UNRECOGNIZED,
+            ]
+        except ImportError:  # pragma: no cover - defensive (neo4j-driver < 5.7)
+            pass
+        try:
+            driver = AsyncGraphDatabase.driver(settings.neo4j_uri, **driver_kwargs)
+        except TypeError:  # pragma: no cover - defensive
+            driver = AsyncGraphDatabase.driver(
+                settings.neo4j_uri,
+                auth=(settings.neo4j_user, settings.neo4j_password),
+            )
         try:
             await driver.verify_connectivity()
         finally:

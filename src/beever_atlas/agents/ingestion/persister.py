@@ -29,6 +29,49 @@ from beever_atlas.models import AtomicFact, GraphEntity, GraphRelationship
 logger = logging.getLogger(__name__)
 
 
+def match_media_by_word_overlap(
+    fact: dict[str, Any],
+    preprocessed_messages: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Attribute media/link provenance to a fact via a word-overlap heuristic.
+
+    A single shared common word (e.g. "project", "demo") is not enough — that
+    mis-attributes media across unrelated messages in long channels. Requires:
+      - an author identity match between fact and candidate message, AND
+      - either ≥3 unique overlapping ≥4-char words, OR
+      - ≥1 overlapping word with len ≥6.
+
+    Returns the matched preprocessed message dict, or ``None`` when no
+    candidate satisfies the threshold. Callers should mark resulting facts
+    with ``derived_from = "heuristic_word_overlap"``.
+    """
+    fact_author = (fact.get("author_id") or fact.get("author_name") or "").lower()
+    if not fact_author:
+        return None
+    fact_text_lower = (fact.get("memory_text", "")).lower()
+    fact_words = set(w for w in fact_text_lower.split() if len(w) > 3)
+    best_match: dict[str, Any] | None = None
+    best_score = 0
+    best_long_overlap = False
+    for pm in preprocessed_messages:
+        pm_author = (pm.get("author_id") or pm.get("author_name") or "").lower()
+        if not pm_author or pm_author != fact_author:
+            continue
+        pm_text = (pm.get("text", "")).lower()
+        pm_words = set(w for w in pm_text.split() if len(w) > 3)
+        shared = pm_words & fact_words
+        overlap = len(shared)
+        has_long = any(len(w) >= 6 for w in shared)
+        qualifies = overlap >= 3 or (has_long and overlap >= 1)
+        if qualifies and overlap > best_score:
+            best_score = overlap
+            best_long_overlap = has_long
+            best_match = pm
+    if best_match and (best_score >= 3 or best_long_overlap):
+        return best_match
+    return None
+
+
 class PersisterAgent(BaseAgent):
     """Persists embedded facts and validated entities to Weaviate and Neo4j.
 
@@ -135,21 +178,12 @@ class PersisterAgent(BaseAgent):
                     if source_msg:
                         break
 
+            heuristic_match = False
             if not source_msg:
-                fact_text_lower = (fd.get("memory_text", "")).lower()
-                # Pass 2: word overlap matching
-                best_match = None
-                best_score = 0
-                for pm in preprocessed_messages:
-                    pm_text = (pm.get("text", "")).lower()
-                    pm_words = set(w for w in pm_text.split() if len(w) > 3)
-                    fact_words = set(w for w in fact_text_lower.split() if len(w) > 3)
-                    overlap = len(pm_words & fact_words)
-                    if overlap > best_score:
-                        best_score = overlap
-                        best_match = pm
-                if best_match and best_score >= 3:
-                    source_msg = best_match
+                matched = match_media_by_word_overlap(fd, preprocessed_messages)
+                if matched is not None:
+                    source_msg = matched
+                    heuristic_match = True
 
             if source_msg:
                 media_urls = source_msg.get("source_media_urls") or []
@@ -166,6 +200,8 @@ class PersisterAgent(BaseAgent):
                 fact_data["source_link_urls"] = source_msg.get("source_link_urls") or []
                 fact_data["source_link_titles"] = source_msg.get("source_link_titles") or []
                 fact_data["source_link_descriptions"] = source_msg.get("source_link_descriptions") or []
+                if heuristic_match:
+                    fact_data["derived_from"] = "heuristic_word_overlap"
 
             # Normalize fact_type from LLM output
             raw_type = str(fact_data.get("fact_type", "")).lower().strip()

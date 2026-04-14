@@ -8,9 +8,11 @@ import logging
 import re
 from typing import Any
 
+from beever_atlas.agents.prompt_safety import wrap_untrusted
 from beever_atlas.llm import get_llm_provider
 from beever_atlas.llm.model_resolver import is_ollama_model
 from beever_atlas.models.domain import AtomicFact, WikiCitation, WikiPage, WikiPageNode, WikiPageRef, WikiStructure
+from beever_atlas.wiki import render
 from beever_atlas.wiki.prompts import (
     ACTIVITY_PROMPT,
     DECISIONS_PROMPT,
@@ -20,12 +22,78 @@ from beever_atlas.wiki.prompts import (
     PEOPLE_PROMPT,
     RESOURCES_PROMPT,
     SUBTOPIC_PROMPT,
+    SUBTOPIC_PROMPT_V2,
+    THIN_TOPIC_PROMPT,
     TOPIC_ANALYSIS_PROMPT,
     TOPIC_PROMPT,
+    TOPIC_PROMPT_V2,
 )
 from beever_atlas.wiki.schemas import CompiledPageContent
 
+# Phase 4: deterministic Key Facts marker.
+_KEY_FACTS_MARKER = "<<KEY_FACTS_TABLE>>"
+# Minimum member_facts count to take the full topic path; below this the
+# thin-topic path runs when wiki_compiler_v2 is ON.
+_THIN_TOPIC_THRESHOLD = 5
+
+
+def _splice_key_facts_table(content: str, key_facts: list[dict]) -> str:
+    """Replace the `<<KEY_FACTS_TABLE>>` marker with the deterministic table.
+
+    - If the marker is absent, insert the rendered table after the first
+      non-TL;DR `## ` heading.
+    - If the rendered table is empty, replace the marker with "" (so the
+      section vanishes cleanly).
+    """
+    table = render.render_key_facts_table(key_facts)
+    if _KEY_FACTS_MARKER in content:
+        return content.replace(_KEY_FACTS_MARKER, table)
+    # Marker missing — insert after first non-TL;DR `## ` heading.
+    if not table:
+        return content
+    lines = content.split("\n")
+    insert_at: int | None = None
+    for idx, line in enumerate(lines):
+        if line.startswith("## "):
+            # Skip TL;DR heading (case-insensitive match on the remainder).
+            heading = line[3:].strip().lower()
+            if heading.startswith("tl;dr") or heading.startswith("tldr"):
+                continue
+            # Insert after this heading plus its following blank line (if any).
+            insert_at = idx + 1
+            # Skip one blank line to place table content in the section body.
+            if insert_at < len(lines) and lines[insert_at].strip() == "":
+                insert_at += 1
+            break
+    if insert_at is None:
+        # No suitable heading — append at end.
+        return content.rstrip() + "\n\n" + table + "\n"
+    new_lines = lines[:insert_at] + [table, ""] + lines[insert_at:]
+    return "\n".join(new_lines)
+
 logger = logging.getLogger(__name__)
+
+
+def _apply_title_fallbacks(clusters: list) -> None:
+    """Defend against clusters arriving with empty titles.
+
+    Upstream consolidation is expected to assign a descriptive title to every
+    cluster, but if one slips through with ``title == ""`` the LLM will
+    faithfully render the empty string (e.g. "**** (1 member) — ..."). Mutate
+    each offending cluster in place with a synthesized fallback derived from
+    topic_tags, falling back to ``Topic {id[:6]}``.
+    """
+    for c in clusters:
+        if c.title and c.title.strip():
+            continue
+        fallback = ", ".join(t for t in (c.topic_tags or [])[:3] if t) or f"Topic {c.id[:6]}"
+        logger.info(
+            "WikiCompiler: cluster %s had empty title, synthesized '%s'",
+            c.id,
+            fallback,
+        )
+        c.title = fallback
+
 
 # Minimum number of member facts in a cluster before sub-page analysis is triggered
 TOPIC_SUBPAGE_THRESHOLD = 15
@@ -125,6 +193,178 @@ def _build_media_data(facts: list[AtomicFact]) -> list[dict]:
     return media
 
 
+def _assemble_resources_markdown(media_data: list[dict]) -> str:
+    """Build the Resources & Media wiki page markdown deterministically.
+
+    Produces the same section structure that RESOURCES_PROMPT asked the LLM to
+    emit, but without an LLM round-trip, avoiding token-limit truncation on
+    large channels.
+
+    Sections emitted (each skipped if no data):
+      ## Media distribution  — donut chart JSON block
+      ## Resources table     — GFM table, max 40 rows, round-robin by type
+      ## Overview            — deterministic 1-2 sentence summary
+      ## Images              — top 10 image items
+      ## Documents           — top 10 document/file/pdf items
+      ## Links               — top 20 link items
+      ## Videos              — up to 10 video items
+    """
+    if not media_data:
+        return ""
+
+    from collections import Counter
+
+    def _esc(text: str) -> str:
+        """Escape pipe characters for GFM table cells and strip newlines."""
+        return " ".join(str(text).splitlines()).replace("|", "\\|")
+
+    def _ctx(text: str, limit: int = 120) -> str:
+        """Truncate context, sentence-case the result."""
+        clean = " ".join(str(text or "").split())[:limit]
+        return clean[:1].upper() + clean[1:] if clean else ""
+
+    # ── Type counts ──────────────────────────────────────────────────────
+    type_counts: Counter[str] = Counter(item["type"] for item in media_data)
+
+    # ── Section: Media distribution ──────────────────────────────────────
+    TYPE_LABELS = {
+        "image": "Images",
+        "document": "Documents",
+        "file": "Files",
+        "pdf": "PDFs",
+        "link": "Links",
+        "video": "Videos",
+    }
+    chart_data = [
+        {"name": TYPE_LABELS.get(t, t.title()), "value": count}
+        for t, count in sorted(type_counts.items())
+        if count > 0
+    ]
+    chart_block = (
+        "```chart\n"
+        + json.dumps(
+            {"type": "donut", "title": "Resources by Type", "data": chart_data},
+            separators=(",", ":"),
+        )
+        + "\n```"
+    )
+
+    # ── Section: Resources table (round-robin, max 40) ───────────────────
+    # Bucket by type and sort each bucket by fact_index (stable ordering).
+    buckets: dict[str, list[dict]] = {}
+    for item in media_data:
+        buckets.setdefault(item["type"], []).append(item)
+    # Within each bucket keep insertion order (already stable from _build_media_data).
+    type_order = ["image", "document", "file", "pdf", "link", "video"]
+    # Include any types not in type_order at the end.
+    extra_types = [t for t in buckets if t not in type_order]
+    ordered_types = [t for t in type_order if t in buckets] + extra_types
+
+    # Round-robin interleave.
+    table_rows: list[dict] = []
+    iters = {t: iter(buckets[t]) for t in ordered_types}
+    active = list(ordered_types)
+    while active and len(table_rows) < 40:
+        next_active = []
+        for t in active:
+            if len(table_rows) >= 40:
+                break
+            try:
+                table_rows.append(next(iters[t]))
+                next_active.append(t)
+            except StopIteration:
+                pass
+        active = next_active
+
+    table_lines = [
+        "| Name | Type | Shared By | Context | Link |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in table_rows:
+        name = _esc(row.get("name", ""))
+        rtype = _esc(TYPE_LABELS.get(row.get("type", ""), row.get("type", "").title()))
+        author = _esc(row.get("author", ""))
+        ctx = _esc(_ctx(row.get("context", "")))
+        url = row.get("url", "")
+        link_cell = f"[Open]({url})" if url else ""
+        table_lines.append(f"| {name} | {rtype} | {author} | {ctx} | {link_cell} |")
+
+    # ── Section: Overview ────────────────────────────────────────────────
+    unique_types = sorted(type_counts.keys())
+    author_counts: Counter[str] = Counter(
+        item.get("author", "") for item in media_data if item.get("author")
+    )
+    top_author = author_counts.most_common(1)[0][0] if author_counts else None
+
+    type_list = ", ".join(TYPE_LABELS.get(t, t.title()) for t in unique_types)
+    overview_parts = [
+        f"This channel has shared {len(media_data)} resource(s) across "
+        f"{len(unique_types)} type(s): {type_list}."
+    ]
+    if top_author:
+        overview_parts.append(f"Top contributor: {top_author}.")
+    overview_text = " ".join(overview_parts)
+
+    # ── Section: Images ──────────────────────────────────────────────────
+    images = [m for m in media_data if m.get("type") == "image"][:10]
+
+    # ── Section: Documents ───────────────────────────────────────────────
+    docs = [m for m in media_data if m.get("type") in ("document", "file", "pdf")][:10]
+
+    # ── Section: Links ───────────────────────────────────────────────────
+    links = [m for m in media_data if m.get("type") == "link"][:20]
+
+    # ── Section: Videos ──────────────────────────────────────────────────
+    videos = [m for m in media_data if m.get("type") == "video"][:10]
+
+    # ── Assemble ─────────────────────────────────────────────────────────
+    sections: list[str] = []
+
+    sections.append("## Media distribution\n\n" + chart_block)
+
+    if table_rows:
+        sections.append("## Resources table\n\n" + "\n".join(table_lines))
+
+    sections.append("## Overview\n\n" + overview_text)
+
+    if images:
+        img_lines = ["## Images"]
+        for item in images:
+            desc = _ctx(item.get("context", ""), 120) or item.get("name", "")
+            alt = item.get("name", "image")
+            url = item.get("url", "")
+            img_lines.append(f"\n**{desc}**\n![{alt}]({url})")
+        sections.append("\n".join(img_lines))
+
+    if docs:
+        doc_lines = ["## Documents"]
+        for item in docs:
+            name = item.get("name", "")
+            ctx = _ctx(item.get("context", ""), 120)
+            url = item.get("url", "")
+            doc_lines.append(f"\n**{name}** — {ctx} [Download]({url})")
+        sections.append("\n".join(doc_lines))
+
+    if links:
+        link_lines = ["## Links"]
+        for item in links:
+            name = item.get("name", "")
+            ctx = _ctx(item.get("context", ""), 120)
+            url = item.get("url", "")
+            link_lines.append(f"\n**{name}** — {ctx} [Read article]({url})")
+        sections.append("\n".join(link_lines))
+
+    if videos:
+        vid_lines = ["## Videos"]
+        for item in videos:
+            desc = _ctx(item.get("context", ""), 120) or item.get("name", "")
+            url = item.get("url", "")
+            vid_lines.append(f"\n**{desc}** [Watch]({url})")
+        sections.append("\n".join(vid_lines))
+
+    return "\n\n".join(sections) + "\n"
+
+
 def _format_relationship_edges(persons: list[dict]) -> list[dict]:
     """Extract relationship edges from person entities for the People prompt."""
     edges: list[dict] = []
@@ -197,6 +437,410 @@ GENERIC_GLOSSARY_TERMS: set[str] = {
 }
 
 
+def _faq_fallback(faq_by_topic: list[dict], clusters: list) -> tuple[str, str]:
+    """Render a minimal FAQ page from structured inputs when the LLM fails.
+
+    ``faq_by_topic`` is the same structure passed to FAQ_PROMPT:
+    ``[{"topic": str, "questions": [{"question": str, "answer": str}, ...]}]``.
+    When empty, fall back to one entry per cluster built from topic tags /
+    first key_fact.
+    """
+    lines: list[str] = ["## Frequently Asked Questions", ""]
+    rendered_any = False
+    for entry in faq_by_topic:
+        topic = entry.get("topic", "")
+        questions = entry.get("questions") or []
+        if not questions:
+            continue
+        if topic:
+            lines.append(f"### {topic}")
+            lines.append("")
+        for q in questions:
+            if isinstance(q, dict):
+                q_text = (q.get("question") or "").strip()
+                a_text = (q.get("answer") or "").strip()
+            else:
+                q_text = str(q).strip()
+                a_text = ""
+            if not q_text:
+                continue
+            lines.append(f"#### {q_text}")
+            if a_text:
+                lines.append("")
+                lines.append(a_text)
+            lines.append("")
+            rendered_any = True
+
+    if not rendered_any:
+        # No structured Q&A — fall back to per-cluster topic summary.
+        for c in clusters:
+            title = getattr(c, "title", "") or ""
+            if not title.strip():
+                continue
+            tags = getattr(c, "topic_tags", None) or []
+            key_facts = getattr(c, "key_facts", None) or []
+            blurb = ""
+            if key_facts:
+                first = key_facts[0]
+                if isinstance(first, dict):
+                    blurb = (first.get("fact") or first.get("text") or "").strip()
+                else:
+                    blurb = str(first).strip()
+            if not blurb and tags:
+                blurb = ", ".join(str(t) for t in tags[:3])
+            lines.append(f"### {title}")
+            lines.append("")
+            if blurb:
+                lines.append(blurb)
+                lines.append("")
+            rendered_any = True
+
+    if not rendered_any:
+        lines.append("_No FAQ data was available for this channel._")
+        lines.append("")
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = "Auto-generated FAQ from channel topics."
+    return content, summary
+
+
+def _glossary_fallback(glossary_terms: list, clusters: list) -> tuple[str, str]:
+    """Render a minimal Glossary page from term list / clusters when LLM fails."""
+    lines: list[str] = ["## Glossary", ""]
+
+    # Build term -> definition map from cluster key_entities where available.
+    defs: dict[str, str] = {}
+    for c in clusters:
+        for ent in getattr(c, "key_entities", None) or []:
+            if isinstance(ent, dict):
+                name = (ent.get("name") or "").strip()
+                desc = (ent.get("description") or ent.get("role") or "").strip()
+                if name and desc and name not in defs:
+                    defs[name] = desc
+
+    normalized_terms: list[str] = []
+    for t in glossary_terms:
+        if isinstance(t, dict):
+            name = (t.get("term") or t.get("name") or "").strip()
+            if name:
+                normalized_terms.append(name)
+                desc = (t.get("definition") or t.get("description") or "").strip()
+                if desc and name not in defs:
+                    defs[name] = desc
+        elif t:
+            normalized_terms.append(str(t).strip())
+
+    rendered_any = False
+    for term in sorted(set(normalized_terms), key=str.lower):
+        if not term:
+            continue
+        definition = defs.get(term, "").strip()
+        if not definition:
+            definition = "Referenced in this channel."
+        lines.append(f"**{term}** — {definition}")
+        lines.append("")
+        rendered_any = True
+
+    if not rendered_any:
+        # No term list — fall back to cluster titles + first key fact.
+        for c in clusters:
+            title = getattr(c, "title", "") or ""
+            if not title.strip():
+                continue
+            key_facts = getattr(c, "key_facts", None) or []
+            blurb = ""
+            if key_facts:
+                first = key_facts[0]
+                if isinstance(first, dict):
+                    blurb = (first.get("fact") or first.get("text") or "").strip()
+                else:
+                    blurb = str(first).strip()
+            if not blurb:
+                blurb = "Discussed in this channel."
+            lines.append(f"**{title}** — {blurb}")
+            lines.append("")
+            rendered_any = True
+
+    if not rendered_any:
+        lines.append("_No glossary terms were extracted for this channel._")
+        lines.append("")
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = "Auto-generated glossary from channel terms."
+    return content, summary
+
+
+_PLACEHOLDER_LINE = "This section has limited data and could not be summarized."
+
+
+def _overview_fallback(channel_summary: Any, clusters: list) -> tuple[str, str]:
+    """Render a minimal Overview page from channel summary + clusters."""
+    channel_name = getattr(channel_summary, "channel_name", "") or "This channel"
+    description = (getattr(channel_summary, "description", "") or "").strip()
+    themes = (getattr(channel_summary, "themes", "") or "").strip()
+    text = (getattr(channel_summary, "text", "") or "").strip()
+    blurb = description or themes or text
+    topic_count = len(clusters)
+    memory_count = sum(getattr(c, "member_count", 0) for c in clusters)
+
+    lines: list[str] = ["## Overview", ""]
+    para_parts = [f"**{channel_name}**"]
+    if blurb:
+        para_parts.append(blurb)
+    para_parts.append(f"{topic_count} topic(s), {memory_count} memories.")
+    lines.append(" ".join(para_parts))
+    lines.append("")
+
+    if clusters:
+        lines.append("## Topics at a glance")
+        lines.append("")
+        for c in clusters:
+            title = (getattr(c, "title", "") or "").strip() or f"Topic {getattr(c, 'id', '')[:6]}"
+            mc = getattr(c, "member_count", 0)
+            tags = getattr(c, "topic_tags", None) or []
+            blurb2 = ""
+            if tags:
+                blurb2 = str(tags[0])
+            else:
+                kf = getattr(c, "key_facts", None) or []
+                if kf:
+                    first = kf[0]
+                    if isinstance(first, dict):
+                        blurb2 = (first.get("fact") or first.get("memory_text") or first.get("text") or "").strip()
+                    else:
+                        blurb2 = str(first).strip()
+            blurb2 = blurb2[:120]
+            suffix = f" — {blurb2}" if blurb2 else ""
+            lines.append(f"* **{title}** ({mc} memories){suffix}")
+        lines.append("")
+
+    top_people = getattr(channel_summary, "top_people", None) or []
+    if top_people:
+        lines.append("## Key contributors")
+        lines.append("")
+        for person in top_people[:5]:
+            if isinstance(person, dict):
+                name = (person.get("name") or "").strip()
+            else:
+                name = str(person).strip()
+            if name:
+                lines.append(f"* {name}")
+        lines.append("")
+
+    if len(lines) <= 2:
+        lines.append(_PLACEHOLDER_LINE)
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = f"Overview of {channel_name} ({topic_count} topics, {memory_count} memories)."
+    return content, summary
+
+
+def _people_fallback(persons: list, top_people: list) -> tuple[str, str]:
+    """Render a minimal Contributors page from persons / top_people data."""
+    lines: list[str] = ["## Contributors", ""]
+    rendered_any = False
+
+    # Prefer structured `persons` (list of dicts with "entity" + edges).
+    for person_data in persons or []:
+        if not isinstance(person_data, dict):
+            continue
+        entity = person_data.get("entity")
+        name = ""
+        if entity is not None:
+            name = getattr(entity, "name", None) or (entity.get("name") if isinstance(entity, dict) else str(entity))
+        name = (name or "").strip()
+        if not name:
+            continue
+        decided = person_data.get("decided") or []
+        works_on = person_data.get("works_on") or []
+        uses = person_data.get("uses") or []
+        bits = []
+        if works_on:
+            bits.append(f"works on {', '.join(str(x) for x in works_on[:3])}")
+        if decided:
+            bits.append(f"decided on {', '.join(str(x) for x in decided[:3])}")
+        if uses:
+            bits.append(f"uses {', '.join(str(x) for x in uses[:3])}")
+        suffix = " · ".join(bits)
+        if suffix:
+            lines.append(f"**{name}** — {suffix}")
+        else:
+            lines.append(f"**{name}**")
+        lines.append("")
+        rendered_any = True
+
+    if not rendered_any:
+        for person in top_people or []:
+            if isinstance(person, dict):
+                name = (person.get("name") or "").strip()
+                role = (person.get("role") or "").strip()
+                topic_count = person.get("topic_count")
+                expertise = person.get("expertise_topics") or []
+            else:
+                name = str(person).strip()
+                role = ""
+                topic_count = None
+                expertise = []
+            if not name:
+                continue
+            bits = []
+            if role:
+                bits.append(role)
+            elif expertise:
+                bits.append(str(expertise[0]))
+            if topic_count is not None:
+                bits.append(f"{topic_count} topics")
+            suffix = " · ".join(bits)
+            if suffix:
+                lines.append(f"**{name}** — {suffix}")
+            else:
+                lines.append(f"**{name}**")
+            lines.append("")
+            rendered_any = True
+
+    if not rendered_any:
+        lines.append(_PLACEHOLDER_LINE)
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = "Auto-generated contributor list from channel data."
+    return content, summary
+
+
+def _activity_fallback(
+    recent_facts: list,
+    recent_activity_summary: dict,
+    clusters: list,
+) -> tuple[str, str]:
+    """Render a minimal Recent Activity page from recent facts / clusters."""
+    lines: list[str] = ["## Recent Activity", ""]
+    rendered_any = False
+
+    for f in (recent_facts or [])[:10]:
+        ts = getattr(f, "message_ts", "") or ""
+        author = getattr(f, "author_name", "") or ""
+        text = (getattr(f, "memory_text", "") or "").strip()
+        if not text:
+            continue
+        text = text[:180]
+        prefix_bits = []
+        if ts:
+            prefix_bits.append(ts)
+        if author:
+            prefix_bits.append(author)
+        prefix = " — ".join(prefix_bits)
+        if prefix:
+            lines.append(f"* {prefix}: {text}")
+        else:
+            lines.append(f"* {text}")
+        rendered_any = True
+
+    if not rendered_any:
+        highlights = (recent_activity_summary or {}).get("highlights") or []
+        for h in highlights[:10]:
+            if isinstance(h, dict):
+                msg = (h.get("text") or h.get("summary") or "").strip()
+            else:
+                msg = str(h).strip()
+            if msg:
+                lines.append(f"* {msg}")
+                rendered_any = True
+
+    if not rendered_any:
+        for c in clusters or []:
+            title = (getattr(c, "title", "") or "").strip()
+            if not title:
+                continue
+            mc = getattr(c, "member_count", 0)
+            end = getattr(c, "date_range_end", "") or ""
+            suffix = f" ({end})" if end else ""
+            lines.append(f"* {title} — {mc} memories{suffix}")
+            rendered_any = True
+
+    if not rendered_any:
+        lines.append(_PLACEHOLDER_LINE)
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = "Auto-generated recent activity summary."
+    return content, summary
+
+
+def _resources_fallback(media_data: list[dict]) -> tuple[str, str]:
+    """Render a minimal Resources & Media page from media_data."""
+    lines: list[str] = ["## Resources & Media", ""]
+    rendered_any = False
+
+    # Group by type when easy.
+    by_type: dict[str, list[dict]] = {}
+    for item in media_data or []:
+        if not isinstance(item, dict):
+            continue
+        t = (item.get("type") or "link").lower()
+        if t in {"image", "png", "jpg", "jpeg", "gif"}:
+            key = "Images"
+        elif t in {"pdf", "doc", "docx", "document", "file"}:
+            key = "Documents"
+        else:
+            key = "Links"
+        by_type.setdefault(key, []).append(item)
+
+    for section in ("Images", "Documents", "Links"):
+        items = by_type.get(section) or []
+        if not items:
+            continue
+        lines.append(f"### {section}")
+        lines.append("")
+        for item in items:
+            url = (item.get("url") or "").strip()
+            if not url:
+                continue
+            name = (item.get("name") or "").strip()
+            if not name:
+                name = url[:60]
+            lines.append(f"* **{name}** — [open]({url})")
+            rendered_any = True
+        lines.append("")
+
+    if not rendered_any:
+        lines.append(_PLACEHOLDER_LINE)
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = (
+        f"Catalog of {len(media_data)} shared resource(s)."
+        if media_data else "No shared resources found."
+    )
+    return content, summary
+
+
+def _subtopic_fallback(
+    sub_title: str,
+    sub_facts: list,
+    cluster_title: str = "",
+) -> tuple[str, str]:
+    """Render a minimal subtopic page from its assigned facts."""
+    title = (sub_title or "").strip() or "Subtopic"
+    lines: list[str] = [f"## {title}", ""]
+    rendered_any = False
+
+    for f in sub_facts or []:
+        text = (getattr(f, "memory_text", "") or "").strip()
+        if not text:
+            continue
+        text = text[:200]
+        lines.append(f"* {text}")
+        rendered_any = True
+
+    if not rendered_any:
+        blurb = (cluster_title or "").strip()
+        if blurb:
+            lines.append(f"Part of **{blurb}**. {_PLACEHOLDER_LINE}")
+        else:
+            lines.append(_PLACEHOLDER_LINE)
+
+    content = "\n".join(lines).rstrip() + "\n"
+    summary = f"Auto-generated subtopic summary for {title}."
+    return content, summary
+
+
 _LANG_HEADER_TEMPLATE = """\
 ## Language Directive (applies to every section below)
 The underlying channel memory is in **{source_language}** (BCP-47).
@@ -220,6 +864,426 @@ Produce this wiki page's content in **{target_language}** (BCP-47).
 _CODE_FENCE_RE = re.compile(
     r"^\s*```(?:json|JSON)?\s*(.*?)\s*```\s*$", re.DOTALL,
 )
+
+# Patterns that indicate a safety-blocked or refused LLM response.
+_SAFETY_PREFIXES = ("I can't", "I cannot", "I'm not able", "As an AI")
+_SAFETY_KEYWORDS = ("BLOCKED", "SAFETY")
+
+# GFM separator row: a table row composed only of pipes, dashes, colons, spaces.
+_GFM_SEP_ROW_RE = re.compile(r"^\s*\|[\s\-\|:]+\|\s*$")
+
+# Fenced code block pattern for stripping blocks when checking "visuals only".
+_FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
+# Directory where failing LLM JSON payloads are dumped for diagnosis.
+_PARSE_FAILURE_DUMP_DIR = "/tmp/wiki_parse_failures"
+
+
+def _dump_parse_failure(raw: str) -> str | None:
+    """Write a failing LLM JSON payload to the failure-dump directory.
+
+    Returns the dump path on success, None on any filesystem error (never
+    propagates — a dump failure must not break compile).
+    """
+    try:
+        import hashlib
+        import os
+        import time
+
+        os.makedirs(_PARSE_FAILURE_DUMP_DIR, exist_ok=True)
+        ts = int(time.time() * 1000)
+        sha = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+        path = os.path.join(_PARSE_FAILURE_DUMP_DIR, f"{ts}_{sha}.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(raw)
+        return path
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _recover_truncated_content_field(text: str) -> dict | None:
+    """Recover a ``{"content": "..."}`` payload that was truncated mid-string.
+
+    Used when the LLM hit ``max_output_tokens`` while emitting the content
+    value — no closing ``"``, no closing ``}``. Locates the ``"content": "``
+    opener and treats the rest of the text as the interior, re-escaping raw
+    quotes/control-chars so the rebuilt JSON parses cleanly.
+
+    Returns None if the recovered content is shorter than 200 chars (not
+    worth the risk of shipping partial garbage) or if no ``content`` key is
+    found.
+    """
+    if not text:
+        return None
+    key_idx = text.find('"content"')
+    if key_idx < 0:
+        return None
+    colon_idx = text.find(":", key_idx + len('"content"'))
+    if colon_idx < 0:
+        return None
+    open_idx = text.find('"', colon_idx + 1)
+    if open_idx < 0:
+        return None
+
+    interior = text[open_idx + 1 :]
+    # Trim a dangling trailing backslash that would otherwise produce an
+    # invalid escape when reconstructed.
+    if interior.endswith("\\"):
+        interior = interior[:-1]
+
+    if len(interior) < 200:
+        return None
+
+    # Re-escape interior char-by-char (same rules as _recover_content_field).
+    out: list[str] = []
+    k = 0
+    n = len(interior)
+    while k < n:
+        c = interior[k]
+        if c == "\\" and k + 1 < n:
+            out.append(c)
+            out.append(interior[k + 1])
+            k += 2
+            continue
+        if c == '"':
+            out.append('\\"')
+        elif c == "\n":
+            out.append("\\n")
+        elif c == "\r":
+            out.append("\\r")
+        elif c == "\t":
+            out.append("\\t")
+        elif ord(c) < 0x20:
+            out.append(" ")
+        else:
+            out.append(c)
+        k += 1
+    escaped_content = "".join(out)
+
+    # Derive summary from first sentence of decoded content.
+    try:
+        decoded = json.loads('"' + escaped_content + '"')
+    except Exception:  # noqa: BLE001
+        decoded = interior
+    first_line = decoded.lstrip().split("\n", 1)[0].strip()
+    first_line = first_line.lstrip("#*>- ").strip()
+    summary = ""
+    for sep in (". ", "! ", "? "):
+        if sep in first_line:
+            summary = first_line.split(sep, 1)[0] + sep.strip()
+            break
+    else:
+        summary = first_line[:200]
+    summary = json.dumps(summary)[1:-1]
+
+    reconstructed = '{"content": "' + escaped_content + '", "summary": "' + summary + '"}'
+    try:
+        return json.loads(reconstructed)
+    except json.JSONDecodeError:
+        return None
+
+
+def _recover_content_field(raw: str) -> dict | None:
+    """Aggressive recovery of a ``{"content": "...", ...}`` LLM payload.
+
+    Used as a last-chance fallback when the standard JSON parsers fail —
+    most commonly because the LLM emitted an unescaped ``"`` or raw control
+    char inside the content string literal. Locates the ``"content"`` key,
+    finds the outer object's closing ``}``, and walks backwards to identify
+    the closing ``"`` of the content value (the last ``"`` that is followed
+    only by whitespace + ``,`` or ``}``). Re-escapes the interior so it
+    can be re-parsed as JSON.
+
+    Returns the parsed dict or None if no recovery is possible.
+    """
+    if not raw:
+        return None
+    text = raw.strip()
+    truncated = False
+    if not text.endswith("}"):
+        # Find the last closing brace of the outer object.
+        last_brace = text.rfind("}")
+        if last_brace < 0:
+            # No closing brace anywhere — likely truncated mid-content-string.
+            # Take the raw text as-is for truncation branch below.
+            truncated = True
+        else:
+            text = text[: last_brace + 1]
+
+    if truncated:
+        return _recover_truncated_content_field(text)
+
+    # Locate the "content" key.
+    key_idx = text.find('"content"')
+    if key_idx < 0:
+        return None
+    # Find the ':' after the key.
+    colon_idx = text.find(":", key_idx + len('"content"'))
+    if colon_idx < 0:
+        return None
+    # Find the opening '"' of the value.
+    open_idx = text.find('"', colon_idx + 1)
+    if open_idx < 0:
+        return None
+
+    last_brace = text.rfind("}")
+    if last_brace <= open_idx:
+        return None
+    close_idx = -1
+    # Preferred heuristic: find the first `"`, `"` followed by the next
+    # top-level key pattern (`,\s*"<identifier>"\s*:`). Anything before that
+    # is still inside the content value even if stray quotes exist.
+    _next_key_re = re.compile(r'"\s*,\s*"[A-Za-z_][A-Za-z0-9_]*"\s*:')
+    m = _next_key_re.search(text, open_idx + 1)
+    if m and m.start() < last_brace:
+        close_idx = m.start()
+    # Fallback: walk backwards from the last '}' to find the closing '"'.
+    i = last_brace - 1
+    while close_idx < 0 and i > open_idx:
+        ch = text[i]
+        if ch == '"':
+            # Check what follows (whitespace then , or })
+            j = i + 1
+            while j < last_brace and text[j] in " \t\r\n":
+                j += 1
+            if j < len(text) and text[j] in ",}":
+                close_idx = i
+                break
+        i -= 1
+    if close_idx < 0:
+        # Fallback: the outer object may have only the content key.
+        # Try: last '"' before the final '}'.
+        j = last_brace - 1
+        while j > open_idx and text[j] in " \t\r\n":
+            j -= 1
+        if j > open_idx and text[j] == '"':
+            close_idx = j
+    if close_idx <= open_idx:
+        return None
+
+    interior = text[open_idx + 1 : close_idx]
+    # Re-escape interior char-by-char.
+    out: list[str] = []
+    k = 0
+    n = len(interior)
+    while k < n:
+        c = interior[k]
+        if c == "\\" and k + 1 < n:
+            # Preserve existing escape sequences verbatim.
+            out.append(c)
+            out.append(interior[k + 1])
+            k += 2
+            continue
+        if c == '"':
+            out.append('\\"')
+        elif c == "\n":
+            out.append("\\n")
+        elif c == "\r":
+            out.append("\\r")
+        elif c == "\t":
+            out.append("\\t")
+        elif ord(c) < 0x20:
+            out.append(" ")
+        else:
+            out.append(c)
+        k += 1
+    escaped_content = "".join(out)
+
+    # Try to salvage the original "summary" field if present & parseable.
+    summary = ""
+    # Look for "summary" after close_idx.
+    tail = text[close_idx + 1 :]
+    sm_key = tail.find('"summary"')
+    if sm_key >= 0:
+        sm_colon = tail.find(":", sm_key + len('"summary"'))
+        if sm_colon >= 0:
+            sm_open = tail.find('"', sm_colon + 1)
+            if sm_open >= 0:
+                # Find closing '"' of summary value — simple scan respecting escapes.
+                j = sm_open + 1
+                while j < len(tail):
+                    if tail[j] == "\\" and j + 1 < len(tail):
+                        j += 2
+                        continue
+                    if tail[j] == '"':
+                        summary = tail[sm_open + 1 : j]
+                        break
+                    j += 1
+    # Fallback: first sentence of recovered content (unescape for summary).
+    if not summary:
+        try:
+            # Use the re-escaped content for JSON decode of just the string.
+            decoded = json.loads('"' + escaped_content + '"')
+        except Exception:  # noqa: BLE001
+            decoded = escaped_content
+        first_line = decoded.lstrip().split("\n", 1)[0].strip()
+        first_line = first_line.lstrip("#*>- ").strip()
+        for sep in (". ", "! ", "? "):
+            if sep in first_line:
+                summary = first_line.split(sep, 1)[0] + sep.strip()
+                break
+        else:
+            summary = first_line[:200]
+        # Re-escape summary for reconstruction.
+        summary = json.dumps(summary)[1:-1]
+
+    reconstructed = '{"content": "' + escaped_content + '", "summary": "' + summary + '"}'
+    try:
+        return json.loads(reconstructed)
+    except json.JSONDecodeError:
+        return None
+
+
+def _escape_control_chars_inside_strings(text: str) -> str:
+    """Escape raw control characters found inside JSON string literals.
+
+    Walks the candidate string tracking in/out-of-string state. Inside a
+    string literal, replaces literal control chars with their JSON-safe
+    escape sequences. This recovers JSON that Gemini sometimes emits with
+    raw newlines / tabs inside "content" values.
+    """
+    result: list[str] = []
+    in_string = False
+    i = 0
+    n = len(text)
+    _ESCAPE_MAP = {
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\x00": " ",
+        "\x0b": " ",
+        "\x0c": " ",
+    }
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == "\\":
+                # Consume escaped char verbatim (two chars).
+                result.append(ch)
+                i += 1
+                if i < n:
+                    result.append(text[i])
+                    i += 1
+                continue
+            if ch == '"':
+                in_string = False
+                result.append(ch)
+                i += 1
+                continue
+            escaped = _ESCAPE_MAP.get(ch)
+            if escaped:
+                result.append(escaped)
+            else:
+                result.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            result.append(ch)
+        i += 1
+    return "".join(result)
+
+
+def _is_degenerate_content(content: str) -> tuple[bool, str]:
+    """Detect degenerate LLM output (too short, low alnum ratio, dash-wall, visuals-only).
+
+    Returns (is_degenerate, reason).
+    """
+    if len(content) < 80:
+        return True, "too short"
+    total = max(len(content), 1)
+    alnum_count = sum(1 for c in content if c.isalnum())
+    if alnum_count / total < 0.2:
+        return True, "low alnum ratio"
+    # Check for >= 5 consecutive GFM separator rows (dash-wall).
+    lines = content.splitlines()
+    max_run = run = 0
+    for line in lines:
+        if _GFM_SEP_ROW_RE.match(line):
+            run += 1
+            if run > max_run:
+                max_run = run
+        else:
+            run = 0
+    if max_run >= 5:
+        return True, "dash wall"
+    # Check if stripping fenced blocks leaves no alphanumeric content.
+    stripped = _FENCED_BLOCK_RE.sub("", content)
+    if not any(c.isalnum() for c in stripped):
+        return True, "visuals only"
+    return False, ""
+
+
+_DELIMITED_RESPONSE_SUFFIX = """
+
+Return your response in this exact format, nothing else:
+
+###SUMMARY###
+<one or two sentence summary, plain text, no markdown>
+###CONTENT###
+<full markdown content as specified above>
+###END###
+"""
+
+
+def _parse_delimited_response(raw: str) -> CompiledPageContent:
+    """Parse a delimited LLM response into CompiledPageContent.
+
+    Tolerates:
+    - Missing ###END### marker (takes everything after ###CONTENT###).
+    - Missing ###SUMMARY### marker (derives summary from first sentence of content).
+    - Preamble before ###SUMMARY### (ignored).
+    - Echoed ###CONTENT### / ###END### markers inside the body (uses rsplit to
+      keep trailing body content, treating earlier occurrences as part of prose).
+
+    On total failure (no ###CONTENT### at all), returns empty CompiledPageContent
+    so the existing empty-retry logic kicks in.
+    """
+    if not raw:
+        return CompiledPageContent(content="", summary="")
+
+    if "###CONTENT###" not in raw:
+        return CompiledPageContent(content="", summary="")
+
+    # rsplit on ###CONTENT###: head = everything before the LAST ###CONTENT### marker
+    # (may contain ###SUMMARY### + summary text, plus any echoed markers);
+    # tail = the actual content body (which may itself contain echoed ###CONTENT###).
+    head, _, tail = raw.rpartition("###CONTENT###")
+
+    # Strip trailing ###END### marker from tail using rsplit to be tolerant of
+    # echoed ###END### inside the body — only the LAST occurrence is the real terminator.
+    if "###END###" in tail:
+        tail, _, _ = tail.rpartition("###END###")
+    content = tail.strip()
+
+    # Extract summary from head: find LAST ###SUMMARY### marker.
+    summary = ""
+    if "###SUMMARY###" in head:
+        _, _, summary_part = head.rpartition("###SUMMARY###")
+        summary = summary_part.strip()
+
+    # Fallback: derive summary from first sentence of content if missing.
+    if not summary and content:
+        first_line = content.lstrip().split("\n", 1)[0].strip()
+        # Strip leading markdown-ish prefixes for a cleaner summary.
+        first_line_clean = first_line.lstrip("#*>- ").strip()
+        # First sentence from first non-empty line.
+        for sep in (". ", "! ", "? "):
+            if sep in first_line_clean:
+                summary = first_line_clean.split(sep, 1)[0] + sep.strip()
+                break
+        else:
+            summary = first_line_clean
+
+    return CompiledPageContent(content=content, summary=summary)
+
+
+def _is_safety_block(raw: str) -> bool:
+    """Return True if the raw LLM response looks like a safety refusal."""
+    head = raw[:200]
+    if any(raw.startswith(p) for p in _SAFETY_PREFIXES):
+        return True
+    return any(kw in head for kw in _SAFETY_KEYWORDS)
 
 
 def _parse_llm_json(raw: str | None) -> dict | list | None:
@@ -255,6 +1319,28 @@ def _parse_llm_json(raw: str | None) -> dict | list | None:
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
+            pass
+        # Control-char sanitizer: escape raw control chars inside string literals
+        # and retry. Gated on wiki_parse_hardening flag.
+        try:
+            from beever_atlas.infra.config import get_settings
+            if get_settings().wiki_parse_hardening:
+                sanitized = _escape_control_chars_inside_strings(candidate)
+                try:
+                    return json.loads(sanitized)
+                except json.JSONDecodeError:
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+        # Content-field aggressive recovery (unescaped quotes / control chars
+        # inside the "content" string literal). Gated on wiki_parse_hardening.
+        try:
+            from beever_atlas.infra.config import get_settings
+            if get_settings().wiki_parse_hardening:
+                recovered = _recover_content_field(candidate)
+                if recovered is not None:
+                    return recovered
+        except Exception:  # noqa: BLE001
             pass
         # Last resort: reuse the ingestion-side truncation recovery.
         try:
@@ -375,6 +1461,18 @@ class WikiCompiler:
         content = WikiCompiler._CITATION_LIST_RE.sub("", content)
 
         # 2. Sanitize mermaid blocks
+        def _sanitize_node_label(match: re.Match) -> str:
+            node_id = match.group(1)
+            label = match.group(2)
+            # Strip characters mermaid rejects inside [...]: parens, quotes, backticks
+            label = re.sub(r'[()"\'\`]', " ", label)
+            # Collapse repeated spaces
+            label = re.sub(r" {2,}", " ", label).strip()
+            # If label is now empty, fall back to node ID so the box shows something
+            if not label:
+                label = node_id
+            return f"{node_id}[{label}]"
+
         def _clean_mermaid(m: re.Match) -> str:
             opener, body, closer = m.group(1), m.group(2), m.group(3)
             lines = body.split("\n")
@@ -384,16 +1482,34 @@ class WikiCompiler:
                 # Remove forbidden directives
                 if stripped.startswith(("subgraph", "end", "style ", "classDef ", "class ")):
                     continue
+                # Drop lines that are purely an empty bracket node: ID[] or bare [Label]
+                if re.match(r"^\s*\w*\[\s*\]\s*$", line):
+                    continue
                 # Convert dash-space edge labels to pipe style: A -- label --> B  →  A -->|label| B
                 line = re.sub(r"--\s+([^-\n][^>\n]*?)\s+-->", r"-->|\1|", line)
                 line = re.sub(r"--\s+([^-\n][^-\n]*?)\s+---", r"---|\1|", line)
-                # Strip colon-style labels: A --> B: label  →  A --> B
-                line = re.sub(r"(-->)\s+(\w+(?:\[[^\]]*\])?)\s*:\s*.+$", r"\1 \2", line)
+                # Strip colon-style labels conservatively: only when --> NODE: free text (no brackets)
+                line = re.sub(r"(-->\s*\w+(?:\[[^\]]*\])?)\s*:\s*[^\[\]|]+$", r"\1", line)
+                # Sanitize node-definition labels: strip forbidden chars inside [...]
+                line = re.sub(r"([A-Za-z0-9_]+)\[([^\]]*)\]", _sanitize_node_label, line)
                 # Keep pipe-style labels intact: A -->|label| B is valid mermaid
                 cleaned.append(line)
             return opener + "\n".join(cleaned) + closer
 
         content = WikiCompiler._MERMAID_BLOCK_RE.sub(_clean_mermaid, content)
+
+        # 2b. Prune edges referencing undefined nodes inside mermaid blocks.
+        # Example: "EEACBA -->|drives| ELLMS" where EEACBA is never defined as
+        # "EEACBA[Label]" elsewhere in the block — a typo of EACBA. Gated on
+        # wiki_parse_hardening so legacy behaviour is preserved when disabled.
+        try:
+            from beever_atlas.infra.config import get_settings
+            if get_settings().wiki_parse_hardening:
+                content = WikiCompiler._MERMAID_BLOCK_RE.sub(
+                    WikiCompiler._prune_undefined_mermaid_edges, content
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 3. Trim over-citation: keep at most 3 consecutive [N] markers per cluster
         def _trim_citations(m: re.Match) -> str:
@@ -406,6 +1522,59 @@ class WikiCompiler:
         content = WikiCompiler._BLANK_LINES_RE.sub("\n\n\n", content)
 
         return content.rstrip() + "\n"
+
+    # Matches any node definition with a bracketed label:
+    # ID[Label], ID(Label), ID{Label}, ID((Label)). Captures the ID.
+    _NODE_DEF_RE = re.compile(
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\[|\[|\(\(|\(|\{)"
+    )
+    # Matches edge lines with optional pipe-style label:
+    #   SRC --> DST, SRC -->|label| DST, SRC --- DST, SRC ---|label| DST
+    # Also tolerates bracketed labels on SRC/DST (e.g. SRC[Foo] -->|x| DST[Bar]).
+    _EDGE_LINE_RE = re.compile(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)(?:\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\}))?"
+        r"\s*(?:-->|---)(?:\s*\|[^|]*\|)?\s*"
+        r"([A-Za-z_][A-Za-z0-9_]*)(?:\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\}))?\s*$"
+    )
+
+    @staticmethod
+    def _prune_undefined_mermaid_edges(m: "re.Match[str]") -> str:
+        """Drop edge lines whose SRC or DST references an undefined node.
+
+        A node is "defined" if it appears anywhere in the same fenced block as
+        ``ID[Label]`` / ``ID(Label)`` / ``ID{Label}`` / ``ID((Label))`` — i.e.
+        it has a bracketed label attached. Edges that reference an identifier
+        that was never given a label (typos like ``EEACBA --> ELLMS``) are
+        silently dropped. Node-definition lines and non-edge lines (e.g.
+        ``graph TD``) are left untouched.
+        """
+        opener, body, closer = m.group(1), m.group(2), m.group(3)
+        lines = body.split("\n")
+
+        # First pass: collect all defined node IDs (those appearing with a
+        # bracketed label anywhere in the block).
+        defined: set[str] = set()
+        for line in lines:
+            for node_id in WikiCompiler._NODE_DEF_RE.findall(line):
+                defined.add(node_id)
+
+        # Second pass: drop edges whose endpoints are undefined.
+        kept: list[str] = []
+        for line in lines:
+            edge_match = WikiCompiler._EDGE_LINE_RE.match(line)
+            if edge_match is None:
+                kept.append(line)
+                continue
+            src, dst = edge_match.group(1), edge_match.group(2)
+            if src not in defined or dst not in defined:
+                logger.info(
+                    "WikiCompiler: dropped edge with undefined node ref: %s",
+                    line.strip(),
+                )
+                continue
+            kept.append(line)
+
+        return opener + "\n".join(kept) + closer
 
     @staticmethod
     def _filter_media_for_resources(media_data: list[dict]) -> list[dict]:
@@ -456,54 +1625,205 @@ class WikiCompiler:
 
     # ── LLM call ─────────────────────────────────────────────────────
 
-    async def _llm_generate_json(self, prompt: str, temperature: float = 0.2) -> str:
+    # Per-page-kind output token budgets (Phase 3). Sized at 50% headroom
+    # over observed max for each kind. Resources needs 32k for the full
+    # 40-row media table; topic/subtopic at 12k covers the longest seen
+    # pages; smaller fixed pages are capped conservatively.
+    # When wiki_token_budget_v2=OFF, the uniform legacy 32k applies.
+    _PAGE_KIND_MAX_TOKENS: dict[str, int] = {
+        "resources":   32768,
+        "topic":       12288,
+        "subtopic":    12288,
+        "overview":    10240,
+        "people":       8192,
+        "decisions":    8192,
+        "activity":     8192,
+        "glossary":    12288,
+        "faq":         12288,
+        "analysis":     4096,
+        "translation":  4096,
+    }
+    _PAGE_KIND_MAX_TOKENS_DEFAULT = 16384
+
+    async def _llm_generate_json(
+        self,
+        prompt: str,
+        temperature: float = 0.2,
+        page_kind: str = "topic",
+    ) -> str:
         """Call the configured LLM and return raw text. Supports Gemini and Ollama."""
+        from beever_atlas.infra.config import get_settings
+        settings = get_settings()
+        if settings.wiki_token_budget_v2:
+            max_tokens = self._PAGE_KIND_MAX_TOKENS.get(page_kind, self._PAGE_KIND_MAX_TOKENS_DEFAULT)
+        else:
+            max_tokens = 32768
+
+        # Phase 5: delimited response mode. Markdown-content pages switch to a
+        # delimited format when wiki_compiler_v2=ON. Analysis and translation
+        # always use JSON mode (invariant) because their responses are consumed
+        # programmatically as lists/dicts with non-string values.
+        use_delimited = (
+            settings.wiki_compiler_v2
+            and page_kind not in {"analysis", "translation"}
+        )
+
         if is_ollama_model(self._model_name):
             import litellm
-            from beever_atlas.infra.config import get_settings
             import os
-            os.environ.setdefault("OLLAMA_API_BASE", get_settings().ollama_api_base)
-            resp = await litellm.acompletion(
-                model=self._model_name,
-                messages=[{"role": "user", "content": prompt + "\n\nRespond with valid JSON only."}],
-                temperature=temperature,
-                format="json",
-            )
+            os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
+            if use_delimited:
+                resp = await litellm.acompletion(
+                    model=self._model_name,
+                    messages=[{"role": "user", "content": prompt + _DELIMITED_RESPONSE_SUFFIX}],
+                    temperature=temperature,
+                )
+            else:
+                resp = await litellm.acompletion(
+                    model=self._model_name,
+                    messages=[{"role": "user", "content": prompt + "\n\nRespond with valid JSON only."}],
+                    temperature=temperature,
+                    format="json",
+                )
             return resp.choices[0].message.content or "{}"  # pyright: ignore[reportAttributeAccessIssue]
         else:
             from google import genai
             from google.genai import types
             client = genai.Client()
+            if use_delimited:
+                config = types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                contents = prompt + _DELIMITED_RESPONSE_SUFFIX
+            else:
+                config = types.GenerateContentConfig(
+                    # response_mime_type alone nudges Gemini toward JSON without
+                    # forcing a schema. response_schema was tried but caused
+                    # instability on very long outputs (Resources page), where
+                    # the model got stuck escaping a multi-KB markdown string
+                    # and emitted corrupted JSON. _parse_llm_json handles minor
+                    # malformation; keep the nudge, skip the hard schema.
+                    response_mime_type="application/json",
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                contents = prompt
             response = await client.aio.models.generate_content(
                 model=self._model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=temperature,
-                ),
+                contents=contents,
+                config=config,
             )
             return response.text or "{}"
 
-    async def _call_llm(self, prompt: str, max_retries: int = 1) -> CompiledPageContent:
+    async def _call_llm(self, prompt: str, max_retries: int = 1, page_kind: str = "topic") -> CompiledPageContent:
+        from beever_atlas.infra.config import get_settings
+        settings = get_settings()
+        hardening = settings.wiki_parse_hardening
+        # Phase 5: same branch as _llm_generate_json — delimited mode only for
+        # markdown-content pages when wiki_compiler_v2=ON.
+        use_delimited = (
+            settings.wiki_compiler_v2
+            and page_kind not in {"analysis", "translation"}
+        )
+
         data: dict = {}
         for attempt in range(1 + max_retries):
-            raw = await self._llm_generate_json(prompt, temperature=0.2 + (attempt * 0.1))
+            raw = await self._llm_generate_json(prompt, temperature=0.2 + (attempt * 0.1), page_kind=page_kind)
+
+            # 2g. Retry gating: skip retry for short or safety-blocked responses.
+            if hardening and attempt == 0:
+                raw_stripped = (raw or "").strip()
+                if len(raw_stripped) < 100:
+                    logger.warning("WikiCompiler: raw_too_short_no_retry, raw_len=%d", len(raw_stripped))
+                    return CompiledPageContent(content="", summary="")
+                if _is_safety_block(raw_stripped):
+                    logger.warning("WikiCompiler: safety_block_no_retry, raw_head=%r", raw_stripped[:200])
+                    return CompiledPageContent(content="", summary="")
+
+            if use_delimited:
+                parsed_page = _parse_delimited_response(raw or "")
+                content = parsed_page.content.strip()
+                summary = parsed_page.summary.strip()
+                data = {"content": content, "summary": summary}
+
+                # 1c. Degenerate-content guard (mirrors JSON branch).
+                if hardening and content:
+                    is_degen, reason = _is_degenerate_content(content)
+                    if is_degen and attempt < max_retries:
+                        logger.warning(
+                            "WikiCompiler: degenerate content (%s, attempt %d), retrying with temperature=0.4",
+                            reason, attempt + 1,
+                        )
+                        raw2 = await self._llm_generate_json(
+                            prompt + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
+                            temperature=0.4,
+                            page_kind=page_kind,
+                        )
+                        parsed2 = _parse_delimited_response(raw2 or "")
+                        content2 = parsed2.content.strip()
+                        summary2 = parsed2.summary.strip()
+                        is_degen2, reason2 = _is_degenerate_content(content2) if content2 else (True, "empty")
+                        if not is_degen2:
+                            return CompiledPageContent(content=content2, summary=summary2)
+                        logger.warning("WikiCompiler: degenerate content shipped for retry (%s)", reason2)
+                        return CompiledPageContent(content=content2 or content, summary=summary2 or summary)
+
+                if content:
+                    return CompiledPageContent(content=content, summary=summary)
+                if attempt < max_retries:
+                    logger.info("WikiCompiler: empty content (attempt %d), retrying...", attempt + 1)
+                continue
+
             parsed = _parse_llm_json(raw)
             if parsed is None:
+                dump_path = None
+                if hardening and raw:
+                    dump_path = _dump_parse_failure(raw)
                 logger.warning(
-                    "WikiCompiler: failed to parse LLM JSON (attempt %d). raw_head=%r",
+                    "WikiCompiler: failed to parse LLM JSON (attempt %d), raw_len=%d. raw_head=%r dump=%s",
                     attempt + 1,
+                    len(raw or ""),
                     (raw or "")[:200],
+                    dump_path,
                 )
                 data = {}
-            else:
-                data = parsed if isinstance(parsed, dict) else {}
+                if attempt < max_retries:
+                    logger.info("WikiCompiler: parse failure (attempt %d), retrying...", attempt + 1)
+                continue
+            data = parsed if isinstance(parsed, dict) else {}
             content = data.get("content", "").strip()
             summary = data.get("summary", "").strip()
-            if content and len(content) > 50:
+
+            # 1c. Degenerate-content guard: retry once with higher temperature.
+            if hardening and content:
+                is_degen, reason = _is_degenerate_content(content)
+                if is_degen and attempt < max_retries:
+                    logger.warning(
+                        "WikiCompiler: degenerate content (%s, attempt %d), retrying with temperature=0.4",
+                        reason, attempt + 1,
+                    )
+                    # Force a retry with explicit degenerate note appended to prompt.
+                    raw2 = await self._llm_generate_json(
+                        prompt + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
+                        temperature=0.4,
+                        page_kind=page_kind,
+                    )
+                    parsed2 = _parse_llm_json(raw2)
+                    if parsed2 and isinstance(parsed2, dict):
+                        content2 = parsed2.get("content", "").strip()
+                        summary2 = parsed2.get("summary", "").strip()
+                        is_degen2, reason2 = _is_degenerate_content(content2) if content2 else (True, "empty")
+                        if not is_degen2:
+                            return CompiledPageContent(content=content2, summary=summary2)
+                        logger.warning("WikiCompiler: degenerate content shipped for retry (%s)", reason2)
+                        return CompiledPageContent(content=content2 or content, summary=summary2 or summary)
+
+            # Return immediately on any non-empty content
+            if content:
                 return CompiledPageContent(content=content, summary=summary)
             if attempt < max_retries:
-                logger.info("WikiCompiler: empty/short content (attempt %d), retrying...", attempt + 1)
+                logger.info("WikiCompiler: empty content (attempt %d), retrying...", attempt + 1)
         logger.warning("WikiCompiler: empty content after %d attempts", 1 + max_retries)
         return CompiledPageContent(
             content=data.get("content", "").strip(),
@@ -550,7 +1870,7 @@ class WikiCompiler:
             {
                 "index": i,
                 "author": f.author_name,
-                "excerpt": f.memory_text[:120],
+                "excerpt": wrap_untrusted(f.memory_text[:120]),
                 "timestamp": f.message_ts,
             }
             for i, f in enumerate(citation_facts, 1)
@@ -590,15 +1910,25 @@ class WikiCompiler:
             faq_count=faq_count,
             cited_facts_json=json.dumps(cited_facts_for_prompt, default=str),
         )
-        result = await self._call_llm(prompt)
+        try:
+            result = await self._call_llm(prompt, page_kind="overview")
+            content = result.content if result is not None else ""
+            summary_text = result.summary if result is not None else ""
+        except Exception as exc:
+            logger.warning("WikiCompiler: overview page failed hard (%s); using fallback", exc)
+            content, summary_text = "", ""
+        stripped = (content or "").strip()
+        if not stripped or _is_degenerate_content(content)[0]:
+            logger.info("WikiCompiler: overview content empty/degenerate, using deterministic fallback")
+            content, summary_text = _overview_fallback(summary, clusters)
         return WikiPage(
             id="overview",
             slug="overview",
             title=self._page_title("overview"),
             page_type="fixed",
             section_number="1",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=self._postprocess_content(content),
+            summary=summary_text,
             memory_count=gathered["total_facts"],
             citations=_build_citations(citation_facts),
         )
@@ -609,7 +1939,7 @@ class WikiCompiler:
         Returns the parsed analysis dict or None if analysis fails or isn't needed.
         """
         indexed_facts = [
-            {"index": i, "memory_text": f.memory_text, "author_name": f.author_name, "fact_type": f.fact_type}
+            {"index": i, "memory_text": wrap_untrusted(f.memory_text), "author_name": f.author_name, "fact_type": f.fact_type}
             for i, f in enumerate(sorted_facts[:30])
         ]
         prompt = self._fmt_prompt(TOPIC_ANALYSIS_PROMPT,
@@ -619,7 +1949,7 @@ class WikiCompiler:
             indexed_facts_json=json.dumps(indexed_facts, default=str),
         )
         try:
-            raw = await self._llm_generate_json(prompt)
+            raw = await self._llm_generate_json(prompt, page_kind="analysis")
             data = json.loads(raw)
             if not isinstance(data, dict) or "needs_subpages" not in data:
                 logger.warning("WikiCompiler: topic analysis returned invalid structure for %s", cluster.title)
@@ -641,7 +1971,7 @@ class WikiCompiler:
         sub_facts = [all_sorted_facts[i] for i in fact_indices if i < len(all_sorted_facts)]
         facts_data = [
             {
-                "memory_text": f.memory_text,
+                "memory_text": wrap_untrusted(f.memory_text),
                 "author_name": f.author_name,
                 "quality_score": f.quality_score,
                 "fact_type": f.fact_type,
@@ -655,7 +1985,10 @@ class WikiCompiler:
         sub_slug = _slugify(sub_title)
 
         fact_count = len(sub_facts)
-        prompt = self._fmt_prompt(SUBTOPIC_PROMPT,
+        from beever_atlas.infra.config import get_settings
+        v2 = get_settings().wiki_compiler_v2
+        prompt_template = SUBTOPIC_PROMPT_V2 if v2 else SUBTOPIC_PROMPT
+        prompt = self._fmt_prompt(prompt_template,
             parent_title=parent_title,
             title=sub_title,
             summary=sub_info.get("summary", ""),
@@ -663,10 +1996,35 @@ class WikiCompiler:
             member_facts_json=json.dumps(facts_data, default=str),
             media_json=json.dumps(media_data, default=str),
         )
-        result = await self._call_llm(prompt, max_retries=2)
-        content = self._postprocess_content(result.content)
-        if not content or len(content.strip()) < 50:
-            content = _facts_fallback_content(sub_facts)
+        try:
+            result = await self._call_llm(prompt, max_retries=2, page_kind="subtopic")
+            raw_content = result.content if result is not None else ""
+            result_summary = result.summary if result is not None else ""
+        except Exception as exc:
+            logger.warning("WikiCompiler: subtopic page failed hard (%s); using fallback", exc)
+            raw_content = ""
+            result_summary = ""
+        content = self._postprocess_content(raw_content)
+        if v2:
+            # Pull cluster-style key_facts dicts from the sub-fact slice.
+            sub_key_facts = [
+                {
+                    "memory_text": f.memory_text,
+                    "author_name": f.author_name,
+                    "fact_type": f.fact_type,
+                    "importance": f.importance,
+                    "quality_score": f.quality_score,
+                }
+                for f in sub_facts
+            ]
+            content = _splice_key_facts_table(content, sub_key_facts)
+        stripped = (content or "").strip()
+        if not stripped or len(stripped) < 50 or _is_degenerate_content(content)[0]:
+            logger.info("WikiCompiler: subtopic content empty/degenerate, using deterministic fallback")
+            fb_content, fb_summary = _subtopic_fallback(sub_title, sub_facts, parent_title)
+            content = fb_content
+            if not result_summary:
+                result_summary = fb_summary
         page_id = f"topic-{parent_slug}--{sub_slug}"
         return WikiPage(
             id=page_id,
@@ -675,18 +2033,63 @@ class WikiCompiler:
             page_type="sub-topic",
             parent_id=f"topic-{parent_slug}",
             content=content,
-            summary=result.summary,
+            summary=result_summary,
             memory_count=fact_count,
             citations=_build_citations(sub_facts[:10]),
+        )
+
+    async def _compile_thin_topic(self, cluster, gathered: dict) -> WikiPage:
+        """Phase 4 thin-topic path — TL;DR + table + 3-sentence summary only."""
+        member_facts: list[AtomicFact] = gathered["cluster_facts"].get(cluster.id, [])
+        sorted_facts = sorted(member_facts, key=lambda f: f.quality_score, reverse=True)
+        facts_data = [
+            {
+                "memory_text": wrap_untrusted(f.memory_text),
+                "author_name": f.author_name,
+                "quality_score": f.quality_score,
+                "fact_type": f.fact_type,
+                "importance": f.importance,
+                "message_ts": f.message_ts,
+            }
+            for f in sorted_facts
+        ]
+        slug = _slugify(cluster.title) or cluster.id
+        prompt = self._fmt_prompt(THIN_TOPIC_PROMPT,
+            title=cluster.title,
+            summary=cluster.summary,
+            fact_count=len(member_facts),
+            key_facts_json=json.dumps(cluster.key_facts, default=str),
+            member_facts_json=json.dumps(facts_data, default=str),
+        )
+        result = await self._call_llm(prompt, page_kind="topic")
+        content = self._postprocess_content(result.content)
+        # Marker substitution still runs (table may be empty -> "" replacement).
+        content = _splice_key_facts_table(content, cluster.key_facts)
+        if not content or len(content.strip()) < 50:
+            content = _facts_fallback_content(sorted_facts)
+        return WikiPage(
+            id=f"topic-{slug}",
+            slug=slug,
+            title=cluster.title,
+            page_type="topic",
+            content=content,
+            summary=result.summary,
+            memory_count=cluster.member_count,
+            citations=_build_citations(sorted_facts[:20]),
         )
 
     async def _compile_topic_page(self, cluster, gathered: dict) -> WikiPage | list[WikiPage]:
         """Compile a topic page. Returns a single page or [parent, *sub_pages] for large topics."""
         member_facts: list[AtomicFact] = gathered["cluster_facts"].get(cluster.id, [])
+        # Phase 4: thin-topic routing (only when wiki_compiler_v2=ON).
+        from beever_atlas.infra.config import get_settings
+        v2 = get_settings().wiki_compiler_v2
+        if v2 and len(member_facts) < _THIN_TOPIC_THRESHOLD:
+            return await self._compile_thin_topic(cluster, gathered)
         sorted_facts = sorted(member_facts, key=lambda f: f.quality_score, reverse=True)
         facts_data = [
             {
-                "memory_text": f.memory_text,
+                "memory_text": wrap_untrusted(f.memory_text),
                 "author_name": f.author_name,
                 "quality_score": f.quality_score,
                 "fact_type": f.fact_type,
@@ -738,7 +2141,8 @@ class WikiCompiler:
 
                     if sub_pages:
                         # Build parent overview page (without full detail — sub-pages have that)
-                        parent_prompt = self._fmt_prompt(TOPIC_PROMPT,
+                        parent_prompt = self._fmt_prompt(
+                            TOPIC_PROMPT_V2 if v2 else TOPIC_PROMPT,
                             title=cluster.title,
                             summary=cluster.summary,
                             current_state=cluster.current_state,
@@ -760,7 +2164,11 @@ class WikiCompiler:
                             media_json=json.dumps(media_data, default=str),
                             related_topics_json=related_topics_json,
                         )
-                        parent_result = await self._call_llm(parent_prompt)
+                        parent_result = await self._call_llm(parent_prompt, page_kind="topic")
+                        parent_content = parent_result.content
+                        if v2:
+                            parent_content = self._postprocess_content(parent_content)
+                            parent_content = _splice_key_facts_table(parent_content, cluster.key_facts)
                         children_refs = [
                             WikiPageRef(
                                 id=sp.id, title=sp.title, slug=sp.slug,
@@ -773,7 +2181,7 @@ class WikiCompiler:
                             slug=slug,
                             title=cluster.title,
                             page_type="topic",
-                            content=parent_result.content,
+                            content=parent_content if v2 else parent_result.content,
                             summary=parent_result.summary,
                             memory_count=cluster.member_count,
                             citations=_build_citations(sorted_facts[:20]),
@@ -787,7 +2195,8 @@ class WikiCompiler:
                     )
 
         # Flat topic page (default path, or fallback from failed sub-page generation)
-        prompt = self._fmt_prompt(TOPIC_PROMPT,
+        prompt = self._fmt_prompt(
+            TOPIC_PROMPT_V2 if v2 else TOPIC_PROMPT,
             title=cluster.title,
             summary=cluster.summary,
             current_state=cluster.current_state,
@@ -809,8 +2218,10 @@ class WikiCompiler:
             media_json=json.dumps(media_data, default=str),
             related_topics_json=related_topics_json,
         )
-        result = await self._call_llm(prompt)
+        result = await self._call_llm(prompt, page_kind="topic")
         content = self._postprocess_content(result.content)
+        if v2:
+            content = _splice_key_facts_table(content, cluster.key_facts)
         if not content or len(content.strip()) < 50:
             content = _facts_fallback_content(sorted_facts)
         return WikiPage(
@@ -826,21 +2237,32 @@ class WikiCompiler:
 
     async def _compile_people(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
-        relationship_edges = _format_relationship_edges(gathered["persons"])
-        prompt = self._fmt_prompt(PEOPLE_PROMPT,
-            persons_json=json.dumps(gathered["persons"], default=str),
-            top_people_json=json.dumps(channel_summary.top_people, default=str),
-            relationship_edges_json=json.dumps(relationship_edges, default=str),
-        )
-        result = await self._call_llm(prompt)
+        persons = gathered["persons"]
+        try:
+            relationship_edges = _format_relationship_edges(persons)
+            prompt = self._fmt_prompt(PEOPLE_PROMPT,
+                persons_json=json.dumps(persons, default=str),
+                top_people_json=json.dumps(channel_summary.top_people, default=str),
+                relationship_edges_json=json.dumps(relationship_edges, default=str),
+            )
+            result = await self._call_llm(prompt, page_kind="people")
+            content = result.content if result is not None else ""
+            summary_text = result.summary if result is not None else ""
+        except Exception as exc:
+            logger.warning("WikiCompiler: people page failed hard (%s); using fallback", exc)
+            content, summary_text = "", ""
+        stripped = (content or "").strip()
+        if not stripped or _is_degenerate_content(content)[0]:
+            logger.info("WikiCompiler: people content empty/degenerate, using deterministic fallback")
+            content, summary_text = _people_fallback(persons, channel_summary.top_people or [])
         return WikiPage(
             id="people",
             slug="people",
             title=self._page_title("people"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
-            memory_count=len(gathered["persons"]),
+            content=self._postprocess_content(content),
+            summary=summary_text,
+            memory_count=len(persons),
         )
 
     async def _compile_decisions(self, gathered: dict) -> WikiPage:
@@ -849,7 +2271,7 @@ class WikiCompiler:
             decisions_json=json.dumps(gathered["decisions"], default=str),
             top_decisions_json=json.dumps(channel_summary.top_decisions, default=str),
         )
-        result = await self._call_llm(prompt)
+        result = await self._call_llm(prompt, page_kind="decisions")
         return WikiPage(
             id="decisions",
             slug="decisions",
@@ -878,14 +2300,19 @@ class WikiCompiler:
             faq_candidates_json=json.dumps(faq_by_topic, default=str),
             topic_names_json=json.dumps(topic_names, default=str),
         )
-        result = await self._call_llm(prompt)
+        result = await self._call_llm(prompt, page_kind="faq")
+        content = result.content
+        summary = result.summary
+        if not content.strip():
+            logger.info("WikiCompiler: FAQ LLM returned empty, using deterministic fallback")
+            content, summary = _faq_fallback(faq_by_topic, clusters)
         return WikiPage(
             id="faq",
             slug="faq",
             title=self._page_title("faq"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=self._postprocess_content(content),
+            summary=summary,
             memory_count=sum(len(c.faq_candidates) for c in clusters),
         )
 
@@ -935,34 +2362,56 @@ class WikiCompiler:
             glossary_terms_json=json.dumps(glossary_terms, default=str),
             channel_description=channel_summary.description or channel_summary.channel_name,
         )
-        result = await self._call_llm(prompt)
+        result = await self._call_llm(prompt, page_kind="glossary")
+        content = result.content
+        summary = result.summary
+        if not content.strip():
+            logger.info("WikiCompiler: Glossary LLM returned empty, using deterministic fallback")
+            content, summary = _glossary_fallback(glossary_terms, gathered.get("clusters", []))
         return WikiPage(
             id="glossary",
             slug="glossary",
             title=self._page_title("glossary"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=self._postprocess_content(content),
+            summary=summary,
             memory_count=len(glossary_terms),
         )
 
     async def _compile_resources(self, gathered: dict) -> WikiPage:
-        """Compile Resources & Media page from media_facts."""
+        """Compile Resources & Media page deterministically from media_facts.
+
+        Replaced the previous LLM call (which emitted large escape-heavy JSON
+        that overflowed max_output_tokens and produced truncated/unparseable
+        output) with pure Python markdown assembly.  The markdown structure and
+        section headings are identical to those the old RESOURCES_PROMPT asked
+        the LLM to produce, so frontend rendering is unchanged.
+        """
         media_facts = gathered.get("media_facts", [])
-        media_data = _build_media_data(media_facts)
-        media_data = self._filter_media_for_resources(media_data)
-        prompt = self._fmt_prompt(RESOURCES_PROMPT,
-            media_json=json.dumps(media_data, default=str),
-            media_count=len(media_data),
-        )
-        result = await self._call_llm(prompt)
+        try:
+            media_data = _build_media_data(media_facts)
+            media_data = self._filter_media_for_resources(media_data)
+            content = _assemble_resources_markdown(media_data)
+            summary = (
+                f"Catalog of {len(media_data)} shared resource(s) across "
+                f"{len({item['type'] for item in media_data})} type(s)."
+                if media_data else "No shared resources found."
+            )
+        except Exception as exc:
+            logger.warning("WikiCompiler: resources page failed hard (%s); using fallback", exc)
+            media_data = []
+            content, summary = "", ""
+        if not (content or "").strip():
+            logger.info("WikiCompiler: resources content empty, using deterministic fallback")
+            content, summary = _resources_fallback(media_data)
+
         return WikiPage(
             id="resources",
             slug="resources",
             title=self._page_title("resources"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=content,
+            summary=summary,
             memory_count=len(media_data),
             citations=_build_citations(media_facts[:20]),
         )
@@ -971,7 +2420,7 @@ class WikiCompiler:
         channel_summary = gathered["channel_summary"]
         recent_data = [
             {
-                "memory_text": f.memory_text,
+                "memory_text": wrap_untrusted(f.memory_text),
                 "author_name": f.author_name,
                 "message_ts": f.message_ts,
                 "fact_type": f.fact_type,
@@ -982,19 +2431,33 @@ class WikiCompiler:
         # Include recent media
         recent_media = _build_media_data(gathered["recent_facts"])
 
-        prompt = self._fmt_prompt(ACTIVITY_PROMPT,
-            recent_facts_json=json.dumps(recent_data, default=str),
-            recent_activity_json=json.dumps(channel_summary.recent_activity_summary, default=str),
-            recent_media_json=json.dumps(recent_media, default=str),
-        )
-        result = await self._call_llm(prompt)
+        try:
+            prompt = self._fmt_prompt(ACTIVITY_PROMPT,
+                recent_facts_json=json.dumps(recent_data, default=str),
+                recent_activity_json=json.dumps(channel_summary.recent_activity_summary, default=str),
+                recent_media_json=json.dumps(recent_media, default=str),
+            )
+            result = await self._call_llm(prompt, page_kind="activity")
+            content = result.content if result is not None else ""
+            summary_text = result.summary if result is not None else ""
+        except Exception as exc:
+            logger.warning("WikiCompiler: activity page failed hard (%s); using fallback", exc)
+            content, summary_text = "", ""
+        stripped = (content or "").strip()
+        if not stripped or _is_degenerate_content(content)[0]:
+            logger.info("WikiCompiler: activity content empty/degenerate, using deterministic fallback")
+            content, summary_text = _activity_fallback(
+                gathered["recent_facts"],
+                channel_summary.recent_activity_summary or {},
+                gathered.get("clusters", []),
+            )
         return WikiPage(
             id="activity",
             slug="activity",
             title=self._page_title("activity"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
-            summary=result.summary,
+            content=self._postprocess_content(content),
+            summary=summary_text,
             memory_count=len(gathered["recent_facts"]),
         )
 
@@ -1041,7 +2504,7 @@ class WikiCompiler:
             '{"titles": [{"id": "<cluster_id>", "title": "<translated>"}]}'
         )
         try:
-            raw = await self._llm_generate_json(prompt, temperature=0.2)
+            raw = await self._llm_generate_json(prompt, temperature=0.2, page_kind="translation")
             parsed = _parse_llm_json(raw)
             if not isinstance(parsed, dict):
                 return {}
@@ -1110,20 +2573,14 @@ class WikiCompiler:
             on_page_compiled: Optional async callback(page_id, pages_done, pages_completed)
                 called each time a page finishes compilation.
         """
+        from beever_atlas.infra.config import get_settings
+        parallel_dispatch = get_settings().wiki_parallel_dispatch
+
         clusters = gathered["clusters"]
+        # Defend against empty cluster titles reaching any LLM prompt/render path.
+        _apply_title_fallbacks(clusters)
         channel_summary = gathered["channel_summary"]
 
-        # Localize topic titles when rendering in a different target language.
-        # Each cluster is shallow-copied with an updated title so the rest of
-        # this compile sees translated titles without touching the DB-backing
-        # TopicCluster objects (they're pydantic; model_copy returns a clone).
-        title_map = await self._translate_cluster_titles(clusters)
-        if title_map:
-            clusters = [
-                c.model_copy(update={"title": title_map[c.id]}) if c.id in title_map else c
-                for c in clusters
-            ]
-            gathered = {**gathered, "clusters": clusters}
         pages: dict[str, WikiPage] = {}
         pages_completed: list[str] = []
 
@@ -1135,12 +2592,49 @@ class WikiCompiler:
                 await on_page_compiled(page_key, len(pages_completed), list(pages_completed))
             return result
 
+        if parallel_dispatch:
+            # 1d. Dispatch title translation as a background task so it runs
+            # concurrently with pages that do not need translated titles
+            # (people, decisions, activity, resources).
+            title_map_task: asyncio.Task = asyncio.create_task(
+                self._translate_cluster_titles(clusters)
+            )
+
+            async def _apply_titles_to_gathered() -> dict:
+                """Await translation and return a gathered dict with updated titles."""
+                title_map = await title_map_task
+                if not title_map:
+                    return gathered
+                updated_clusters = [
+                    c.model_copy(update={"title": title_map[c.id]}) if c.id in title_map else c
+                    for c in clusters
+                ]
+                return {**gathered, "clusters": updated_clusters}
+
+        else:
+            # Serial fallback: await translation before dispatching any page.
+            title_map = await self._translate_cluster_titles(clusters)
+            if title_map:
+                clusters = [
+                    c.model_copy(update={"title": title_map[c.id]}) if c.id in title_map else c
+                    for c in clusters
+                ]
+                gathered = {**gathered, "clusters": clusters}
+
         # Build list of (key, coroutine) pairs, gating conditional pages BEFORE dispatching LLM calls
         fixed_tasks: list[tuple[str, Any]] = []
 
-        # Always generate: overview, people, activity
-        fixed_tasks.append(("overview", _tracked(self._compile_overview(gathered), "overview")))
-        fixed_tasks.append(("people", _tracked(self._compile_people(gathered), "people")))
+        if parallel_dispatch:
+            # Pages that need translated cluster titles await the task internally.
+            async def _overview_with_titles():
+                return await self._compile_overview(await _apply_titles_to_gathered())
+
+            fixed_tasks.append(("overview", _tracked(_overview_with_titles(), "overview")))
+            # Pages that do NOT reference cluster titles run immediately in parallel with translation.
+            fixed_tasks.append(("people", _tracked(self._compile_people(gathered), "people")))
+        else:
+            fixed_tasks.append(("overview", _tracked(self._compile_overview(gathered), "overview")))
+            fixed_tasks.append(("people", _tracked(self._compile_people(gathered), "people")))
 
         # Conditional: decisions — skip if 0 decisions
         if len(gathered.get("decisions", [])) > 0:
@@ -1151,27 +2645,38 @@ class WikiCompiler:
         # Conditional: FAQ — skip if 0 faq_candidates across all clusters
         total_faq = sum(len(c.faq_candidates) for c in clusters)
         if total_faq > 0:
-            fixed_tasks.append(("faq", _tracked(self._compile_faq(gathered), "faq")))
+            if parallel_dispatch:
+                async def _faq_with_titles():
+                    return await self._compile_faq(await _apply_titles_to_gathered())
+                fixed_tasks.append(("faq", _tracked(_faq_with_titles(), "faq")))
+            else:
+                fixed_tasks.append(("faq", _tracked(self._compile_faq(gathered), "faq")))
         else:
             logger.info("WikiCompiler: skipping FAQ page (0 faq candidates)")
 
         # Conditional: glossary — skip if 0 glossary_terms
         if len(channel_summary.glossary_terms or []) > 0:
-            fixed_tasks.append(("glossary", _tracked(self._compile_glossary(gathered), "glossary")))
+            if parallel_dispatch:
+                async def _glossary_with_titles():
+                    return await self._compile_glossary(await _apply_titles_to_gathered())
+                fixed_tasks.append(("glossary", _tracked(_glossary_with_titles(), "glossary")))
+            else:
+                fixed_tasks.append(("glossary", _tracked(self._compile_glossary(gathered), "glossary")))
         else:
             logger.info("WikiCompiler: skipping Glossary page (0 glossary terms)")
 
-        # Always generate: activity
+        # Always generate: activity (no cluster title references)
         fixed_tasks.append(("activity", _tracked(self._compile_activity(gathered), "activity")))
 
-        # Conditional: resources — skip if 0 media
+        # Conditional: resources — skip if 0 media (no cluster title references)
         media_data = _build_media_data(gathered.get("media_facts", []))
         if len(media_data) > 0:
             fixed_tasks.append(("resources", _tracked(self._compile_resources(gathered), "resources")))
         else:
             logger.info("WikiCompiler: skipping Resources page (0 media)")
 
-        # Filter clusters: skip thin or off-topic topics
+        # Filter clusters: skip thin or off-topic topics.
+        # Use original clusters for relevance check (titles are cosmetic only).
         channel_themes = channel_summary.themes if hasattr(channel_summary, "themes") else []
         if isinstance(channel_themes, str):
             channel_themes = [channel_themes]
@@ -1188,10 +2693,21 @@ class WikiCompiler:
         # Store skipped topics so overview can reference them
         gathered["_skipped_topics"] = skipped_topics
 
-        topic_tasks = [
-            (f"topic-{_slugify(c.title) or c.id}", _tracked(self._compile_topic_page(c, gathered), f"topic-{_slugify(c.title) or c.id}"))
-            for c in filtered_clusters
-        ]
+        if parallel_dispatch:
+            async def _compile_topic_with_titles(cluster):
+                updated_gathered = await _apply_titles_to_gathered()
+                updated_gathered["_skipped_topics"] = skipped_topics
+                return await self._compile_topic_page(cluster, updated_gathered)
+
+            topic_tasks = [
+                (f"topic-{_slugify(c.title) or c.id}", _tracked(_compile_topic_with_titles(c), f"topic-{_slugify(c.title) or c.id}"))
+                for c in filtered_clusters
+            ]
+        else:
+            topic_tasks = [
+                (f"topic-{_slugify(c.title) or c.id}", _tracked(self._compile_topic_page(c, gathered), f"topic-{_slugify(c.title) or c.id}"))
+                for c in filtered_clusters
+            ]
 
         all_keys = [k for k, _ in fixed_tasks] + [k for k, _ in topic_tasks]
         all_coros = [c for _, c in fixed_tasks] + [c for _, c in topic_tasks]

@@ -1,0 +1,456 @@
+{
+  "channel_id": "C0BENCH001",
+  "channel_name": "#bench-test",
+  "channel_summary": {
+    "id": "summary-bench-001",
+    "tier": "summary",
+    "channel_id": "C0BENCH001",
+    "channel_name": "#bench-test",
+    "text": "This is a benchmark test channel covering engineering topics.",
+    "description": "Benchmark synthetic channel for wiki compiler testing.",
+    "themes": "Backend engineering, infrastructure, and team processes.",
+    "momentum": "Active discussions on API redesign and deployment improvements.",
+    "team_dynamics": "Alice leads architecture decisions, Bob handles ops.",
+    "cluster_count": 6,
+    "fact_count": 85,
+    "updated_at": "2024-01-15T10:00:00+00:00",
+    "key_decisions": [
+      {"name": "Switch to PostgreSQL", "decided_by": "Alice", "status": "active", "superseded_by": "", "date": "2024-01-10", "topic_cluster_id": "cluster-001", "context": "Performance needs"}
+    ],
+    "key_entities": [
+      {"id": "e1", "name": "Alice", "type": "Person"},
+      {"id": "e2", "name": "Bob", "type": "Person"}
+    ],
+    "key_topics": [
+      {"id": "cluster-001", "title": "API Redesign", "member_count": 25},
+      {"id": "cluster-002", "title": "Deployment Pipeline", "member_count": 18}
+    ],
+    "date_range_start": "2024-01-01",
+    "date_range_end": "2024-01-15",
+    "media_count": 5,
+    "author_count": 8,
+    "worst_staleness": 0.2,
+    "top_decisions": [
+      {"name": "Switch to PostgreSQL", "decided_by": "Alice", "status": "active", "superseded_by": "", "date": "2024-01-10", "topic_cluster_id": "cluster-001", "context": "Performance needs"}
+    ],
+    "top_people": [
+      {"name": "Alice", "role": "architect", "topic_count": 3, "expertise_topics": ["API Redesign", "Database"]},
+      {"name": "Bob", "role": "ops", "topic_count": 2, "expertise_topics": ["Deployment Pipeline"]}
+    ],
+    "tech_stack": [
+      {"name": "PostgreSQL", "category": "database", "champion": "Alice", "topic_count": 2},
+      {"name": "Docker", "category": "infrastructure", "champion": "Bob", "topic_count": 3}
+    ],
+    "active_projects": [
+      {"name": "API v2", "status": "in_progress", "owner": "Alice", "blockers": [], "topic_cluster_id": "cluster-001"}
+    ],
+    "glossary_terms": [
+      {"term": "API", "definition": "Application Programming Interface", "first_mentioned_by": "Alice", "related_topics": ["API Redesign"]},
+      {"term": "CI/CD", "definition": "Continuous Integration and Continuous Deployment", "first_mentioned_by": "Bob", "related_topics": ["Deployment Pipeline"]}
+    ],
+    "recent_activity_summary": {
+      "facts_added_7d": 20,
+      "decisions_added_7d": 2,
+      "entities_added_7d": 5,
+      "new_topics": ["Monitoring"],
+      "updated_topics": ["API Redesign"],
+      "highlights": "Major API redesign kicked off."
+    },
+    "topic_graph_edges": [
+      {"source_cluster_id": "cluster-001", "target_cluster_id": "cluster-002", "source_title": "API Redesign", "target_title": "Deployment Pipeline", "shared_entities": ["Alice"]}
+    ]
+  },
+  "clusters": [
+    {
+      "id": "cluster-001",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "API Redesign and REST Architecture",
+      "summary": "The team is redesigning the public API to use REST principles consistently.",
+      "current_state": "Design phase complete, implementation starting next sprint.",
+      "open_questions": "Which versioning strategy to adopt: URL-based or header-based?",
+      "impact_note": "Affects all downstream integrations and clients.",
+      "topic_tags": ["api", "rest", "architecture"],
+      "member_ids": ["f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12","f13","f14","f15","f16","f17","f18","f19","f20","f21","f22","f23","f24","f25"],
+      "member_count": 25,
+      "key_entities": [{"id": "e1", "name": "Alice", "type": "Person"}, {"id": "e3", "name": "REST API", "type": "Technology"}],
+      "key_relationships": [{"source": "Alice", "type": "LEADS", "target": "API Redesign", "confidence": "0.9"}],
+      "date_range_start": "2024-01-01",
+      "date_range_end": "2024-01-15",
+      "authors": ["Alice", "Charlie"],
+      "media_refs": [],
+      "media_names": [],
+      "link_refs": ["https://restfulapi.net"],
+      "high_importance_count": 5,
+      "related_cluster_ids": ["cluster-002"],
+      "staleness_score": 0.1,
+      "status": "active",
+      "fact_type_counts": {"decision": 3, "observation": 15, "action_item": 7},
+      "key_facts": [
+        {"fact_id": "f1", "memory_text": "Alice proposed switching to REST for the new API", "author_name": "Alice", "message_ts": "1704067200", "fact_type": "decision", "importance": "high", "quality_score": 0.9, "source_message_id": "msg1"},
+        {"fact_id": "f2", "memory_text": "REST API will follow OpenAPI 3.0 spec", "author_name": "Charlie", "message_ts": "1704067300", "fact_type": "decision", "importance": "high", "quality_score": 0.85, "source_message_id": "msg2"},
+        {"fact_id": "f3", "memory_text": "URL versioning preferred over header versioning", "author_name": "Alice", "message_ts": "1704067400", "fact_type": "decision", "importance": "medium", "quality_score": 0.8, "source_message_id": "msg3"},
+        {"fact_id": "f4", "memory_text": "Authentication will use OAuth 2.0", "author_name": "Alice", "message_ts": "1704067500", "fact_type": "decision", "importance": "high", "quality_score": 0.88, "source_message_id": "msg4"},
+        {"fact_id": "f5", "memory_text": "Rate limiting at 1000 req/min per client", "author_name": "Charlie", "message_ts": "1704067600", "fact_type": "decision", "importance": "medium", "quality_score": 0.75, "source_message_id": "msg5"},
+        {"fact_id": "f6", "memory_text": "Swagger docs will be auto-generated", "author_name": "Alice", "message_ts": "1704067700", "fact_type": "observation", "importance": "medium", "quality_score": 0.7, "source_message_id": "msg6"},
+        {"fact_id": "f7", "memory_text": "Migration guide for v1 clients needed", "author_name": "Charlie", "message_ts": "1704067800", "fact_type": "action_item", "importance": "high", "quality_score": 0.82, "source_message_id": "msg7"},
+        {"fact_id": "f8", "memory_text": "GraphQL considered but rejected for complexity", "author_name": "Alice", "message_ts": "1704067900", "fact_type": "decision", "importance": "low", "quality_score": 0.65, "source_message_id": "msg8"}
+      ],
+      "decisions": [
+        {"name": "Use REST", "decided_by": "Alice", "status": "active", "superseded_by": "", "date": "2024-01-01", "context": "Better client compatibility"}
+      ],
+      "people": [
+        {"name": "Alice", "role": "decision_maker", "entity_id": "e1"},
+        {"name": "Charlie", "role": "contributor", "entity_id": "e4"}
+      ],
+      "technologies": [{"name": "REST", "category": "architecture", "champion": "Alice"}],
+      "projects": [{"name": "API v2", "status": "in_progress", "owner": "Alice", "blockers": []}],
+      "faq_candidates": [
+        {"question": "Why switch to REST?", "answer": "Better client compatibility and industry standard support."},
+        {"question": "What versioning strategy is used?", "answer": "URL-based versioning with /v2/ prefix."}
+      ]
+    },
+    {
+      "id": "cluster-002",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "Deployment Pipeline and CI/CD Improvements",
+      "summary": "The team is improving the deployment pipeline to reduce deploy time.",
+      "current_state": "Docker-based pipeline in staging, production rollout pending.",
+      "open_questions": "Should we use blue-green or rolling deployments?",
+      "impact_note": "Faster releases directly impact team velocity.",
+      "topic_tags": ["deployment", "ci-cd", "docker"],
+      "member_ids": ["f21","f22","f23","f24","f25","f26","f27","f28","f29","f30","f31","f32","f33","f34","f35","f36","f37","f38"],
+      "member_count": 18,
+      "key_entities": [{"id": "e2", "name": "Bob", "type": "Person"}, {"id": "e5", "name": "Docker", "type": "Technology"}],
+      "key_relationships": [{"source": "Bob", "type": "MANAGES", "target": "Deployment Pipeline", "confidence": "0.85"}],
+      "date_range_start": "2024-01-05",
+      "date_range_end": "2024-01-15",
+      "authors": ["Bob", "Alice"],
+      "media_refs": ["https://example.com/deploy-diagram.png"],
+      "media_names": ["deploy-diagram.png"],
+      "link_refs": ["https://docs.docker.com"],
+      "high_importance_count": 3,
+      "related_cluster_ids": ["cluster-001"],
+      "staleness_score": 0.15,
+      "status": "active",
+      "fact_type_counts": {"decision": 4, "observation": 8, "action_item": 6},
+      "key_facts": [
+        {"fact_id": "f21", "memory_text": "Docker adopted for containerization", "author_name": "Bob", "message_ts": "1704499200", "fact_type": "decision", "importance": "high", "quality_score": 0.9, "source_message_id": "msg21"},
+        {"fact_id": "f22", "memory_text": "GitHub Actions for CI pipeline", "author_name": "Bob", "message_ts": "1704499300", "fact_type": "decision", "importance": "high", "quality_score": 0.88, "source_message_id": "msg22"},
+        {"fact_id": "f23", "memory_text": "Deploy time reduced from 45 to 12 minutes with caching", "author_name": "Bob", "message_ts": "1704499400", "fact_type": "observation", "importance": "high", "quality_score": 0.92, "source_message_id": "msg23"},
+        {"fact_id": "f24", "memory_text": "Staging environment mirrors production configuration", "author_name": "Alice", "message_ts": "1704499500", "fact_type": "observation", "importance": "medium", "quality_score": 0.8, "source_message_id": "msg24"},
+        {"fact_id": "f25", "memory_text": "Blue-green deployment strategy under evaluation", "author_name": "Bob", "message_ts": "1704499600", "fact_type": "observation", "importance": "medium", "quality_score": 0.75, "source_message_id": "msg25"}
+      ],
+      "decisions": [
+        {"name": "Use Docker", "decided_by": "Bob", "status": "active", "superseded_by": "", "date": "2024-01-05", "context": "Consistent environments"}
+      ],
+      "people": [
+        {"name": "Bob", "role": "decision_maker", "entity_id": "e2"},
+        {"name": "Alice", "role": "contributor", "entity_id": "e1"}
+      ],
+      "technologies": [{"name": "Docker", "category": "infrastructure", "champion": "Bob"}, {"name": "GitHub Actions", "category": "ci-cd", "champion": "Bob"}],
+      "projects": [{"name": "Pipeline v2", "status": "in_progress", "owner": "Bob", "blockers": []}],
+      "faq_candidates": [
+        {"question": "How long does deployment take?", "answer": "Currently 12 minutes with Docker caching optimizations."}
+      ]
+    },
+    {
+      "id": "cluster-thin",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "Database Connection Pooling",
+      "summary": "Brief discussion on tuning connection pool settings.",
+      "current_state": "Pool size set to 20, monitoring for saturation.",
+      "open_questions": "",
+      "impact_note": "Minor performance tuning.",
+      "topic_tags": ["database", "performance"],
+      "member_ids": ["ft1","ft2","ft3"],
+      "member_count": 3,
+      "key_entities": [{"id": "e6", "name": "PostgreSQL", "type": "Technology"}],
+      "key_relationships": [],
+      "date_range_start": "2024-01-12",
+      "date_range_end": "2024-01-12",
+      "authors": ["Alice"],
+      "media_refs": [],
+      "media_names": [],
+      "link_refs": [],
+      "high_importance_count": 0,
+      "related_cluster_ids": [],
+      "staleness_score": 0.3,
+      "status": "active",
+      "fact_type_counts": {"observation": 3},
+      "key_facts": [
+        {"fact_id": "ft1", "memory_text": "Connection pool size set to 20", "author_name": "Alice", "message_ts": "1705017600", "fact_type": "observation", "importance": "low", "quality_score": 0.6, "source_message_id": "msgt1"},
+        {"fact_id": "ft2", "memory_text": "Pool timeout is 30 seconds", "author_name": "Alice", "message_ts": "1705017700", "fact_type": "observation", "importance": "low", "quality_score": 0.55, "source_message_id": "msgt2"},
+        {"fact_id": "ft3", "memory_text": "Max overflow allows 10 extra connections", "author_name": "Alice", "message_ts": "1705017800", "fact_type": "observation", "importance": "low", "quality_score": 0.5, "source_message_id": "msgt3"}
+      ],
+      "decisions": [],
+      "people": [{"name": "Alice", "role": "contributor", "entity_id": "e1"}],
+      "technologies": [{"name": "PostgreSQL", "category": "database", "champion": "Alice"}],
+      "projects": [],
+      "faq_candidates": []
+    },
+    {
+      "id": "cluster-003",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "Monitoring and Observability Stack",
+      "summary": "The team is evaluating monitoring solutions for production visibility.",
+      "current_state": "Prometheus and Grafana selected, dashboards being built.",
+      "open_questions": "Should we add distributed tracing with Jaeger?",
+      "impact_note": "Critical for production incident response.",
+      "topic_tags": ["monitoring", "observability", "prometheus"],
+      "member_ids": ["f41","f42","f43","f44","f45","f46","f47","f48","f49","f50"],
+      "member_count": 10,
+      "key_entities": [{"id": "e7", "name": "Prometheus", "type": "Technology"}],
+      "key_relationships": [],
+      "date_range_start": "2024-01-08",
+      "date_range_end": "2024-01-14",
+      "authors": ["Bob", "Dave"],
+      "media_refs": [],
+      "media_names": [],
+      "link_refs": ["https://prometheus.io"],
+      "high_importance_count": 2,
+      "related_cluster_ids": ["cluster-002"],
+      "staleness_score": 0.05,
+      "status": "active",
+      "fact_type_counts": {"decision": 2, "observation": 6, "action_item": 2},
+      "key_facts": [
+        {"fact_id": "f41", "memory_text": "Prometheus chosen for metrics collection", "author_name": "Bob", "message_ts": "1704672000", "fact_type": "decision", "importance": "high", "quality_score": 0.88, "source_message_id": "msg41"},
+        {"fact_id": "f42", "memory_text": "Grafana dashboards show request latency p50/p95/p99", "author_name": "Dave", "message_ts": "1704672100", "fact_type": "observation", "importance": "high", "quality_score": 0.85, "source_message_id": "msg42"},
+        {"fact_id": "f43", "memory_text": "Alertmanager configured for PagerDuty integration", "author_name": "Bob", "message_ts": "1704672200", "fact_type": "decision", "importance": "high", "quality_score": 0.9, "source_message_id": "msg43"}
+      ],
+      "decisions": [
+        {"name": "Use Prometheus", "decided_by": "Bob", "status": "active", "superseded_by": "", "date": "2024-01-08", "context": "Open source and widely supported"}
+      ],
+      "people": [
+        {"name": "Bob", "role": "decision_maker", "entity_id": "e2"},
+        {"name": "Dave", "role": "contributor", "entity_id": "e8"}
+      ],
+      "technologies": [{"name": "Prometheus", "category": "monitoring", "champion": "Bob"}, {"name": "Grafana", "category": "visualization", "champion": "Dave"}],
+      "projects": [],
+      "faq_candidates": [
+        {"question": "What metrics are tracked?", "answer": "Request latency percentiles, error rates, and resource utilization."}
+      ]
+    },
+    {
+      "id": "cluster-004",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "Authentication and Security Hardening",
+      "summary": "Security review prompted improvements to auth flow and secret management.",
+      "current_state": "JWT tokens rotated, Vault integrated for secrets.",
+      "open_questions": "Should we enable MFA for admin accounts?",
+      "impact_note": "Security improvements reduce risk of credential compromise.",
+      "topic_tags": ["security", "authentication", "jwt"],
+      "member_ids": ["f51","f52","f53","f54","f55","f56","f57"],
+      "member_count": 7,
+      "key_entities": [{"id": "e9", "name": "Vault", "type": "Technology"}],
+      "key_relationships": [],
+      "date_range_start": "2024-01-09",
+      "date_range_end": "2024-01-13",
+      "authors": ["Alice", "Eve"],
+      "media_refs": [],
+      "media_names": [],
+      "link_refs": [],
+      "high_importance_count": 3,
+      "related_cluster_ids": ["cluster-001"],
+      "staleness_score": 0.0,
+      "status": "active",
+      "fact_type_counts": {"decision": 3, "observation": 2, "action_item": 2},
+      "key_facts": [
+        {"fact_id": "f51", "memory_text": "JWT tokens now expire after 1 hour", "author_name": "Alice", "message_ts": "1704758400", "fact_type": "decision", "importance": "high", "quality_score": 0.92, "source_message_id": "msg51"},
+        {"fact_id": "f52", "memory_text": "HashiCorp Vault integrated for secret management", "author_name": "Eve", "message_ts": "1704758500", "fact_type": "decision", "importance": "high", "quality_score": 0.9, "source_message_id": "msg52"},
+        {"fact_id": "f53", "memory_text": "Refresh token rotation enabled", "author_name": "Alice", "message_ts": "1704758600", "fact_type": "decision", "importance": "high", "quality_score": 0.88, "source_message_id": "msg53"}
+      ],
+      "decisions": [
+        {"name": "Short JWT TTL", "decided_by": "Alice", "status": "active", "superseded_by": "", "date": "2024-01-09", "context": "Security hardening"}
+      ],
+      "people": [
+        {"name": "Alice", "role": "decision_maker", "entity_id": "e1"},
+        {"name": "Eve", "role": "expert", "entity_id": "e9"}
+      ],
+      "technologies": [{"name": "JWT", "category": "auth", "champion": "Alice"}, {"name": "Vault", "category": "secrets", "champion": "Eve"}],
+      "projects": [],
+      "faq_candidates": [
+        {"question": "How long do tokens last?", "answer": "Access tokens expire in 1 hour; refresh tokens in 7 days."}
+      ]
+    },
+    {
+      "id": "cluster-resources",
+      "tier": "topic",
+      "channel_id": "C0BENCH001",
+      "title": "Engineering Resources and Documentation Links",
+      "summary": "Curated links, documents, and references shared by the team.",
+      "current_state": "Collection growing; needs organization.",
+      "open_questions": "How should we tag and categorize resources?",
+      "impact_note": "Centralized resources reduce onboarding time.",
+      "topic_tags": ["documentation", "resources", "links"],
+      "member_ids": ["fr1","fr2","fr3","fr4","fr5","fr6","fr7","fr8","fr9","fr10","fr11","fr12","fr13","fr14","fr15","fr16","fr17","fr18","fr19","fr20","fr21","fr22","fr23","fr24","fr25","fr26","fr27","fr28","fr29","fr30","fr31","fr32","fr33","fr34","fr35","fr36","fr37","fr38","fr39","fr40","fr41"],
+      "member_count": 41,
+      "key_entities": [],
+      "key_relationships": [],
+      "date_range_start": "2024-01-01",
+      "date_range_end": "2024-01-15",
+      "authors": ["Alice", "Bob", "Charlie", "Dave", "Eve"],
+      "media_refs": [
+        "https://example.com/arch-diagram.pdf",
+        "https://example.com/api-spec.pdf",
+        "https://example.com/deploy-guide.pdf",
+        "https://example.com/security-review.pdf",
+        "https://example.com/monitoring-setup.pdf",
+        "https://example.com/db-schema.pdf",
+        "https://example.com/onboarding.pdf",
+        "https://example.com/runbook.pdf",
+        "https://example.com/adr-001.pdf",
+        "https://example.com/adr-002.pdf",
+        "https://example.com/tech-radar.pdf",
+        "https://example.com/roadmap-q1.pdf",
+        "https://example.com/meeting-notes.pdf",
+        "https://example.com/incident-postmortem.pdf",
+        "https://example.com/performance-report.pdf",
+        "https://example.com/capacity-plan.pdf",
+        "https://example.com/data-model.pdf",
+        "https://example.com/api-changelog.pdf",
+        "https://example.com/test-strategy.pdf",
+        "https://example.com/release-notes.pdf",
+        "https://example.com/slo-sla.pdf"
+      ],
+      "media_names": [
+        "arch-diagram.pdf","api-spec.pdf","deploy-guide.pdf","security-review.pdf",
+        "monitoring-setup.pdf","db-schema.pdf","onboarding.pdf","runbook.pdf",
+        "adr-001.pdf","adr-002.pdf","tech-radar.pdf","roadmap-q1.pdf",
+        "meeting-notes.pdf","incident-postmortem.pdf","performance-report.pdf",
+        "capacity-plan.pdf","data-model.pdf","api-changelog.pdf",
+        "test-strategy.pdf","release-notes.pdf","slo-sla.pdf"
+      ],
+      "link_refs": [
+        "https://restfulapi.net", "https://docs.docker.com", "https://prometheus.io",
+        "https://grafana.com", "https://www.vaultproject.io", "https://swagger.io",
+        "https://github.com/org/api-v2", "https://github.com/org/deploy-config",
+        "https://github.com/org/monitoring", "https://github.com/org/auth-service",
+        "https://wiki.internal/onboarding", "https://wiki.internal/runbooks",
+        "https://wiki.internal/adrs", "https://wiki.internal/roadmap",
+        "https://wiki.internal/slo", "https://wiki.internal/incident-process",
+        "https://wiki.internal/tech-radar", "https://wiki.internal/data-dictionary",
+        "https://wiki.internal/api-contract", "https://wiki.internal/security-policy"
+      ],
+      "high_importance_count": 5,
+      "related_cluster_ids": [],
+      "staleness_score": 0.1,
+      "status": "active",
+      "fact_type_counts": {"observation": 41},
+      "key_facts": [
+        {"fact_id": "fr1", "memory_text": "Architecture diagram updated for Q1 2024", "author_name": "Alice", "message_ts": "1704067200", "fact_type": "observation", "importance": "high", "quality_score": 0.9, "source_message_id": "msgr1"},
+        {"fact_id": "fr2", "memory_text": "API spec document available in Confluence", "author_name": "Charlie", "message_ts": "1704067300", "fact_type": "observation", "importance": "high", "quality_score": 0.88, "source_message_id": "msgr2"},
+        {"fact_id": "fr3", "memory_text": "Deploy guide covers Docker and Kubernetes", "author_name": "Bob", "message_ts": "1704067400", "fact_type": "observation", "importance": "medium", "quality_score": 0.82, "source_message_id": "msgr3"},
+        {"fact_id": "fr4", "memory_text": "Security review report shared with all engineers", "author_name": "Eve", "message_ts": "1704067500", "fact_type": "observation", "importance": "high", "quality_score": 0.9, "source_message_id": "msgr4"},
+        {"fact_id": "fr5", "memory_text": "Monitoring setup guide available in wiki", "author_name": "Dave", "message_ts": "1704067600", "fact_type": "observation", "importance": "medium", "quality_score": 0.78, "source_message_id": "msgr5"},
+        {"fact_id": "fr6", "memory_text": "Database schema ER diagram updated", "author_name": "Alice", "message_ts": "1704153600", "fact_type": "observation", "importance": "medium", "quality_score": 0.75, "source_message_id": "msgr6"},
+        {"fact_id": "fr7", "memory_text": "Onboarding document revised for new hires", "author_name": "Alice", "message_ts": "1704240000", "fact_type": "observation", "importance": "high", "quality_score": 0.88, "source_message_id": "msgr7"},
+        {"fact_id": "fr8", "memory_text": "Runbook for production incidents pinned in channel", "author_name": "Bob", "message_ts": "1704326400", "fact_type": "observation", "importance": "high", "quality_score": 0.92, "source_message_id": "msgr8"},
+        {"fact_id": "fr9", "memory_text": "ADR-001 documents the REST decision rationale", "author_name": "Alice", "message_ts": "1704412800", "fact_type": "observation", "importance": "medium", "quality_score": 0.8, "source_message_id": "msgr9"},
+        {"fact_id": "fr10", "memory_text": "ADR-002 documents the Docker adoption decision", "author_name": "Bob", "message_ts": "1704499200", "fact_type": "observation", "importance": "medium", "quality_score": 0.78, "source_message_id": "msgr10"}
+      ],
+      "decisions": [],
+      "people": [
+        {"name": "Alice", "role": "contributor", "entity_id": "e1"},
+        {"name": "Bob", "role": "contributor", "entity_id": "e2"}
+      ],
+      "technologies": [],
+      "projects": [],
+      "faq_candidates": [
+        {"question": "Where is the onboarding guide?", "answer": "Available at wiki.internal/onboarding."},
+        {"question": "Where are the Architecture Decision Records?", "answer": "ADRs are stored in wiki.internal/adrs and summarized in the wiki."}
+      ]
+    }
+  ],
+  "cluster_facts": {
+    "cluster-001": [
+      {"id": "f1", "memory_text": "Alice proposed switching to REST for the new API", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067200", "thread_ts": null, "source_message_id": "msg1", "topic_tags": ["api","rest"], "entity_tags": ["Alice"], "action_tags": [], "importance": "high", "graph_entity_ids": ["e1"], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f2", "memory_text": "REST API will follow OpenAPI 3.0 spec", "quality_score": 0.85, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704067300", "thread_ts": null, "source_message_id": "msg2", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f3", "memory_text": "URL versioning preferred over header versioning", "quality_score": 0.8, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067400", "thread_ts": null, "source_message_id": "msg3", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f4", "memory_text": "Authentication will use OAuth 2.0", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067500", "thread_ts": null, "source_message_id": "msg4", "topic_tags": ["api","security"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f5", "memory_text": "Rate limiting at 1000 req/min per client", "quality_score": 0.75, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704067600", "thread_ts": null, "source_message_id": "msg5", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f6", "memory_text": "Swagger docs will be auto-generated", "quality_score": 0.7, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067700", "thread_ts": null, "source_message_id": "msg6", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f7", "memory_text": "Migration guide for v1 clients needed", "quality_score": 0.82, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704067800", "thread_ts": null, "source_message_id": "msg7", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "action_item", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f8", "memory_text": "GraphQL considered but rejected for complexity", "quality_score": 0.65, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067900", "thread_ts": null, "source_message_id": "msg8", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f9", "memory_text": "API response envelope includes status, data, and errors fields", "quality_score": 0.78, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068000", "thread_ts": null, "source_message_id": "msg9", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f10", "memory_text": "Pagination uses cursor-based approach for consistency", "quality_score": 0.77, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704068100", "thread_ts": null, "source_message_id": "msg10", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f11", "memory_text": "Error codes follow RFC 7807 problem details format", "quality_score": 0.82, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068200", "thread_ts": null, "source_message_id": "msg11", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f12", "memory_text": "Deprecation policy: 6-month notice for breaking changes", "quality_score": 0.84, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068300", "thread_ts": null, "source_message_id": "msg12", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f13", "memory_text": "Integration tests will be added for each endpoint", "quality_score": 0.72, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704068400", "thread_ts": null, "source_message_id": "msg13", "topic_tags": ["api","testing"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "action_item", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f14", "memory_text": "CORS policy allows frontend origins in production", "quality_score": 0.7, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068500", "thread_ts": null, "source_message_id": "msg14", "topic_tags": ["api","security"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f15", "memory_text": "Webhook support planned for v2.1", "quality_score": 0.65, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068600", "thread_ts": null, "source_message_id": "msg15", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f16", "memory_text": "SDK libraries will be generated from OpenAPI spec", "quality_score": 0.75, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704068700", "thread_ts": null, "source_message_id": "msg16", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "action_item", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f17", "memory_text": "API gateway will handle rate limiting and auth", "quality_score": 0.8, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068800", "thread_ts": null, "source_message_id": "msg17", "topic_tags": ["api","infrastructure"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f18", "memory_text": "Idempotency keys required for mutating operations", "quality_score": 0.83, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704068900", "thread_ts": null, "source_message_id": "msg18", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f19", "memory_text": "Async endpoints for long-running jobs via job queue", "quality_score": 0.76, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704069000", "thread_ts": null, "source_message_id": "msg19", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f20", "memory_text": "Changelog maintained for every breaking change", "quality_score": 0.71, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704069100", "thread_ts": null, "source_message_id": "msg20", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "action_item", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f_api21", "memory_text": "API uses HTTPS exclusively, HTTP redirects to HTTPS", "quality_score": 0.86, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704069200", "thread_ts": null, "source_message_id": "msg_api21", "topic_tags": ["api","security"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f_api22", "memory_text": "Response compression using gzip enabled", "quality_score": 0.69, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704069300", "thread_ts": null, "source_message_id": "msg_api22", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f_api23", "memory_text": "Health check endpoint at /api/health returns status and version", "quality_score": 0.73, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704069400", "thread_ts": null, "source_message_id": "msg_api23", "topic_tags": ["api","monitoring"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f_api24", "memory_text": "JSON is the only supported content type for requests and responses", "quality_score": 0.81, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704069500", "thread_ts": null, "source_message_id": "msg_api24", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f_api25", "memory_text": "Batch API endpoint allows processing up to 100 items per request", "quality_score": 0.79, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704069600", "thread_ts": null, "source_message_id": "msg_api25", "topic_tags": ["api"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ],
+    "cluster-002": [
+      {"id": "f21", "memory_text": "Docker adopted for containerization", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499200", "thread_ts": null, "source_message_id": "msg21", "topic_tags": ["deployment","docker"], "entity_tags": ["Bob"], "action_tags": [], "importance": "high", "graph_entity_ids": ["e2"], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f22", "memory_text": "GitHub Actions for CI pipeline", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499300", "thread_ts": null, "source_message_id": "msg22", "topic_tags": ["ci-cd"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f23", "memory_text": "Deploy time reduced from 45 to 12 minutes with caching", "quality_score": 0.92, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499400", "thread_ts": null, "source_message_id": "msg23", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f24", "memory_text": "Staging environment mirrors production configuration", "quality_score": 0.8, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704499500", "thread_ts": null, "source_message_id": "msg24", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f25", "memory_text": "Blue-green deployment strategy under evaluation", "quality_score": 0.75, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499600", "thread_ts": null, "source_message_id": "msg25", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f26", "memory_text": "Rollback takes 2 minutes with pre-built Docker images", "quality_score": 0.85, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499700", "thread_ts": null, "source_message_id": "msg26", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f27", "memory_text": "Environment variables managed via GitHub Secrets", "quality_score": 0.78, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499800", "thread_ts": null, "source_message_id": "msg27", "topic_tags": ["deployment","security"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f28", "memory_text": "Automated smoke tests run after each deploy", "quality_score": 0.82, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704499900", "thread_ts": null, "source_message_id": "msg28", "topic_tags": ["deployment","testing"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f29", "memory_text": "Database migrations run via Alembic before app startup", "quality_score": 0.87, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500000", "thread_ts": null, "source_message_id": "msg29", "topic_tags": ["deployment","database"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f30", "memory_text": "Multi-stage Docker builds reduce image size by 60%", "quality_score": 0.79, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500100", "thread_ts": null, "source_message_id": "msg30", "topic_tags": ["docker","deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f31", "memory_text": "Deploy notifications sent to Slack channel on success or failure", "quality_score": 0.71, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500200", "thread_ts": null, "source_message_id": "msg31", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f32", "memory_text": "Production deploys require two approvals in GitHub", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704500300", "thread_ts": null, "source_message_id": "msg32", "topic_tags": ["deployment","process"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f33", "memory_text": "Docker registry hosted on GitHub Container Registry (GHCR)", "quality_score": 0.76, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500400", "thread_ts": null, "source_message_id": "msg33", "topic_tags": ["docker","deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f34", "memory_text": "Kubernetes migration planned for Q2 2024", "quality_score": 0.68, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500500", "thread_ts": null, "source_message_id": "msg34", "topic_tags": ["deployment","kubernetes"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f35", "memory_text": "Resource limits set for all containers (CPU and memory)", "quality_score": 0.74, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500600", "thread_ts": null, "source_message_id": "msg35", "topic_tags": ["docker","deployment"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f36", "memory_text": "Health checks configured with 30s interval and 3 retries", "quality_score": 0.77, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500700", "thread_ts": null, "source_message_id": "msg36", "topic_tags": ["deployment","monitoring"], "entity_tags": [], "action_tags": [], "importance": "medium", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f37", "memory_text": "Zero-downtime deploys achieved via load balancer drain", "quality_score": 0.89, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704500800", "thread_ts": null, "source_message_id": "msg37", "topic_tags": ["deployment"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f38", "memory_text": "Test coverage gates: 80% minimum required for merge", "quality_score": 0.83, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704500900", "thread_ts": null, "source_message_id": "msg38", "topic_tags": ["testing","ci-cd"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ],
+    "cluster-thin": [
+      {"id": "ft1", "memory_text": "Connection pool size set to 20", "quality_score": 0.6, "tier": "atomic", "cluster_id": "cluster-thin", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1705017600", "thread_ts": null, "source_message_id": "msgt1", "topic_tags": ["database"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "ft2", "memory_text": "Pool timeout is 30 seconds", "quality_score": 0.55, "tier": "atomic", "cluster_id": "cluster-thin", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1705017700", "thread_ts": null, "source_message_id": "msgt2", "topic_tags": ["database"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "ft3", "memory_text": "Max overflow allows 10 extra connections", "quality_score": 0.5, "tier": "atomic", "cluster_id": "cluster-thin", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1705017800", "thread_ts": null, "source_message_id": "msgt3", "topic_tags": ["database"], "entity_tags": [], "action_tags": [], "importance": "low", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ],
+    "cluster-003": [
+      {"id": "f41", "memory_text": "Prometheus chosen for metrics collection", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-003", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704672000", "thread_ts": null, "source_message_id": "msg41", "topic_tags": ["monitoring"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f42", "memory_text": "Grafana dashboards show request latency p50/p95/p99", "quality_score": 0.85, "tier": "atomic", "cluster_id": "cluster-003", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U004", "author_name": "Dave", "message_ts": "1704672100", "thread_ts": null, "source_message_id": "msg42", "topic_tags": ["monitoring"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f43", "memory_text": "Alertmanager configured for PagerDuty integration", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-003", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704672200", "thread_ts": null, "source_message_id": "msg43", "topic_tags": ["monitoring"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ],
+    "cluster-004": [
+      {"id": "f51", "memory_text": "JWT tokens now expire after 1 hour", "quality_score": 0.92, "tier": "atomic", "cluster_id": "cluster-004", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704758400", "thread_ts": null, "source_message_id": "msg51", "topic_tags": ["security","auth"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f52", "memory_text": "HashiCorp Vault integrated for secret management", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-004", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U005", "author_name": "Eve", "message_ts": "1704758500", "thread_ts": null, "source_message_id": "msg52", "topic_tags": ["security"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "f53", "memory_text": "Refresh token rotation enabled", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-004", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704758600", "thread_ts": null, "source_message_id": "msg53", "topic_tags": ["security","auth"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ],
+    "cluster-resources": [
+      {"id": "fr1", "memory_text": "Architecture diagram updated for Q1 2024", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-resources", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067200", "thread_ts": null, "source_message_id": "msgr1", "topic_tags": ["documentation"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "https://example.com/arch-diagram.pdf", "source_media_type": "pdf", "source_media_urls": ["https://example.com/arch-diagram.pdf"], "source_media_names": ["arch-diagram.pdf"], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+      {"id": "fr2", "memory_text": "API spec document available in Confluence", "quality_score": 0.88, "tier": "atomic", "cluster_id": "cluster-resources", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U003", "author_name": "Charlie", "message_ts": "1704067300", "thread_ts": null, "source_message_id": "msgr2", "topic_tags": ["documentation"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "https://example.com/api-spec.pdf", "source_media_type": "pdf", "source_media_urls": ["https://example.com/api-spec.pdf"], "source_media_names": ["api-spec.pdf"], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+    ]
+  },
+  "recent_facts": [
+    {"id": "f1", "memory_text": "Alice proposed switching to REST for the new API", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-001", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067200", "thread_ts": null, "source_message_id": "msg1", "topic_tags": ["api","rest"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""},
+    {"id": "f21", "memory_text": "Docker adopted for containerization", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-002", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U002", "author_name": "Bob", "message_ts": "1704499200", "thread_ts": null, "source_message_id": "msg21", "topic_tags": ["deployment","docker"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "", "source_media_type": "", "source_media_urls": [], "source_media_names": [], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "decision", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+  ],
+  "media_facts": [
+    {"id": "fr1", "memory_text": "Architecture diagram updated for Q1 2024", "quality_score": 0.9, "tier": "atomic", "cluster_id": "cluster-resources", "channel_id": "C0BENCH001", "platform": "slack", "author_id": "U001", "author_name": "Alice", "message_ts": "1704067200", "thread_ts": null, "source_message_id": "msgr1", "topic_tags": ["documentation"], "entity_tags": [], "action_tags": [], "importance": "high", "graph_entity_ids": [], "source_media_url": "https://example.com/arch-diagram.pdf", "source_media_type": "pdf", "source_media_urls": ["https://example.com/arch-diagram.pdf"], "source_media_names": ["arch-diagram.pdf"], "source_link_urls": [], "source_link_titles": [], "source_link_descriptions": [], "valid_at": null, "invalid_at": null, "superseded_by": null, "supersedes": null, "potential_contradiction": false, "text_vector": null, "fact_type": "observation", "thread_context_summary": "", "source_lang": "en", "derived_from": ""}
+  ],
+  "decisions": [
+    {"id": "d1", "name": "Switch to PostgreSQL", "decided_by": "Alice", "status": "active", "superseded_by": "", "date": "2024-01-10", "context": "Performance needs", "topic_cluster_id": "cluster-001"},
+    {"id": "d2", "name": "Use Docker", "decided_by": "Bob", "status": "active", "superseded_by": "", "date": "2024-01-05", "context": "Consistent environments", "topic_cluster_id": "cluster-002"}
+  ],
+  "technologies": [
+    {"entity": {"id": "e3", "name": "REST API", "type": "Technology"}, "used_by": ["cluster-001"]},
+    {"entity": {"id": "e5", "name": "Docker", "type": "Technology"}, "used_by": ["cluster-002"]}
+  ],
+  "projects": [
+    {"entity": {"id": "p1", "name": "API v2", "type": "Project"}, "dependencies": [], "owners": ["Alice"]},
+    {"entity": {"id": "p2", "name": "Pipeline v2", "type": "Project"}, "dependencies": [], "owners": ["Bob"]}
+  ]
+}

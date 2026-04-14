@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -75,7 +76,7 @@ export function useGlobalConversationHistory() {
       if (search) params.set("search", search);
       params.set("page", "1");
       params.set("page_size", String(PAGE_SIZE));
-      const res = await fetch(`${API_BASE}/api/ask/sessions?${params}`);
+      const res = await authFetch(`${API_BASE}/api/ask/sessions?${params}`);
       if (res.ok) {
         const data: SessionsPage = await res.json();
         setSessions(data.sessions ?? []);
@@ -102,7 +103,7 @@ export function useGlobalConversationHistory() {
       if (search) params.set("search", search);
       params.set("page", String(nextPageRef.current));
       params.set("page_size", String(PAGE_SIZE));
-      const res = await fetch(`${API_BASE}/api/ask/sessions?${params}`);
+      const res = await authFetch(`${API_BASE}/api/ask/sessions?${params}`);
       if (res.ok) {
         const data: SessionsPage = await res.json();
         setSessions((prev) => {
@@ -124,27 +125,36 @@ export function useGlobalConversationHistory() {
   }, []);
 
   const loadSession = useCallback(
-    async (sessionId: string): Promise<{ messages: SessionMessage[]; channel_ids: string[] }> => {
+    async (
+      sessionId: string,
+    ): Promise<{
+      messages: SessionMessage[];
+      channel_ids: string[];
+      status: "ok" | "forbidden" | "not_found" | "error";
+    }> => {
       try {
-        const res = await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`);
+        const res = await authFetch(`${API_BASE}/api/ask/sessions/${sessionId}`);
         if (res.ok) {
           const data = await res.json();
           return {
             messages: data.messages ?? [],
             channel_ids: data.channel_ids ?? [],
+            status: "ok",
           };
         }
+        if (res.status === 403) return { messages: [], channel_ids: [], status: "forbidden" };
+        if (res.status === 404) return { messages: [], channel_ids: [], status: "not_found" };
       } catch (err) {
         console.error("Failed to load session", err);
       }
-      return { messages: [], channel_ids: [] };
+      return { messages: [], channel_ids: [], status: "error" };
     },
     [],
   );
 
   const renameSession = useCallback(async (sessionId: string, title: string) => {
     try {
-      await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
+      await authFetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
@@ -159,7 +169,7 @@ export function useGlobalConversationHistory() {
 
   const pinSession = useCallback(async (sessionId: string, pinned: boolean) => {
     try {
-      await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
+      await authFetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pinned }),
@@ -174,7 +184,7 @@ export function useGlobalConversationHistory() {
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
+      const res = await authFetch(`${API_BASE}/api/ask/sessions/${sessionId}`, {
         method: "DELETE",
       });
       if (!res.ok) {

@@ -3,7 +3,7 @@ name = "beever-atlas"
 version = "0.1.0"
 description = "Wiki-first RAG system with dual semantic + graph memory"
 readme = { text = "", content-type = "text/markdown" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
@@ -18,7 +18,7 @@ dependencies = [
     "redis>=5.2.0",
     "httpx>=0.28.0",
     "sse-starlette>=2.1.0",
-    "pypdf>=4.0.0",
+    "pypdf>=5.1.0",
     "python-docx>=1.1.0",
     "cryptography>=42.0.0",
     "jellyfish>=1.0.0",
@@ -29,6 +29,8 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "langdetect>=1.0.9",
     "tavily-python>=0.5.0",
+    "slowapi>=0.1.9",
+    "aiolimiter>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +42,8 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
+    "hypothesis>=6.100.0",
+    "markdown-it-py>=3.0.0",
 ]
 test = [
     "tiktoken>=0.7",
@@ -57,5 +61,5 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100

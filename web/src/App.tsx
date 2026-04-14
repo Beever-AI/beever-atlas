@@ -13,6 +13,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Channels } from "@/pages/Channels";
 import { ChannelWorkspace } from "@/pages/ChannelWorkspace";
 import { AskPage } from "@/pages/AskPage";
+import { SharedAskPage } from "@/pages/SharedAskPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { ActivityPage } from "@/pages/ActivityPage";
 import { ProfilePage } from "@/pages/ProfilePage";
@@ -83,6 +84,7 @@ function AppShell() {
                 <Route path="settings" element={<ChannelSettingsTab />} />
               </Route>
               <Route path="/ask" element={<AskPage />} />
+              <Route path="/ask/:sessionId" element={<AskPage />} />
               <Route path="/activity" element={<ActivityPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/profile" element={<ProfilePage />} />
@@ -100,7 +102,12 @@ function App() {
   return (
     <TooltipProvider>
       <BrowserRouter>
-        <AppShell />
+        <Routes>
+          {/* Public (unauthed) share route — MUST be outside AppShell so it
+              renders without sidebar/header chrome and without any auth guard. */}
+          <Route path="/ask/shared/:token" element={<SharedAskPage />} />
+          <Route path="*" element={<AppShell />} />
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   );

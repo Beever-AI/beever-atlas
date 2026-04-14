@@ -6,6 +6,7 @@ import logging
 
 from google.adk.agents import LlmAgent
 
+from beever_atlas.agents.prompt_safety import UNTRUSTED_SYSTEM_NOTE
 from beever_atlas.agents.query.prompts import (
     build_qa_system_prompt,
     QA_QUICK_SUFFIX,
@@ -13,6 +14,42 @@ from beever_atlas.agents.query.prompts import (
 )
 from beever_atlas.agents.tools import QA_TOOLS
 from beever_atlas.infra.config import ConfigurationError
+
+
+# Tool name fragments that indicate write or network-egress capability.
+# When an agent context includes untrusted content, these tools are filtered
+# out as an output-side defense against prompt-injection-driven exfiltration.
+_UNTRUSTED_TOOL_DENYLIST_FRAGMENTS = (
+    "tavily",
+    "web_search",
+    "write",
+    "create",
+    "update",
+    "delete",
+    "send",
+    "post",
+)
+
+
+def _filter_tools_for_untrusted(tools: list) -> list:
+    """Drop write/egress tools when the prompt contains untrusted content.
+
+    Defense-in-depth: a prompt-injection payload in retrieved memory could
+    instruct the model to exfiltrate data via web search or mutate state
+    via MCP write tools. Restrict to read-only tools in that context.
+    """
+    kept: list = []
+    for t in tools:
+        name = (
+            getattr(t, "__name__", None)
+            or getattr(t, "name", None)
+            or getattr(getattr(t, "func", None), "__name__", "")
+            or ""
+        ).lower()
+        if any(frag in name for frag in _UNTRUSTED_TOOL_DENYLIST_FRAGMENTS):
+            continue
+        kept.append(t)
+    return kept
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +75,7 @@ def _maybe_wrap_with_skills(tools_list: list) -> list:
         from beever_atlas.infra.config import get_settings
         settings = get_settings()
     except Exception:
+        logger.exception("qa_agent: failed to load settings when wrapping skills")
         return tools_list
 
     if not getattr(settings, "qa_skills_enabled", False):
@@ -80,7 +118,7 @@ _SUMMARIZE_TOOLS_NAMES = {"get_wiki_page", "get_topic_overview", "search_channel
 
 # Cached agent instances keyed on (mode, citation_registry_enabled, qa_new_prompt) so
 # flipping either flag at runtime produces a freshly-built agent.
-_agents: dict[tuple[str, bool, bool], LlmAgent] = {}
+_agents: dict[tuple[str, bool, bool, bool], LlmAgent] = {}
 
 
 def _current_registry_flag() -> bool:
@@ -88,6 +126,7 @@ def _current_registry_flag() -> bool:
         from beever_atlas.infra.config import get_settings
         return bool(get_settings().citation_registry_enabled)
     except Exception:
+        logger.exception("qa_agent: failed to read citation_registry_enabled")
         return False
 
 
@@ -96,6 +135,16 @@ def _current_new_prompt_flag() -> bool:
         from beever_atlas.infra.config import get_settings
         return bool(get_settings().qa_new_prompt)
     except Exception:
+        logger.exception("qa_agent: failed to read qa_new_prompt")
+        return False
+
+
+def _current_skills_flag() -> bool:
+    try:
+        from beever_atlas.infra.config import get_settings
+        return bool(get_settings().qa_skills_enabled)
+    except Exception:
+        logger.exception("qa_agent: failed to read qa_skills_enabled")
         return False
 
 
@@ -117,6 +166,7 @@ def _maybe_add_follow_ups_tool(tools_list: list, include_follow_ups: bool) -> li
         if not get_settings().citation_registry_enabled:
             return tools_list
     except Exception:
+        logger.exception("qa_agent: failed to load settings for follow-ups tool")
         return tools_list
     from beever_atlas.agents.query.follow_ups_tool import suggest_follow_ups
     return [*tools_list, suggest_follow_ups]
@@ -149,6 +199,11 @@ def create_qa_agent(
     registry = get_mcp_registry()
 
     base_tools = tools if tools is not None else QA_TOOLS
+
+    # Inject the untrusted-content system note once. Retrieved memory text
+    # and message bodies are wrapped in <untrusted> tags downstream
+    # (see beever_atlas.agents.prompt_safety).
+    extra_instruction = f"\n\n{UNTRUSTED_SYSTEM_NOTE}\n{extra_instruction}"
 
     if mode == "quick":
         # Quick: 2 tools, no thinking, concise prompt
@@ -225,11 +280,17 @@ def _create_thinking_planner():
 def get_agent_for_mode(mode: str = "deep") -> LlmAgent:
     """Get or create a cached QA agent for the specified mode.
 
-    Cache key is `(mode, citation_registry_enabled)` so flipping the
-    registry flag at runtime produces a new agent with the correct
-    tool-set — avoids stale prompt/tool mismatch during rollout.
+    Cache key is `(mode, citation_registry_enabled, qa_new_prompt,
+    qa_skills_enabled)` so flipping any of those flags at runtime
+    produces a new agent with the correct tool-set — avoids stale
+    prompt/tool mismatch during rollout.
     """
-    key = (mode, _current_registry_flag(), _current_new_prompt_flag())
+    key = (
+        mode,
+        _current_registry_flag(),
+        _current_new_prompt_flag(),
+        _current_skills_flag(),
+    )
     if key not in _agents:
         _agents[key] = create_qa_agent(mode)
     return _agents[key]

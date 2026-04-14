@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(prefix="/api/dev", tags=["dev"])
+from beever_atlas.infra.auth import require_admin
+
+router = APIRouter(
+    prefix="/api/dev",
+    tags=["dev"],
+    dependencies=[Depends(require_admin)],
+)
 logger = logging.getLogger(__name__)
 
 
@@ -93,7 +99,7 @@ async def reset_all_data() -> dict:
         defaults = GlobalPolicyDefaults(
             sync=SyncConfig(
                 trigger_mode=SyncTriggerMode.MANUAL, sync_type="auto",
-                max_messages=s.sync_max_messages, min_sync_interval_minutes=5,
+                max_messages=s.sync_max_messages, min_sync_interval_minutes=1,
             ),
             ingestion=IngestionConfig(
                 batch_size=s.sync_batch_size, quality_threshold=s.quality_threshold,

@@ -6,13 +6,12 @@ import { MermaidBlock } from "./MermaidBlock";
 import { ChartBlock } from "./ChartBlock";
 import { CalloutBox } from "./CalloutBox";
 import { CitationLink } from "./CitationLink";
+import { buildLoaderUrl } from "@/lib/api";
 import type { WikiCitation } from "@/lib/types";
-
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 function proxyUrl(url: string): string {
   if (url.includes("files.slack.com")) {
-    return `${API_BASE}/api/files/proxy?url=${encodeURIComponent(url)}`;
+    return buildLoaderUrl(`/api/files/proxy?url=${encodeURIComponent(url)}`);
   }
   return url;
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { FeedbackRating } from "../types/askTypes";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -30,7 +31,7 @@ export function useFeedback(channelId: string) {
       : `${API_BASE}/api/ask/feedback`;
 
     try {
-      await fetch(url, {
+      await authFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

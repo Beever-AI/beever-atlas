@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile, DecompositionPlan } from "../types/askTypes";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -183,7 +184,7 @@ export function useAsk(channelId: string): UseAskReturn {
       });
 
       try {
-        const res = await fetch(`${API_BASE}/api/channels/${channelId}/ask`, {
+        const res = await authFetch(`${API_BASE}/api/channels/${channelId}/ask`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

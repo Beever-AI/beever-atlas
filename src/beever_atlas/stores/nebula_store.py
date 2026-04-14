@@ -7,9 +7,13 @@ are wrapped with ``asyncio.to_thread`` (one session per thread call).
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
+import inspect
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,8 +22,81 @@ from nebula3.Config import Config as NebulaConfig
 from nebula3.gclient.net import ConnectionPool
 
 from beever_atlas.models import GraphEntity, GraphRelationship, Subgraph
+from beever_atlas.stores.graph_errors import (
+    GraphBackendUnavailable,
+    GraphConflict,
+    GraphStoreError,
+)
 
 logger = logging.getLogger(__name__)
+
+# nGQL error-message fragments that signal the backend is unreachable or
+# transiently broken.  Matched as substrings of the RuntimeError text.
+_NEBULA_UNAVAILABLE_MARKERS = (
+    "connection is lost",
+    "Session not existed",
+    "Session is not existed",
+    "SpaceNotFound",
+    "No schema found",
+    "connection refused",
+    "no available",
+    "Storage Error",
+    "leader changed",
+    "RPC failure",
+)
+
+# Fragments that mean constraint/authorisation violation.
+_NEBULA_CONFLICT_MARKERS = (
+    "existed",  # "Vertex existed", "Edge existed", "Tag existed"
+    "duplicated",
+    "permission denied",
+    "PermissionError",
+    "Unauthorized",
+)
+
+
+def _classify_nebula_error(msg: str) -> GraphStoreError:
+    """Map an nGQL error string to a GraphStoreError subclass."""
+    lowered = msg.lower()
+    if any(m.lower() in lowered for m in _NEBULA_UNAVAILABLE_MARKERS):
+        return GraphBackendUnavailable(msg)
+    if any(m.lower() in lowered for m in _NEBULA_CONFLICT_MARKERS):
+        return GraphConflict(msg)
+    return GraphStoreError(msg)
+
+
+@asynccontextmanager
+async def _translate_errors() -> AsyncIterator[None]:
+    """Translate raw nebula3 RuntimeError into :mod:`graph_errors` types."""
+    try:
+        yield
+    except GraphStoreError:
+        raise
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "nGQL error" not in msg and "Nebula" not in msg and "Session" not in msg:
+            raise
+        raise _classify_nebula_error(msg) from exc
+
+
+def _wrap_async_methods(cls: type) -> type:
+    """Wrap every public async method with :func:`_translate_errors`."""
+    for attr_name, attr in list(vars(cls).items()):
+        if attr_name.startswith("_"):
+            continue
+        if not inspect.iscoroutinefunction(attr):
+            continue
+
+        def _make(fn):  # noqa: ANN001
+            @functools.wraps(fn)
+            async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                async with _translate_errors():
+                    return await fn(*args, **kwargs)
+
+            return _wrapped
+
+        setattr(cls, attr_name, _make(attr))
+    return cls
 
 # Maximum vertices/edges per single INSERT statement (Nebula practical limit).
 _BATCH_CHUNK_SIZE = 500
@@ -79,7 +156,15 @@ def _event_vid(weaviate_id: str) -> str:
 
 def _escape(value: str) -> str:
     """Escape a string for nGQL.  Nebula uses backslash escaping inside
-    double-quoted strings."""
+    double-quoted strings.
+
+    Callers use this both for double-quoted string literals and for
+    identifiers wrapped in backticks. Backticks in input would break out of
+    the identifier context — reject them outright since valid schema
+    identifiers never contain them.
+    """
+    if "`" in value:
+        raise ValueError(f"Backtick not allowed in nGQL identifier/literal: {value!r}")
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -88,6 +173,7 @@ def _quote(value: str) -> str:
     return f'"{_escape(value)}"'
 
 
+@_wrap_async_methods
 class NebulaStore:
     """NebulaGraph backend implementing :class:`GraphStore`."""
 

@@ -60,15 +60,18 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
   }
 
   return (
-    <div className="relative min-h-full flex items-center justify-center p-6 sm:p-8 overflow-hidden bg-background">
-      {/* Dynamic Background */}
-      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-primary/20 rounded-full blur-[120px] animate-pulse" style={{ animationDuration: '8s' }} />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-500/10 rounded-full blur-[140px] animate-pulse" style={{ animationDuration: '10s' }} />
-        <div className="absolute top-[20%] right-[10%] w-[40%] h-[40%] bg-teal-500/10 rounded-full blur-[100px] animate-pulse" style={{ animationDuration: '12s' }} />
+    <div className="relative h-full overflow-y-auto bg-background">
+      {/* Dynamic Background — sticky to the viewport while the content scrolls */}
+      <div className="sticky top-0 left-0 right-0 h-0 z-0 pointer-events-none">
+        <div className="absolute inset-x-0 top-0 h-screen overflow-hidden">
+          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-primary/20 rounded-full blur-[120px] animate-pulse" style={{ animationDuration: '8s' }} />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-500/10 rounded-full blur-[140px] animate-pulse" style={{ animationDuration: '10s' }} />
+          <div className="absolute top-[20%] right-[10%] w-[40%] h-[40%] bg-teal-500/10 rounded-full blur-[100px] animate-pulse" style={{ animationDuration: '12s' }} />
+        </div>
       </div>
 
-      <div className="w-full max-w-lg relative z-10">
+      <div className="relative z-10 min-h-full flex items-center justify-center p-6 sm:p-8">
+       <div className="w-full max-w-lg">
         {step === "profile" ? (
           <div className="animate-fade-in">
             {/* Spark badge */}
@@ -293,6 +296,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
             </div>
           </div>
         )}
+       </div>
       </div>
     </div>
   );

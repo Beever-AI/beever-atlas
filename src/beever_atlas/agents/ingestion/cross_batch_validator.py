@@ -11,6 +11,8 @@ from beever_atlas.agents.prompts.cross_batch_validator import CROSS_BATCH_VALIDA
 from beever_atlas.agents.schemas.validation import ValidationResult
 from beever_atlas.agents.callbacks.checkpoint_skip import make_checkpoint_skip_callback
 from beever_atlas.llm import get_llm_provider
+from beever_atlas.services.adk_recovery import wrap_with_recovery
+from beever_atlas.services.json_recovery import recover_validation_from_truncated
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _skip_if_no_work(callback_context: CallbackContext) -> types.Content | None:
 
 def create_cross_batch_validator(model=None) -> LlmAgent:
     """Create the cross-batch validator LlmAgent."""
-    return LlmAgent(
+    agent = LlmAgent(
         name="cross_batch_validator_agent",
         model=model or get_llm_provider().resolve_model("cross_batch_validator"),
         instruction=CROSS_BATCH_VALIDATOR_INSTRUCTION,
@@ -54,7 +56,8 @@ def create_cross_batch_validator(model=None) -> LlmAgent:
         output_key="validated_entities",
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            max_output_tokens=65536,
+            max_output_tokens=63000,
         ),
         before_agent_callback=_skip_if_no_work,
     )
+    return wrap_with_recovery(agent, recover_validation_from_truncated, ValidationResult)

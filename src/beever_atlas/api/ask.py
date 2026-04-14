@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING, AsyncGenerator
 if TYPE_CHECKING:
     from beever_atlas.agents.query.decomposer import QueryPlan
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File as FastAPIFile
+
+from beever_atlas.infra.auth import require_user
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -22,6 +24,7 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.genai import types as genai_types
 
 from beever_atlas.agents.runner import create_runner, create_session
+from beever_atlas.infra.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -1132,9 +1135,10 @@ class FeedbackV2Request(BaseModel):
 
 
 @router.post("/api/ask")
+@limiter.limit("30/minute")
 async def ask_v2(
-    body: AskV2Request,
     request: Request,
+    body: AskV2Request,
 ) -> StreamingResponse:
     """Session-scoped SSE streaming. `channel_id` scopes retrieval for this turn only.
 
@@ -1300,6 +1304,347 @@ async def delete_ask_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
     return {"status": "ok"}
+
+
+# ===========================================================================
+# Share endpoints — Phase 2 of ask-url-routing-share-chat plan.
+# Owner-authenticated CRUD on `shared_conversations`; public GET lives on the
+# `public_router` below which is mounted WITHOUT the global auth dep.
+# ===========================================================================
+
+
+_SHARE_VISIBILITIES = {"owner", "auth", "public"}
+
+
+class ShareCreateRequest(BaseModel):
+    visibility: str = Field(default="owner", pattern="^(owner|auth|public)$")
+
+
+class ShareVisibilityRequest(BaseModel):
+    visibility: str = Field(..., pattern="^(owner|auth|public)$")
+
+
+def _share_response(doc: dict) -> dict:
+    created = doc.get("created_at")
+    rotated = doc.get("rotated_at")
+    updated = doc.get("updated_at")
+    return {
+        "share_token": doc["share_token"],
+        "url": f"/ask/shared/{doc['share_token']}",
+        "visibility": doc["visibility"],
+        "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+        "rotated_at": rotated.isoformat() if hasattr(rotated, "isoformat") else rotated,
+        "updated_at": updated.isoformat() if hasattr(updated, "isoformat") else updated,
+    }
+
+
+async def _verify_session_ownership(session_id: str, user_id: str) -> dict:
+    """Return the session doc or raise 403/404."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+
+    settings = get_settings()
+    store = ChatHistoryStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        session = await store.load_session(session_id=session_id)
+    finally:
+        store.close()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Fail-closed: require exact owner match. Legacy sessions without a user_id
+    # cannot be shared (would otherwise be claimable by any authenticated caller).
+    if session.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return session
+
+
+@router.post("/api/ask/sessions/{session_id}/share")
+async def create_or_rotate_share(
+    session_id: str,
+    request: Request,
+    body: ShareCreateRequest | None = None,
+    rotate: bool = False,
+    caller_user_id: str = Depends(require_user),
+) -> dict:
+    """Create a share for the session, or rotate the token on an existing one.
+
+    - No existing active share: create with the requested visibility (default owner).
+    - Existing active share AND rotate=False: return it unchanged.
+    - Existing active share AND rotate=True: atomic single-doc token rotation.
+    """
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.services.share_snapshot import build_share_snapshot
+    from beever_atlas.services.share_store import ShareStore
+
+    user_id = caller_user_id
+    session = await _verify_session_ownership(session_id, user_id)
+
+    visibility = (body.visibility if body else "owner") or "owner"
+
+    settings = get_settings()
+    store = ShareStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        existing = await store.get_active_by_session(user_id, session_id)
+        if existing and rotate:
+            rotated = await store.rotate_token(existing["_id"])
+            if rotated is None:
+                # Lost the race — someone else rotated/revoked first.
+                raise HTTPException(status_code=404, detail="Share no longer active")
+            return _share_response(rotated)
+        if existing and not rotate:
+            return _share_response(existing)
+
+        # Create new
+        title = session.get("title") or ""
+        scrubbed = build_share_snapshot(session.get("messages") or [])
+        doc = await store.create(
+            owner_user_id=user_id,
+            source_session_id=session_id,
+            visibility=visibility,
+            title=title,
+            messages=scrubbed,
+        )
+        return _share_response(doc)
+    finally:
+        store.close()
+
+
+@router.put("/api/ask/sessions/{session_id}/share")
+async def resnapshot_share(
+    session_id: str,
+    request: Request,
+    caller_user_id: str = Depends(require_user),
+) -> dict:
+    """Re-snapshot the session into the existing share (token stable)."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.services.share_snapshot import build_share_snapshot
+    from beever_atlas.services.share_store import ShareStore
+
+    user_id = caller_user_id
+    session = await _verify_session_ownership(session_id, user_id)
+
+    settings = get_settings()
+    store = ShareStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        existing = await store.get_active_by_session(user_id, session_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="No active share")
+        title = session.get("title") or ""
+        scrubbed = build_share_snapshot(session.get("messages") or [])
+        updated = await store.resnapshot(existing["_id"], title=title, messages=scrubbed)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="No active share")
+        return _share_response(updated)
+    finally:
+        store.close()
+
+
+@router.patch("/api/ask/sessions/{session_id}/share/visibility")
+async def update_share_visibility(
+    session_id: str,
+    body: ShareVisibilityRequest,
+    request: Request,
+    caller_user_id: str = Depends(require_user),
+) -> dict:
+    """Update visibility tier of an existing active share."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.services.share_store import ShareStore
+
+    user_id = caller_user_id
+    await _verify_session_ownership(session_id, user_id)
+
+    settings = get_settings()
+    store = ShareStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        existing = await store.get_active_by_session(user_id, session_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="No active share")
+        updated = await store.update_visibility(existing["_id"], body.visibility)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="No active share")
+        return _share_response(updated)
+    finally:
+        store.close()
+
+
+@router.delete("/api/ask/sessions/{session_id}/share", status_code=204)
+async def revoke_share(
+    session_id: str,
+    request: Request,
+    caller_user_id: str = Depends(require_user),
+) -> Response:
+    """Revoke the active share. Idempotent: 204 on transition, 404 if none active."""
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.services.share_store import ShareStore
+
+    user_id = caller_user_id
+    await _verify_session_ownership(session_id, user_id)
+
+    settings = get_settings()
+    store = ShareStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        existing = await store.get_active_by_session(user_id, session_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="No active share")
+        transitioned = await store.revoke(existing["_id"])
+        if not transitioned:
+            raise HTTPException(status_code=404, detail="No active share")
+    finally:
+        store.close()
+    return Response(status_code=204)
+
+
+# ---- Public GET (auth optional, lives on the un-auth'd public_router) ----
+
+public_router = APIRouter()
+
+# Per-share and per-IP in-memory rate buckets. Acceptable for v1 single-process
+# dev; swap for Redis in prod if horizontal scaling is added.
+_RATE_WINDOW_S = 60.0
+_RATE_MAX_KEYS = 10000
+_rate_state: dict[str, tuple[float, int]] = {}
+_rate_lock = asyncio.Lock()
+
+
+def _rate_prune_expired(now: float) -> None:
+    """Drop buckets whose window has fully elapsed. O(n); bounded by _RATE_MAX_KEYS."""
+    expired = [k for k, (ws, _c) in _rate_state.items() if now - ws >= _RATE_WINDOW_S]
+    for k in expired:
+        _rate_state.pop(k, None)
+
+
+async def _rate_check(key: str, limit: int) -> bool:
+    """Simple fixed-window counter. Returns True if under limit (and records the hit).
+
+    Atomic under asyncio concurrency via module-level lock. Evicts expired buckets
+    opportunistically to prevent unbounded memory growth.
+    """
+    now = time.monotonic()
+    async with _rate_lock:
+        # Opportunistic eviction when the map grows past the soft cap.
+        if len(_rate_state) > _RATE_MAX_KEYS:
+            _rate_prune_expired(now)
+        window_start, count = _rate_state.get(key, (now, 0))
+        if now - window_start >= _RATE_WINDOW_S:
+            _rate_state[key] = (now, 1)
+            return True
+        if count >= limit:
+            return False
+        _rate_state[key] = (window_start, count + 1)
+        return True
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else "unknown"
+
+
+def _hash_ip(ip: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(ip.encode("utf-8")).hexdigest()[:32]
+
+
+@public_router.get("/api/ask/shared/{share_token}")
+async def get_shared_conversation(
+    share_token: str,
+    request: Request,
+):
+    """Serve a shared conversation snapshot. Auth is conditional on visibility tier.
+
+    Ordering directive (per plan): revoked/missing tokens must hard-404 BEFORE
+    any rate-limit bucket is consulted, otherwise an attacker replaying an old
+    token could drain the quota of the new one.
+    """
+    from fastapi.responses import JSONResponse
+    from beever_atlas.infra.auth import require_user_optional
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.services.share_store import ShareStore
+
+    settings = get_settings()
+    store = ShareStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        doc = await store.get_by_token(share_token)
+        # Hard-404 BEFORE any rate-limit accounting.
+        if not doc or doc.get("revoked_at") is not None:
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+
+        # Resolve optional caller identity (no 401 on missing).
+        caller_user_id = require_user_optional(
+            authorization=request.headers.get("authorization"),
+            access_token=request.query_params.get("access_token"),
+        )
+
+        visibility = doc.get("visibility", "owner")
+        owner_user_id = doc.get("owner_user_id")
+
+        if visibility == "owner":
+            if not caller_user_id:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Authentication required"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if caller_user_id != owner_user_id:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        elif visibility == "auth":
+            if not caller_user_id:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Authentication required"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        elif visibility == "public":
+            # Rate limit only the public tier.
+            ip = _client_ip(request)
+            # Key on stable share _id (not the rotatable token) so rotation does
+            # not reset the per-share bucket.
+            if not await _rate_check(f"share:id:{doc['_id']}", 60):
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+            if not await _rate_check(f"share:ip:{ip}", 120):
+                return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+            # Append access log (FIFO cap 1000).
+            try:
+                await store.append_access_log(
+                    doc["_id"],
+                    {
+                        "ip_hash": _hash_ip(ip),
+                        "ua": (request.headers.get("user-agent") or "")[:256],
+                        "ts": datetime.now(UTC),
+                    },
+                )
+            except Exception:
+                logger.debug("append_access_log failed", exc_info=True)
+        else:
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+
+        created = doc.get("created_at")
+        payload = {
+            "title": doc.get("title") or "",
+            "messages": doc.get("messages") or [],
+            "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+            "visibility": visibility,
+            "owner_user_id": owner_user_id,
+        }
+        headers = {
+            "Referrer-Policy": "no-referrer",
+            "X-Robots-Tag": "noindex, nofollow",
+            "Cache-Control": "private, no-store",
+        }
+        return JSONResponse(content=payload, headers=headers)
+    finally:
+        store.close()
 
 
 @router.post("/api/ask/upload")

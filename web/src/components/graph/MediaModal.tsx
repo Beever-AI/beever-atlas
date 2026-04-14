@@ -1,4 +1,5 @@
 import { X, ExternalLink, FileText, Image as ImageIcon, Film, Link2 } from "lucide-react";
+import { buildLoaderUrl } from "@/lib/api";
 
 interface MediaModalProps {
   name: string;
@@ -8,7 +9,7 @@ interface MediaModalProps {
 }
 
 export function MediaModal({ name, url, mediaType, onClose }: MediaModalProps) {
-  const proxyUrl = `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/files/proxy?url=${encodeURIComponent(url)}`;
+  const proxyUrl = buildLoaderUrl(`/api/files/proxy?url=${encodeURIComponent(url)}`);
   const isSlackFile = url.includes("files.slack.com");
   const displayUrl = isSlackFile ? proxyUrl : url;
 

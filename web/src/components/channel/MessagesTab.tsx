@@ -12,8 +12,8 @@ import {
 import { cn } from "@/lib/utils";
 import { emojify } from "node-emoji";
 import type { SyncState } from "@/hooks/useSync";
+import { buildLoaderUrl } from "@/lib/api";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const PAGE_SIZE = 50;
 const POLL_INTERVAL_MS = 30_000;
 
@@ -885,7 +885,7 @@ function MessageRow({ msg, isReply = false, onToggleReplies, isExpanded }: { msg
             {msg.attachments.map((att, i) => {
               const isImage = att.type === "image" || /\.(png|jpe?g|gif|webp|svg)$/i.test(att.name || "");
               const isVideo = att.type === "video" || /\.(mp4|mov|webm|avi)$/i.test(att.name || "");
-              const proxyUrl = att.url ? `${API_BASE}/api/files/proxy?url=${encodeURIComponent(att.url)}` : undefined;
+              const proxyUrl = att.url ? buildLoaderUrl(`/api/files/proxy?url=${encodeURIComponent(att.url)}`) : undefined;
 
               if (isImage && proxyUrl) {
                 return <ImageAttachment key={proxyUrl} url={proxyUrl} name={att.name || "Image"} />;

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -28,7 +29,7 @@ export function useConversationHistory(channelId: string) {
     try {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
-      const res = await fetch(`${API_BASE}/api/channels/${channelId}/ask/history?${params}`);
+      const res = await authFetch(`${API_BASE}/api/channels/${channelId}/ask/history?${params}`);
       if (res.ok) {
         const data = await res.json();
         setSessions(data.sessions ?? []);
@@ -42,7 +43,7 @@ export function useConversationHistory(channelId: string) {
 
   const loadSession = useCallback(async (sessionId: string): Promise<SessionMessage[]> => {
     try {
-      const res = await fetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`);
+      const res = await authFetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`);
       if (res.ok) {
         const data = await res.json();
         return data.messages ?? [];
@@ -55,7 +56,7 @@ export function useConversationHistory(channelId: string) {
 
   const renameSession = useCallback(async (sessionId: string, title: string) => {
     try {
-      await fetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
+      await authFetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
@@ -68,7 +69,7 @@ export function useConversationHistory(channelId: string) {
 
   const pinSession = useCallback(async (sessionId: string, pinned: boolean) => {
     try {
-      await fetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
+      await authFetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pinned }),
@@ -81,7 +82,7 @@ export function useConversationHistory(channelId: string) {
 
   const deleteSession = useCallback(async (sessionId: string) => {
     try {
-      await fetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
+      await authFetch(`${API_BASE}/api/channels/${channelId}/ask/sessions/${sessionId}`, {
         method: "DELETE",
       });
       setSessions(prev => prev.filter(s => s.session_id !== sessionId));

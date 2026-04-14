@@ -7,6 +7,7 @@ import { useFileUpload } from "@/hooks/useFileUpload";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
 import { ChannelPicker } from "@/components/ask/ChannelPicker";
+import { Share2, Check } from "lucide-react";
 import type { AnswerMode, Message } from "@/types/askTypes";
 import type { ChannelOption } from "@/components/ask/ChannelPicker";
 
@@ -23,6 +24,10 @@ interface AskCoreProps {
   initialQuery?: string;
   /** Picker mode only: available channels for the inline picker. */
   availableChannels?: ChannelOption[];
+  /** Picker mode: the sessionId from the URL path (`/ask/:sessionId`). */
+  urlSessionId?: string;
+  /** Picker mode: called once when a new session id is minted from SSE metadata. */
+  onSessionMinted?: (sessionId: string) => void;
 }
 
 export function AskCore({
@@ -30,6 +35,8 @@ export function AskCore({
   channelId,
   initialQuery,
   availableChannels = [],
+  urlSessionId,
+  onSessionMinted,
 }: AskCoreProps) {
   if (channelMode === "fixed") {
     return (
@@ -44,6 +51,8 @@ export function AskCore({
       initialChannelId={channelId}
       initialQuery={initialQuery}
       availableChannels={availableChannels}
+      urlSessionId={urlSessionId}
+      onSessionMinted={onSessionMinted}
     />
   );
 }
@@ -197,10 +206,14 @@ function AskCorePicker({
   initialChannelId,
   initialQuery,
   availableChannels,
+  urlSessionId,
+  onSessionMinted,
 }: {
   initialChannelId: string;
   initialQuery?: string;
   availableChannels: ChannelOption[];
+  urlSessionId?: string;
+  onSessionMinted?: (sessionId: string) => void;
 }) {
   const {
     ask,
@@ -215,6 +228,7 @@ function AskCorePicker({
     disabledTools,
     toggleTool,
     toolDescriptors,
+    phase,
   } = useAskSession();
 
   const sessions = useAskSessions();
@@ -225,6 +239,16 @@ function AskCorePicker({
 
   const [mode, setMode] = useState<AnswerMode>("deep");
   const [activeChannelId, setActiveChannelId] = useState<string>(initialChannelId);
+  const [shareCopied, setShareCopied] = useState(false);
+  const handleShare = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Build channelId → name lookup for badges
   const channelNames = useMemo(() => {
@@ -257,6 +281,21 @@ function AskCorePicker({
   useEffect(() => {
     if (sessionId) sessions.setActiveSessionId(sessionId);
   }, [sessionId, sessions.setActiveSessionId]);
+
+  // Fire navigate(replace) exactly once on creating → streaming for a session
+  // minted on bare /ask. `mintedRef` guards against the effect running twice
+  // (React strict-mode double-invoke) for the same id.
+  const mintedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (phase !== "streaming") return;
+    if (!sessionId) return;
+    if (mintedRef.current === sessionId) return;
+    // Skip if URL already matches — this is a follow-up turn on an existing
+    // session, not a cold mint.
+    if (urlSessionId === sessionId) return;
+    mintedRef.current = sessionId;
+    onSessionMinted?.(sessionId);
+  }, [phase, sessionId, urlSessionId, onSessionMinted]);
 
   // Refresh session list after streaming completes
   useEffect(() => {
@@ -350,6 +389,20 @@ function AskCorePicker({
 
   return (
     <div className="flex flex-col h-full bg-background">
+      {sessionId && messages.length > 0 && (
+        <div className="flex items-center justify-end gap-2 px-4 py-1 border-b border-border/40">
+          <button
+            onClick={handleShare}
+            className="inline-flex items-center gap-1 text-xs h-7 px-2 rounded-md border border-border bg-card hover:bg-muted text-foreground"
+            data-testid="ask-share-button"
+            aria-label="Share conversation"
+          >
+            {shareCopied ? <Check size={12} /> : <Share2 size={12} />}
+            {shareCopied ? "Copied" : "Share"}
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="ml-auto flex items-center gap-2">

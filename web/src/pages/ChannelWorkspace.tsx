@@ -111,6 +111,37 @@ export function ChannelWorkspace() {
   const { syncState, triggerSync, isSyncing, error: syncError } = useSync(id ?? "", channel?.connection_id ?? null);
   const syncFailureMessage =
     syncError || (syncState.state === "error" ? syncState.errors?.filter(Boolean).join("; ") : null);
+
+  // Parse "Try again in Ns." out of cooldown errors so we can show a live
+  // countdown instead of a stale number. Matched once when the message arrives;
+  // ticks down via setInterval without refetching.
+  const cooldownSecondsFromMsg = (() => {
+    if (!syncFailureMessage) return null;
+    const m = /Try again in (\d+)s/.exec(syncFailureMessage);
+    return m ? parseInt(m[1]!, 10) : null;
+  })();
+  const [cooldownRemaining, setCooldownRemaining] = useState<number | null>(null);
+  useEffect(() => {
+    if (cooldownSecondsFromMsg == null) {
+      setCooldownRemaining(null);
+      return;
+    }
+    setCooldownRemaining(cooldownSecondsFromMsg);
+    const t = setInterval(() => {
+      setCooldownRemaining((prev) => {
+        if (prev == null || prev <= 1) {
+          clearInterval(t);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [cooldownSecondsFromMsg]);
+  const isCoolingDown = cooldownRemaining != null && cooldownRemaining > 0;
+  const displayFailureMessage = isCoolingDown
+    ? `Cooldown active. Try again in ${cooldownRemaining}s.`
+    : syncFailureMessage;
   const syncCompletedWithNoNew =
     syncState.state === "idle" && !!syncState.job_id && (syncState.total_messages ?? 0) === 0;
 
@@ -194,9 +225,16 @@ export function ChannelWorkspace() {
           </div>
           {isMember && (
             <>
-              {syncFailureMessage && (
-                <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-                  Sync failed: {syncFailureMessage}
+              {displayFailureMessage && (
+                <div
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-xs",
+                    isCoolingDown
+                      ? "border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300"
+                      : "border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300",
+                  )}
+                >
+                  {isCoolingDown ? displayFailureMessage : `Sync failed: ${displayFailureMessage}`}
                 </div>
               )}
               {syncCompletedWithNoNew && (

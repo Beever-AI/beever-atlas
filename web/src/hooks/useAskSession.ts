@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Message, MessageCitations, AskMetadata, ToolCallEvent, AnswerMode, AttachmentFile, DecompositionPlan } from "../types/askTypes";
 import type { ToolDescriptor } from "../types/toolTypes";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -14,7 +15,7 @@ let _toolDescriptorPromise: Promise<ToolDescriptor[]> | null = null;
 function fetchToolDescriptors(): Promise<ToolDescriptor[]> {
   if (_toolDescriptorCache !== null) return Promise.resolve(_toolDescriptorCache);
   if (_toolDescriptorPromise !== null) return _toolDescriptorPromise;
-  _toolDescriptorPromise = fetch(`${API_BASE}/api/ask/tools`)
+  _toolDescriptorPromise = authFetch(`${API_BASE}/api/ask/tools`)
     .then((res) => {
       if (!res.ok) throw new Error(`GET /api/ask/tools returned ${res.status}`);
       return res.json() as Promise<{ tools: ToolDescriptor[] }>;
@@ -124,6 +125,8 @@ interface AskCallOptions {
   attachments?: AttachmentFile[];
 }
 
+export type AskPhase = "idle" | "creating" | "streaming" | "persisted" | "abandoned";
+
 interface UseAskSessionReturn {
   ask: (question: string, options: AskCallOptions) => Promise<void>;
   retry: () => void;
@@ -142,6 +145,9 @@ interface UseAskSessionReturn {
   disabledTools: string[];
   toggleTool: (name: string) => void;
   toolDescriptors: ToolDescriptor[];
+  phase: AskPhase;
+  /** Mark current streaming/creating flow as abandoned (route-change). */
+  abandon: () => void;
 }
 
 /**
@@ -155,6 +161,9 @@ export function useAskSession(): UseAskSessionReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [phase, setPhase] = useState<AskPhase>("idle");
+  const phaseRef = useRef<AskPhase>("idle");
+  const isMountedRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
   // Lazy — only allocate a session id when the user actually submits. This
   // prevents phantom sessions during React StrictMode re-mounts or route churn.
@@ -193,13 +202,34 @@ export function useAskSession(): UseAskSessionReturn {
     });
   }, []);
 
-  // Cancel typewriters on unmount
+  // Cancel typewriters + abort pending stream on unmount.
+  // isMountedRef guards any setState scheduled after an `await` — callers MUST
+  // bail early when it flips false, else React logs a leak warning.
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       contentTwRef.current?.cancel();
       thinkingTwRef.current?.cancel();
+      abortRef.current?.abort();
+      phaseRef.current = "idle";
     };
   }, []);
+
+  const setPhaseSafe = useCallback((next: AskPhase) => {
+    phaseRef.current = next;
+    if (!isMountedRef.current) return;
+    setPhase(next);
+  }, []);
+
+  const abandon = useCallback(() => {
+    // Called when the route changes while creating/streaming — suppress any
+    // pending navigate(replace) side-effects. We mark phase=abandoned so the
+    // creating→streaming transition's navigate is a no-op.
+    if (phaseRef.current === "creating" || phaseRef.current === "streaming") {
+      setPhaseSafe("abandoned");
+    }
+  }, [setPhaseSafe]);
 
   const clearIdleTimeout = useCallback(() => {
     if (idleTimeoutRef.current) {
@@ -221,7 +251,8 @@ export function useAskSession(): UseAskSessionReturn {
     setSessionId(null);
     // Lazy: next ask() will allocate a fresh session id
     sessionIdRef.current = null;
-  }, [clearIdleTimeout]);
+    setPhaseSafe("idle");
+  }, [clearIdleTimeout, setPhaseSafe]);
 
   const ask = useCallback(
     async (question: string, options: AskCallOptions) => {
@@ -248,6 +279,10 @@ export function useAskSession(): UseAskSessionReturn {
       abortRef.current = controller;
 
       setError(null);
+      // idle → creating (or persisted → creating for follow-up turns on the
+      // same session — navigate-on-mint is a no-op when sessionIdRef already
+      // matches URL, so consumers just watch for the streaming transition).
+      setPhaseSafe("creating");
 
       const userMsgId = crypto.randomUUID();
       const assistantMsgId = crypto.randomUUID();
@@ -298,7 +333,7 @@ export function useAskSession(): UseAskSessionReturn {
       });
 
       try {
-        const res = await fetch(`${API_BASE}/api/ask`, {
+        const res = await authFetch(`${API_BASE}/api/ask`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -380,6 +415,13 @@ export function useAskSession(): UseAskSessionReturn {
                     updateAssistant((msg) => ({ ...msg, metadata: data }));
                     if (data.session_id) {
                       setSessionId(data.session_id);
+                      sessionIdRef.current = data.session_id;
+                      // creating → streaming transition; consumers watch this
+                      // to navigate(replace) the URL. Guarded by mount via
+                      // setPhaseSafe; abandoned stays abandoned.
+                      if (phaseRef.current === "creating") {
+                        setPhaseSafe("streaming");
+                      }
                     }
                     break;
                   case "tool_call_start":
@@ -477,6 +519,9 @@ export function useAskSession(): UseAskSessionReturn {
         contentTwRef.current?.flush();
         thinkingTwRef.current?.flush();
         updateAssistant((msg) => ({ ...msg, isStreaming: false }));
+        if (phaseRef.current === "streaming" || phaseRef.current === "creating") {
+          setPhaseSafe("persisted");
+        }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           // Keep partial content, just stop streaming; cancel pending typewriter chars
@@ -489,6 +534,9 @@ export function useAskSession(): UseAskSessionReturn {
         thinkingTwRef.current?.cancel();
         setError(err instanceof Error ? err.message : "Unknown error");
         updateAssistant((msg) => ({ ...msg, isStreaming: false }));
+        if (phaseRef.current === "streaming" || phaseRef.current === "creating") {
+          setPhaseSafe("persisted");
+        }
       } finally {
         clearIdleTimeout();
         abortRef.current = null;
@@ -502,7 +550,8 @@ export function useAskSession(): UseAskSessionReturn {
     setSessionId(loadedSid);
     sessionIdRef.current = loadedSid;
     setError(null);
-  }, []);
+    setPhaseSafe("persisted");
+  }, [setPhaseSafe]);
 
   const retry = useCallback(() => {
     if (!lastCallRef.current) return;
@@ -547,5 +596,7 @@ export function useAskSession(): UseAskSessionReturn {
     disabledTools,
     toggleTool,
     toolDescriptors,
+    phase,
+    abandon,
   };
 }

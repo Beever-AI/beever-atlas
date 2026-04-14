@@ -1,9 +1,13 @@
 """Application configuration loaded from environment variables."""
 
+import logging
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationError(RuntimeError):
@@ -13,7 +17,12 @@ class ConfigurationError(RuntimeError):
 class Settings(BaseSettings):
     """Beever Atlas configuration — all values from env vars."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+        "populate_by_name": True,
+    }
 
     # Data stores
     weaviate_url: str = Field(default="http://localhost:8080")
@@ -82,6 +91,21 @@ class Settings(BaseSettings):
     contradiction_confidence_threshold: float = Field(default=0.8)
     contradiction_flag_threshold: float = Field(default=0.5)
 
+    # Provider rate limits (requests per minute)
+    gemini_rpm: int = Field(default=300)
+    jina_rpm: int = Field(default=500)
+
+    # Bounded inter-batch concurrency (1–8).
+    # Default 4: live telemetry showed p95 semaphore_wait ~518s at concurrency=2
+    # on 11-batch syncs — the semaphore was the dominant bottleneck, not Gemini quota.
+    ingest_batch_concurrency: int = Field(default=4, ge=1, le=8)
+
+    # Intra-batch contradiction detection concurrency (1–16)
+    contradiction_concurrency: int = Field(default=4, ge=1, le=16)
+
+    # Bounded concurrent in-flight Gemini image description calls (1–16)
+    image_extractor_concurrency: int = Field(default=4, ge=1, le=16)
+
     # Cross-batch thread context
     cross_batch_thread_context_enabled: bool = Field(default=True)
     thread_context_max_length: int = Field(default=200)
@@ -128,6 +152,13 @@ class Settings(BaseSettings):
     # Bridge (bot service)
     bridge_url: str = Field(default="http://localhost:3001")
     bridge_api_key: str = Field(default="")
+    # When True, accept both constant-time and legacy `==` bridge auth paths
+    # for one release cycle. Every legacy accept logs a warning.
+    bridge_hmac_dual: bool = Field(default=False, alias="BEEVER_BRIDGE_HMAC_DUAL")
+    # Allowlist of external hostnames reachable by outbound MCP tool calls.
+    # Empty list disables allowlist enforcement (SSRF guard still rejects
+    # private IPs).
+    external_mcp_allowlist: list[str] = Field(default_factory=list)
 
     # Graph database backend
     graph_backend: str = Field(default="neo4j")  # "neo4j", "nebula", or "none"
@@ -147,7 +178,9 @@ class Settings(BaseSettings):
     # ceiling (entity=65536, fact=131072). Default ~70% of entity ceiling
     # leaves headroom for schema overhead and estimator drift.
     # Set to 0 to disable output-aware batching (input-only, legacy behaviour).
-    batch_max_output_tokens: int = Field(default=45000, alias="BATCH_MAX_OUTPUT_TOKENS")
+    batch_max_output_tokens: int = Field(default=24000, alias="BATCH_MAX_OUTPUT_TOKENS")
+    batch_max_messages: int = Field(default=30, ge=5, le=60, description="Hard cap on messages per batch. Derived from observed bench data — successful batches had ≤65 msgs; failure cluster started at 89. Prevents output truncation at the source.")
+    llm_outage_breaker_threshold: int = Field(default=3, ge=1, le=10, description="After this many consecutive cross-batch Gemini 5xx, fail fast instead of burning per-batch retry budget.")
     fact_max_retries: int = Field(default=3)
     stale_job_threshold_hours: float = Field(default=1.0)
 
@@ -228,8 +261,28 @@ class Settings(BaseSettings):
     def supported_languages_list(self) -> list[str]:
         return [s.strip() for s in self.supported_languages.split(",") if s.strip()]
 
+    # Wiki compiler feature flags
+    # Phase 1: control-char sanitizer, degenerate-content guard, retry gating.
+    # Pure defensive additions — default ON.
+    wiki_parse_hardening: bool = Field(default=True, alias="BEEVER_WIKI_PARSE_HARDENING")
+    # Phase 2: parallelize title translation with page dispatch. Default ON.
+    wiki_parallel_dispatch: bool = Field(default=True, alias="BEEVER_WIKI_PARALLEL_DISPATCH")
+    # Phase 3: per-page-kind token budgets. Default ON.
+    wiki_token_budget_v2: bool = Field(default=True, alias="BEEVER_WIKI_TOKEN_BUDGET_V2")
+    # Phase 4+5: deterministic Key Facts table + delimited response parser. Default OFF.
+    wiki_compiler_v2: bool = Field(default=False, alias="BEEVER_WIKI_COMPILER_V2")
+
     # Credential encryption
     credential_master_key: str = Field(default="")
+
+    # Deployment environment — gates fail-fast production validation
+    beever_env: Literal["development", "production", "test"] = Field(
+        default="development", alias="BEEVER_ENV"
+    )
+    # API bearer tokens (comma-separated)
+    api_keys: str = Field(default="", alias="BEEVER_API_KEYS")
+    # Admin token for /api/dev/* endpoints
+    admin_token: str = Field(default="", alias="BEEVER_ADMIN_TOKEN")
 
     @property
     def neo4j_user(self) -> str:
@@ -239,6 +292,31 @@ class Settings(BaseSettings):
     def neo4j_password(self) -> str:
         parts = self.neo4j_auth.split("/", 1)
         return parts[1] if len(parts) > 1 else ""
+
+    @model_validator(mode="after")
+    def _validate_production(self) -> "Settings":
+        problems: list[str] = []
+        key = self.credential_master_key or ""
+        hex_ok = len(key) == 64 and all(c in "0123456789abcdefABCDEF" for c in key)
+        if not hex_ok:
+            problems.append("CREDENTIAL_MASTER_KEY must be 64 hex chars (AES-256-GCM)")
+        if self.neo4j_password in {"beever_atlas_dev", ""}:
+            problems.append("NEO4J_AUTH password is a dev default or empty")
+        if self.nebula_password == "nebula":
+            problems.append("NEBULA_PASSWORD is the default 'nebula'")
+        if not (self.bridge_api_key or "").strip():
+            problems.append("BRIDGE_API_KEY is empty")
+        if not (self.api_keys or "").strip():
+            problems.append("BEEVER_API_KEYS is empty")
+        if not (self.admin_token or "").strip():
+            problems.append("BEEVER_ADMIN_TOKEN is empty")
+
+        if self.beever_env == "production" and problems:
+            raise ValueError("Production config invalid: " + "; ".join(problems))
+        if problems:
+            for p in problems:
+                logger.warning("config: %s (dev-mode warning only)", p)
+        return self
 
 
 @lru_cache

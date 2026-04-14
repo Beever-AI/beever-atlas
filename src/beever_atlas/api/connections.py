@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from typing import Any
 
@@ -205,8 +206,15 @@ async def list_connections_with_credentials(request: Request) -> list[_InternalC
         raise HTTPException(status_code=403, detail="BRIDGE_API_KEY not configured")
 
     auth = request.headers.get("authorization", "")
-    if auth != f"Bearer {expected_key}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    expected = f"Bearer {expected_key}"
+    if not hmac.compare_digest(auth, expected):
+        if getattr(settings, "bridge_hmac_dual", False) and auth == expected:
+            logger.warning(
+                "bridge auth accepted via legacy == path (BEEVER_BRIDGE_HMAC_DUAL); "
+                "retire this flag after the next release"
+            )
+        else:
+            raise HTTPException(status_code=401, detail="Unauthorized")
 
     stores = get_stores()
     connections = await stores.platform.list_connections()

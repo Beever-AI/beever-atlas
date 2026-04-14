@@ -185,10 +185,18 @@ export function SyncProgress({ syncState, isSyncing }: SyncProgressProps) {
     }
   }
 
+  // Compute monotonic current step: under concurrency, take the max step across all in-flight
+  // batch_stages values; fall back to parsing the singleton current_stage for Phase 1 runs.
+  const batchStages = syncState.stage_details?.batch_stages;
+  const maxStep = batchStages && Object.keys(batchStages).length > 0
+    ? Math.max(...Object.values(batchStages).map((s) => parseStage(s)?.step ?? 0))
+    : (parsed?.step ?? 0);
+  const maxStepTotal = parsed?.total ?? 0;
+
   // Progress = messages already fully processed + fraction of current batch's stage progress.
   const basePct = total > 0 ? (processed / total) * 100 : 0;
-  const stageBonus = parsed?.step && parsed?.total && totalBatches > 0
-    ? (parsed.step / parsed.total) * (100 / totalBatches)
+  const stageBonus = maxStep && maxStepTotal && totalBatches > 0
+    ? (maxStep / maxStepTotal) * (100 / totalBatches)
     : 0;
   const pct = isFailed ? Math.round(basePct) : Math.min(100, Math.round(basePct + stageBonus));
 
@@ -207,9 +215,11 @@ export function SyncProgress({ syncState, isSyncing }: SyncProgressProps) {
             <span className={`text-sm font-medium ${isFailed ? "text-red-500" : "text-foreground"}`}>
               {isFailed ? "Sync failed" : isRetrying ? "Retrying..." : "Syncing channel"}
             </span>
-            {batch > 0 && (
+            {totalBatches > 0 && (
               <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                Batch {batch}/{totalBatches}
+                {batchStages && Object.keys(batchStages).length > 0
+                  ? `${Object.keys(batchStages).length} in flight · ${syncState.batches_completed ?? 0} of ${totalBatches} done`
+                  : `${syncState.batches_completed ?? 0} of ${totalBatches} batches`}
               </span>
             )}
           </div>
@@ -232,7 +242,7 @@ export function SyncProgress({ syncState, isSyncing }: SyncProgressProps) {
         {/* Pipeline stage indicators */}
         <div className="flex items-center gap-0.5 mb-2.5 overflow-x-auto">
           {PIPELINE_STAGES.map((s, i) => {
-            const status = getStageStatus(i, s.key, timings, parsed?.step);
+            const status = getStageStatus(i, s.key, timings, maxStep || null);
             return (
               <div key={s.key} className="flex items-center shrink-0">
                 {i > 0 && (

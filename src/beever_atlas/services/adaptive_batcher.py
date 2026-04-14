@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 # Projected output-token constants, used for the optional output budget.
 # Tuned from current Pydantic schemas (see agents/schemas/extraction.py) — an
 # ExtractedFact serialises to ~150 tokens, an ExtractedEntity to ~120.
-AVG_TOKENS_PER_FACT = 150
-AVG_TOKENS_PER_ENTITY = 120
+AVG_TOKENS_PER_FACT = 180  # 20% headroom; re-tune from Phase 1.5 telemetry.
+AVG_TOKENS_PER_ENTITY = 144  # 20% headroom; re-tune from Phase 1.5 telemetry.
 EXPECTED_ENTITIES_PER_MESSAGE = 1  # empirical; most messages contribute ≤1 new entity.
 
 
@@ -99,6 +99,7 @@ def token_aware_batches(
     time_window_seconds: int = 600,
     max_output_tokens: int | None = None,
     max_facts_per_message: int = 2,
+    max_messages: int | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Split messages into batches respecting a token budget.
 
@@ -181,6 +182,17 @@ def token_aware_batches(
                 len(group),
             )
             continue
+
+        # Hard message-count cap (evaluated first so smallest limit wins).
+        if (
+            max_messages is not None
+            and len(current_batch) + len(group) > max_messages
+            and current_batch
+        ):
+            batches.append(current_batch)
+            current_batch = []
+            current_tokens = 0
+            current_output_tokens = 0
 
         # Would adding this group exceed input OR output budget?
         would_overflow_input = current_tokens + group_tokens > max_tokens

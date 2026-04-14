@@ -3,24 +3,100 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from neo4j import AsyncGraphDatabase
+from neo4j import exceptions as neo4j_exc
 
 from beever_atlas.models import GraphEntity, GraphRelationship, Subgraph
+from beever_atlas.stores.graph_errors import (
+    GraphBackendUnavailable,
+    GraphConflict,
+    GraphStoreError,
+)
 
 if TYPE_CHECKING:
     from beever_atlas.stores.graph_protocol import GraphStore
 
 
+@asynccontextmanager
+async def _translate_errors() -> AsyncIterator[None]:
+    """Translate raw ``neo4j.exceptions.*`` into :mod:`graph_errors` types.
+
+    ``GraphNotFound`` is NOT raised here — point-query methods raise it
+    explicitly when a ``result.single()`` yields ``None``.
+    """
+    try:
+        yield
+    except (neo4j_exc.ConstraintError, neo4j_exc.Forbidden) as exc:
+        raise GraphConflict(str(exc)) from exc
+    except (
+        neo4j_exc.ServiceUnavailable,
+        neo4j_exc.SessionExpired,
+        neo4j_exc.TransientError,
+    ) as exc:
+        raise GraphBackendUnavailable(str(exc)) from exc
+    except GraphStoreError:
+        raise
+    except neo4j_exc.Neo4jError as exc:
+        # Catch-all for other driver errors — surface as generic backend error
+        raise GraphStoreError(str(exc)) from exc
+
+
+def _wrap_async_methods(cls: type) -> type:
+    """Decorator: wrap every public async method on *cls* with
+    :func:`_translate_errors` so callers see ``GraphStoreError`` subclasses
+    instead of raw ``neo4j.exceptions.*``.
+    """
+    for attr_name, attr in list(vars(cls).items()):
+        if attr_name.startswith("_"):
+            continue
+        if not inspect.iscoroutinefunction(attr):
+            continue
+
+        def _make(fn):  # noqa: ANN001 — local closure
+            @functools.wraps(fn)
+            async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                async with _translate_errors():
+                    return await fn(*args, **kwargs)
+
+            return _wrapped
+
+        setattr(cls, attr_name, _make(attr))
+    return cls
+
+
+@_wrap_async_methods
 class Neo4jStore:
     """Manages a Neo4j knowledge graph with Entity nodes, Event nodes, and
     flexible relationship types."""
 
     def __init__(self, uri: str, user: str, password: str) -> None:
-        self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        # Filter informational Neo4j notifications (e.g. SUPERSEDES relationship
+        # type missing on OPTIONAL MATCH — pre-existing harmless noise). The
+        # kwargs below landed in neo4j-driver 5.7+; fall back to a plain driver
+        # if they are unsupported by the installed driver version.
+        try:
+            from neo4j import NotificationDisabledCategory, NotificationMinimumSeverity
+
+            self._driver = AsyncGraphDatabase.driver(
+                uri,
+                auth=(user, password),
+                notifications_min_severity=NotificationMinimumSeverity.WARNING,
+                notifications_disabled_categories=[NotificationDisabledCategory.UNRECOGNIZED],
+            )
+        except (ImportError, TypeError):  # pragma: no cover - defensive
+            # TODO: neo4j-driver < 5.7 lacks notification filtering kwargs.
+            self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -221,7 +297,11 @@ class Neo4jStore:
     async def upsert_relationship(self, rel: GraphRelationship) -> str:
         """MERGE a relationship between two entities using apoc.merge.relationship.
 
-        Returns the relationship element ID.
+        Returns the relationship element ID, or empty string when either
+        endpoint entity does not exist in the graph (the MATCH yields no
+        row, apoc.merge is skipped, and result.single() is None). Can
+        happen under concurrent batches or cross-batch validator dedup —
+        we log and skip rather than crash the whole batch.
         """
         now_iso = datetime.now(tz=UTC).isoformat()
         async with self._driver.session() as session:
@@ -259,11 +339,37 @@ class Neo4jStore:
                 now=now_iso,
             )
             record = await result.single()
-            return record["eid"]  # type: ignore[index]
+            if record is None:
+                logger.warning(
+                    "Neo4jStore: relationship skipped — entity not found (source=%s target=%s type=%s)",
+                    rel.source, rel.target, rel.type,
+                )
+                return ""
+            return record["eid"]
 
     async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
-        """Upsert multiple relationships in parallel. Returns element IDs."""
-        return list(await asyncio.gather(*[self.upsert_relationship(r) for r in rels]))
+        """Upsert multiple relationships in parallel.
+
+        Uses return_exceptions=True so one failing relationship does not
+        poison the whole batch — the failure is logged, its slot in the
+        returned list is an empty string, and sibling relationships still
+        persist.
+        """
+        results = await asyncio.gather(
+            *[self.upsert_relationship(r) for r in rels],
+            return_exceptions=True,
+        )
+        ids: list[str] = []
+        for rel, res in zip(rels, results):
+            if isinstance(res, BaseException):
+                logger.warning(
+                    "Neo4jStore: relationship upsert failed (source=%s target=%s type=%s): %s",
+                    rel.source, rel.target, rel.type, res,
+                )
+                ids.append("")
+            else:
+                ids.append(res)
+        return ids
 
     # ------------------------------------------------------------------
     # Write — episodic links
@@ -482,7 +588,7 @@ class Neo4jStore:
         self, entity_id: str, hops: int = 1, limit: int = 50
     ) -> Subgraph:
         """Return the neighborhood subgraph up to `hops` hops from an entity."""
-        hops = max(1, hops)
+        hops = max(1, min(int(hops), 4))
         async with self._driver.session() as session:
             result = await session.run(
                 f"""

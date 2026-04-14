@@ -117,3 +117,58 @@ class TestFilterMediaForResources:
 
     def test_empty_input(self):
         assert WikiCompiler._filter_media_for_resources([]) == []
+
+
+class TestCleanMermaid:
+    """Tests for mermaid sanitization in WikiCompiler._postprocess_content."""
+
+    def _wrap(self, body: str) -> str:
+        return f"```mermaid\n{body}\n```"
+
+    def test_strips_parens_in_node_label(self):
+        content = self._wrap("graph TD\n    A[Foo (Bar)] --> B[Baz]")
+        result = WikiCompiler._postprocess_content(content)
+        assert "(" not in result
+        assert ")" not in result
+        # Label content preserved (without parens)
+        assert "Foo" in result
+        assert "Bar" in result
+
+    def test_strips_quotes_in_node_label(self):
+        content = self._wrap('graph TD\n    A["Quoted Label"] --> B[Normal]')
+        result = WikiCompiler._postprocess_content(content)
+        assert '"' not in result.split("```mermaid")[1].split("```")[0]
+
+    def test_empty_brackets_dropped(self):
+        content = self._wrap("graph TD\n    A[] --> B[Valid]")
+        result = WikiCompiler._postprocess_content(content)
+        # The empty-bracket node line should be removed
+        assert "A[]" not in result
+
+    def test_empty_label_falls_back_to_node_id(self):
+        # A node whose label becomes empty after stripping forbidden chars
+        content = self._wrap('graph TD\n    A["()"] --> B[Target]')
+        result = WikiCompiler._postprocess_content(content)
+        # Should not have empty brackets
+        assert "A[]" not in result
+
+    def test_colon_label_stripped(self):
+        content = self._wrap("graph TD\n    A[Source] --> B[Dest]: some free text")
+        result = WikiCompiler._postprocess_content(content)
+        # Colon label removed
+        assert ": some free text" not in result
+        # Nodes preserved
+        assert "A[Source]" in result or "Source" in result
+
+    def test_colon_label_not_strip_pipe_labels(self):
+        content = self._wrap("graph TD\n    A[Source] -->|valid label| B[Dest]")
+        result = WikiCompiler._postprocess_content(content)
+        assert "|valid label|" in result
+
+    def test_no_empty_brackets_in_output(self):
+        content = self._wrap("graph TD\n    A[()] --> B[Hello]")
+        result = WikiCompiler._postprocess_content(content)
+        mermaid_body = result.split("```mermaid")[1].split("```")[0]
+        import re
+        # No node should have empty brackets after sanitization
+        assert not re.search(r"\w+\[\s*\]", mermaid_body)

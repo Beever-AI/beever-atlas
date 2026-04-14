@@ -10,6 +10,29 @@ from beever_atlas.agents.schemas.consolidation import (
     TopicSummaryResult,
 )
 from beever_atlas.llm import get_llm_provider
+from beever_atlas.services.adk_recovery import wrap_with_recovery
+from beever_atlas.services.json_recovery import recover_truncated_json
+
+
+def _recover_summary(text: str) -> dict | None:
+    result = recover_truncated_json(text)
+    if isinstance(result, dict):
+        return result
+    return {"summary_text": ""}
+
+
+def _recover_topic_summary(text: str) -> dict | None:
+    result = recover_truncated_json(text)
+    if isinstance(result, dict):
+        return result
+    return {"summary_text": ""}
+
+
+def _recover_channel_summary(text: str) -> dict | None:
+    result = recover_truncated_json(text)
+    if isinstance(result, dict):
+        return result
+    return {"summary_text": ""}
 
 
 def create_summarizer(instruction: str, model=None) -> LlmAgent:
@@ -19,7 +42,7 @@ def create_summarizer(instruction: str, model=None) -> LlmAgent:
         instruction: The prompt template with context already interpolated.
         model: Optional model override. If None, resolved from config.
     """
-    return LlmAgent(
+    agent = LlmAgent(
         name="summarizer",
         model=model or get_llm_provider().resolve_model("summarizer"),
         instruction=instruction,
@@ -29,6 +52,7 @@ def create_summarizer(instruction: str, model=None) -> LlmAgent:
             response_mime_type="application/json",
         ),
     )
+    return wrap_with_recovery(agent, _recover_summary, SummaryResult)
 
 
 def create_topic_summarizer(instruction: str, model=None) -> LlmAgent:
@@ -36,7 +60,7 @@ def create_topic_summarizer(instruction: str, model=None) -> LlmAgent:
 
     Returns title, multi-angle summaries, focused topic_tags, and FAQ candidates.
     """
-    return LlmAgent(
+    agent = LlmAgent(
         name="topic_summarizer",
         model=model or get_llm_provider().resolve_model("summarizer"),
         instruction=instruction,
@@ -46,6 +70,7 @@ def create_topic_summarizer(instruction: str, model=None) -> LlmAgent:
             response_mime_type="application/json",
         ),
     )
+    return wrap_with_recovery(agent, _recover_topic_summary, TopicSummaryResult)
 
 
 def create_channel_summarizer(instruction: str, model=None) -> LlmAgent:
@@ -54,7 +79,7 @@ def create_channel_summarizer(instruction: str, model=None) -> LlmAgent:
     Returns multi-angle summaries, description, themes, momentum,
     team_dynamics, and glossary terms.
     """
-    return LlmAgent(
+    agent = LlmAgent(
         name="channel_summarizer",
         model=model or get_llm_provider().resolve_model("summarizer"),
         instruction=instruction,
@@ -64,3 +89,4 @@ def create_channel_summarizer(instruction: str, model=None) -> LlmAgent:
             response_mime_type="application/json",
         ),
     )
+    return wrap_with_recovery(agent, _recover_channel_summary, ChannelSummaryResult)

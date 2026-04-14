@@ -1,0 +1,67 @@
+{
+  "_comment": "Cassette of pre-recorded LLM responses keyed by (page_kind, prompt_hash). Populated for synthetic benchmark fixture. Each entry maps to a response string that the fake LLM returns instead of making a network call.",
+  "_version": 1,
+  "_fixture": "gathered_bench.json",
+  "entries": {
+    "overview": {
+      "content": "## Overview\n\nThis channel covers backend engineering topics including API redesign, deployment pipeline improvements, monitoring, and security hardening. The team has been active in Q1 2024 with major architectural decisions.\n\n## Key Topics\n\n- **API Redesign**: Switching to REST with OpenAPI 3.0 spec\n- **Deployment Pipeline**: Docker-based CI/CD with GitHub Actions\n- **Monitoring**: Prometheus and Grafana stack\n- **Security**: JWT hardening and Vault integration\n\n## Recent Activity\n\nThe team has made significant progress on the API v2 design and deployment automation. Alice leads architecture decisions while Bob handles operations.",
+      "summary": "Backend engineering channel covering API redesign, deployment pipeline, monitoring, and security in Q1 2024."
+    },
+    "people": {
+      "content": "## Team Members\n\n### Alice\nLead architect driving the API redesign and security hardening initiatives. Active across 3 major topics.\n\n### Bob\nOps lead managing the deployment pipeline and monitoring stack. Champion of Docker and Prometheus adoption.\n\n### Charlie\nContributor to API design discussions, focused on documentation and spec compliance.\n\n### Dave\nContributor to monitoring dashboards and observability stack.\n\n### Eve\nSecurity specialist who integrated HashiCorp Vault for secrets management.",
+      "summary": "Five team members: Alice (architect), Bob (ops), Charlie (API docs), Dave (monitoring), Eve (security)."
+    },
+    "decisions": {
+      "content": "## Key Decisions\n\n### Switch to PostgreSQL\n- **Decided by**: Alice\n- **Date**: 2024-01-10\n- **Status**: Active\n- **Context**: Performance requirements exceeded what the previous database could handle.\n\n### Use Docker for Containerization\n- **Decided by**: Bob\n- **Date**: 2024-01-05\n- **Status**: Active\n- **Context**: Ensures consistent environments across development, staging, and production.",
+      "summary": "Two major decisions: PostgreSQL adoption and Docker containerization."
+    },
+    "faq": {
+      "content": "## Frequently Asked Questions\n\n### Why switch to REST?\nBetter client compatibility and industry standard support. REST with OpenAPI 3.0 provides better tooling, documentation generation, and client SDK support compared to the previous approach.\n\n### What versioning strategy is used?\nURL-based versioning with /v2/ prefix. This was preferred over header-based versioning for clarity and debuggability.\n\n### How long does deployment take?\nCurrently 12 minutes with Docker caching optimizations, down from 45 minutes previously.\n\n### Where is the onboarding guide?\nAvailable at wiki.internal/onboarding.\n\n### How long do tokens last?\nAccess tokens expire in 1 hour; refresh tokens in 7 days.",
+      "summary": "FAQs covering REST migration rationale, versioning, deployment timing, onboarding, and token lifetimes."
+    },
+    "glossary": {
+      "content": "## Glossary\n\n### API\nApplication Programming Interface — a contract that defines how software components interact.\n\n### CI/CD\nContinuous Integration and Continuous Deployment — automated pipeline that builds, tests, and deploys code changes.",
+      "summary": "Glossary covering API and CI/CD terms."
+    },
+    "activity": {
+      "content": "## Recent Activity\n\n### This Week\n- 20 new facts added\n- 2 new decisions recorded\n- 5 new entities identified\n\n### Highlights\n- Major API redesign kicked off\n- Docker pipeline in staging\n- Prometheus monitoring live",
+      "summary": "Active week with API redesign kickoff and pipeline improvements."
+    },
+    "resources": {
+      "content": "## Resources\n\n### Documents\n- [Architecture Diagram](https://example.com/arch-diagram.pdf) — Updated Q1 2024\n- [API Spec](https://example.com/api-spec.pdf) — OpenAPI 3.0 specification\n- [Deploy Guide](https://example.com/deploy-guide.pdf) — Docker and Kubernetes guide\n\n### External Links\n- [REST API Best Practices](https://restfulapi.net)\n- [Docker Documentation](https://docs.docker.com)\n- [Prometheus](https://prometheus.io)",
+      "summary": "Engineering resources including architecture docs, API spec, deploy guide, and external references."
+    },
+    "topic_api_redesign_and_rest_architecture": {
+      "content": "## API Redesign and REST Architecture\n\n**TL;DR**: The team is redesigning the public API to use REST principles consistently, with OpenAPI 3.0 spec and URL-based versioning.\n\n## Background\n\nThe previous API had inconsistent conventions that made client integration difficult. Alice proposed switching to REST in January 2024.\n\n## Key Decisions\n\n| Decision | Owner | Status |\n|---|---|---|\n| Use REST architecture | Alice | Active |\n| URL-based versioning | Alice | Active |\n| OAuth 2.0 authentication | Alice | Active |\n\n## Current State\n\nDesign phase complete. Implementation starts next sprint. Migration guide for v1 clients is in progress.\n\n## Open Questions\n\n- Which versioning strategy to adopt: URL-based (decided) or header-based?",
+      "summary": "REST API redesign with OpenAPI 3.0, URL versioning, and OAuth 2.0 auth. Implementation begins next sprint."
+    },
+    "topic_deployment_pipeline_and_ci_cd_improvements": {
+      "content": "## Deployment Pipeline and CI/CD Improvements\n\n**TL;DR**: Docker-based pipeline with GitHub Actions reduced deploy time from 45 to 12 minutes.\n\n## Background\n\nThe deployment process was slow and inconsistent across environments. Bob led the initiative to containerize all services.\n\n## Key Decisions\n\n| Decision | Owner | Status |\n|---|---|---|\n| Docker containerization | Bob | Active |\n| GitHub Actions for CI | Bob | Active |\n| Two approvals for prod deploys | Alice | Active |\n\n## Current State\n\nDocker-based pipeline in staging. Production rollout pending approval. Zero-downtime deploys achieved via load balancer drain.\n\n## Open Questions\n\n- Should we use blue-green or rolling deployments?",
+      "summary": "Docker + GitHub Actions CI/CD pipeline achieving 12-minute deploys with zero downtime."
+    },
+    "topic_database_connection_pooling": {
+      "content": "## Database Connection Pooling\n\n**TL;DR**: Connection pool tuned to size 20 with 30-second timeout and 10 overflow connections.\n\n## Summary\n\nAlice configured PostgreSQL connection pool settings for the production workload. Pool size 20 handles normal load; 10 overflow connections handle bursts.",
+      "summary": "PostgreSQL connection pool set to size 20, 30s timeout, 10 overflow."
+    },
+    "topic_monitoring_and_observability_stack": {
+      "content": "## Monitoring and Observability Stack\n\n**TL;DR**: Prometheus and Grafana selected for metrics and dashboards, with PagerDuty alerting.\n\n## Background\n\nProduction visibility was insufficient for incident response. Bob and Dave evaluated multiple solutions.\n\n## Key Decisions\n\n| Decision | Owner | Status |\n|---|---|---|\n| Prometheus for metrics | Bob | Active |\n| PagerDuty alerting | Bob | Active |\n\n## Current State\n\nPrometheus and Grafana running. Dashboards showing p50/p95/p99 latency. Alertmanager configured for PagerDuty.\n\n## Open Questions\n\n- Should we add distributed tracing with Jaeger?",
+      "summary": "Prometheus/Grafana monitoring with PagerDuty alerting for production visibility."
+    },
+    "topic_authentication_and_security_hardening": {
+      "content": "## Authentication and Security Hardening\n\n**TL;DR**: JWT tokens shortened to 1-hour TTL, refresh token rotation enabled, HashiCorp Vault integrated.\n\n## Background\n\nSecurity review identified credential exposure risks. Alice and Eve led the hardening effort.\n\n## Key Decisions\n\n| Decision | Owner | Status |\n|---|---|---|\n| 1-hour JWT TTL | Alice | Active |\n| Vault for secrets | Eve | Active |\n| Refresh token rotation | Alice | Active |\n\n## Current State\n\nAll changes deployed. JWT tokens rotate hourly. Vault manages all application secrets.\n\n## Open Questions\n\n- Should we enable MFA for admin accounts?",
+      "summary": "Security hardened with short JWT TTL, Vault secrets management, and refresh token rotation."
+    },
+    "topic_engineering_resources_and_documentation_links": {
+      "content": "## Engineering Resources and Documentation Links\n\n**TL;DR**: Centralized collection of architecture docs, ADRs, runbooks, and external references.\n\n## Documents\n\n- Architecture Diagram (Q1 2024)\n- API Specification (OpenAPI 3.0)\n- Deploy Guide\n- Security Review Report\n- Runbook for Production Incidents\n- ADR-001: REST Decision\n- ADR-002: Docker Adoption\n\n## External Links\n\n- REST API Best Practices\n- Docker Documentation\n- Prometheus\n- Grafana",
+      "summary": "Engineering resource hub with architecture docs, ADRs, runbooks, and external references."
+    },
+    "translation": {
+      "content": "{}",
+      "summary": ""
+    },
+    "analysis": {
+      "needs_subpages": false,
+      "subpages": []
+    }
+  }
+}

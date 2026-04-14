@@ -70,8 +70,8 @@ web/dist/
 # OpenSpec workflow artifacts
 openspec/
 
-# Stray version artifacts
-=3.6.0
+# Stray version artifacts (e.g. pip's '=3.6.0' sentinel files)
+=*
 
 # Root package-lock (monorepo uses per-package locks)
 /package-lock.json
@@ -81,3 +81,9 @@ openspec/
 
 # QA harness output artifacts
 scripts/_qa_harness_out/
+
+# Local scratch notes
+daily_update.md
+
+# hypothesis cache
+.hypothesis/

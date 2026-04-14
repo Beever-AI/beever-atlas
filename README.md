@@ -9,7 +9,7 @@ Turn Slack, Discord, and Teams conversations into a living, searchable knowledge
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green.svg)](https://fastapi.tiangolo.com)
 [![Google ADK](https://img.shields.io/badge/Google%20ADK-agent%20framework-orange.svg)](https://google.github.io/adk-docs/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
 </div>
 
@@ -31,7 +31,6 @@ Beever Atlas continuously ingests your team's conversations and builds an automa
 
 **In development:**
 - 🤖 QA agent (single-channel and multi-channel MCP)
-- ☁️ One-line cloud installation
 - 🔍 Cross-channel search (Phase 2)
 
 ---
@@ -134,58 +133,104 @@ After ingestion, Atlas builds a structured wiki per channel:
 
 ## Quick Start
 
+Beever Atlas ships as a full Docker Compose stack — backend, bot, frontend, and all four data stores come up with one command.
+
 ### Prerequisites
 
 - Docker & Docker Compose
 - A Google API key (Gemini) — [get one free](https://aistudio.google.com/apikey)
 - A Jina API key (embeddings) — [get one free](https://jina.ai)
-- (Optional) Slack bot token for real data; mock mode works without one
+- (Optional) Slack/Discord/Teams credentials for real data; mock mode works without any
 
-### 1. Clone and Configure
+### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/beever-atlas.git
+git clone https://github.com/votee/beever-atlas.git
 cd beever-atlas
 cp .env.example .env
 ```
 
-Edit `.env` with your keys (minimum required for Docker):
+Open `.env` and fill in these **required** keys:
 
 ```env
-# Required
+# LLM + embeddings (required)
 GOOGLE_API_KEY=your_gemini_key
 JINA_API_KEY=your_jina_key
 
-# Recommended for production
-CREDENTIAL_MASTER_KEY=   # 64-char hex (openssl rand -hex 32)
-BRIDGE_API_KEY=          # any random secret (openssl rand -hex 16)
+# API authentication (any strings — tokens clients must send as Bearer)
+BEEVER_API_KEYS=dev-key-change-me
+BEEVER_ADMIN_TOKEN=dev-admin-change-me
+
+# Database passwords (NEO4J_PASSWORD must match the password half of NEO4J_AUTH)
+NEO4J_PASSWORD=beever_atlas_dev
+WEAVIATE_API_KEY=any-long-random-string
+
+# Bridge auth + credential encryption
+BRIDGE_API_KEY=$(openssl rand -hex 16)
+CREDENTIAL_MASTER_KEY=$(openssl rand -hex 32)
 ```
 
-### 2. Start All Services
+> **Tip:** `CREDENTIAL_MASTER_KEY` must be exactly 64 hex chars (AES-256-GCM). Setting `BEEVER_ENV=production` makes startup fail if any of the above are defaults.
+
+### 2. Start the full stack
 
 ```bash
 docker compose up
 ```
 
-This starts: Python backend (`:8000`), Bot service (`:3001`), React frontend (`:3000`), Weaviate (`:8080`), Neo4j (`:7474`/`:7687`), MongoDB (`:27017`), Redis (`:6380`).
+This builds and starts everything in one command:
 
-**First run takes 2–3 minutes** as Docker builds images and databases initialize.
+| Service | Port | Description |
+|---|---|---|
+| React frontend | `:3000` | Dashboard UI |
+| Python backend | `:8000` | FastAPI + ADK agents |
+| Bot service | `:3001` | Platform bridge (Slack / Discord / Teams) |
+| Weaviate | `:8080` | Semantic memory |
+| Neo4j | `:7474` / `:7687` | Graph memory |
+| MongoDB | `:27017` | State + wiki cache |
+| Redis | `:6379` | Sessions |
 
-### 3. Open the Dashboard
+First run takes 2–3 minutes while images build and databases initialize. Subsequent runs start in seconds.
 
-Navigate to [http://localhost:3000](http://localhost:3000).
+### 3. Open the dashboard
 
-- **Mock mode** (default, `ADAPTER_MOCK=true`): Uses fixture data — no Slack credentials needed.
-- **Real mode**: Set `ADAPTER_MOCK=false`, add your Slack token, restart, then connect a workspace in Settings → Connections.
+Navigate to **[http://localhost:3000](http://localhost:3000)**.
 
-### 4. Sync a Channel
+- **Mock mode** (default, `ADAPTER_MOCK=true`): uses fixture data — no platform credentials required.
+- **Real mode**: set `ADAPTER_MOCK=false`, then connect a workspace in **Settings → Connections** (Slack / Discord / Teams tokens are entered through the UI, not `.env`).
 
-In the dashboard: **Connections → Add Workspace → Select channels → Sync**.
+### 4. Sync a channel
+
+From the dashboard: **Connections → Add Workspace → Select channels → Sync**.
 
 Or via API:
+
 ```bash
-curl -X POST http://localhost:8000/api/channels/C12345/sync
+curl -X POST http://localhost:8000/api/channels/C12345/sync \
+  -H "Authorization: Bearer dev-key-change-me"
 ```
+
+### Common commands
+
+```bash
+docker compose up -d              # Start in background
+docker compose logs -f beever-atlas   # Tail backend logs
+docker compose down               # Stop (keeps data)
+docker compose down -v            # Stop and DELETE all indexed data
+make docker-up                    # Shortcut for `docker compose up -d`
+```
+
+---
+
+## Privacy & Telemetry
+
+Beever Atlas collects no telemetry. No usage data, error reports, or analytics are sent anywhere by default. All LLM calls go through API keys you configure in your own `.env`, and all data stays in the databases you control.
+
+---
+
+## API Stability
+
+All `/api/*` endpoints are **UNSTABLE** in 0.1.0. v0.2.0 will introduce a `/api/v1/*` prefix; clients pinning current paths will break. See [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -303,7 +348,11 @@ All services read from a single `.env` file in the project root.
 
 | Variable | Default | Description |
 |---|---|---|
+| `BEEVER_ENV` | `development` | `development` \| `production` \| `test`. `production` enables fail-fast validation (rejects dev defaults). |
+| `BEEVER_API_KEYS` | — | Comma-separated Bearer tokens accepted by the backend (`Authorization: Bearer <token>`). |
+| `BEEVER_ADMIN_TOKEN` | — | Token required for `/api/dev/*` endpoints (`X-Admin-Token` header). |
 | `CREDENTIAL_MASTER_KEY` | — | 64-char hex key for AES-256-GCM encryption of platform credentials. Generate: `openssl rand -hex 32` |
+| `NEO4J_PASSWORD` | — | Password used by `docker-compose` to initialize Neo4j (must match password half of `NEO4J_AUTH`). |
 
 ### Graph Backend
 
@@ -594,7 +643,7 @@ Please open an issue first for significant changes.
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE) © 2026 Beever Atlas contributors. Third-party attributions in [NOTICE](NOTICE).
 
 ---
 

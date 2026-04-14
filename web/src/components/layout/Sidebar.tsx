@@ -19,7 +19,7 @@ import { SidebarConversationList } from "./SidebarConversationList";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTheme } from "@/hooks/useTheme";
 import { useAskSessions } from "@/contexts/AskSessionsContext";
-import { api } from "@/lib/api";
+import { api, adminHeaders } from "@/lib/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 
 const MIN_WIDTH = 180;
@@ -216,7 +216,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     onClick={async () => {
                       if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
                       try {
-                        await api.post("/api/dev/reset", {});
+                        await api.post("/api/dev/reset", {}, { headers: adminHeaders() });
                         window.location.reload();
                       } catch (e) {
                         alert("Reset failed. Check console.");
@@ -248,7 +248,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     onClick={async () => {
                       if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
                       try {
-                        await api.post("/api/dev/reset", {});
+                        await api.post("/api/dev/reset", {}, { headers: adminHeaders() });
                         window.location.reload();
                       } catch (e) {
                         alert("Reset failed. Check console.");

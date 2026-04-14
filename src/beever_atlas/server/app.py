@@ -2,7 +2,8 @@
 
 import logging
 import warnings
-warnings.filterwarnings("ignore", message="unclosed resource.*TCPTransport", category=ResourceWarning)
+warnings.filterwarnings("ignore", category=ResourceWarning, module=r"neo4j\..*")
+warnings.filterwarnings("ignore", category=ResourceWarning, module=r"aiohttp\..*")
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timezone
@@ -11,11 +12,16 @@ from dotenv import load_dotenv
 # Load .env into os.environ so all modules (adapters, etc.) can read env vars
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from beever_atlas.infra.auth import require_user
 
 from beever_atlas.adapters import close_adapter
-from beever_atlas.api.ask import router as ask_router
+from beever_atlas.infra.rate_limit import limiter
+from beever_atlas.api.ask import router as ask_router, public_router as ask_public_router
 from beever_atlas.api.channels import router as channels_router
 from beever_atlas.api.connections import router as connections_router
 from beever_atlas.api.imports import router as imports_router
@@ -153,31 +159,49 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Per-IP rate limit. Limiter instance lives in infra.rate_limit so route
+# modules can share it; here we wire it into the FastAPI app.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS for React dev server and production
+_settings = get_settings()
+_cors_origins = [o.strip() for o in _settings.cors_origins.split(",") if o.strip()]
+_allow_credentials = True
+if _allow_credentials and any(o == "*" for o in _cors_origins):
+    raise RuntimeError(
+        "CORS misconfigured: cannot use wildcard origin '*' with allow_credentials=True"
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_settings().cors_origins.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Admin-Token"],
 )
 
-# Include API routers
-app.include_router(ask_router)
-app.include_router(channels_router)
-app.include_router(connections_router)
-app.include_router(imports_router)
-app.include_router(sync_router)
-app.include_router(memories_router)
-app.include_router(graph_router)
-app.include_router(search_router)
-app.include_router(stats_router)
-app.include_router(topics_router)
-app.include_router(policies_router)
-app.include_router(models_router)
-app.include_router(dev_router)
-app.include_router(wiki_router)
-app.include_router(config_router)
+# All routers require Bearer auth except /api/health (declared below) and MCP mount.
+_auth = [Depends(require_user)]
+app.include_router(ask_router, dependencies=_auth)
+# Public shared-conversation GET — auth handled inside the endpoint based on
+# the share's visibility tier (owner/auth/public). Must NOT inherit `_auth`.
+app.include_router(ask_public_router)
+app.include_router(channels_router, dependencies=_auth)
+app.include_router(connections_router, dependencies=_auth)
+app.include_router(imports_router, dependencies=_auth)
+app.include_router(sync_router, dependencies=_auth)
+app.include_router(memories_router, dependencies=_auth)
+app.include_router(graph_router, dependencies=_auth)
+app.include_router(search_router, dependencies=_auth)
+app.include_router(stats_router, dependencies=_auth)
+app.include_router(topics_router, dependencies=_auth)
+app.include_router(policies_router, dependencies=_auth)
+app.include_router(models_router, dependencies=_auth)
+# Dev router: only mounted in development; its own endpoints require admin token.
+if _settings.beever_env == "development":
+    app.include_router(dev_router)
+app.include_router(wiki_router, dependencies=_auth)
+app.include_router(config_router, dependencies=_auth)
 
 # Mount MCP server — auth inherits from FastAPI middleware (Task 8.6/8.7)
 app.mount("/mcp", mcp_server.http_app(path="/"))
@@ -186,7 +210,8 @@ register_health_checks()
 
 
 @app.get("/api/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
+@limiter.limit("60/minute")
+async def health_check(request: Request) -> HealthResponse:
     """Check connectivity to all data stores."""
     results = await health_registry.check_all()
     status = health_registry.overall_status(results)

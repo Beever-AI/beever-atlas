@@ -1,14 +1,52 @@
 import { useEffect, useState, useCallback } from "react";
 import { Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import mermaid from "mermaid";
+import DOMPurify from "dompurify";
 import { useTheme } from "@/hooks/useTheme";
 
+function sanitizeSvg(svg: string): string {
+  // mermaid (v11, securityLevel: "strict") already runs DOMPurify internally.
+  // Our outer pass must preserve:
+  //   - <foreignObject> + HTML children (if htmlLabels=true)
+  //   - <style> tags (mermaid injects CSS that colors node labels — stripping
+  //     these leaves node text invisible, not absent)
+  //   - class / style attributes (node text uses class="nodeLabel" + fill)
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true, html: true },
+    ADD_TAGS: ["style", "foreignObject"],
+    ADD_ATTR: ["class", "style", "transform", "xmlns"],
+    FORBID_TAGS: ["script"],
+    FORBID_ATTR: [
+      "onerror", "onload", "onclick", "onmouseover", "onmousedown",
+      "onmouseup", "onfocus", "onblur", "onchange", "onsubmit",
+    ],
+  });
+}
+
+let mermaidInitPromise: Promise<void> | null = null;
+let mermaidInitTheme: "light" | "dark" | null = null;
+
+function ensureMermaidInit(theme: "light" | "dark", config: Parameters<typeof mermaid.initialize>[0]) {
+  if (!mermaidInitPromise || mermaidInitTheme !== theme) {
+    mermaidInitTheme = theme;
+    mermaidInitPromise = (async () => {
+      mermaid.initialize(config);
+    })();
+  }
+  return mermaidInitPromise;
+}
+
 function mermaidThemeConfig(theme: "light" | "dark") {
+  // htmlLabels: false forces mermaid to render labels as SVG <text> instead
+  // of <foreignObject>-wrapped HTML. Otherwise DOMPurify drops the labels
+  // and nodes render as empty boxes.
+  const flowchart = { htmlLabels: false, useMaxWidth: true };
   if (theme === "dark") {
     return {
       startOnLoad: false,
-      securityLevel: "loose" as const,
+      securityLevel: "strict" as const,
       theme: "base" as const,
+      flowchart,
       themeVariables: {
         background: "transparent",
         primaryColor: "#1f2937",
@@ -22,8 +60,9 @@ function mermaidThemeConfig(theme: "light" | "dark") {
 
   return {
     startOnLoad: false,
-    securityLevel: "loose" as const,
+    securityLevel: "strict" as const,
     theme: "base" as const,
+    flowchart,
     themeVariables: {
       background: "transparent",
       primaryColor: "#e2e8f0",
@@ -104,22 +143,26 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
 
   useEffect(() => {
     const render = async () => {
-      mermaid.initialize(mermaidThemeConfig(resolvedTheme === "dark" ? "dark" : "light"));
+      const theme = resolvedTheme === "dark" ? "dark" : "light";
+      await ensureMermaidInit(theme, mermaidThemeConfig(theme));
       const sanitized = sanitizeMermaid(chart);
       // Mermaid v10+ resolves the promise even on parse errors, but returns a
       // diagnostic SVG containing the error text. Detect these cases explicitly.
       const isErrorSvg = (svg: string) =>
         svg.includes("Syntax error in text") || svg.includes("class=\"error-icon\"");
+      // Mermaid IDs must start with a letter; Math.random().toString(36).slice(2)
+      // can begin with a digit, which breaks selector lookups inside mermaid.
+      const newId = () => `m${Math.random().toString(36).slice(2).replace(/[^a-zA-Z0-9]/g, "")}`;
 
       try {
-        const id = `mermaid-${Math.random().toString(36).slice(2)}`;
+        const id = newId();
         const result = await mermaid.render(id, sanitized);
         if (isErrorSvg(result.svg)) throw new Error("mermaid returned error svg");
         setSvg(result.svg);
         setError(null);
       } catch {
         try {
-          const id2 = `mermaid-${Math.random().toString(36).slice(2)}`;
+          const id2 = newId();
           const result2 = await mermaid.render(id2, simplifyMermaid(sanitized));
           if (isErrorSvg(result2.svg)) throw new Error("mermaid returned error svg after simplify");
           setSvg(result2.svg);
@@ -151,15 +194,17 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const origWidth = widthMatch ? parseFloat(widthMatch[1]) : 0;
 
   // If diagram is very wide (>800px), scale it down but keep readable
-  const inlineSvg = origWidth > 800
+  const inlineSvgRaw = origWidth > 800
     ? svg.replace(/<svg /, '<svg style="height:auto;min-height:250px" ')
     : svg.replace(/<svg /, '<svg style="width:100%;height:auto;min-height:200px" ');
+  const inlineSvg = sanitizeSvg(inlineSvgRaw);
 
   // For expanded view: force SVG to fill available width
-  const expandedSvg = svg
+  const expandedSvgRaw = svg
     .replace(/width="[\d.]+"/, 'width="100%"')
     .replace(/height="[\d.]+"/, 'height="100%"')
     .replace(/<svg /, '<svg style="width:100%;height:auto;min-width:80vw" ');
+  const expandedSvg = sanitizeSvg(expandedSvgRaw);
 
   if (expanded) {
     return (

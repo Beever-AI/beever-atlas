@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { AttachmentFile } from "../types/askTypes";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -52,7 +53,7 @@ export function useFileUpload(channelId: string) {
         ? `${API_BASE}/api/channels/${channelId}/ask/upload`
         : `${API_BASE}/api/ask/upload`;
 
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method: "POST",
         body: formData,
       });

@@ -4,6 +4,7 @@ import type {
   ImportCommitResponse,
   ImportPreviewResponse,
 } from "@/lib/types";
+import { authFetch } from "@/lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -44,7 +45,7 @@ export function useFileImport(): UseFileImportReturn {
         form.append("file", file);
         form.append("use_llm", useLlm ? "true" : "false");
         // 60s timeout — LLM call can be slow; larger files still upload.
-        const res = await fetch(`${API_BASE}/api/imports/preview`, {
+        const res = await authFetch(`${API_BASE}/api/imports/preview`, {
           method: "POST",
           body: form,
         });
@@ -65,7 +66,7 @@ export function useFileImport(): UseFileImportReturn {
       setCommitting(true);
       setError(null);
       try {
-        const res = await fetch(`${API_BASE}/api/imports/commit`, {
+        const res = await authFetch(`${API_BASE}/api/imports/commit`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),

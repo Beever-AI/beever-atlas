@@ -15,7 +15,7 @@ services:
     environment:
       WEAVIATE_URL: http://weaviate:8080
       NEO4J_URI: bolt://neo4j:7687
-      NEO4J_AUTH: neo4j/beever_atlas_dev
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}
       MONGODB_URI: mongodb://mongodb:27017/beever_atlas
       REDIS_URL: redis://redis:6379
       BRIDGE_URL: http://bot:3001
@@ -37,11 +37,14 @@ services:
 
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
-    ports: ["8080:8080", "50051:50051"]
+    ports: ["127.0.0.1:8080:8080", "127.0.0.1:50051:50051"]
     volumes: [weaviate_data:/var/lib/weaviate]
     environment:
       QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
+      AUTHENTICATION_APIKEY_ENABLED: "true"
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:?WEAVIATE_API_KEY must be set}
+      AUTHENTICATION_APIKEY_USERS: admin@beever.local
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       CLUSTER_HOSTNAME: node1
     healthcheck:
@@ -52,9 +55,9 @@ services:
 
   neo4j:
     image: neo4j:5.26-community
-    ports: ["7474:7474", "7687:7687"]
+    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
     environment:
-      NEO4J_AUTH: neo4j/beever_atlas_dev
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}
       NEO4J_PLUGINS: '["apoc"]'
     volumes: [neo4j_data:/data]
     healthcheck:
@@ -65,7 +68,7 @@ services:
 
   mongodb:
     image: mongo:7.0
-    ports: ["27017:27017"]
+    ports: ["127.0.0.1:27017:27017"]
     volumes: [mongo_data:/data/db]
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -75,7 +78,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["6380:6379"]
+    ports: ["127.0.0.1:6380:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { wikiT } from "@/lib/wikiI18n";
 import { RefreshCw, BookOpen, AlertTriangle, Sparkles, Network, FileText, Loader2, CheckCircle2, Circle, ArrowRight, FolderSync, History as HistoryIcon } from "lucide-react";
+import { PipelineEmptyState } from "@/components/shared/PipelineEmptyState";
 import { useWiki } from "@/hooks/useWiki";
 import { useWikiPage } from "@/hooks/useWikiPage";
 import { useWikiRefresh, type WikiGenerationStatus } from "@/hooks/useWikiRefresh";
@@ -550,31 +551,47 @@ export function WikiTab() {
   // 404: wiki has never been generated for this language — show a targeted empty state
   if (!wiki && isNotFound && !isRefreshing) {
     const supported = langConfig?.supported_languages ?? [targetLang];
+    const steps = [
+      { label: "Sync channel", icon: FolderSync, done: !isNoMemory, active: isNoMemory },
+      { label: "Build memories", icon: Sparkles, done: !isNoMemory, active: false },
+      { label: "Generate wiki", icon: BookOpen, done: false, active: !isNoMemory },
+    ];
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-6 py-12">
-        <div className="mx-auto w-full max-w-md text-center">
-          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-            <BookOpen className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <h3 className="text-base font-semibold text-foreground">
-            {wikiT(targetLang, "noWikiYet")}
-          </h3>
-          <p className="mx-auto mt-1.5 max-w-xs text-sm text-muted-foreground">
-            {wikiT(targetLang, "noWikiEmptySubtitle")}
-          </p>
-          <div className="mt-6 flex justify-center">
-            <WikiRegenerateButton
-              currentLang={targetLang}
-              supportedLanguages={supported}
-              isRefreshing={isRefreshing}
-              onRegenerate={() => handleRegenerateInLang(targetLang)}
-              onRegenerateInLang={handleSwitchLang}
-              label="Generate"
-              size="lg"
-            />
-          </div>
-        </div>
-      </div>
+      <PipelineEmptyState
+        icon={isNoMemory ? FolderSync : BookOpen}
+        title={isNoMemory ? "Sync this channel first" : wikiT(targetLang, "noWikiYet")}
+        description={
+          isNoMemory
+            ? "Wikis are built from channel memories. Sync this channel to extract memories, then return here to generate a wiki."
+            : wikiT(targetLang, "noWikiEmptySubtitle")
+        }
+        steps={steps}
+      >
+        {isNoMemory ? (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Use the <span className="font-medium text-foreground">Sync Channel</span> button in the top-right to begin.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/channels/${channelId}/sync-history`)}
+            >
+              View sync history
+            </Button>
+          </>
+        ) : (
+          <WikiRegenerateButton
+            currentLang={targetLang}
+            supportedLanguages={supported}
+            isRefreshing={isRefreshing}
+            onRegenerate={() => handleRegenerateInLang(targetLang)}
+            onRegenerateInLang={handleSwitchLang}
+            label="Generate"
+            size="lg"
+          />
+        )}
+      </PipelineEmptyState>
     );
   }
 
@@ -619,15 +636,31 @@ export function WikiTab() {
     ? (versionData?.target_lang ?? "en")
     : targetLang;
 
-  // Show a loading indicator inside the layout when fetching a non-overview page
-  const pageContent =
-    showPageLoading || !activePage ? (
+  // Show a loading indicator while fetching; an empty-state when the backend
+  // returns 404 (page exists in sidebar structure but has no cached content)
+  // so the pane does not spin forever.
+  let pageContent: ReactNode;
+  if (showPageLoading) {
+    pageContent = (
       <div className="flex items-center justify-center py-16">
         <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
       </div>
-    ) : (
-      renderPage(activePage, topicPages, handleNavigate, displayedLang)
     );
+  } else if (!activePage) {
+    pageContent = (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <FileText className="w-8 h-8 text-muted-foreground/40 mb-3" />
+        <p className="text-sm text-muted-foreground">
+          This page isn't available in the current wiki.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground/70">
+          Try regenerating the wiki to populate it.
+        </p>
+      </div>
+    );
+  } else {
+    pageContent = renderPage(activePage, topicPages, handleNavigate, displayedLang);
+  }
 
   return (
     <WikiLayout

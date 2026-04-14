@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussion
+    url: https://github.com/votee/beever-atlas/discussions
+    about: Ask questions, share ideas, and discuss Beever Atlas with the community.
+  - name: Security vulnerability
+    url: https://github.com/votee/beever-atlas/security/advisories/new
+    about: Report a security issue privately via GitHub Security Advisories.

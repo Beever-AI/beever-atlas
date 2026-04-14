@@ -30,6 +30,9 @@ interface AskSessionsContextValue {
   /** Session CRUD actions */
   fetchSessions: () => void;
   loadSession: (sessionId: string) => Promise<Message[]>;
+  /** Last loadSession outcome — drives the "not-available" panel on /ask/:id. */
+  loadStatus: "idle" | "ok" | "forbidden" | "not_found" | "error";
+  clearLoadStatus: () => void;
   renameSession: (sessionId: string, title: string) => void;
   pinSession: (sessionId: string, pinned: boolean) => void;
   deleteSession: (sessionId: string) => void;
@@ -57,6 +60,8 @@ export function useAskSessions(): AskSessionsContextValue {
       loadMore: () => {},
       fetchSessions: () => {},
       loadSession: async () => [],
+      loadStatus: "idle",
+      clearLoadStatus: () => {},
       renameSession: () => {},
       pinSession: () => {},
       deleteSession: () => {},
@@ -69,12 +74,19 @@ export function useAskSessions(): AskSessionsContextValue {
 export function AskSessionsProvider({ children }: { children: React.ReactNode }) {
   const [isActive, setActive] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [loadStatus, setLoadStatus] = useState<
+    "idle" | "ok" | "forbidden" | "not_found" | "error"
+  >("idle");
 
   const history = useGlobalConversationHistory();
 
+  const clearLoadStatus = useCallback(() => setLoadStatus("idle"), []);
+
   const loadSession = useCallback(
     async (sessionId: string): Promise<Message[]> => {
-      const { messages: sessionMessages } = await history.loadSession(sessionId);
+      const { messages: sessionMessages, status } =
+        await history.loadSession(sessionId);
+      setLoadStatus(status);
       if (sessionMessages.length > 0) {
         const converted: Message[] = sessionMessages.map((m, i) => ({
           id: `loaded-${i}`,
@@ -128,6 +140,8 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
       loadMore: history.loadMore,
       fetchSessions: history.fetchSessions,
       loadSession,
+      loadStatus,
+      clearLoadStatus,
       renameSession: history.renameSession,
       pinSession: history.pinSession,
       deleteSession: history.deleteSession,
@@ -144,6 +158,8 @@ export function AskSessionsProvider({ children }: { children: React.ReactNode })
       history.loadingMore,
       history.loadMore,
       loadSession,
+      loadStatus,
+      clearLoadStatus,
       history.renameSession,
       history.pinSession,
       history.deleteSession,

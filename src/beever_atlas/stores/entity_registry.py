@@ -84,58 +84,58 @@ class EntityRegistry:
         """
         if not names:
             return {}
-        import httpx
         from beever_atlas.infra.config import get_settings
+        from beever_atlas.infra.http_safe import safe_post
 
         settings = get_settings()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                settings.jina_api_url,
-                headers={
-                    "Authorization": f"Bearer {settings.jina_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.jina_model,
-                    "input": names,
-                    "dimensions": settings.jina_dimensions,
-                    "task": "text-matching",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            result: dict[str, list[float]] = {}
-            for i, item in enumerate(data["data"]):
-                if i < len(names):
-                    result[names[i]] = item["embedding"]
-            return result
+        resp = await safe_post(
+            settings.jina_api_url,
+            timeout=30.0,
+            headers={
+                "Authorization": f"Bearer {settings.jina_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.jina_model,
+                "input": names,
+                "dimensions": settings.jina_dimensions,
+                "task": "text-matching",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        result: dict[str, list[float]] = {}
+        for i, item in enumerate(data["data"]):
+            if i < len(names):
+                result[names[i]] = item["embedding"]
+        return result
 
     async def compute_name_embedding(self, name: str) -> list[float]:
         """Compute a Jina embedding for an entity name.
 
         Returns the embedding vector.
         """
-        import httpx
         from beever_atlas.infra.config import get_settings
+        from beever_atlas.infra.http_safe import safe_post
 
         settings = get_settings()
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                settings.jina_api_url,
-                headers={
-                    "Authorization": f"Bearer {settings.jina_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.jina_model,
-                    "input": [name],
-                    "dimensions": settings.jina_dimensions,
-                    "task": "text-matching",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["data"][0]["embedding"]
+        resp = await safe_post(
+            settings.jina_api_url,
+            timeout=15.0,
+            headers={
+                "Authorization": f"Bearer {settings.jina_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.jina_model,
+                "input": [name],
+                "dimensions": settings.jina_dimensions,
+                "task": "text-matching",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["data"][0]["embedding"]
 
     async def find_similar_by_embedding(
         self,

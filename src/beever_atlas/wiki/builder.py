@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import UTC, datetime
 
@@ -20,6 +21,20 @@ logger = logging.getLogger(__name__)
 # concurrent generations. These module-level structures survive across
 # WikiBuilder instances and ensure only one generation runs per channel at a
 # time (regardless of target_lang).
+def _detect_platform(channel_id: str) -> str:
+    """Infer platform from channel_id format.
+
+    Mirrors ``beever_atlas.api.channels._detect_platform_from_channel_id``
+    but is duplicated here to avoid a wiki→api import cycle. Falls back to
+    ``"unknown"`` rather than hardcoding ``"slack"``.
+    """
+    if re.match(r"^[CDG][A-Z0-9]{8,}$", channel_id):
+        return "slack"
+    if re.match(r"^\d{17,20}$", channel_id):
+        return "discord"
+    return "unknown"
+
+
 _CHANNEL_LOCKS: dict[str, asyncio.Lock] = {}
 _CHANNEL_LOCKS_GUARD = asyncio.Lock()
 _ACTIVE_GENERATIONS: set[str] = set()
@@ -184,10 +199,11 @@ class WikiBuilder:
             )
 
             channel_summary = data["channel_summary"]
+            platform = _detect_platform(channel_id)
             structure = compiler.build_structure(
                 channel_id=channel_id,
                 channel_name=channel_summary.channel_name,
-                platform=channel_summary.channel_id and "slack",
+                platform=platform,
                 pages=pages,
             )
 
@@ -208,7 +224,7 @@ class WikiBuilder:
             wiki = WikiResponse(
                 channel_id=channel_id,
                 channel_name=channel_summary.channel_name,
-                platform="slack",
+                platform=platform,
                 generated_at=now,
                 is_stale=False,
                 structure=structure,

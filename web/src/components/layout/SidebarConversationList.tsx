@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Plus, Search, X, Pin, Loader2 } from "lucide-react";
 import { useAskSessions } from "@/contexts/AskSessionsContext";
 import { ConversationItem } from "@/components/channel/ConversationItem";
@@ -45,7 +46,6 @@ export function SidebarConversationList() {
     searchQuery,
     setSearchQuery,
     newConversation,
-    setActiveSessionId,
     renameSession,
     pinSession,
     deleteSession,
@@ -53,6 +53,7 @@ export function SidebarConversationList() {
     loadMore,
     loadingMore,
   } = useAskSessions();
+  const navigate = useNavigate();
 
   const [searchFocused, setSearchFocused] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -80,7 +81,8 @@ export function SidebarConversationList() {
   );
 
   const handleSelectSession = (sessionId: string) => {
-    setActiveSessionId(sessionId);
+    // URL is canonical — route change writes activeSessionId via AskPage.
+    navigate(`/ask/${sessionId}`);
   };
 
   const renderItem = (s: GlobalConversationSession) => (
