@@ -1,5 +1,5 @@
 import { type ReactNode, useState, useCallback, useRef, useEffect } from "react";
-import { Download, Search, X, ChevronUp, ChevronDown, History } from "lucide-react";
+import { Download, Search, X, ChevronUp, ChevronDown, History, Menu } from "lucide-react";
 import { WikiSidebar } from "./WikiSidebar";
 import { WikiBreadcrumb } from "./WikiBreadcrumb";
 import { FreshnessBadge } from "./FreshnessBadge";
@@ -253,6 +253,7 @@ export function WikiLayout({
 }: WikiLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const isDragging = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const searchableContentRef = useRef<HTMLDivElement>(null);
@@ -285,11 +286,20 @@ export function WikiLayout({
   }, [sidebarWidth]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full relative">
+      {/* Mobile sidebar backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
       {/* Left Sidebar */}
       <div
-        className="shrink-0 border-r border-border bg-background flex flex-col min-h-0"
-        style={{ width: sidebarWidth }}
+        className={`border-r border-border bg-background flex flex-col min-h-0 transition-transform duration-200 fixed inset-y-0 left-0 z-40 !w-[85vw] max-w-[320px] md:!w-[var(--wiki-sidebar-w)] md:static md:shrink-0 md:z-auto md:max-w-none md:translate-x-0 ${
+          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
+        style={{ ["--wiki-sidebar-w" as string]: `${sidebarWidth}px` }}
       >
         <div className="p-4 pb-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
@@ -323,7 +333,10 @@ export function WikiLayout({
           <WikiSidebar
             pages={structure.pages}
             activePageId={activePage.id}
-            onNavigate={onNavigate}
+            onNavigate={(id) => {
+              onNavigate(id);
+              setMobileSidebarOpen(false);
+            }}
             lang={currentLang}
           />
         </div>
@@ -411,15 +424,24 @@ export function WikiLayout({
         </div>
       )}
 
-      {/* Resize handle */}
+      {/* Resize handle — desktop only */}
       <div
         onMouseDown={handleMouseDown}
-        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
+        className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors"
       />
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-w-0">
-        <div className="max-w-4xl mx-auto px-8 py-6" ref={contentRef}>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 md:px-8 py-4 md:py-6" ref={contentRef}>
+          <div className="flex items-center gap-2 md:hidden mb-2">
+            <button
+              onClick={() => setMobileSidebarOpen(true)}
+              className="inline-flex items-center justify-center size-9 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              aria-label="Open wiki navigation"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+          </div>
           <WikiBreadcrumb page={activePage} />
           <div ref={searchableContentRef}>
             {children}
