@@ -12,6 +12,7 @@ import { QueryPlan } from "./QueryPlan";
 import { Sources } from "./Sources";
 import { CitationChip } from "./CitationChip";
 import { InlineMedia } from "./InlineMedia";
+import { MarkdownImage } from "./MarkdownImage";
 import { AnswerActions } from "./AnswerActions";
 import { FollowUpSuggestions } from "./FollowUpSuggestions";
 import { selectCitations, stripSourcesBlock } from "@/lib/citations";
@@ -35,6 +36,8 @@ interface CitationContext {
   refs: CitationRef[];
   /** Markers the rewriter has already resolved to inline media (to cap count). */
   inlineUsed: Set<number>;
+  /** Whether we've already auto-inlined one file (PDF/document) attachment. */
+  fileInlineUsed: boolean;
 }
 
 /** Split a text node on inline `[N]` markers, substituting chips or media. */
@@ -112,15 +115,32 @@ function renderMarker(
   const ref = ctx.refs.find((r) => r.marker === n);
   const source = ref ? ctx.sources.find((s) => s.id === ref.source_id) : undefined;
 
+  // Auto-upgrade to inline when the source carries visual media or a file,
+  // even if the LLM forgot the `inline` tag. Images/videos always upgrade.
+  // PDFs and documents upgrade at most once per answer so link cards don't
+  // flood every citation. Plain `link_preview` still requires the explicit
+  // `inline` tag.
+  const firstAttachment = source?.attachments[0];
+  const isVisualMedia =
+    firstAttachment?.kind === "image" ||
+    firstAttachment?.kind === "video";
+  const isFileAttachment =
+    firstAttachment?.kind === "pdf" ||
+    firstAttachment?.kind === "document";
+  const fileAlreadyShown = ctx.fileInlineUsed;
+  const canUpgradeFile = isFileAttachment && !fileAlreadyShown;
   const wantsInline =
-    ref?.inline === true &&
     !!source &&
-    source.attachments.length > 0 &&
+    !!firstAttachment &&
+    (ref?.inline === true || isVisualMedia || canUpgradeFile) &&
     ctx.inlineUsed.size < MAX_INLINE_MEDIA &&
     !ctx.inlineUsed.has(n);
 
   if (wantsInline && source) {
     ctx.inlineUsed.add(n);
+    if (canUpgradeFile) {
+      ctx.fileInlineUsed = true;
+    }
     return (
       <InlineMedia
         key={key}
@@ -151,6 +171,7 @@ function AssistantMessageInner({
     sources,
     refs,
     inlineUsed: new Set<number>(),
+    fileInlineUsed: false,
   };
 
   // Memoize the markdown tree so React doesn't re-parse the same prefix on
@@ -242,6 +263,12 @@ function AssistantMessageInner({
               ),
               a: ({ href, children }) => (
                 <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/80 underline underline-offset-2">{children}</a>
+              ),
+              img: ({ src, alt }) => (
+                <MarkdownImage
+                  src={typeof src === "string" ? src : undefined}
+                  alt={typeof alt === "string" ? alt : undefined}
+                />
               ),
             }}
           >

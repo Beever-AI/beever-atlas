@@ -185,12 +185,16 @@ class ChatHistoryStore:
                 msg["citations"] = as_legacy_items(msg["citations"])
 
     async def load_session(self, session_id: str) -> dict | None:
-        """Load a full session by ID. Returns None if not found."""
+        """Load a full session by ID. Returns None if not found.
+
+        Citations are returned in the full envelope shape
+        `{items, sources, refs}` so inline media attachments and structured
+        refs survive across page reloads. The frontend's `MessageCitations`
+        type accepts either envelope or legacy flat list.
+        """
         doc = await self._collection.find_one(
             {"session_id": session_id}, {"_id": 0}
         )
-        if doc is not None:
-            self._flatten_citations_in_place(doc.get("messages", []))
         return doc
 
     async def load_session_with_channels(self, session_id: str) -> dict | None:
@@ -204,7 +208,8 @@ class ChatHistoryStore:
         if doc is None:
             return None
 
-        self._flatten_citations_in_place(doc.get("messages", []))
+        # Preserve the citation envelope (sources + refs + attachments) so
+        # re-hydrated messages show inline media after reload.
         legacy_channel_id = doc.get("channel_id")
         channel_ids: list[str] = []
         seen: set[str] = set()

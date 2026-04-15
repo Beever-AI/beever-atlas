@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FileText, Film, Globe, Image as ImageIcon, Music } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MediaAttachment, Source } from "@/types/askTypes";
-import { isAuthGatedMediaUrl, mediaHostLabel } from "@/lib/mediaUrl";
+import { isAuthGatedMediaUrl, mediaHostLabel, proxiedMediaUrl } from "@/lib/mediaUrl";
 import { looksUnavailable } from "@/lib/citations";
 
 function safeLabel(raw: unknown, fallback: string): string {
@@ -175,11 +175,12 @@ function InlineImage({
     );
   }
 
+  const imgSrc = proxiedMediaUrl(attachment.url) ?? attachment.url;
   return (
     <span className="block my-3" onClick={onJumpToFooter}>
       <a href={openHref} target="_blank" rel="noopener noreferrer">
         <img
-          src={attachment.url}
+          src={imgSrc}
           alt={attachment.alt_text ?? source.title ?? "Source image"}
           onError={() => setErrored(true)}
           className={cn(

@@ -21,7 +21,7 @@ import type {
   SourceKind,
 } from "@/types/askTypes";
 import { DerivedFrom } from "./DerivedFrom";
-import { isAuthGatedMediaUrl } from "@/lib/mediaUrl";
+import { isAuthGatedMediaUrl, proxiedMediaUrl } from "@/lib/mediaUrl";
 
 interface SourceCardProps {
   source: Source;
@@ -339,7 +339,7 @@ function ImageChip({ attachment }: { attachment: MediaAttachment }) {
       title={attachment.alt_text ?? attachment.title ?? "image"}
     >
       <img
-        src={attachment.thumbnail_url ?? attachment.url}
+        src={proxiedMediaUrl(attachment.thumbnail_url ?? attachment.url) ?? attachment.url}
         alt={attachment.alt_text ?? "attachment"}
         onError={() => setErrored(true)}
         className="h-full w-full object-cover"

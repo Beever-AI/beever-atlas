@@ -494,12 +494,27 @@ async def _run_agent_stream(
                         yield _sse_event("response_delta", {"delta": tail})
                         accumulated_text += tail
 
+                # Safety net: if retrieval found media but the LLM skipped the
+                # `## Media` section, build and append one from the registry.
+                if _registry is not None:
+                    from beever_atlas.agents.query.gallery_fallback import (
+                        maybe_build_gallery,
+                    )
+                    _gallery = maybe_build_gallery(_registry, accumulated_text)
+                    if _gallery:
+                        yield _sse_event("response_delta", {"delta": _gallery})
+                        accumulated_text += _gallery
+
                 # Build citations: registry-backed envelope (flag on) or
                 # legacy regex-parsed list (flag off).
                 if _registry is not None:
                     envelope = _registry.finalize(accumulated_text)
                     citations_payload = envelope.to_dict()
-                    citations = envelope.items  # for persistence back-compat
+                    # Persist the full envelope (sources + refs + attachments)
+                    # so inline media survives across page reloads. Read shim
+                    # in chat_history_store normalizes legacy rows to the same
+                    # shape.
+                    citations = citations_payload
                     logger.info(
                         "citation_registry turn summary: "
                         "session=%s registered=%d referenced=%d permalink_nulls=%s",
@@ -613,6 +628,18 @@ async def _run_agent_stream(
                 channel_id,
             )
             # Persist even when turn_complete didn't fire (e.g., thinking planner flow)
+            if _registry is not None and _rewriter is not None:
+                _tail = _rewriter.flush()
+                if _tail:
+                    yield _sse_event("response_delta", {"delta": _tail})
+                    accumulated_text += _tail
+                from beever_atlas.agents.query.gallery_fallback import (
+                    maybe_build_gallery,
+                )
+                _gallery2 = maybe_build_gallery(_registry, accumulated_text)
+                if _gallery2:
+                    yield _sse_event("response_delta", {"delta": _gallery2})
+                    accumulated_text += _gallery2
             if accumulated_text.strip():
                 # Flush rewriter + emit envelope when registry is active.
                 if _rewriter is not None and _registry is not None:
@@ -621,8 +648,9 @@ async def _run_agent_stream(
                         yield _sse_event("response_delta", {"delta": tail})
                         accumulated_text += tail
                     envelope = _registry.finalize(accumulated_text)
-                    citations = envelope.items
-                    yield _sse_event("citations", envelope.to_dict())
+                    # Persist the full envelope so reload re-hydrates media.
+                    citations = envelope.to_dict()
+                    yield _sse_event("citations", citations)
                 else:
                     citations = _extract_citations_from_text(accumulated_text)
                     yield _sse_event("citations", {"items": citations})
@@ -697,7 +725,7 @@ def _build_thinking_doc(
 async def _persist_qa_history(
     question: str,
     answer: str,
-    citations: list[dict],
+    citations: list[dict] | dict,
     channel_id: str,
     user_id: str,
     session_id: str,
