@@ -17,16 +17,16 @@ from weaviate.classes.init import AdditionalConfig, Auth
 from weaviate.classes.query import Filter
 from weaviate.config import GrpcConfig
 
+from beever_atlas.models import AtomicFact, MemoryFilters, PaginatedFacts
+
+if TYPE_CHECKING:
+    from beever_atlas.models.domain import ChannelSummary, EntityKnowledgeCard, TopicCluster
+
 _GRPC_CHANNEL_OPTIONS: list[tuple[str, Any]] = [
     ("grpc.max_send_message_length", -1),
     ("grpc.max_receive_message_length", -1),
 ]
 _ADDITIONAL_CONFIG = AdditionalConfig(grpc_config=GrpcConfig(channel_options=_GRPC_CHANNEL_OPTIONS))
-
-from beever_atlas.models import AtomicFact, MemoryFilters, PaginatedFacts
-
-if TYPE_CHECKING:
-    from beever_atlas.models.domain import ChannelSummary, EntityKnowledgeCard, TopicCluster
 
 COLLECTION_NAME = "MemoryFact"
 logger = logging.getLogger(__name__)
