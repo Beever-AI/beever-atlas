@@ -8,12 +8,20 @@ import logging
 import math
 import uuid
 from datetime import datetime
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 import weaviate
 from weaviate.classes.config import Configure, DataType, Property
-from weaviate.classes.init import Auth
+from weaviate.classes.init import AdditionalConfig, Auth
 from weaviate.classes.query import Filter
+from weaviate.config import GrpcConfig
+
+_GRPC_CHANNEL_OPTIONS: list[tuple[str, Any]] = [
+    ("grpc.max_send_message_length", -1),
+    ("grpc.max_receive_message_length", -1),
+]
+_ADDITIONAL_CONFIG = AdditionalConfig(grpc_config=GrpcConfig(channel_options=_GRPC_CHANNEL_OPTIONS))
 
 from beever_atlas.models import AtomicFact, MemoryFilters, PaginatedFacts
 
@@ -54,6 +62,7 @@ class WeaviateStore:
                     port=port,
                     grpc_port=50051,
                     auth_credentials=auth,
+                    additional_config=_ADDITIONAL_CONFIG,
                 )
 
             return weaviate.connect_to_custom(
@@ -64,6 +73,7 @@ class WeaviateStore:
                 grpc_port=50051,
                 grpc_secure=secure,
                 auth_credentials=auth,
+                additional_config=_ADDITIONAL_CONFIG,
             )
 
         self._client = await asyncio.to_thread(_connect)
@@ -870,28 +880,92 @@ class WeaviateStore:
     # ------------------------------------------------------------------
 
     async def get_unclustered_facts(
-        self, channel_id: str, limit: int = 1000,
+        self, channel_id: str, limit: int | None = None,
     ) -> list[AtomicFact]:
-        """Fetch atomic facts that have no cluster assignment, with vectors."""
+        """Fetch atomic facts that have no cluster assignment, with vectors.
 
-        def _fetch() -> list[AtomicFact]:
+        Streams via cursor pagination so a single gRPC response never exceeds
+        Weaviate's 10MB cap. Pass ``limit`` to stop early; ``None`` drains all.
+        """
+        facts: list[AtomicFact] = []
+        async for fact in self.iter_unclustered_facts(channel_id):
+            facts.append(fact)
+            if limit is not None and len(facts) >= limit:
+                break
+        return facts
+
+    async def iter_unclustered_facts(
+        self, channel_id: str, page_size: int = 200,
+    ) -> AsyncIterator[AtomicFact]:
+        """Yield unclustered atomic facts (with vectors), one page at a time.
+
+        Uses offset pagination with small pages so each gRPC response stays well
+        under Weaviate's 10MB cap. (Cursor ``after=`` is unavailable here because
+        Weaviate rejects ``after`` combined with a ``where`` filter.)
+
+        Note: Weaviate's ``QUERY_MAXIMUM_RESULTS`` (default 10000) caps the total
+        number of results an offset query can traverse. Channels above that size
+        require a schema-level bump of that setting.
+        """
+        weaviate_filter = (
+            Filter.by_property("channel_id").equal(channel_id)
+            & Filter.by_property("tier").equal("atomic")
+            & Filter.by_property("cluster_id").equal("__none__")
+        )
+
+        def _fetch_page(offset: int) -> list[Any]:
             collection = self._collection()
-
-            # Unclustered facts have cluster_id set to "__none__" sentinel.
-            # Cannot use "" (stopword) or is_none (requires indexNullState).
-            weaviate_filter = (
-                Filter.by_property("channel_id").equal(channel_id)
-                & Filter.by_property("tier").equal("atomic")
-                & Filter.by_property("cluster_id").equal("__none__")
-            )
-            result = collection.query.fetch_objects(
+            return list(collection.query.fetch_objects(
                 filters=weaviate_filter,
-                limit=limit,
+                limit=page_size,
+                offset=offset,
                 include_vector=True,
-            )
-            return [self._obj_to_fact(obj, include_vector=True) for obj in result.objects]
+            ).objects)
 
-        return await asyncio.to_thread(_fetch)
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(_fetch_page, offset)
+            if not page:
+                return
+            for obj in page:
+                yield self._obj_to_fact(obj, include_vector=True)
+            if len(page) < page_size:
+                return
+            offset += page_size
+
+    async def iter_all_fact_ids(
+        self, channel_id: str, page_size: int = 500,
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Yield ``(uuid, cluster_id)`` pairs for every atomic fact in a channel.
+
+        Returns only the two fields needed for cluster resets — no vectors, no
+        text — so each page is a few KB. Uses offset pagination (cursor ``after``
+        is incompatible with filters in Weaviate).
+        """
+        weaviate_filter = (
+            Filter.by_property("channel_id").equal(channel_id)
+            & Filter.by_property("tier").equal("atomic")
+        )
+
+        def _fetch_page(offset: int) -> list[Any]:
+            collection = self._collection()
+            return list(collection.query.fetch_objects(
+                filters=weaviate_filter,
+                limit=page_size,
+                offset=offset,
+                return_properties=["cluster_id"],
+            ).objects)
+
+        offset = 0
+        while True:
+            page = await asyncio.to_thread(_fetch_page, offset)
+            if not page:
+                return
+            for obj in page:
+                yield str(obj.uuid), obj.properties.get("cluster_id") or ""
+            if len(page) < page_size:
+                return
+            offset += page_size
 
     async def upsert_cluster(self, cluster: "TopicCluster") -> str:
         """Upsert a topic cluster as a MemoryFact with tier='topic'."""

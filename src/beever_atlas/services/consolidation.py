@@ -139,8 +139,6 @@ class ConsolidationService:
         self, channel_id: str, channel_name: str = "",
     ) -> ConsolidationResult:
         """Full rebuild: reset all clusters and re-cluster from scratch."""
-        from beever_atlas.models.api import MemoryFilters
-
         result = ConsolidationResult(channel_id=channel_id)
 
         try:
@@ -150,19 +148,20 @@ class ConsolidationService:
                 await self._weaviate.delete_cluster(cluster.id)
                 result.clusters_deleted += 1
 
-            # Reset cluster_id on all facts
-            all_facts_page = await self._weaviate.list_facts(
-                channel_id=channel_id,
-                filters=MemoryFilters(),
-                page=1,
-                limit=10000,
-            )
-            updates = [
-                (f.id, "__none__") for f in all_facts_page.memories
-                if f.cluster_id != "__none__"
-            ]
-            if updates:
-                await self._weaviate.batch_update_fact_clusters(updates)
+            # Reset cluster_id on every fact. Stream via cursor pagination over
+            # id-only records (no vectors, no text) so the reset scales to
+            # channels with tens of thousands of facts without hitting the
+            # Weaviate 10MB gRPC response cap.
+            batch: list[tuple[str, str]] = []
+            BATCH = 500
+            async for fact_id, cluster_id in self._weaviate.iter_all_fact_ids(channel_id):
+                if cluster_id != "__none__":
+                    batch.append((fact_id, "__none__"))
+                if len(batch) >= BATCH:
+                    await self._weaviate.batch_update_fact_clusters(batch)
+                    batch = []
+            if batch:
+                await self._weaviate.batch_update_fact_clusters(batch)
 
             # Now run incremental (which will process all facts since none are clustered)
             created, updated = await self._incremental_cluster(channel_id, result)
