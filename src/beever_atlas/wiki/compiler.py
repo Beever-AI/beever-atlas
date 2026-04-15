@@ -556,6 +556,80 @@ def _faq_fallback(faq_by_topic: list[dict], clusters: list) -> tuple[str, str]:
     return content, summary
 
 
+_SUBTOPIC_SECTION_ALIASES: dict[str, re.Pattern] = {
+    "key_facts": re.compile(r"^##\s+key\s+facts\b", re.IGNORECASE | re.MULTILINE),
+    "overview": re.compile(r"^##\s+(overview|summary|details)\b", re.IGNORECASE | re.MULTILINE),
+}
+
+
+def _render_subtopic_key_facts_block(sub_key_facts: list[dict]) -> str:
+    if not sub_key_facts:
+        return ""
+    table = render.render_key_facts_table(sub_key_facts)
+    if not table:
+        return ""
+    return "## Key Facts\n\n" + table
+
+
+def _render_subtopic_overview_block(
+    sub_title: str, sub_facts: list, parent_title: str
+) -> str:
+    authors: list[str] = []
+    for f in sub_facts or []:
+        a = (getattr(f, "author_name", "") or "").strip()
+        if a and a not in authors:
+            authors.append(a)
+    count = len(sub_facts or [])
+    if count == 0:
+        return ""
+    author_bit = ""
+    if authors:
+        shown = ", ".join(authors[:3])
+        if len(authors) > 3:
+            shown += f" and {len(authors) - 3} others"
+        author_bit = f" Contributions came from {shown}."
+    return (
+        f"## Overview\n\nThis sub-topic of **{parent_title}** consolidates "
+        f"{count} related memories under **{sub_title}**.{author_bit}"
+    )
+
+
+def _splice_subtopic_sections(
+    content: str,
+    sub_title: str,
+    sub_facts: list,
+    parent_title: str,
+    sub_key_facts: list[dict],
+) -> str:
+    """Append Key Facts table + Overview when the LLM drops them.
+
+    Sub-topic pages sometimes render as TL;DR + concept diagram only, with
+    no Key Facts table and no Overview section. This splice injects both
+    deterministically so every sub-page has substantive body content.
+    """
+    if not content:
+        return content
+    present = {key: bool(pat.search(content)) for key, pat in _SUBTOPIC_SECTION_ALIASES.items()}
+    additions: list[str] = []
+    if not present["key_facts"]:
+        block = _render_subtopic_key_facts_block(sub_key_facts)
+        if block:
+            additions.append(block)
+    if not present["overview"]:
+        block = _render_subtopic_overview_block(sub_title, sub_facts, parent_title)
+        if block:
+            additions.append(block)
+    if not additions:
+        return content
+    logger.info(
+        "WikiCompiler: subtopic splice added %d missing sections for '%s': %s",
+        len(additions),
+        sub_title,
+        [k for k, v in present.items() if not v],
+    )
+    return content.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
+
+
 _GLOSSARY_PLACEHOLDER_RE = re.compile(
     r"\(\s*(implicit|inferred|unknown|n\/a|not\s+specified|tbd)\s*\)",
     re.IGNORECASE,
@@ -2845,7 +2919,18 @@ class WikiCompiler:
             media_json=json.dumps(media_data, default=str),
         )
         try:
-            result = await self._call_llm(prompt, max_retries=2, page_kind="subtopic")
+            # Require Key Facts + Overview so thin sub-topic pages (TL;DR +
+            # concept diagram only) trigger a retry instead of shipping.
+            result = await self._call_llm(
+                prompt,
+                max_retries=2,
+                page_kind="subtopic",
+                validator=combine(
+                    min_length(200),
+                    mermaid_balanced,
+                    required_headings(("Key Facts", "Overview")),
+                ),
+            )
             raw_content = result.content if result is not None else ""
             result_summary = result.summary if result is not None else ""
         except Exception as exc:
@@ -2853,19 +2938,25 @@ class WikiCompiler:
             raw_content = ""
             result_summary = ""
         content = self._postprocess_content(raw_content)
+        # Always splice Key Facts table + Overview deterministically when the
+        # LLM drops them (this happens even after validator retries when the
+        # model repeatedly skips sections). Uses sub_facts directly so the
+        # table reflects this sub-topic's evidence, not the parent's.
+        sub_key_facts = [
+            {
+                "memory_text": f.memory_text,
+                "author_name": f.author_name,
+                "fact_type": f.fact_type,
+                "importance": f.importance,
+                "quality_score": f.quality_score,
+            }
+            for f in sub_facts
+        ]
         if v2:
-            # Pull cluster-style key_facts dicts from the sub-fact slice.
-            sub_key_facts = [
-                {
-                    "memory_text": f.memory_text,
-                    "author_name": f.author_name,
-                    "fact_type": f.fact_type,
-                    "importance": f.importance,
-                    "quality_score": f.quality_score,
-                }
-                for f in sub_facts
-            ]
             content = _splice_key_facts_table(content, sub_key_facts)
+        content = _splice_subtopic_sections(
+            content, sub_title, sub_facts, parent_title, sub_key_facts
+        )
         stripped = (content or "").strip()
         if not stripped or len(stripped) < 50 or _is_degenerate_content(content)[0]:
             logger.info("WikiCompiler: subtopic content empty/degenerate, using deterministic fallback")
