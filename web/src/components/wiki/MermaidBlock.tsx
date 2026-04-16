@@ -1,27 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { Maximize2, X, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import mermaid from "mermaid";
-import DOMPurify from "dompurify";
 import { useTheme } from "@/hooks/useTheme";
-
-function sanitizeSvg(svg: string): string {
-  // mermaid (v11, securityLevel: "strict") already runs DOMPurify internally.
-  // Our outer pass must preserve:
-  //   - <foreignObject> + HTML children (if htmlLabels=true)
-  //   - <style> tags (mermaid injects CSS that colors node labels — stripping
-  //     these leaves node text invisible, not absent)
-  //   - class / style attributes (node text uses class="nodeLabel" + fill)
-  return DOMPurify.sanitize(svg, {
-    USE_PROFILES: { svg: true, svgFilters: true, html: true },
-    ADD_TAGS: ["style", "foreignObject"],
-    ADD_ATTR: ["class", "style", "transform", "xmlns"],
-    FORBID_TAGS: ["script"],
-    FORBID_ATTR: [
-      "onerror", "onload", "onclick", "onmouseover", "onmousedown",
-      "onmouseup", "onfocus", "onblur", "onchange", "onsubmit",
-    ],
-  });
-}
+import { sanitizeSvg } from "./sanitizeSvg";
 
 let mermaidInitPromise: Promise<void> | null = null;
 let mermaidInitTheme: "light" | "dark" | null = null;

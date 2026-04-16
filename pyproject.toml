@@ -31,6 +31,7 @@ dependencies = [
     "tavily-python>=0.5.0",
     "slowapi>=0.1.9",
     "aiolimiter>=1.1.0",
+    "python-multipart>=0.0.26,<1.0.0",
 ]
 
 [project.optional-dependencies]

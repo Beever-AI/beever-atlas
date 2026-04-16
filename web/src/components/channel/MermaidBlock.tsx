@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
-import DOMPurify from "dompurify";
 import { Maximize2, X } from "lucide-react";
+import { sanitizeSvg } from "@/components/wiki/sanitizeSvg";
 
 interface MermaidBlockProps {
   code: string;
@@ -161,20 +161,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           throw new Error("Mermaid render produced a syntax-error SVG.");
         }
         if (!cancelled) {
-          // mermaid emits a <style> block that colors `.nodeLabel` text and
-          // wraps labels in <foreignObject> when htmlLabels=true. The default
-          // svg profile drops both, leaving text invisible or absent. Preserve
-          // them explicitly while still blocking <script> and event handlers.
-          const cleanSvg = DOMPurify.sanitize(rendered, {
-            USE_PROFILES: { svg: true, svgFilters: true, html: true },
-            ADD_TAGS: ["style", "foreignObject"],
-            ADD_ATTR: ["class", "style", "transform", "xmlns"],
-            FORBID_TAGS: ["script"],
-            FORBID_ATTR: [
-              "onerror", "onload", "onclick", "onmouseover", "onmousedown",
-              "onmouseup", "onfocus", "onblur", "onchange", "onsubmit",
-            ],
-          });
+          const cleanSvg = sanitizeSvg(rendered);
           setSvg(cleanSvg);
           setError(null);
         }
