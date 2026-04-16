@@ -6,8 +6,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
 router = APIRouter(prefix="/api/channels", tags=["sync"])
@@ -39,8 +41,10 @@ async def trigger_sync(
     sync_type: Literal["auto", "full", "incremental"] = Query(default="auto"),
     use_batch_api: bool = Query(default=False),
     connection_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Trigger a sync job for the given channel."""
+    await assert_channel_access(principal, channel_id)
     logger.info("Sync API: trigger requested for channel=%s sync_type=%s", channel_id, sync_type)
 
     # Resolve effective policy for cooldown and default sync_type
@@ -127,8 +131,10 @@ async def trigger_sync(
 async def get_sync_history(
     channel_id: str,
     limit: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_user),
 ) -> list[dict]:
     """Return past sync jobs for a channel with pipeline progress details."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     jobs = await stores.mongodb.get_sync_jobs_for_channel(
         channel_id=channel_id, limit=limit,
@@ -162,8 +168,12 @@ _STATUS_MAP = {
 
 
 @router.get("/{channel_id}/sync/status")
-async def get_sync_status(channel_id: str) -> dict:
+async def get_sync_status(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Get the current sync progress for the given channel."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     job = await stores.mongodb.get_sync_status(channel_id)
     if job is None:

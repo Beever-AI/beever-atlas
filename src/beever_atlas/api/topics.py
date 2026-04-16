@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
@@ -97,8 +99,12 @@ class EntityCardResponse(BaseModel):
     "/api/channels/{channel_id}/topics",
     response_model=list[TopicClusterResponse],
 )
-async def list_topics(channel_id: str) -> list[TopicClusterResponse]:
+async def list_topics(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> list[TopicClusterResponse]:
     """List all topic clusters for a channel."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     clusters = await stores.weaviate.list_clusters(channel_id)
     # Sort by member_count descending
@@ -141,8 +147,13 @@ async def list_topics(channel_id: str) -> list[TopicClusterResponse]:
     "/api/channels/{channel_id}/topics/{cluster_id}",
     response_model=TopicClusterDetailResponse,
 )
-async def get_topic(channel_id: str, cluster_id: str) -> TopicClusterDetailResponse:
+async def get_topic(
+    channel_id: str,
+    cluster_id: str,
+    principal: Principal = Depends(require_user),
+) -> TopicClusterDetailResponse:
     """Get a topic cluster with its member facts."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     cluster = await stores.weaviate.get_cluster(cluster_id)
     if cluster is None:
@@ -161,8 +172,12 @@ async def get_topic(channel_id: str, cluster_id: str) -> TopicClusterDetailRespo
     "/api/channels/{channel_id}/summary",
     response_model=ChannelSummaryResponse,
 )
-async def get_channel_summary(channel_id: str) -> ChannelSummaryResponse:
+async def get_channel_summary(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> ChannelSummaryResponse:
     """Get the Tier 0 channel summary."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     summary = await stores.weaviate.get_channel_summary(channel_id)
     if summary is None:
@@ -262,11 +277,15 @@ async def list_entity_cards(channel_id: str | None = None) -> list[EntityCardRes
     "/api/channels/{channel_id}/consolidate",
     status_code=202,
 )
-async def trigger_consolidation(channel_id: str) -> dict:
+async def trigger_consolidation(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Trigger a full reconsolidation as a background task."""
     from beever_atlas.infra.config import get_settings
     from beever_atlas.services.consolidation import ConsolidationService
 
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     settings = get_settings()
     service = ConsolidationService(stores.weaviate, settings, graph=stores.graph)

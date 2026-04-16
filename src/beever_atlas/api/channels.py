@@ -10,12 +10,14 @@ from typing import Any
 
 import httpx as _httpx
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from beever_atlas.adapters import ChannelInfo, get_adapter
 from beever_atlas.adapters.bridge import BridgeError, ChatBridgeAdapter
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
@@ -390,6 +392,7 @@ async def list_channels() -> list[ChannelResponse]:
 async def get_channel(
     channel_id: str,
     connection_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
 ) -> ChannelResponse:
     """Get metadata for a specific channel.
 
@@ -398,6 +401,7 @@ async def get_channel(
     found — this supports direct URL navigation and page refreshes where no
     route state (and therefore no connection_id) is available.
     """
+    await assert_channel_access(principal, channel_id)
     if connection_id:
         adapter = _make_bridge_adapter(connection_id)
         try:
@@ -475,8 +479,10 @@ async def get_channel_messages(
     before: str | None = Query(default=None, description="Message ID cursor - fetch messages before this ID"),
     order: str = Query(default="desc", description="Sort order: desc (newest first) or asc (oldest first)"),
     connection_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
 ) -> MessagesListResponse:
     """Get paginated messages for a channel."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
 
     # File-imported channels: read from the imported_messages collection
@@ -562,8 +568,10 @@ async def get_thread_messages(
     channel_id: str,
     thread_id: str,
     connection_id: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
 ) -> list[MessageResponse]:
     """Get all messages in a thread (parent + replies)."""
+    await assert_channel_access(principal, channel_id)
     adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
     try:
         messages = await adapter.fetch_thread(channel_id, thread_id)
@@ -599,10 +607,14 @@ async def get_thread_messages(
 
 
 @router.delete("/api/channels/{channel_id}/data")
-async def clear_channel_data(channel_id: str):
+async def clear_channel_data(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+):
     """Delete all synced data (facts, entities, events, media, sync state) for a channel."""
     from beever_atlas.stores import get_stores
 
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     results: dict[str, Any] = {}
 

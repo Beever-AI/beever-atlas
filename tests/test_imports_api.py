@@ -29,6 +29,15 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(settings, "file_import_llm_mapping_enabled", False)
     app = FastAPI()
     app.include_router(router)
+    # Bypass `require_user` on this isolated app — RES-177 H1 adds the
+    # dependency directly on preview/commit handlers, so the global
+    # conftest override (which targets the top-level app) does not cover
+    # this ad-hoc test app.
+    from beever_atlas.infra.auth import Principal, require_user
+
+    app.dependency_overrides[require_user] = lambda: Principal(
+        "user:test", kind="user"
+    )
     return TestClient(app)
 
 

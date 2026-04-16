@@ -294,6 +294,18 @@ class Settings(BaseSettings):
         default=True, alias="BEEVER_ALLOW_BRIDGE_AS_USER"
     )
 
+    # Single-tenant compatibility mode for the v1.0 OSS launch. When True,
+    # any authenticated user principal is granted access to channels whose
+    # owning PlatformConnection has ``owner_principal_id`` set to the shared
+    # sentinel ``"legacy:shared"`` (or missing) — this preserves today's
+    # behaviour for solo / operator deployments that never assigned per-user
+    # ownership. Post-v1.0 this default flips to ``False`` so multi-tenant
+    # operators must explicitly backfill ownership on legacy rows (see
+    # ``stores.platform_store.PlatformStore.backfill_legacy_owners``).
+    beever_single_tenant: bool = Field(
+        default=True, alias="BEEVER_SINGLE_TENANT"
+    )
+
     @property
     def neo4j_user(self) -> str:
         return self.neo4j_auth.split("/")[0]

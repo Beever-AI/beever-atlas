@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
 router = APIRouter(prefix="/api", tags=["stats"])
@@ -41,8 +43,11 @@ async def get_activity(
 async def get_sync_history(
     channel_id: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_user),
 ) -> list[dict]:
     """Return sync history with per-batch extraction breakdowns."""
+    if channel_id:
+        await assert_channel_access(principal, channel_id)
     stores = get_stores()
     events = await stores.mongodb.get_sync_history(
         channel_id=channel_id, limit=limit,

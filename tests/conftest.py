@@ -46,19 +46,29 @@ def _drop_chat_history_test_db():
 
 
 def _build_mock_connection(connection_id: str = "conn-mock") -> PlatformConnection:
-    """One connected Slack connection — enough to satisfy channels.py flows."""
+    """One connected Slack connection — enough to satisfy channels.py flows.
+
+    `selected_channels` includes the MockAdapter channel ids so the RES-177
+    `_assert_channel_access` guard admits `user:test` (via the
+    single-tenant ``legacy:shared`` fallback) on the mock workspace.
+    Tests that exercise cross-user denial install their own connection.
+    """
     return PlatformConnection(
         id=connection_id,
         platform="slack",
         source="env",
         display_name="mock-workspace",
         status="connected",
-        selected_channels=[],
+        selected_channels=["C_MOCK_GENERAL", "C_MOCK_ENGINEERING", "C_MOCK_RANDOM"],
         encrypted_credentials=b"",
         credential_iv=b"",
         credential_tag=b"",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        # Shared sentinel → single-tenant fallback admits `user:test` on any
+        # channel this connection advertises. Tests that exercise cross-user
+        # denial set an explicit owner instead.
+        owner_principal_id="legacy:shared",
     )
 
 
@@ -130,14 +140,19 @@ def _auth_bypass(monkeypatch):
     monkeypatch.setenv("BEEVER_ENV", "test")
 
     try:
-        from beever_atlas.infra.auth import require_user
+        from beever_atlas.infra.auth import Principal, require_user
         from beever_atlas.server.app import app
     except Exception:
         yield
         return
 
-    def _fake_user() -> str:
-        return "user:test"
+    def _fake_user() -> Principal:
+        # Return a proper Principal — RES-177 H1 adds code paths (notably
+        # `infra.channel_access.assert_channel_access`) that inspect
+        # `.kind` and `.id`. Plain strings still work because Principal
+        # subclasses str, but the guard's single-tenant fallback needs
+        # `kind == "user"`.
+        return Principal("user:test", kind="user")
 
     saved = app.dependency_overrides.get(require_user)
     app.dependency_overrides[require_user] = _fake_user

@@ -7,9 +7,10 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from beever_atlas.infra.auth import Principal, require_user
 from beever_atlas.infra.config import get_settings
 from beever_atlas.stores import get_stores
 
@@ -236,7 +237,10 @@ async def list_connections_with_credentials(request: Request) -> list[_InternalC
 
 
 @router.post("/api/connections", response_model=ConnectionResponse, status_code=201)
-async def create_connection(body: CreateConnectionRequest) -> ConnectionResponse:
+async def create_connection(
+    body: CreateConnectionRequest,
+    principal: Principal = Depends(require_user),
+) -> ConnectionResponse:
     """Create a new platform connection.
 
     Flow:
@@ -306,7 +310,10 @@ async def create_connection(body: CreateConnectionRequest) -> ConnectionResponse
             await _unregister_adapter(connection_id)
             raise
 
-    # Step 3: persist encrypted connection
+    # Step 3: persist encrypted connection.
+    # `owner_principal_id` is stamped with the authenticated caller's principal
+    # id (RES-177 H1) so `_assert_channel_access` can gate downstream routes.
+    owner_id = getattr(principal, "id", None) or str(principal)
     conn = await stores.platform.create_connection(
         platform=platform,
         display_name=body.display_name.strip(),
@@ -314,6 +321,7 @@ async def create_connection(body: CreateConnectionRequest) -> ConnectionResponse
         status="connected",
         source="ui",
         connection_id=connection_id,
+        owner_principal_id=owner_id,
     )
 
     logger.info("Created platform connection id=%s platform=%s", conn.id, conn.platform)

@@ -24,3 +24,9 @@ class PlatformConnection(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     source: Literal["ui", "env"] = "ui"
+    # Principal id (see `infra/auth.Principal.id`) of the user who created this
+    # connection. `None` on documents written before RES-177; the platform
+    # store's startup backfill rewrites `None` to the shared sentinel
+    # ``"legacy:shared"`` so multi-tenant deployments have a single target
+    # for explicit ownership assignment.
+    owner_principal_id: str | None = None

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
@@ -43,12 +45,17 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_facts(body: SearchRequest) -> SearchResponse:
+async def search_facts(
+    body: SearchRequest,
+    principal: Principal = Depends(require_user),
+) -> SearchResponse:
     """Search facts using semantic similarity.
 
     Computes a query embedding via Jina, then runs hybrid search
     (vector + field-filter) against Weaviate.
     """
+    if body.channel_id:
+        await assert_channel_access(principal, body.channel_id)
     stores = get_stores()
 
     try:

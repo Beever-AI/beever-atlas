@@ -105,6 +105,10 @@ async def _migrate_env_connection(stores: StoreClients, settings) -> None:
             credentials=credentials,
             status="connected",
             source="env",
+            # Env-provisioned rows are shared across users; use the same
+            # sentinel the startup backfill assigns to pre-migration rows so
+            # `_assert_channel_access` single-tenant fallback applies.
+            owner_principal_id="legacy:shared",
         )
         logging.getLogger(__name__).info(
             "Env-to-DB migration: created source='env' platform connection id=%s", conn.id

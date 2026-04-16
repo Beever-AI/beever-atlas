@@ -64,8 +64,11 @@ class TestGetChannel:
 
     @pytest.mark.asyncio
     async def test_not_found_channel(self, client: AsyncClient):
+        # RES-177 H1: channels not associated with any owned
+        # PlatformConnection return 403 (access-denied) rather than 404
+        # so we do not leak channel existence across tenants.
         response = await client.get("/api/channels/NONEXISTENT")
-        assert response.status_code == 404
+        assert response.status_code == 403
 
 
 class TestGetMessages:

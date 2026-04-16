@@ -34,6 +34,31 @@ class PlatformStore:
             pass  # collection may not exist yet
         await self._col.create_index([("platform", 1), ("source", 1)])
         await self._col.create_index("source")
+        # RES-177 H1: backfill legacy rows so multi-tenant operators have a
+        # single sentinel to target when assigning ownership.
+        await self.backfill_legacy_owners()
+
+    async def backfill_legacy_owners(self) -> int:
+        """Set ``owner_principal_id`` on legacy rows to the shared sentinel.
+
+        Idempotent: only rewrites rows where the field is missing OR ``None``.
+        Returns the number of rows updated. Safe to invoke on every boot;
+        subsequent invocations against already-backfilled data return 0.
+        """
+        try:
+            result = await self._col.update_many(
+                {
+                    "$or": [
+                        {"owner_principal_id": {"$exists": False}},
+                        {"owner_principal_id": None},
+                    ]
+                },
+                {"$set": {"owner_principal_id": "legacy:shared"}},
+            )
+        except Exception:
+            # Collection may not exist yet on a fresh install; nothing to do.
+            return 0
+        return int(getattr(result, "modified_count", 0) or 0)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -63,8 +88,14 @@ class PlatformStore:
         status: str = "connected",
         source: str = "ui",
         connection_id: str | None = None,
+        owner_principal_id: str | None = None,
     ) -> PlatformConnection:
-        """Encrypt credentials and persist a new PlatformConnection."""
+        """Encrypt credentials and persist a new PlatformConnection.
+
+        ``owner_principal_id`` is stamped with the caller's principal id for
+        UI-provisioned connections; env-provisioned rows pass the shared
+        sentinel ``"legacy:shared"`` so single-tenant compatibility applies.
+        """
         ciphertext, iv, tag = encrypt_credentials(credentials)
         kwargs: dict = dict(
             platform=platform,  # type: ignore[arg-type]
@@ -75,6 +106,7 @@ class PlatformStore:
             selected_channels=selected_channels or [],
             status=status,  # type: ignore[arg-type]
             source=source,  # type: ignore[arg-type]
+            owner_principal_id=owner_principal_id,
         )
         if connection_id:
             kwargs["id"] = connection_id

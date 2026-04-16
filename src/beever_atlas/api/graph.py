@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 from beever_atlas.models import GraphEntity, GraphRelationship, Subgraph
 
@@ -15,8 +17,11 @@ async def list_entities(
     channel_id: str | None = Query(default=None),
     entity_type: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
+    principal: Principal = Depends(require_user),
 ) -> list[GraphEntity]:
     """List entities in the knowledge graph."""
+    if channel_id:
+        await assert_channel_access(principal, channel_id)
     stores = get_stores()
     return await stores.graph.list_entities(channel_id=channel_id, entity_type=entity_type, limit=limit)
 
@@ -25,8 +30,11 @@ async def list_entities(
 async def list_relationships(
     channel_id: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
+    principal: Principal = Depends(require_user),
 ) -> list[GraphRelationship]:
     """List relationships in the knowledge graph, including entity-media links."""
+    if channel_id:
+        await assert_channel_access(principal, channel_id)
     stores = get_stores()
     entity_rels = await stores.graph.list_relationships(channel_id=channel_id, limit=limit)
 
@@ -57,8 +65,11 @@ async def get_entity_neighbors(
 async def list_media(
     channel_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
+    principal: Principal = Depends(require_user),
 ) -> list[dict]:
     """List media nodes in the knowledge graph."""
+    if channel_id:
+        await assert_channel_access(principal, channel_id)
     stores = get_stores()
     return await stores.graph.list_media(channel_id=channel_id, limit=limit)
 
@@ -67,7 +78,9 @@ async def list_media(
 async def get_decisions(
     channel_id: str,
     limit: int = Query(default=20, ge=1, le=200),
+    principal: Principal = Depends(require_user),
 ) -> list[GraphEntity]:
     """Get the decision timeline for a channel."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     return await stores.graph.get_decisions(channel_id, limit=limit)

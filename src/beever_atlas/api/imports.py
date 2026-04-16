@@ -23,13 +23,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from beever_atlas.agents.ingestion.csv_mapper import (
     infer_mapping,
     infer_mapping_deterministic,
 )
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.infra.config import get_settings
 from beever_atlas.services.file_importer import (
     ColumnMapping,
@@ -232,8 +234,16 @@ def _row_count_estimate(path: Path, encoding: str, fmt: str) -> int:
     return count
 
 
-async def _ensure_file_connection(display_name: str) -> str:
-    """Return the single shared ``platform="file"`` connection id, creating it if needed."""
+async def _ensure_file_connection(
+    display_name: str, owner_principal_id: str | None = None,
+) -> str:
+    """Return the single shared ``platform="file"`` connection id, creating it if needed.
+
+    When a new file connection is created, ``owner_principal_id`` is stamped
+    with the caller's principal so channel-access guards admit them on the
+    synthetic file channels. Older file connections are untouched (the
+    startup backfill rewrites missing owners to ``"legacy:shared"``).
+    """
     stores = get_stores()
     existing = await stores.platform.list_connections()
     for conn in existing:
@@ -245,6 +255,7 @@ async def _ensure_file_connection(display_name: str) -> str:
         credentials={},
         status="connected",
         source="ui",
+        owner_principal_id=owner_principal_id,
     )
     logger.info("imports: created platform=file connection id=%s", conn.id)
     return conn.id
@@ -260,9 +271,13 @@ async def preview_import(
     request: Request,
     file: UploadFile = File(...),
     use_llm: bool = Form(default=True),
+    principal: Principal = Depends(require_user),
 ) -> PreviewResponse:
     """Stage an uploaded file and return the inferred column mapping."""
     _ = _extract_user_id(request)  # enforce auth context, scope cleanup per-user later
+    # RES-177 M6: stamp the uploader's principal id on the stage so the
+    # commit step can reject cross-user claims on the stage dir.
+    uploader_principal_id = getattr(principal, "id", None) or str(principal)
 
     safe_name, _ext = _sanitize_filename(file.filename)
 
@@ -349,6 +364,7 @@ async def preview_import(
         "encoding": encoding,
         "format": fmt,
         "created_at": time.time(),
+        "uploader_principal_id": uploader_principal_id,
     }
     meta_path.write_text(json.dumps(meta))
 
@@ -376,7 +392,11 @@ async def preview_import(
 
 
 @router.post("/api/imports/commit", response_model=CommitResponse)
-async def commit_import(request: Request, body: CommitRequest) -> CommitResponse:
+async def commit_import(
+    request: Request,
+    body: CommitRequest,
+    principal: Principal = Depends(require_user),
+) -> CommitResponse:
     _ = _extract_user_id(request)
     """Parse the staged file using ``body.mapping`` and kick off ingestion."""
     meta = _meta(body.file_id)
@@ -390,6 +410,21 @@ async def commit_import(request: Request, body: CommitRequest) -> CommitResponse
         raise HTTPException(
             status_code=410,
             detail="Staged file has expired. Re-upload via /api/imports/preview.",
+        )
+
+    # RES-177 M6: reject cross-user commits on a stage uploaded by someone
+    # else. Stages written before this change have no uploader recorded;
+    # honour them only when single-tenant fallback would otherwise apply.
+    caller_pid = getattr(principal, "id", None) or str(principal)
+    uploader_pid = meta.get("uploader_principal_id")
+    if uploader_pid and uploader_pid != caller_pid:
+        logger.info(
+            "imports.commit deny: file_id=%s uploader=%s caller=%s reason=principal_mismatch",
+            body.file_id, uploader_pid, caller_pid,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Staged upload belongs to a different user.",
         )
 
     original_path = Path(meta["original_path"])
@@ -434,7 +469,9 @@ async def commit_import(request: Request, body: CommitRequest) -> CommitResponse
         )
 
     stores = get_stores()
-    connection_id = await _ensure_file_connection("File Imports")
+    connection_id = await _ensure_file_connection(
+        "File Imports", owner_principal_id=caller_pid,
+    )
 
     # Tie this channel to the file connection so the sidebar groups it under
     # "File Imports" instead of treating it as orphaned.
@@ -444,6 +481,13 @@ async def commit_import(request: Request, body: CommitRequest) -> CommitResponse
             connection_id,
             selected_channels=list(file_conn.selected_channels) + [channel_id],
         )
+
+    # RES-177 H1 + M6: enforce channel-level access once the channel is
+    # attached to the file connection. The check runs AFTER selected_channels
+    # is updated so first-time commits by the uploader succeed (the uploader
+    # now owns the file connection); repeat commits to a channel owned by
+    # another user fail here.
+    await assert_channel_access(principal, channel_id)
 
     # Persist raw messages so the Messages tab can render them. Platform
     # channels re-fetch from the bridge, but file channels have no upstream —
