@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from beever_atlas.server.app import app
 
 SESSION_ID = "test-delete-session-abc123"
-USER_ID = "api_user"
+USER_ID = "user:test"  # conftest `_auth_bypass` principal id post-RES-177
 
 
 @pytest.fixture

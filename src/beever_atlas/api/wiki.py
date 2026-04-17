@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.infra.config import get_settings
 from beever_atlas.stores import get_stores
 from beever_atlas.wiki.cache import WikiCache
@@ -58,8 +60,13 @@ async def _resolve_target_lang(channel_id: str, requested: str | None) -> str:
 
 
 @router.get("")
-async def get_wiki(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
+async def get_wiki(
+    channel_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return the full cached wiki for a channel."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     lang = await _resolve_target_lang(channel_id, target_lang)
     doc = await cache.get_wiki(channel_id, target_lang=lang)
@@ -69,8 +76,14 @@ async def get_wiki(channel_id: str, target_lang: str | None = Query(default=None
 
 
 @router.get("/pages/{page_id}")
-async def get_wiki_page(channel_id: str, page_id: str, target_lang: str | None = Query(default=None)) -> dict:
+async def get_wiki_page(
+    channel_id: str,
+    page_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return a single wiki page from cache."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     lang = await _resolve_target_lang(channel_id, target_lang)
     page = await cache.get_page(channel_id, page_id, target_lang=lang)
@@ -80,8 +93,13 @@ async def get_wiki_page(channel_id: str, page_id: str, target_lang: str | None =
 
 
 @router.get("/structure")
-async def get_wiki_structure(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
+async def get_wiki_structure(
+    channel_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return the wiki sidebar structure without page content."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     lang = await _resolve_target_lang(channel_id, target_lang)
     doc = await cache.get_structure(channel_id, target_lang=lang)
@@ -91,15 +109,24 @@ async def get_wiki_structure(channel_id: str, target_lang: str | None = Query(de
 
 
 @router.get("/versions")
-async def list_wiki_versions(channel_id: str) -> list[dict]:
+async def list_wiki_versions(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> list[dict]:
     """Return a list of archived wiki version summaries for a channel."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     return await cache.version_store.list_versions(channel_id)
 
 
 @router.get("/versions/{version_number}")
-async def get_wiki_version(channel_id: str, version_number: int) -> dict:
+async def get_wiki_version(
+    channel_id: str,
+    version_number: int,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return the full content of a specific archived wiki version."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     version = await cache.version_store.get_version(channel_id, version_number)
     if version is None:
@@ -112,9 +139,13 @@ async def get_wiki_version(channel_id: str, version_number: int) -> dict:
 
 @router.get("/versions/{version_number}/pages/{page_id}")
 async def get_wiki_version_page(
-    channel_id: str, version_number: int, page_id: str
+    channel_id: str,
+    version_number: int,
+    page_id: str,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Return a single page from an archived wiki version."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     page = await cache.version_store.get_version_page(
         channel_id, version_number, page_id
@@ -128,8 +159,12 @@ async def get_wiki_version_page(
 
 
 @router.get("/download")
-async def download_wiki_markdown(channel_id: str) -> PlainTextResponse:
+async def download_wiki_markdown(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> PlainTextResponse:
     """Export the full wiki as a single Markdown file."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     doc = await cache.get_wiki(channel_id)
     if doc is None:
@@ -180,8 +215,13 @@ async def download_wiki_markdown(channel_id: str) -> PlainTextResponse:
 
 
 @router.get("/status")
-async def get_wiki_status(channel_id: str, target_lang: str | None = Query(default=None)) -> dict:
+async def get_wiki_status(
+    channel_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return the current wiki generation status for a channel."""
+    await assert_channel_access(principal, channel_id)
     cache = _get_cache()
     lang = await _resolve_target_lang(channel_id, target_lang)
     status = await cache.get_generation_status(channel_id, target_lang=lang)
@@ -195,8 +235,10 @@ async def refresh_wiki(
     channel_id: str,
     background_tasks: BackgroundTasks,
     target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Trigger async wiki generation for a channel."""
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.wiki.builder import WikiBuilder
 
     stores = get_stores()

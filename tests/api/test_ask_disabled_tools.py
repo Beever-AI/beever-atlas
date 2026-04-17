@@ -109,7 +109,7 @@ class _AgentStreamPatches:
 
 
 @pytest.mark.anyio
-async def test_disabled_tools_filtered_from_agent(client):
+async def test_disabled_tools_filtered_from_agent(client, mock_stores):
     captured: dict = {}
 
     def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
@@ -139,7 +139,7 @@ async def test_disabled_tools_filtered_from_agent(client):
 
 
 @pytest.mark.anyio
-async def test_qa_tools_not_mutated(client):
+async def test_qa_tools_not_mutated(client, mock_stores):
     before_identity = id(QA_TOOLS)
     before_list = list(QA_TOOLS)
 
@@ -163,7 +163,7 @@ async def test_qa_tools_not_mutated(client):
 
 
 @pytest.mark.anyio
-async def test_unknown_tool_name_ignored(client):
+async def test_unknown_tool_name_ignored(client, mock_stores):
     def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
         return MagicMock()
 
@@ -201,7 +201,7 @@ async def test_unknown_tool_name_ignored(client):
 
 
 @pytest.mark.anyio
-async def test_refusal_clause_appended(client):
+async def test_refusal_clause_appended(client, mock_stores):
     captured: dict = {}
 
     def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):

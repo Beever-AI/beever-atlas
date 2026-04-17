@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.models.sync_policy import (
     ChannelPolicy,
     ConsolidationConfig,
@@ -177,8 +179,12 @@ async def get_presets() -> list[dict]:
 
 
 @router.get("/channels/{channel_id}/policy")
-async def get_channel_policy(channel_id: str) -> dict:
+async def get_channel_policy(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Return the channel policy (raw + effective resolved)."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     policy = await stores.mongodb.get_channel_policy(channel_id)
     defaults = await stores.mongodb.get_global_defaults()
@@ -204,8 +210,13 @@ async def get_channel_policy(channel_id: str) -> dict:
 
 
 @router.put("/channels/{channel_id}/policy")
-async def upsert_channel_policy(channel_id: str, body: PolicyUpdateRequest) -> dict:
+async def upsert_channel_policy(
+    channel_id: str,
+    body: PolicyUpdateRequest,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Create or update a channel policy."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
 
     # If applying a preset, populate from preset config
@@ -258,8 +269,12 @@ async def upsert_channel_policy(channel_id: str, body: PolicyUpdateRequest) -> d
 
 
 @router.delete("/channels/{channel_id}/policy")
-async def delete_channel_policy(channel_id: str) -> dict:
+async def delete_channel_policy(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Delete a channel policy, reverting to global defaults."""
+    await assert_channel_access(principal, channel_id)
     stores = get_stores()
     deleted = await stores.mongodb.delete_channel_policy(channel_id)
     if not deleted:
@@ -303,11 +318,20 @@ async def list_policies() -> list[dict]:
 
 
 @router.post("/channels/bulk-policy")
-async def bulk_apply_policy(body: BulkPolicyRequest) -> dict:
+async def bulk_apply_policy(
+    body: BulkPolicyRequest,
+    principal: Principal = Depends(require_user),
+) -> dict:
     """Apply a preset to multiple channels at once."""
     preset_cfg = get_preset_config(body.preset)
     if preset_cfg is None:
         raise HTTPException(status_code=404, detail=f"Preset '{body.preset}' not found")
+
+    # RES-177 H1: verify ownership for EVERY channel BEFORE any mutation.
+    # If any channel is not owned by the caller, the whole bulk fails
+    # and no policy is written — avoids partial-application of a preset.
+    for channel_id in body.channel_ids:
+        await assert_channel_access(principal, channel_id)
 
     stores = get_stores()
     updated = []

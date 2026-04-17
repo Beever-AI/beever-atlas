@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File as FastAPIFile
 
-from beever_atlas.infra.auth import require_user
+from beever_atlas.infra.auth import Principal, require_user
+from beever_atlas.infra.channel_access import assert_channel_access
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -61,15 +62,6 @@ class FeedbackRequest(BaseModel):
 def _sse_event(event_type: str, data: dict) -> str:
     """Format a Server-Sent Event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-
-
-def _extract_user_id(request: Request) -> str:
-    """Extract user_id from request auth state.
-
-    Checks request.state.user_id (set by auth middleware) and falls back
-    to "api_user" for unauthenticated/development requests.
-    """
-    return getattr(request.state, "user_id", None) or "api_user"
 
 
 def _extract_citations_from_text(text: str) -> list[dict]:
@@ -865,6 +857,7 @@ async def ask_history(
     page: int = 1,
     page_size: int = 20,
     search: str | None = None,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Return paginated past Q&A sessions for the authenticated user.
 
@@ -872,10 +865,11 @@ async def ask_history(
     first question preview, and created_at timestamp.
     Supports optional search filtering and excludes soft-deleted sessions.
     """
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
 
     # Use direct MongoDB query to support is_deleted filter and search
@@ -938,13 +932,15 @@ async def ask_channel(
     channel_id: str,
     body: AskRequest,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> StreamingResponse:
     """Stream an ADK agent response as Server-Sent Events.
 
     Emits: thinking, response_delta, tool_call_start, tool_call_end,
            citations, follow_ups, metadata, error, done.
     """
-    user_id = _extract_user_id(request)
+    await assert_channel_access(principal, channel_id)
+    user_id = principal.id
     session_id = body.session_id or str(uuid.uuid4())
 
     return StreamingResponse(
@@ -971,8 +967,10 @@ async def ask_channel(
 async def upload_attachment(
     channel_id: str,
     file: UploadFile = FastAPIFile(...),
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Upload a file for text extraction. Returns extracted text for injection into agent prompt."""
+    await assert_channel_access(principal, channel_id)
     content = await file.read()
     if len(content) > MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size: 10MB")
@@ -1001,12 +999,14 @@ async def submit_feedback(
     channel_id: str,
     body: FeedbackRequest,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Submit thumbs up/down feedback on an assistant response."""
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
@@ -1038,17 +1038,19 @@ async def get_session(
     channel_id: str,
     session_id: str,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Load a full conversation session with all messages.
 
     Authorization: requester must own the session and the URL's channel_id
     must match the session's channel_id (so forged cross-channel URLs 404).
     """
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.chat_history_store import ChatHistoryStore
     from fastapi.responses import JSONResponse
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     store = ChatHistoryStore(settings.mongodb_uri)
     await store.startup()
@@ -1079,12 +1081,14 @@ async def update_session(
     session_id: str,
     body: dict,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Update session metadata (title, pinned status)."""
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
@@ -1112,12 +1116,14 @@ async def delete_session(
     channel_id: str,
     session_id: str,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Soft-delete a conversation session."""
+    await assert_channel_access(principal, channel_id)
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
@@ -1166,6 +1172,7 @@ class FeedbackV2Request(BaseModel):
 async def ask_v2(
     request: Request,
     body: AskV2Request,
+    principal: Principal = Depends(require_user),
 ) -> StreamingResponse:
     """Session-scoped SSE streaming. `channel_id` scopes retrieval for this turn only.
 
@@ -1173,7 +1180,8 @@ async def ask_v2(
     its own `channel_id`. The derived set of channels used in a session is
     aggregated at read time (see GET /api/ask/sessions/{id}).
     """
-    user_id = _extract_user_id(request)
+    await assert_channel_access(principal, body.channel_id)
+    user_id = principal.id
     session_id = body.session_id or str(uuid.uuid4())
 
     return StreamingResponse(
@@ -1218,13 +1226,14 @@ async def list_ask_sessions(
     page: int = 1,
     page_size: int = 20,
     search: str | None = None,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """List all ask sessions for the authenticated user across all channels."""
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.chat_history_store import ChatHistoryStore
 
     page_size = min(page_size, 50)
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     store = ChatHistoryStore(settings.mongodb_uri)
     await store.startup()
@@ -1250,13 +1259,14 @@ async def list_ask_sessions(
 async def get_ask_session(
     session_id: str,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Load a full session with derived channel_ids (v2) or legacy fallback (v1)."""
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores.chat_history_store import ChatHistoryStore
     from fastapi.responses import JSONResponse
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     store = ChatHistoryStore(settings.mongodb_uri)
     await store.startup()
@@ -1280,12 +1290,13 @@ async def update_ask_session(
     session_id: str,
     body: dict,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Update session metadata (title, pinned)."""
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
@@ -1310,12 +1321,13 @@ async def update_ask_session(
 async def delete_ask_session(
     session_id: str,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Soft-delete an ask session."""
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
@@ -1608,10 +1620,11 @@ async def get_shared_conversation(
             return JSONResponse(status_code=404, content={"error": "Not found"})
 
         # Resolve optional caller identity (no 401 on missing).
-        caller_user_id = require_user_optional(
+        caller_principal = require_user_optional(
             authorization=request.headers.get("authorization"),
             access_token=request.query_params.get("access_token"),
         )
+        caller_user_id = caller_principal.id if caller_principal is not None else None
 
         visibility = doc.get("visibility", "owner")
         owner_user_id = doc.get("owner_user_id")
@@ -1705,12 +1718,20 @@ async def upload_ask_attachment(
 async def submit_ask_feedback(
     body: FeedbackV2Request,
     request: Request,
+    principal: Principal = Depends(require_user),
 ) -> dict:
     """Submit thumbs up/down feedback on an assistant response (channel-less)."""
+    # RES-177 M7: when the caller supplies channel_id, enforce ownership.
+    # This prevents cross-tenant feedback injection against another user's
+    # channels. channel_id is optional in FeedbackV2Request so we only
+    # check when it is provided.
+    if body.channel_id:
+        await assert_channel_access(principal, body.channel_id)
+
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = _extract_user_id(request)
+    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:

@@ -473,6 +473,14 @@ async def commit_import(
         "File Imports", owner_principal_id=caller_pid,
     )
 
+    # RES-177 H1 + M6 (review fix): check access BEFORE mutating the file
+    # connection's selected_channels. If the caller doesn't own this channel,
+    # the guard raises 403 and no state is touched; otherwise we append the
+    # channel to the sync pick-list below. The previous ordering was
+    # self-granting — appending first meant the guard would always admit the
+    # caller that had just written themselves into selected_channels.
+    await assert_channel_access(principal, channel_id)
+
     # Tie this channel to the file connection so the sidebar groups it under
     # "File Imports" instead of treating it as orphaned.
     file_conn = await stores.platform.get_connection(connection_id)
@@ -481,13 +489,6 @@ async def commit_import(
             connection_id,
             selected_channels=list(file_conn.selected_channels) + [channel_id],
         )
-
-    # RES-177 H1 + M6: enforce channel-level access once the channel is
-    # attached to the file connection. The check runs AFTER selected_channels
-    # is updated so first-time commits by the uploader succeed (the uploader
-    # now owns the file connection); repeat commits to a channel owned by
-    # another user fail here.
-    await assert_channel_access(principal, channel_id)
 
     # Persist raw messages so the Messages tab can render them. Platform
     # channels re-fetch from the bridge, but file channels have no upstream —

@@ -11,6 +11,14 @@ from httpx import ASGITransport, AsyncClient
 from beever_atlas.wiki.version_store import WikiVersionStore
 
 
+@pytest.fixture(autouse=True)
+def _install_mock_stores(mock_stores):
+    """RES-177: wiki endpoints now call `assert_channel_access`, which
+    needs a usable `get_stores()`. Wire the conftest-provided mock
+    stores uniformly across this file."""
+    yield mock_stores
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 class AsyncCursorMock:

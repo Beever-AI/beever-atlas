@@ -16,6 +16,14 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _install_mock_stores(mock_stores):
+    """RES-177: channel-scoped routes now call `assert_channel_access`,
+    which needs a usable `get_stores()`. Every test in this file exercises
+    `/api/channels/{id}/ask`, so wire the mock stores uniformly."""
+    yield mock_stores
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)

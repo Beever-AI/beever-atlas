@@ -158,8 +158,7 @@ def require_user(
             )
         return principal
 
-    allow_bridge_as_user = getattr(settings, "allow_bridge_as_user", True)
-    if allow_bridge_as_user:
+    if settings.allow_bridge_as_user:
         bridge_principal = _match_bridge_key(token, bridge_key)
         if bridge_principal is not None:
             return bridge_principal
@@ -189,8 +188,7 @@ def require_user_optional(
     if principal is not None:
         return principal
 
-    allow_bridge_as_user = getattr(settings, "allow_bridge_as_user", True)
-    if allow_bridge_as_user:
+    if settings.allow_bridge_as_user:
         return _match_bridge_key(token, bridge_key)
     return None
 
