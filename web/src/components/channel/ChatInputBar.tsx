@@ -278,7 +278,7 @@ export function ChatInputBar({
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5 opacity-70" strokeWidth={2} />
                   <span className="hidden sm:inline">Tools</span>
-                  <span className="opacity-60">{toolsEnabled}/{toolsTotal}</span>
+                  <span className="opacity-60">({toolsEnabled}/{toolsTotal})</span>
                 </button>
                 {showToolsMenu && (
                   <>
