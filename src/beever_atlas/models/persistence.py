@@ -44,6 +44,14 @@ class SyncJob(BaseModel):
     batch_job_state: str | None = None
     batch_job_elapsed_seconds: float | None = None
     version: int = 0
+    # Principal id (see `infra/auth.Principal.id`) that created this job.
+    # Added by openspec change `atlas-mcp-server` Phase 1 — required by the
+    # forthcoming MCP `get_job_status` tool to enforce `job_not_found` for
+    # principals that do not own the job. Legacy rows without this field are
+    # treated as owned by the ``"legacy:shared"`` sentinel (matching the
+    # platform_connections convention at `server/app.py:114`).
+    owner_principal_id: str | None = None
+    kind: str = "sync"  # "sync" | "wiki_refresh" — used by MCP surface
 
 
 class ChannelSyncState(BaseModel):

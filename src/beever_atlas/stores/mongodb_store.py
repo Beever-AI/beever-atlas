@@ -99,14 +99,25 @@ class MongoDBStore:
         total_messages: int,
         batch_size: int = 10,
         parent_messages: int = 0,
+        owner_principal_id: str | None = None,
+        kind: str = "sync",
     ) -> SyncJob:
-        """Create and persist a new SyncJob, returning the model."""
+        """Create and persist a new SyncJob, returning the model.
+
+        ``owner_principal_id`` is stamped on new rows so MCP's
+        ``get_job_status`` can enforce ``job_not_found`` for jobs the
+        caller does not own. Pre-migration rows lack this field; readers
+        MUST treat missing/None values as owned by the ``"legacy:shared"``
+        sentinel.
+        """
         job = SyncJob(
             channel_id=channel_id,
             sync_type=sync_type,
             total_messages=total_messages,
             parent_messages=parent_messages or total_messages,
             batch_size=batch_size,
+            owner_principal_id=owner_principal_id,
+            kind=kind,
         )
         await self._sync_jobs.insert_one(job.model_dump())
         return job

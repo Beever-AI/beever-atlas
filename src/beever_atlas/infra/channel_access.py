@@ -140,3 +140,74 @@ async def assert_channel_access(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Channel access denied",
     )
+
+
+async def assert_connection_owned(
+    principal: Principal | str, connection_id: str
+) -> None:
+    """Raise ``ConnectionAccessDenied`` if ``principal`` doesn't own ``connection_id``.
+
+    Mirrors :func:`assert_channel_access` semantics for connection-scoped
+    operations (e.g. listing the channels of a single connection):
+
+    Allow when:
+
+    1. The connection's ``owner_principal_id`` equals ``principal.id``.
+    2. Single-tenant mode (``BEEVER_SINGLE_TENANT=true``), the principal is
+       a ``user`` kind, AND the connection is un-owned
+       (``owner_principal_id in {None, "legacy:shared"}``) — the legacy
+       fallback for pre-migration rows and env-provisioned connections.
+
+    Bridge principals never inherit the single-tenant fallback.
+
+    Raises:
+        ConnectionAccessDenied: when the connection does not exist OR the
+            principal is not permitted to access it. The two cases are not
+            distinguished in the raised exception so callers cannot probe
+            for connection existence without ownership.
+    """
+    # Import here to avoid a circular import: `capabilities.errors` is a
+    # small leaf module but keeping this local makes the dependency
+    # direction obvious (infra → capabilities.errors, not the reverse).
+    from beever_atlas.capabilities.errors import ConnectionAccessDenied
+
+    stores = get_stores()
+    conn = await stores.platform.get_connection(connection_id)
+
+    pid = _principal_id(principal)
+    kind = _principal_kind(principal)
+    settings = get_settings()
+    single_tenant = bool(getattr(settings, "beever_single_tenant", True))
+
+    if conn is None:
+        logger.info(
+            "connection_access deny: connection=%s principal=%s kind=%s reason=not_found",
+            connection_id,
+            pid,
+            kind,
+        )
+        raise ConnectionAccessDenied(connection_id)
+
+    owner = getattr(conn, "owner_principal_id", None)
+
+    # Explicit ownership match wins for any principal kind.
+    if owner and owner == pid:
+        return
+
+    # Single-tenant fallback: user principals are admitted on un-owned /
+    # sentinel-owned rows. Bridge (and future MCP) principals don't inherit
+    # this — they must have an explicit match.
+    if (
+        single_tenant
+        and kind == "user"
+        and owner in (None, _LEGACY_SHARED_OWNER)
+    ):
+        return
+
+    logger.info(
+        "connection_access deny: connection=%s principal=%s kind=%s reason=owner_mismatch",
+        connection_id,
+        pid,
+        kind,
+    )
+    raise ConnectionAccessDenied(connection_id)

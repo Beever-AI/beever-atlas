@@ -68,12 +68,16 @@ class SyncRunner:
         sync_type: str = "auto",
         use_batch_api: bool = False,
         connection_id: str | None = None,
+        owner_principal_id: str | None = None,
     ) -> str:
         """Kick off a sync for *channel_id* and return the new job_id.
 
         Args:
             channel_id: Platform channel identifier.
             sync_type: ``"auto"`` (default), ``"full"``, or ``"incremental"``.
+            owner_principal_id: Principal id stamped on the created
+                ``sync_jobs`` row; required for MCP ownership checks in
+                ``capabilities.jobs.get_job_status``.
 
         Returns:
             The MongoDB SyncJob ID for the created job.
@@ -167,6 +171,7 @@ class SyncRunner:
                     since=since,
                     use_batch_api=use_batch_api,
                     resolved_type=resolved_type,
+                    owner_principal_id=owner_principal_id,
                 )
 
         adapter = ChatBridgeAdapter(connection_id=resolved_connection_id) if resolved_connection_id else get_adapter()
@@ -216,6 +221,8 @@ class SyncRunner:
             total_messages=len(messages),
             parent_messages=parent_count,
             batch_size=settings.sync_batch_size,
+            owner_principal_id=owner_principal_id,
+            kind="sync",
         )
         job_id: str = job.id
 
@@ -463,6 +470,7 @@ class SyncRunner:
         since: datetime | str | None,
         use_batch_api: bool,
         resolved_type: str,
+        owner_principal_id: str | None = None,
     ) -> str:
         """Start a sync for a file-imported channel.
 
@@ -529,6 +537,8 @@ class SyncRunner:
             total_messages=len(messages),
             parent_messages=parent_count,
             batch_size=settings.sync_batch_size,
+            owner_principal_id=owner_principal_id,
+            kind="sync",
         )
 
         task = asyncio.create_task(
