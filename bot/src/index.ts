@@ -7,7 +7,7 @@ config({ path: resolve(import.meta.dirname, "../../.env") });
 import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
-import { registerBridgeRoutes, recordTelegramChat } from "./bridge.js";
+import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
 import { ChatManager } from "./chat-manager.js";
 import { WebhookBuffer } from "./webhook-buffer.js";
 
@@ -89,11 +89,21 @@ export interface AskResult {
   costUsd: number;
 }
 
+function backendApiKey(): string {
+  const raw = process.env.BEEVER_API_KEYS || "";
+  return raw.split(",").map((k) => k.trim()).find(Boolean) || "";
+}
+
 async function askBackend(channelId: string, question: string): Promise<AskResult> {
   const url = `${BACKEND_URL}/api/channels/${channelId}/ask`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const apiKey = backendApiKey();
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ question }),
   });
 
@@ -206,6 +216,25 @@ async function loadConnectionsFromBackend(chatManager: ChatManager): Promise<voi
   }
 }
 
+async function registerTeamsFromEnvIfPresent(
+  chatManager: ChatManager,
+  logPrefix: string,
+): Promise<boolean> {
+  const teamsAppId = process.env.TEAMS_APP_ID;
+  const teamsAppPassword = process.env.TEAMS_APP_PASSWORD;
+  if (!teamsAppId || !teamsAppPassword) return false;
+
+  const teamsAppTenantId = process.env.TEAMS_APP_TENANT_ID;
+  const appType = teamsAppTenantId ? "SingleTenant" : "MultiTenant";
+  console.log(`${logPrefix}: registering Teams adapter from .env credentials (${appType})`);
+  await chatManager.register("teams", {
+    appId: teamsAppId,
+    appPassword: teamsAppPassword,
+    ...(teamsAppTenantId ? { appTenantId: teamsAppTenantId, appType } : {}),
+  });
+  return true;
+}
+
 async function fallbackToEnvCredentials(chatManager: ChatManager): Promise<void> {
   let registered = 0;
 
@@ -233,11 +262,7 @@ async function fallbackToEnvCredentials(chatManager: ChatManager): Promise<void>
   }
 
   // Teams
-  const teamsAppId = process.env.TEAMS_APP_ID;
-  const teamsAppPassword = process.env.TEAMS_APP_PASSWORD;
-  if (teamsAppId && teamsAppPassword) {
-    console.log("Env fallback: registering Teams adapter from .env credentials");
-    await chatManager.register("teams", { appId: teamsAppId, appPassword: teamsAppPassword });
+  if (await registerTeamsFromEnvIfPresent(chatManager, "Env fallback")) {
     registered++;
   }
 
@@ -472,6 +497,14 @@ async function handleConnectionWebhook(
     if (typeof webhooks[compositeKey] === "function") {
       const webRes = await webhooks[compositeKey](webReq);
       console.log(`Webhook handled by connection ${connectionId} (${compositeKey})`);
+      if (webRes.status < 400) {
+        const platform = compositeKey.split(":", 1)[0];
+        if (platform === "telegram") {
+          recordTelegramChatFromUpdate(body, connectionId);
+        } else if (platform === "teams") {
+          recordTeamsConversationFromActivity(body, connectionId);
+        }
+      }
       res.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
       const resBody = await webRes.text();
       res.end(resBody);
@@ -540,6 +573,8 @@ async function handlePlatformWebhook(
           console.log(`Legacy ${platform} webhook handled by connection ${connectionId}`);
           if (platform === "telegram") {
             recordTelegramChatFromUpdate(body, connectionId);
+          } else if (platform === "teams") {
+            recordTeamsConversationFromActivity(body, connectionId);
           }
           res.writeHead(webRes.status, Object.fromEntries(webRes.headers.entries()));
           const resBody = await webRes.text();
@@ -600,6 +635,25 @@ function recordTelegramChatFromUpdate(body: string, connectionId: string): void 
   }
 }
 
+/**
+ * Parse a Teams webhook (Bot Framework Activity) body and register the
+ * conversation into the bridge's in-memory registry, so `listChannels` can
+ * surface channels/chats/DMs the bot has been @mentioned in. Teams/Azure Bot
+ * Service has no "list my conversations" API without Microsoft Graph app
+ * permissions, so this webhook-driven path is what populates the sidebar until
+ * a full Graph implementation lands.
+ */
+function recordTeamsConversationFromActivity(body: string, connectionId: string): void {
+  try {
+    const activity = JSON.parse(body);
+    if (activity?.conversation?.id) {
+      recordTeamsConversation(connectionId, activity);
+    }
+  } catch {
+    // malformed body — ignore; the SDK's handler will surface its own error
+  }
+}
+
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -632,6 +686,14 @@ async function main(): Promise<void> {
 
   // Attempt to load connections from backend with retry + .env fallback
   await loadConnectionsFromBackend(chatManager);
+
+  // Teams is webhook-only and may not be wired through the backend connection
+  // flow yet. Supplement from .env only when the backend didn't provide one —
+  // otherwise we'd register a duplicate adapter against the same Azure Bot and
+  // every @mention would trigger two replies.
+  if (chatManager.getAdaptersByPlatform("teams").length === 0) {
+    await registerTeamsFromEnvIfPresent(chatManager, "Env supplement");
+  }
 
   // Start periodic background sync for self-healing
   startBackgroundSync(chatManager);

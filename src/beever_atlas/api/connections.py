@@ -79,6 +79,23 @@ def _to_response(conn) -> ConnectionResponse:
     )
 
 
+def _credential_fingerprint(platform: str, credentials: dict[str, str]) -> str | None:
+    """Return a stable per-workspace identifier for a credentials dict.
+
+    Used by `create_connection` to block creating a second row for the same
+    external workspace. Returns None when no fingerprint is available, in which
+    case the caller should not treat it as a collision.
+    """
+    if platform == "teams":
+        # Microsoft App ID identifies the Azure Bot registration. The app
+        # password (client secret) rotates independently, so it can't anchor
+        # workspace identity.
+        value = credentials.get("app_id") or credentials.get("appId")
+        return value.strip().lower() if isinstance(value, str) and value.strip() else None
+    value = credentials.get("bot_token")
+    return value if isinstance(value, str) and value else None
+
+
 def _bridge_client() -> httpx.AsyncClient:
     """Return an httpx client pre-configured for the bridge service."""
     settings = get_settings()
@@ -265,23 +282,32 @@ async def create_connection(
             detail="display_name is required. Provide a name to identify this connection.",
         )
 
-    # Duplicate check: reject if another connection already uses the same token
-    existing = await stores.platform.list_connections()
-    new_token = body.credentials.get("bot_token", "")
-    for existing_conn in existing:
-        if existing_conn.status != "connected" or existing_conn.platform != platform:
-            continue
-        try:
-            existing_creds = stores.platform.decrypt_connection_credentials(existing_conn)
-            if existing_creds.get("bot_token") == new_token and new_token:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f'This workspace is already connected as "{existing_conn.display_name}".',
-                )
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # skip connections we can't decrypt
+    # Duplicate check: reject if another connection already identifies the same
+    # external workspace. Platforms differ in which credential field anchors
+    # workspace identity:
+    #   - Slack/Discord/Mattermost/Telegram: bot token
+    #   - Teams: Microsoft App ID (the secret rotates independently)
+    # Without this per-platform fingerprint, resubmitting the Teams wizard with
+    # the same app produced two DB rows both pointing at the same Azure Bot,
+    # and only one of them ever received webhooks.
+    new_fingerprint = _credential_fingerprint(platform, body.credentials)
+    if new_fingerprint:
+        existing = await stores.platform.list_connections()
+        for existing_conn in existing:
+            if existing_conn.status != "connected" or existing_conn.platform != platform:
+                continue
+            try:
+                existing_creds = stores.platform.decrypt_connection_credentials(existing_conn)
+                existing_fingerprint = _credential_fingerprint(platform, existing_creds)
+                if existing_fingerprint and existing_fingerprint == new_fingerprint:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f'This workspace is already connected as "{existing_conn.display_name}".',
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # skip connections we can't decrypt
 
     # Generate ID before registration so rollback can target the right adapter
     connection_id = str(uuid.uuid4())
@@ -377,12 +403,10 @@ async def list_connection_channels(connection_id: str) -> list[ChannelItem]:
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
 
-    # Teams has no channel-listing path wired up (Graph API not implemented) — short-circuit
-    # to avoid a 501. Telegram falls through: the bridge returns an in-memory registry of
-    # chats the bot has received updates from (populated on webhook delivery).
-    if conn.platform == "teams":
-        return []
-
+    # Teams and Telegram both fall through: the bridge returns an in-memory
+    # registry of conversations the bot has received activities from. For Teams,
+    # conversations also get back-filled by Microsoft Graph via the Chat SDK
+    # adapter when credentials + consent are in place.
     raw_channels = await _list_bridge_channels(conn.platform, connection_id=conn.id)
     # Only return channels where the bot is a member — the bot can only
     # read messages from channels it's been invited to.

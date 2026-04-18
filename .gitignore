@@ -57,6 +57,7 @@ docker-compose.override.yml
 # Beever Atlas specific
 bot/node_modules/
 bot/dist/
+bot/teams-app/beever-atlas-bot.zip
 web/node_modules/
 web/dist/
 

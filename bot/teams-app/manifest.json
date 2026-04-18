@@ -1,0 +1,34 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.1",
+  "id": "eefc03cb-3132-46a1-ac50-e200792849b6",
+  "packageName": "com.votee.beever.atlas",
+  "developer": {
+    "name": "Votee",
+    "websiteUrl": "https://votee.com",
+    "privacyUrl": "https://votee.com/privacy",
+    "termsOfUseUrl": "https://votee.com/terms"
+  },
+  "name": {
+    "short": "Beever Atlas",
+    "full": "Beever Atlas Chat Bot"
+  },
+  "description": {
+    "short": "AI assistant for your team chats",
+    "full": "Beever Atlas brings AI-powered knowledge and assistance to your Microsoft Teams channels, group chats, and direct messages."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#5B4ECC",
+  "bots": [
+    {
+      "botId": "eefc03cb-3132-46a1-ac50-e200792849b6",
+      "scopes": ["personal", "team", "groupchat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ]
+}

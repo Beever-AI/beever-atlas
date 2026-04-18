@@ -12,6 +12,8 @@ import { timingSafeEqual } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { SlackAdapter } from "@chat-adapter/slack";
+import type { TeamsAdapter } from "@chat-adapter/teams";
+import type { Message as ChatSDKMessage } from "chat";
 import { cleanSlackMrkdwn } from "./slack-mrkdwn.js";
 import type { ChatManager } from "./chat-manager.js";
 
@@ -899,59 +901,204 @@ class DiscordBridge implements PlatformBridge {
 }
 
 // ── TeamsBridge ──────────────────────────────────────────────────────────────
-// Teams bots work via real-time webhooks (Azure Bot Service), not REST data pull.
-// Channel listing and message history require Microsoft Graph API setup beyond
-// the adapter scope — these methods return empty stubs.
+// Pull-model ingestion via the Chat SDK Teams adapter's built-in fetch methods
+// (fetchMessages, fetchChannelMessages, fetchChannelInfo, listThreads). The
+// adapter wraps Microsoft Graph under the hood and honours the bot app's
+// authenticated identity. Underlying Graph calls that read chat/channel
+// messages hit Teams Protected APIs — the tenant must have a
+// Microsoft.GraphServices metered account configured (pay-per-call) or a
+// Teams Data API license for those calls to return data.
+//
+// listChannels still reads from `teamsConversationRegistry` so conversations
+// the bot has observed via webhook surface immediately, even before the first
+// message-history fetch.
 
-class TeamsBridge implements PlatformBridge {
-  private adapter: unknown;
+interface TeamsConversationRecord {
+  conversationId: string;
+  name: string;
+  conversationType: string;
+  teamId: string | null;
+  teamName: string | null;
+  channelName: string | null;
+  serviceUrl: string | null;
+  tenantId: string | null;
+  lastSeenAt: number;
+}
 
-  constructor(adapter: unknown) {
-    this.adapter = adapter;
+const teamsConversationRegistry = new Map<string, Map<string, TeamsConversationRecord>>();
+
+export function recordTeamsConversation(
+  connectionId: string,
+  activity: {
+    conversation?: { id?: string; conversationType?: string; name?: string; tenantId?: string };
+    channelData?: {
+      team?: { id?: string; name?: string };
+      channel?: { id?: string; name?: string };
+      tenant?: { id?: string };
+    };
+    serviceUrl?: string;
+    from?: { name?: string };
+  },
+): void {
+  const rawConversationId = activity?.conversation?.id;
+  if (!connectionId || !rawConversationId) return;
+
+  // Bot Framework appends `;messageid=<ts>` to team-channel conversation IDs,
+  // which breaks Graph endpoints that expect the bare channel ID. Strip it so
+  // downstream listChannels / getMessages can reuse this ID directly against
+  // /teams/{teamId}/channels/{channelId}.
+  const conversationId = rawConversationId.split(";")[0];
+
+  const conversationType = activity.conversation?.conversationType || "unknown";
+  const teamName = activity.channelData?.team?.name || null;
+  const channelName = activity.channelData?.channel?.name || null;
+
+  let name: string;
+  if (conversationType === "channel") {
+    name = teamName && channelName
+      ? `${teamName} / ${channelName}`
+      : channelName || teamName || conversationId;
+  } else if (conversationType === "groupChat") {
+    name = activity.conversation?.name || "Group chat";
+  } else {
+    name = activity.from?.name || activity.conversation?.name || "Direct message";
   }
 
-  async resolveUser(_userId: string): Promise<{ name: string; image: string | null }> {
-    return { name: _userId, image: null };
+  let bucket = teamsConversationRegistry.get(connectionId);
+  if (!bucket) {
+    bucket = new Map();
+    teamsConversationRegistry.set(connectionId, bucket);
+  }
+  bucket.set(conversationId, {
+    conversationId,
+    name,
+    conversationType,
+    teamId: activity.channelData?.team?.id || null,
+    teamName,
+    channelName,
+    serviceUrl: activity.serviceUrl || null,
+    tenantId: activity.conversation?.tenantId || activity.channelData?.tenant?.id || null,
+    lastSeenAt: Date.now(),
+  });
+}
+
+function teamsRecordToChannel(entry: TeamsConversationRecord): NormalizedChannel {
+  return {
+    channel_id: entry.conversationId,
+    name: entry.name,
+    platform: "teams",
+    is_member: true,
+    member_count: null,
+    topic: entry.conversationType,
+    purpose: entry.teamName,
+  };
+}
+
+const TEAMS_PAGE_SIZE = 50;
+const TEAMS_MESSAGE_COUNT_CAP = 500;
+
+class TeamsBridge implements PlatformBridge {
+  private adapter: TeamsAdapter;
+  private connectionId: string;
+
+  constructor(adapter: TeamsAdapter, connectionId: string) {
+    this.adapter = adapter;
+    this.connectionId = connectionId;
+  }
+
+  async resolveUser(userId: string): Promise<{ name: string; image: string | null }> {
+    return { name: userId, image: null };
   }
 
   async listChannels(): Promise<NormalizedChannel[]> {
-    throw Object.assign(
-      new Error("Teams channel listing requires Microsoft Graph API setup"),
-      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
-    );
+    const bucket = teamsConversationRegistry.get(this.connectionId);
+    if (!bucket || bucket.size === 0) return [];
+    return Array.from(bucket.values()).map(teamsRecordToChannel);
   }
 
   async getChannel(id: string): Promise<NormalizedChannel> {
-    return {
-      channel_id: id,
-      name: id,
-      platform: "teams",
-      is_member: false,
-      member_count: null,
-      topic: null,
-      purpose: null,
-    };
+    const entry = teamsConversationRegistry.get(this.connectionId)?.get(id);
+    if (entry) return teamsRecordToChannel(entry);
+
+    try {
+      const info = await this.adapter.fetchChannelInfo(id);
+      return {
+        channel_id: info.id,
+        name: info.name || info.id,
+        platform: "teams",
+        is_member: true,
+        member_count: info.memberCount ?? null,
+        topic: null,
+        purpose: null,
+      };
+    } catch {
+      return {
+        channel_id: id,
+        name: id,
+        platform: "teams",
+        is_member: false,
+        member_count: null,
+        topic: null,
+        purpose: null,
+      };
+    }
   }
 
-  async getMessageCount(_channelId: string): Promise<number> {
-    throw Object.assign(
-      new Error("Teams message count requires Microsoft Graph API setup"),
-      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
-    );
+  async getMessageCount(channelId: string): Promise<number> {
+    let count = 0;
+    let cursor: string | undefined;
+    while (count < TEAMS_MESSAGE_COUNT_CAP) {
+      const page = await this.fetchPage(channelId, cursor, TEAMS_PAGE_SIZE);
+      count += page.messages.length;
+      if (!page.nextCursor || page.messages.length === 0) break;
+      cursor = page.nextCursor;
+    }
+    return count;
   }
 
-  async getMessages(_channelId: string, _opts: GetMessagesOpts): Promise<NormalizedMessage[]> {
-    throw Object.assign(
-      new Error("Teams message history requires Microsoft Graph API setup"),
-      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
-    );
+  async getMessages(channelId: string, opts: GetMessagesOpts): Promise<NormalizedMessage[]> {
+    const fetchLimit = Math.max(1, Math.min(opts.limit || 100, TEAMS_MESSAGE_COUNT_CAP));
+    const collected: ChatSDKMessage<unknown>[] = [];
+    let cursor: string | undefined;
+    while (collected.length < fetchLimit) {
+      const remaining = fetchLimit - collected.length;
+      const pageSize = Math.min(TEAMS_PAGE_SIZE, remaining);
+      const page = await this.fetchPage(channelId, cursor, pageSize);
+      collected.push(...page.messages);
+      if (!page.nextCursor || page.messages.length === 0) break;
+      cursor = page.nextCursor;
+    }
+    const entry = teamsConversationRegistry.get(this.connectionId)?.get(channelId);
+    const channelName = entry?.name || channelId;
+    return collected.map((m) => this.normalizeMessage(m, channelId, channelName));
   }
 
-  async getThreadMessages(_channelId: string, _threadId: string): Promise<NormalizedMessage[]> {
-    throw Object.assign(
-      new Error("Teams thread messages require Microsoft Graph API setup"),
-      { data: { error: "not_supported" }, code: "NOT_SUPPORTED" },
-    );
+  async getThreadMessages(channelId: string, threadId: string): Promise<NormalizedMessage[]> {
+    const entry = teamsConversationRegistry.get(this.connectionId)?.get(channelId);
+    if (!entry?.serviceUrl) {
+      throw Object.assign(
+        new Error("Teams serviceUrl unknown — bot must observe an activity in this conversation first"),
+        { data: { error: "not_ready" }, code: "NOT_READY" },
+      );
+    }
+    const encodedThreadId = this.adapter.encodeThreadId({
+      conversationId: channelId,
+      replyToId: threadId,
+      serviceUrl: entry.serviceUrl,
+    });
+
+    const collected: ChatSDKMessage<unknown>[] = [];
+    let cursor: string | undefined;
+    while (collected.length < TEAMS_MESSAGE_COUNT_CAP) {
+      const result = await this.adapter.fetchMessages(encodedThreadId, {
+        cursor,
+        limit: TEAMS_PAGE_SIZE,
+      });
+      collected.push(...result.messages);
+      if (!result.nextCursor || result.messages.length === 0) break;
+      cursor = result.nextCursor;
+    }
+    return collected.map((m) => this.normalizeMessage(m, channelId, entry.name));
   }
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
@@ -964,6 +1111,71 @@ class TeamsBridge implements PlatformBridge {
     const contentType = response.headers.get("content-type") || "application/octet-stream";
     const buffer = Buffer.from(await response.arrayBuffer());
     return { contentType, buffer };
+  }
+
+  private async fetchPage(
+    channelId: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<{ messages: ChatSDKMessage<unknown>[]; nextCursor?: string }> {
+    const entry = teamsConversationRegistry.get(this.connectionId)?.get(channelId);
+    const isTeamChannel = entry?.conversationType === "channel";
+
+    if (isTeamChannel) {
+      return this.adapter.fetchChannelMessages(channelId, { cursor, limit });
+    }
+
+    if (!entry?.serviceUrl) {
+      throw Object.assign(
+        new Error("Teams serviceUrl unknown — bot must observe an activity in this conversation first"),
+        { data: { error: "not_ready" }, code: "NOT_READY" },
+      );
+    }
+    const encodedThreadId = this.adapter.encodeThreadId({
+      conversationId: channelId,
+      serviceUrl: entry.serviceUrl,
+    });
+    return this.adapter.fetchMessages(encodedThreadId, { cursor, limit });
+  }
+
+  private normalizeMessage(
+    m: ChatSDKMessage<unknown>,
+    channelId: string,
+    channelName: string,
+  ): NormalizedMessage {
+    const dateSent = m.metadata?.dateSent;
+    const timestamp = dateSent instanceof Date
+      ? dateSent.toISOString()
+      : new Date(dateSent || Date.now()).toISOString();
+
+    return {
+      content: m.text || "",
+      author: m.author.userId,
+      author_name: m.author.fullName || m.author.userName || m.author.userId,
+      author_image: null,
+      platform: "teams",
+      channel_id: channelId,
+      channel_name: channelName,
+      message_id: m.id,
+      timestamp,
+      thread_id: null,
+      attachments: m.attachments.map((a) => ({
+        type: a.type,
+        url: a.url,
+        name: a.name,
+      })),
+      reactions: [],
+      reply_count: 0,
+      is_bot: m.author.isBot === true,
+      subtype: null,
+      links: (m.links || []).map((l) => ({
+        url: l.url,
+        title: l.title,
+        description: l.description,
+        imageUrl: l.imageUrl,
+        siteName: l.siteName,
+      })),
+    };
   }
 }
 
@@ -1386,7 +1598,7 @@ function clearBridgeCache(): void {
 function newBridgeForPlatform(platform: string, adapter: unknown, connectionId: string, chatManager?: ChatManager): PlatformBridge | null {
   if (platform === "slack") return new SlackBridge(adapter as SlackAdapter);
   if (platform === "discord") return new DiscordBridge(adapter);
-  if (platform === "teams") return new TeamsBridge(adapter);
+  if (platform === "teams") return new TeamsBridge(adapter as TeamsAdapter, connectionId);
   if (platform === "telegram") return new TelegramBridge(adapter, connectionId);
   if (platform === "mattermost") {
     const config = chatManager?.getAdapterConfig(connectionId);
