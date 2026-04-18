@@ -58,14 +58,22 @@ _LEGACY_SHARED_OWNER = "legacy:shared"
 
 
 def _principal_kind(principal: Principal | str) -> str:
-    """Return the principal kind ('user' / 'bridge' / 'unknown').
+    """Return the principal kind ('user' / 'bridge' / 'mcp').
 
     Accepts bare strings (test conftests that pre-date the Principal type)
-    and treats them as ``'user'`` to preserve backward compatibility.
+    and falls back to inspecting the id prefix so MCP principals created
+    directly as strings by middleware still route correctly. Unknown
+    shapes default to ``'user'`` for backward compatibility.
     """
     kind = getattr(principal, "kind", None)
-    if kind in ("user", "bridge"):
+    if kind in ("user", "bridge", "mcp"):
         return kind  # type: ignore[return-value]
+    # String-principal fallback: detect MCP by id prefix.
+    pid = str(principal)
+    if pid.startswith("mcp:"):
+        return "mcp"
+    if pid.startswith("bridge"):
+        return "bridge"
     return "user"
 
 

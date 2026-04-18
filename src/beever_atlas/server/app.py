@@ -216,8 +216,40 @@ app.include_router(wiki_router, dependencies=_auth)
 app.include_router(config_router, dependencies=_auth)
 app.include_router(media_router, dependencies=_auth)
 
-# Mount MCP server — auth inherits from FastAPI middleware (Task 8.6/8.7)
+# Legacy MCP mount. WARNING: this mount is currently UNAUTHENTICATED — the
+# hotfix on branch hotfix/mcp-auth-gate (commit 0b4467c) gates it behind
+# BEEVER_MCP_ENABLED=false by default. That fix will arrive on main via its
+# own PR. Until then, do NOT deploy this branch to production without also
+# carrying the hotfix.
 app.mount("/mcp", mcp_server.http_app(path="/"))
+
+# Secure v2 MCP mount (openspec change atlas-mcp-server). Gated behind
+# BEEVER_MCP_V2=true (default off) until Phase 3 ships the full tool catalog.
+# Auth is enforced by MCPAuthMiddleware at the ASGI layer BEFORE any protocol
+# message reaches FastMCP; the caller's mcp:<hash> principal is attached to
+# ASGI scope.state for tool handlers to consume.
+if _settings.beever_mcp_v2:
+    from starlette.middleware import Middleware
+
+    from beever_atlas.api.mcp_server import build_mcp
+    from beever_atlas.infra.mcp_auth import MCPAuthMiddleware
+
+    _mcp_v2 = build_mcp()
+    _mcp_v2_asgi = _mcp_v2.http_app(
+        path="/",
+        middleware=[Middleware(MCPAuthMiddleware)],
+        stateless_http=True,
+        json_response=True,
+        transport="streamable-http",
+    )
+    # Mount under a distinct path so it does not collide with the legacy
+    # `/mcp` mount above (the legacy mount handles `/mcp/...`; the v2 mount
+    # handles `/mcp/v2/...`). Once the legacy mount is removed this can move
+    # to `/mcp`.
+    app.mount("/mcp/v2", _mcp_v2_asgi)
+    logging.getLogger(__name__).info(
+        "MCP v2 endpoint mounted at /mcp/v2 with auth middleware"
+    )
 
 register_health_checks()
 

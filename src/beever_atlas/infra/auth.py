@@ -41,13 +41,15 @@ class Principal(str):
 
     __slots__ = ("_kind",)
 
-    def __new__(cls, id: str, kind: Literal["user", "bridge"]) -> "Principal":
+    def __new__(
+        cls, id: str, kind: Literal["user", "bridge", "mcp"]
+    ) -> "Principal":
         inst = super().__new__(cls, id)
         inst._kind = kind
         return inst
 
     @property
-    def kind(self) -> Literal["user", "bridge"]:
+    def kind(self) -> Literal["user", "bridge", "mcp"]:
         return self._kind  # type: ignore[return-value]
 
     @property
@@ -84,10 +86,35 @@ def _principal_id_for_key(key: str) -> str:
     return f"user:{digest}"
 
 
+def _principal_id_for_mcp_key(key: str) -> str:
+    """Stable MCP principal id derived from the raw MCP bearer key.
+
+    Mirrors :func:`_principal_id_for_key` but emits the ``mcp:`` prefix so
+    :func:`~beever_atlas.infra.channel_access._principal_kind` resolves to
+    ``"mcp"`` and the ACL guard applies MCP-strict rules (no single-tenant
+    browsing fallback).
+    """
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return f"mcp:{digest}"
+
+
 def _match_user_key(token: str, keys: list[str]) -> Optional[Principal]:
     for key in keys:
         if hmac.compare_digest(token, key):
             return Principal(_principal_id_for_key(key), kind="user")
+    return None
+
+
+def _match_mcp_key(token: str, keys: list[str]) -> Optional[Principal]:
+    """Return a ``Principal(kind='mcp')`` for a matching MCP bearer key.
+
+    Mirrors :func:`_match_user_key`. Called by the MCP ASGI middleware, not
+    by any FastAPI ``Depends`` — MCP principals never reach user-facing
+    routes and vice versa.
+    """
+    for key in keys:
+        if hmac.compare_digest(token, key):
+            return Principal(_principal_id_for_mcp_key(key), kind="mcp")
     return None
 
 

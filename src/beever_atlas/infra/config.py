@@ -10,6 +10,48 @@ from pydantic_settings import BaseSettings
 logger = logging.getLogger(__name__)
 
 
+def validate_keys_disjoint(
+    api_keys: str,
+    bridge_api_key: str,
+    mcp_api_keys: str,
+) -> None:
+    """Assert that MCP keys are disjoint from user keys and the bridge key.
+
+    Called at boot time (inside the Settings model validator). Raises
+    ``ValueError`` if any key appears in more than one pool so a
+    misconfiguration is caught before any request is served.
+    """
+    def _split(raw: str) -> set[str]:
+        return {k.strip() for k in raw.split(",") if k.strip()}
+
+    user_pool = _split(api_keys)
+    bridge_pool = _split(bridge_api_key)
+    mcp_pool = _split(mcp_api_keys)
+
+    overlap_user_mcp = user_pool & mcp_pool
+    if overlap_user_mcp:
+        raise ValueError(
+            "BEEVER_MCP_API_KEYS overlaps with BEEVER_API_KEYS. "
+            "MCP keys must be distinct from user keys. "
+            f"Offending key(s) detected (not shown to avoid leaking secrets). "
+            f"Count: {len(overlap_user_mcp)}"
+        )
+
+    overlap_bridge_mcp = bridge_pool & mcp_pool
+    if overlap_bridge_mcp:
+        raise ValueError(
+            "BEEVER_MCP_API_KEYS overlaps with BRIDGE_API_KEY. "
+            "MCP keys must be distinct from the bridge key. "
+            f"Count: {len(overlap_bridge_mcp)}"
+        )
+
+    # NOTE: user_pool ↔ bridge_pool overlap is intentionally NOT asserted here.
+    # The legacy BEEVER_ALLOW_BRIDGE_AS_USER emergency override (handled by
+    # require_user) is orthogonal; some dev/test fixtures reuse the same
+    # token for both roles. The H4 hardening already rejects bridge keys on
+    # user routes at the request boundary when the override is off.
+
+
 class ConfigurationError(RuntimeError):
     """Raised when feature-flag coupling or settings are invalid."""
 
@@ -281,6 +323,33 @@ class Settings(BaseSettings):
     )
     # API bearer tokens (comma-separated)
     api_keys: str = Field(default="", alias="BEEVER_API_KEYS")
+
+    # MCP bearer tokens (comma-separated). MUST be disjoint from
+    # BEEVER_API_KEYS and BRIDGE_API_KEY — a boot-time assertion enforces
+    # this. Each key identifies an agent instance (not a human user); keys
+    # are issued per external project consuming the Atlas MCP surface.
+    beever_mcp_api_keys: str = Field(
+        default="",
+        alias="BEEVER_MCP_API_KEYS",
+        description=(
+            "Comma-separated bearer keys accepted on the /mcp mount. "
+            "MUST be disjoint from BEEVER_API_KEYS and BRIDGE_API_KEY "
+            "(boot-time assertion fails otherwise)."
+        ),
+    )
+
+    # Mount the v2 /mcp server (with auth middleware + ACL enforcement).
+    # Default off until Phase 3 ships the full tool catalog. The legacy
+    # unauthenticated mount (BEEVER_MCP_ENABLED) remains available for
+    # local dev only — set BEEVER_MCP_V2=true to activate the secure mount.
+    beever_mcp_v2: bool = Field(
+        default=False,
+        alias="BEEVER_MCP_V2",
+        description=(
+            "Mount the v2 /mcp server (with auth middleware + ACL enforcement). "
+            "Leave false until the full change ships."
+        ),
+    )
     # Admin token for /api/dev/* endpoints
     admin_token: str = Field(default="", alias="BEEVER_ADMIN_TOKEN")
 
@@ -324,6 +393,16 @@ class Settings(BaseSettings):
                 "routes, which reopens security finding H4. Turn this off as "
                 "soon as the downstream integration is fixed."
             )
+
+        # Boot-time disjoint-key assertion (D2): MCP keys must not overlap
+        # with user keys or the bridge key. An overlap would allow an MCP
+        # token to authenticate on user/bridge routes (or vice versa), which
+        # breaks the principal-separation model.
+        validate_keys_disjoint(
+            api_keys=self.api_keys,
+            bridge_api_key=self.bridge_api_key,
+            mcp_api_keys=self.beever_mcp_api_keys,
+        )
 
         problems: list[str] = []
         key = self.credential_master_key or ""
