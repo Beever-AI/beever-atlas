@@ -193,8 +193,6 @@ async def refresh_wiki(
     except Exception as exc:
         raise ChannelAccessDenied(channel_id) from exc
 
-    import uuid
-
     from beever_atlas.infra.config import get_settings
     from beever_atlas.stores import get_stores
     from beever_atlas.wiki.cache import WikiCache
@@ -203,25 +201,28 @@ async def refresh_wiki(
     settings = get_settings()
     cache = WikiCache(settings.mongodb_uri)
 
-    # Create a sync_jobs record with kind="wiki_refresh" so get_job_status works.
-    job_id = str(uuid.uuid4())
+    # Create a sync_jobs record and use the *persisted* job id so the
+    # atlas://job/<id> resource resolves to the real row (Phase 1 bug fix).
+    job_id: str | None = None
     try:
-        await stores.mongodb.create_sync_job(
+        job = await stores.mongodb.create_sync_job(
             channel_id=channel_id,
             sync_type="wiki_refresh",
             total_messages=0,
             owner_principal_id=principal_id,
             kind="wiki_refresh",
         )
-        # Overwrite the auto-generated id with our own so the status_uri is stable.
-        # create_sync_job returns the model; we want to use our own id for the URI.
-        # The easiest path: just use the returned job id.
+        job_id = job.id
     except Exception:
         logger.warning(
             "refresh_wiki: could not create sync_jobs record for channel=%s — "
             "falling back to a synthetic job_id",
             channel_id,
         )
+
+    if job_id is None:
+        import uuid as _uuid
+        job_id = str(_uuid.uuid4())
 
     # Set status to "running" immediately so the frontend sees it on first poll.
     try:

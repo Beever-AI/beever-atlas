@@ -114,6 +114,8 @@ def build_mcp() -> FastMCP:
     _register_retrieval_tools(mcp)
     _register_graph_tools(mcp)
     _register_session_tools(mcp)
+    _register_resources(mcp)
+    _register_prompts(mcp)
 
     tool_count = sum(
         1 for k in mcp._local_provider._components if k.startswith("tool:")
@@ -736,6 +738,320 @@ def _register_session_tools(mcp: FastMCP) -> None:
         short_id = str(_uuid.uuid4())[:8]
         session_id = f"mcp:{principal_id}:{short_id}"
         return {"session_id": session_id}
+
+
+# ---------------------------------------------------------------------------
+# Resources (4.1 – 4.5)
+# ---------------------------------------------------------------------------
+
+
+def _register_resources(mcp: FastMCP) -> None:
+    """Register all atlas:// URI resources.
+
+    Resources with {param} in the URI are automatically registered as
+    ResourceTemplates by FastMCP 3.x — the framework extracts param values
+    from the URI and passes them as function kwargs.
+    """
+
+    # 4.1 atlas://connection/{connection_id}
+    @mcp.resource(
+        "atlas://connection/{connection_id}",
+        name="connection",
+        description="Metadata for a single platform connection owned by the calling MCP principal.",
+        mime_type="application/json",
+    )
+    async def get_connection(connection_id: str) -> dict:
+        principal_id = _get_principal_id_from_resource()
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(connection_id, "connection_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import connections as conn_cap
+            from beever_atlas.capabilities.errors import ConnectionAccessDenied
+
+            conns = await conn_cap.list_connections(principal_id)
+            for conn in conns:
+                if conn.get("connection_id") == connection_id:
+                    return conn
+            return {"error": "connection_not_found", "connection_id": connection_id}
+        except ConnectionAccessDenied:
+            return {"error": "connection_access_denied", "connection_id": connection_id}
+        except Exception:
+            logger.exception(
+                "resource get_connection: failed principal=%s connection_id=%s",
+                principal_id, connection_id,
+            )
+            return {"error": "internal_error", "connection_id": connection_id}
+
+    # 4.2 atlas://connection/{connection_id}/channels
+    @mcp.resource(
+        "atlas://connection/{connection_id}/channels",
+        name="connection-channels",
+        description="All channels selected for sync under a connection owned by the calling principal.",
+        mime_type="application/json",
+    )
+    async def get_connection_channels(connection_id: str) -> dict:
+        principal_id = _get_principal_id_from_resource()
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(connection_id, "connection_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import connections as conn_cap
+            from beever_atlas.capabilities.errors import ConnectionAccessDenied
+
+            channels = await conn_cap.list_channels(principal_id, connection_id)
+            return {"channels": channels, "connection_id": connection_id}
+        except ConnectionAccessDenied:
+            return {"error": "connection_access_denied", "connection_id": connection_id}
+        except Exception:
+            logger.exception(
+                "resource get_connection_channels: failed principal=%s connection_id=%s",
+                principal_id, connection_id,
+            )
+            return {"error": "internal_error", "connection_id": connection_id}
+
+    # 4.3 atlas://channel/{channel_id}/wiki — wiki structure index
+    @mcp.resource(
+        "atlas://channel/{channel_id}/wiki",
+        name="channel-wiki-index",
+        description=(
+            "Wiki structure index for a channel: overview summary and available page types. "
+            "Returns a stub if the wiki cache has not been populated yet."
+        ),
+        mime_type="application/json",
+    )
+    async def get_channel_wiki_index(channel_id: str) -> dict:
+        principal_id = _get_principal_id_from_resource()
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import wiki as wiki_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            overview = await wiki_cap.get_topic_overview(principal_id, channel_id)
+            if overview is None:
+                # Return structured stub — wiki not generated yet.
+                logger.warning(
+                    "event=mcp_resource_wiki_stub channel_id=%s "
+                    "detail='wiki structure index awaits Phase 6 wiki-cache integration'",
+                    channel_id,
+                )
+                return {
+                    "channel_id": channel_id,
+                    "page_types": list(wiki_cap.SUPPORTED_PAGE_TYPES),
+                    "overview": None,
+                    "stub": True,
+                }
+            return {
+                "channel_id": channel_id,
+                "page_types": list(wiki_cap.SUPPORTED_PAGE_TYPES),
+                "overview": overview,
+                "stub": False,
+            }
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "resource get_channel_wiki_index: failed principal=%s channel_id=%s",
+                principal_id, channel_id,
+            )
+            return {"error": "internal_error", "channel_id": channel_id}
+
+    # 4.4 atlas://channel/{channel_id}/wiki/page/{page_id}
+    @mcp.resource(
+        "atlas://channel/{channel_id}/wiki/page/{page_id}",
+        name="channel-wiki-page",
+        description=(
+            "Pre-compiled wiki page content for a channel. page_id is one of: "
+            "overview, faq, decisions, people, glossary, activity, topics."
+        ),
+        mime_type="application/json",
+    )
+    async def get_channel_wiki_page(channel_id: str, page_id: str) -> dict:
+        principal_id = _get_principal_id_from_resource()
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id") or _validate_id(page_id, "page_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import wiki as wiki_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            page = await wiki_cap.get_wiki_page(principal_id, channel_id, page_type=page_id)
+            if page is None:
+                return {
+                    "channel_id": channel_id,
+                    "page_type": page_id,
+                    "content": None,
+                    "generated_at": None,
+                    "citations": [],
+                }
+            return {
+                **page,
+                "generated_at": None,  # Phase 6 will wire real timestamps
+                "citations": [],
+            }
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "resource get_channel_wiki_page: failed principal=%s channel_id=%s page_id=%s",
+                principal_id, channel_id, page_id,
+            )
+            return {"error": "internal_error", "channel_id": channel_id, "page_type": page_id}
+
+    # 4.5 atlas://job/{job_id}
+    @mcp.resource(
+        "atlas://job/{job_id}",
+        name="job-status",
+        description=(
+            "Status of a long-running sync or wiki-refresh job. Returns job_not_found "
+            "for jobs not owned by the calling principal (no information leak)."
+        ),
+        mime_type="application/json",
+    )
+    async def get_job(job_id: str) -> dict:
+        principal_id = _get_principal_id_from_resource()
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(job_id, "job_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import jobs as jobs_cap
+            from beever_atlas.capabilities.errors import JobNotFound
+
+            status = await jobs_cap.get_job_status(principal_id, job_id)
+            return status
+        except JobNotFound:
+            return {"error": "job_not_found", "job_id": job_id}
+        except Exception:
+            logger.exception(
+                "resource get_job: failed principal=%s job_id=%s",
+                principal_id, job_id,
+            )
+            return {"error": "job_not_found", "job_id": job_id}
+
+
+def _get_principal_id_from_resource() -> str | None:
+    """Extract ``mcp_principal_id`` inside a resource handler.
+
+    Resource handlers run in the same ASGI request context as tool handlers;
+    the MCPAuthMiddleware has already injected the principal into
+    ``scope["state"]["mcp_principal_id"]``. We reuse :func:`_get_principal_id`
+    which reads from ``get_http_request()``.
+    """
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        request = get_http_request()
+        state = request.scope.get("state") or {}
+        return state.get("mcp_principal_id")
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Prompts (4.6 – 4.8)
+# ---------------------------------------------------------------------------
+
+
+def _register_prompts(mcp: FastMCP) -> None:
+    """Register static prompt templates for common Atlas workflows.
+
+    Prompt handlers are pure template builders — they receive only the
+    declared parameters and return a filled message array. No database
+    access or capability calls are made inside prompt handlers.
+    """
+
+    # 4.6 summarize_channel
+    @mcp.prompt(name="summarize_channel")
+    def summarize_channel(channel_id: str, since_days: int = 7) -> list[dict]:
+        """Produce a user-role instruction to summarize recent channel discussion.
+
+        Parameters:
+            channel_id: The channel id to summarize (from list_channels).
+            since_days: Look-back window in days (default 7).
+
+        Returns a filled message array telling the LLM which tools to use and
+        what to focus on (decisions, open questions, key participants).
+        """
+        return [
+            {
+                "role": "user",
+                "content": (
+                    f"Summarize the last {since_days} days of discussion in #{channel_id}. "
+                    "Focus on decisions made, open questions, and key participants. "
+                    "Use get_wiki_page(page_type='activity') and get_recent_activity "
+                    "to ground your answer."
+                ),
+            }
+        ]
+
+    # 4.7 investigate_decision
+    @mcp.prompt(name="investigate_decision")
+    def investigate_decision(channel_id: str, topic: str) -> list[dict]:
+        """Produce a decision-trace-style instruction for investigating a topic.
+
+        Parameters:
+            channel_id: The channel id to investigate (from list_channels).
+            topic: The decision or topic to trace (e.g. 'database choice').
+
+        Returns a filled message array telling the LLM to follow SUPERSEDES
+        chains, identify decision drivers, and ground claims with fact search.
+        """
+        return [
+            {
+                "role": "user",
+                "content": (
+                    f"Trace the decision history for '{topic}' in channel {channel_id}. "
+                    "Use trace_decision_history for the SUPERSEDES chain, find_experts "
+                    "to identify who drove the decision, and search_channel_facts to "
+                    "ground individual claims."
+                ),
+            }
+        ]
+
+    # 4.8 onboard_new_channel
+    @mcp.prompt(name="onboard_new_channel")
+    def onboard_new_channel(channel_id: str) -> list[dict]:
+        """Produce an onboarding-overview instruction for a new channel.
+
+        Parameters:
+            channel_id: The channel id to onboard (from list_channels).
+
+        Returns a filled message array telling the LLM to read the overview,
+        people, and topics wiki pages and synthesize an orientation summary.
+        """
+        return [
+            {
+                "role": "user",
+                "content": (
+                    f"Give me an onboarding overview of channel {channel_id}. "
+                    "Call get_wiki_page(page_type='overview') first, then "
+                    "get_wiki_page(page_type='people') and (page_type='topics'). "
+                    "Summarize scope, key people, active topics, and recent decisions."
+                ),
+            }
+        ]
 
 
 __all__ = ["build_mcp"]
