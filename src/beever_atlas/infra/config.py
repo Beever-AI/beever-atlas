@@ -294,6 +294,14 @@ class Settings(BaseSettings):
         default=False, alias="BEEVER_ALLOW_BRIDGE_AS_USER"
     )
 
+    # Default OFF. Mount the /mcp endpoint. The current /mcp surface is
+    # UNAUTHENTICATED — enabling this exposes all channel data to any
+    # network-reachable caller. Leave off in production until the MCP auth
+    # middleware ships.
+    beever_mcp_enabled: bool = Field(
+        default=False, alias="BEEVER_MCP_ENABLED"
+    )
+
     # Single-tenant compatibility mode for the v1.0 OSS launch. When True,
     # any authenticated user principal is granted access to channels whose
     # owning PlatformConnection has ``owner_principal_id`` set to the shared
