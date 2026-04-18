@@ -108,6 +108,7 @@ async def trigger_sync(
             sync_type=resolved_sync_type,
             use_batch_api=use_batch_api,
             connection_id=connection_id,
+            owner_principal_id=principal.id,
         )
     except ValueError as exc:
         logger.info(
