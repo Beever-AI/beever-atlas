@@ -215,6 +215,11 @@ async def _run_agent_stream(
     _follow_ups_collector = None
     _follow_ups_token = None
     _rewriter = None
+    # Principal bind for orchestration tools (openspec atlas-mcp-server
+    # Phase 6): the QA agent's orchestration_tools read the principal from
+    # this contextvar. Set just before the runner runs and reset in the
+    # finally below so tool invocations resolve to a live principal.
+    _principal_token = None
     if _registry_enabled:
         from beever_atlas.agents.citations import registry as _citation_registry_mod
         from beever_atlas.agents.citations.permalink_resolver import default_resolver
@@ -296,6 +301,17 @@ async def _run_agent_stream(
         })
 
     try:
+        # Bind the principal for the orchestration tools' contextvar so
+        # list_connections_tool, trigger_sync_tool, etc. resolve to a live
+        # principal during this agent turn.
+        try:
+            from beever_atlas.agents.tools.orchestration_tools import bind_principal
+            _principal_token = bind_principal(session.user_id)
+        except Exception:
+            logger.warning(
+                "failed to bind principal for orchestration tools",
+                exc_info=True,
+            )
         if sse_streaming:
             _stream = runner.run_async(
                 user_id=session.user_id,
@@ -606,6 +622,12 @@ async def _run_agent_stream(
                 reset_collector(_follow_ups_token)
             except Exception:
                 logger.warning("failed to reset follow_ups collector", exc_info=True)
+        if _principal_token is not None:
+            try:
+                from beever_atlas.agents.tools.orchestration_tools import reset_principal
+                reset_principal(_principal_token)
+            except Exception:
+                logger.warning("failed to reset principal", exc_info=True)
 
         if not done_sent:
             # In SSE streaming mode (StreamingMode.SSE), ADK may deliver the
