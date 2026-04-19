@@ -122,6 +122,31 @@ async def _migrate_env_connection(stores: StoreClients, settings) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Build the MCP ASGI app at module-load time (only if enabled). We must
+# construct it BEFORE the FastAPI ``lifespan`` below so the lifespan can
+# chain ``_mcp_asgi.lifespan`` — FastMCP's StreamableHTTPSessionManager is
+# started inside that chained lifespan, so skipping the chain means every
+# request 500s with "Task group is not initialized".
+# ---------------------------------------------------------------------------
+_boot_settings = get_settings()
+_mcp_asgi = None
+if _boot_settings.beever_mcp_enabled:
+    from starlette.middleware import Middleware
+
+    from beever_atlas.api.mcp_server import build_mcp
+    from beever_atlas.infra.mcp_auth import MCPAuthMiddleware
+
+    _mcp_instance = build_mcp()
+    _mcp_asgi = _mcp_instance.http_app(
+        path="/",
+        middleware=[Middleware(MCPAuthMiddleware)],
+        stateless_http=True,
+        json_response=True,
+        transport="streamable-http",
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage store connections and background tasks."""
@@ -149,7 +174,14 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning("MCP registry init failed (non-fatal): %s", exc)
 
     try:
-        yield
+        # Chain FastMCP's lifespan so its StreamableHTTPSessionManager task
+        # group starts before any request hits the mount. Without this chain,
+        # every /mcp request returns 500 with "Task group is not initialized".
+        if _mcp_asgi is not None:
+            async with _mcp_asgi.lifespan(app):
+                yield
+        else:
+            yield
     finally:
         try:
             await scheduler.shutdown()
@@ -219,29 +251,16 @@ app.include_router(wiki_router, dependencies=_auth)
 app.include_router(config_router, dependencies=_auth)
 app.include_router(media_router, dependencies=_auth)
 
-# Secure MCP mount (openspec change atlas-mcp-server). Gated behind
-# BEEVER_MCP_ENABLED=true (default off). Auth is enforced by MCPAuthMiddleware at
-# the ASGI layer BEFORE any protocol message reaches FastMCP; the caller's
-# mcp:<hash> principal is attached to ASGI scope.state for tool handlers to
-# consume. This is the sole MCP surface; the legacy unauthenticated /mcp
-# mount has been retired.
-if _settings.beever_mcp_enabled:
-    from starlette.middleware import Middleware
-
-    from beever_atlas.api.mcp_server import build_mcp
-    from beever_atlas.infra.mcp_auth import MCPAuthMiddleware
-
-    _mcp_v2 = build_mcp()
-    _mcp_v2_asgi = _mcp_v2.http_app(
-        path="/",
-        middleware=[Middleware(MCPAuthMiddleware)],
-        stateless_http=True,
-        json_response=True,
-        transport="streamable-http",
-    )
-    app.mount("/mcp", _mcp_v2_asgi)
+# Secure MCP mount (openspec change atlas-mcp-server). The ASGI app was
+# built at module-load time above so its lifespan could be chained into
+# the FastAPI lifespan; here we just attach it to the route tree.
+# Auth is enforced by MCPAuthMiddleware at the ASGI layer BEFORE any
+# protocol message reaches FastMCP; the caller's mcp:<hash> principal is
+# attached to ASGI scope.state for tool handlers to consume.
+if _mcp_asgi is not None:
+    app.mount("/mcp", _mcp_asgi)
     logging.getLogger(__name__).info(
-        "MCP v2 endpoint mounted at /mcp with auth middleware"
+        "MCP endpoint mounted at /mcp with auth middleware"
     )
 
 register_health_checks()
