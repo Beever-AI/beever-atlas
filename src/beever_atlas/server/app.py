@@ -216,8 +216,20 @@ app.include_router(wiki_router, dependencies=_auth)
 app.include_router(config_router, dependencies=_auth)
 app.include_router(media_router, dependencies=_auth)
 
-# Mount MCP server — auth inherits from FastAPI middleware (Task 8.6/8.7)
-app.mount("/mcp", mcp_server.http_app(path="/"))
+# WARNING: the /mcp mount is currently UNAUTHENTICATED. Full auth middleware
+# is tracked in openspec change 'atlas-mcp-server'.
+if _settings.beever_mcp_enabled:
+    app.mount("/mcp", mcp_server.http_app(path="/"))
+    logging.getLogger(__name__).warning(
+        "MCP endpoint mounted WITHOUT authentication (BEEVER_MCP_ENABLED=true). "
+        "This is intended for local dev only. Do not enable in production."
+    )
+else:
+    logging.getLogger(__name__).info(
+        "MCP endpoint disabled (BEEVER_MCP_ENABLED=false). "
+        "Set BEEVER_MCP_ENABLED=true to enable — unauthenticated for now, "
+        "do not use in production."
+    )
 
 register_health_checks()
 
