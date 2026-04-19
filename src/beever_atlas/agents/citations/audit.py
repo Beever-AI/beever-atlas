@@ -47,6 +47,14 @@ EXEMPT_TOOLS: set[str] = {
     "upsert_fact",
     "upsert_entity",
     "create_episodic_link",
+    # Phase 6 orchestration tools — return structured operational dicts
+    # (job envelopes, connection/channel lists, job status) rather than
+    # citeable retrieval results. Citations don't apply to action outcomes.
+    "list_connections_tool",
+    "list_channels_tool",
+    "trigger_sync_tool",
+    "refresh_wiki_tool",
+    "get_job_status_tool",
 }
 
 

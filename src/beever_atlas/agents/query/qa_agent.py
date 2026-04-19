@@ -13,12 +13,19 @@ from beever_atlas.agents.query.prompts import (
     QA_SUMMARIZE_SUFFIX,
 )
 from beever_atlas.agents.tools import QA_TOOLS
+from beever_atlas.agents.tools.orchestration_tools import ORCHESTRATION_TOOLS
 from beever_atlas.infra.config import ConfigurationError
 
 
 # Tool name fragments that indicate write or network-egress capability.
 # When an agent context includes untrusted content, these tools are filtered
 # out as an output-side defense against prompt-injection-driven exfiltration.
+#
+# Phase 6 additions: "sync" matches trigger_sync_tool; "refresh" matches
+# refresh_wiki_tool.  Neither fragment appears in any existing QA_TOOLS name,
+# so there are no false positives.  Read-only orchestration tools
+# (list_connections_tool, list_channels_tool, get_job_status_tool) do NOT
+# match any fragment and are therefore preserved under untrusted context.
 _UNTRUSTED_TOOL_DENYLIST_FRAGMENTS = (
     "tavily",
     "web_search",
@@ -28,6 +35,8 @@ _UNTRUSTED_TOOL_DENYLIST_FRAGMENTS = (
     "delete",
     "send",
     "post",
+    "sync",
+    "refresh",
 )
 
 
@@ -234,8 +243,12 @@ def create_qa_agent(
             planner=planner,
         )
     else:
-        # Deep (default): all tools, thinking, full pipeline
-        all_tools = [*base_tools, *registry.tools]
+        # Deep (default): all tools, thinking, full pipeline.
+        # Orchestration tools (list_connections, list_channels, trigger_sync,
+        # refresh_wiki, get_job_status) are available in deep mode.
+        # trigger_sync and refresh_wiki are removed by _filter_tools_for_untrusted
+        # when the retrieved context is wrapped in <untrusted> tags.
+        all_tools = [*base_tools, *ORCHESTRATION_TOOLS, *registry.tools]
         all_tools = _maybe_add_follow_ups_tool(all_tools, include_follow_ups=True)
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True)
         prompt = prompt + extra_instruction

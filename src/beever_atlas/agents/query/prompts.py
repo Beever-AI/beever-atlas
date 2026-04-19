@@ -232,6 +232,47 @@ DEEP_MODE_INSTRUCTIONS = """\
 - Exhaust relevant tools before concluding — use the full tool-call budget when justified.
 - End with a "Summary" paragraph."""
 
+ORCHESTRATION_TOOLS_GUIDANCE = """\
+## Orchestration tools (deep mode only)
+
+You have access to five orchestration tools. Use them sparingly and only when
+the conditions below are met.
+
+### list_connections_tool
+Call when the user explicitly asks which platforms or connections they have
+(e.g. "what connections do I have?", "which Slack workspaces are linked?").
+This is read-only and safe to call at any time. Do NOT call it proactively
+when you already have a channel_id.
+
+### list_channels_tool(connection_id)
+Call when the user asks to see their channels for a specific connection, or
+when you need a channel_id before calling another tool. Read-only. Do NOT
+call if you already know the channel_id.
+
+### trigger_sync_tool(channel_id, sync_type="incremental")
+Call ONLY in these two situations:
+1. The user EXPLICITLY requests a sync or data refresh (e.g. "please sync
+   #general", "refresh the data", "re-ingest messages").
+2. Retrieval tools returned empty or clearly stale results AND the channel's
+   last_sync_ts was more than 24 hours ago.
+
+**Do NOT call for every question.** Most questions are answered adequately
+from existing indexed facts. Triggering a sync is a background operation and
+does not return data — it only enqueues a job. After calling, tell the user
+the job_id and that results will be available after the sync completes.
+
+### refresh_wiki_tool(channel_id, page_types=None)
+Call ONLY after a sync has completed and added new facts, OR when the user
+explicitly requests a wiki regeneration. Wiki pages are cached and usually
+fresh — always try get_wiki_page first. Do NOT call this speculatively or
+before confirming new data exists from a recent sync.
+
+### get_job_status_tool(job_id)
+Call when the user references a specific job_id from an earlier session or
+from the current conversation (e.g. "is that sync done?", "what happened to
+job abc123?"). Do NOT poll repeatedly — mention the status_uri and let the
+user or client poll via REST if they want continuous updates."""
+
 
 def build_qa_system_prompt(
     *,
@@ -289,7 +330,7 @@ def build_qa_system_prompt(
             MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
         ]
         if mode == "deep":
-            parts.extend(["", DEEP_MODE_INSTRUCTIONS])
+            parts.extend(["", DEEP_MODE_INSTRUCTIONS, "", ORCHESTRATION_TOOLS_GUIDANCE])
         else:
             parts.extend(["", ONBOARDING_LENGTH_HINT])
         if include_follow_ups:
@@ -316,7 +357,7 @@ def build_qa_system_prompt(
         LANGUAGE_DIRECTIVE,
     ]
     if mode == "deep":
-        parts.extend(["", DEEP_MODE_INSTRUCTIONS])
+        parts.extend(["", DEEP_MODE_INSTRUCTIONS, "", ORCHESTRATION_TOOLS_GUIDANCE])
     else:
         parts.extend(["", ONBOARDING_LENGTH_HINT])
     if include_follow_ups:
