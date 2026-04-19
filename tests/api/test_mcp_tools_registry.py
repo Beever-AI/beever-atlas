@@ -1,10 +1,10 @@
-"""Phase 3 task 3.8/3.9: verify the tool registry has exactly the right set.
+"""Phase 3/5b task 3.8/3.9/5.2-5.4: verify the tool registry has exactly the right set.
 
-`tools/list` (via build_mcp()) must return exactly 14 entries:
+`tools/list` (via build_mcp()) must return exactly 17 entries:
   - 13 v1 tools (3 discovery + 5 retrieval + 3 graph + 1 session + 1 shim)
+  - 3 orchestration tools added in Phase 5b (trigger_sync, refresh_wiki, get_job_status)
 
-Note: orchestration tools (trigger_sync, refresh_wiki, get_job_status) are
-Phase 5b and MUST NOT appear in the registry.
+Total: 17 (within the 18-tool v1 cap).
 """
 
 from __future__ import annotations
@@ -13,34 +13,44 @@ import pytest
 
 from beever_atlas.api.mcp_server import build_mcp
 
-# The spec says 15 tools total for v1, but orchestration (trigger_sync,
-# refresh_wiki, get_job_status) are Phase 5b.  Phase 3 ships 14:
-#   whoami, list_connections, list_channels            (discovery  ×3)
+# Phase 5b adds 3 orchestration tools on top of the 13 v1 + 1 shim = 14.
+# New total: 17.
+#   whoami, list_connections, list_channels            (discovery      ×3)
 #   ask_channel, search_channel_facts, get_wiki_page,
-#   get_recent_activity, search_media_references       (retrieval  ×5)
+#   get_recent_activity, search_media_references       (retrieval      ×5)
 #   find_experts, search_relationships,
-#   trace_decision_history                             (graph      ×3)
-#   start_new_session                                  (session    ×1)
-#   search_channel_knowledge                           (shim       ×1)
+#   trace_decision_history                             (graph          ×3)
+#   start_new_session                                  (session        ×1)
+#   search_channel_knowledge                           (shim           ×1)
+#   trigger_sync, refresh_wiki, get_job_status         (orchestration  ×3)
 
 EXPECTED_TOOLS = frozenset({
+    # discovery
     "whoami",
     "list_connections",
     "list_channels",
+    # retrieval
     "ask_channel",
     "search_channel_facts",
     "get_wiki_page",
     "get_recent_activity",
     "search_media_references",
+    # graph
     "find_experts",
     "search_relationships",
     "trace_decision_history",
+    # session
     "start_new_session",
+    # shim
     "search_channel_knowledge",
+    # orchestration (Phase 5b)
+    "trigger_sync",
+    "refresh_wiki",
+    "get_job_status",
 })
 
-# Orchestration tools are deferred to Phase 5b — they must NOT appear yet.
-DEFERRED_TOOLS = frozenset({"trigger_sync", "refresh_wiki", "get_job_status"})
+# No orchestration tools are deferred any longer — all shipped in Phase 5b.
+DEFERRED_TOOLS: frozenset[str] = frozenset()
 
 
 def _tool_names(mcp) -> frozenset[str]:
@@ -70,7 +80,7 @@ def test_tool_registry_contains_expected_set():
     )
 
 
-def test_tool_count_is_thirteen():
+def test_tool_count_is_seventeen():
     mcp = build_mcp()
     names = _tool_names(mcp)
     assert len(names) == len(EXPECTED_TOOLS), (
@@ -78,12 +88,14 @@ def test_tool_count_is_thirteen():
     )
 
 
-def test_orchestration_tools_not_registered():
+def test_orchestration_tools_are_registered():
+    """Phase 5b: trigger_sync, refresh_wiki, get_job_status must now be present."""
+    orchestration = frozenset({"trigger_sync", "refresh_wiki", "get_job_status"})
     mcp = build_mcp()
     names = _tool_names(mcp)
-    leaked = DEFERRED_TOOLS & names
-    assert not leaked, (
-        f"Phase 5b orchestration tools must not be registered yet: {leaked}"
+    missing = orchestration - names
+    assert not missing, (
+        f"Phase 5b orchestration tools must be registered: {missing}"
     )
 
 
