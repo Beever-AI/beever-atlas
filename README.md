@@ -210,6 +210,31 @@ curl -X POST http://localhost:8000/api/channels/C12345/sync \
   -H "Authorization: Bearer dev-key-change-me"
 ```
 
+### MCP server (for external AI agents)
+
+Beever Atlas exposes a curated MCP (Model Context Protocol) server at `/mcp/v2` for AI agents like Claude Code and Cursor. This allows external code assistants to query your team's knowledge base without using the dashboard.
+
+See [docs/mcp-server.md](docs/mcp-server.md) for:
+- **Tool catalog** — 16 tools for discovery, retrieval, graph traversal, and long-running operations
+- **Auth setup** — generating and managing `BEEVER_MCP_API_KEYS`
+- **Client configuration** — ready-to-use `.mcp.json` templates for Claude Code and Cursor
+- **Rate limits** — principal-keyed limits to prevent one agent from throttling others
+
+Quick example (Claude Code):
+```json
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "url": "https://atlas.example.com/mcp/v2",
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer ${BEEVER_MCP_KEY}"
+      }
+    }
+  }
+}
+```
+
 ### Common commands
 
 ```bash
