@@ -110,16 +110,16 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
                 principal_id,
             )
             return {"error": "answer_timeout"}
-        except Exception as exc:
+        except Exception:
+            # Never surface raw exception details to MCP clients — they may
+            # contain internal hostnames, quota-project ids, or stack
+            # fragments. Full traceback is in the server log instead.
             logger.exception(
                 "event=mcp_ask_channel_runner_error channel=%s principal=%s",
                 channel_id,
                 principal_id,
             )
-            return {
-                "error": "adk_error",
-                "detail": str(exc)[:200],
-            }
+            return {"error": "adk_error"}
 
     @mcp.tool(name="search_channel_facts")
     async def search_channel_facts(

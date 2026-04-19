@@ -111,7 +111,28 @@ async def run_ask_channel(
         reset_principal,
     )
 
-    effective_session_id = session_id or f"mcp:{principal_id}"
+    # Session-id isolation: a client-supplied session_id is accepted only
+    # when it is already namespaced under this principal. Otherwise a
+    # principal could target another principal's session by guessing the
+    # deterministic ``mcp:<hash>`` form. The default (no session_id supplied)
+    # is ``mcp:<principal>:default`` — distinct from any custom id the caller
+    # might try to reuse across principals.
+    principal_namespace = f"mcp:{principal_id}"
+    if session_id:
+        if not session_id.startswith(principal_namespace):
+            return {
+                "error": "invalid_parameter",
+                "parameter": "session_id",
+                "detail": (
+                    "session_id must be one returned by start_new_session or "
+                    "an earlier ask_channel call; cross-principal reuse is "
+                    "not permitted."
+                ),
+            }
+        effective_session_id = session_id
+    else:
+        effective_session_id = f"{principal_namespace}:default"
+
     started_at = time.monotonic()
 
     agent = get_agent_for_mode(mode)

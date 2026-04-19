@@ -102,6 +102,82 @@ async def test_ask_channel_invalid_mode_returns_invalid_parameter():
 
 
 @pytest.mark.asyncio
+async def test_ask_channel_rejects_cross_principal_session_id():
+    """Principal A cannot pass a session_id namespaced under principal B.
+
+    Regression for the session-id spoof finding in the feature-branch
+    security review. The server-generated default is
+    ``mcp:<principal>:default``; any custom id must begin with the caller's
+    ``mcp:<principal>`` prefix.
+    """
+    from beever_atlas.api.mcp_server._ask_runner import run_ask_channel
+
+    ctx = _ctx()
+    # Principal 'alice-hash' tries to pass a session id namespaced under
+    # 'bob-hash'. Must be rejected without reaching the ADK runner.
+    result = await run_ask_channel(
+        principal_id="alice-hash",
+        channel_id="ch-a",
+        question="who am I",
+        mode="deep",
+        session_id="mcp:bob-hash:stolen-session",
+        ctx=ctx,
+    )
+    assert result["error"] == "invalid_parameter"
+    assert result["parameter"] == "session_id"
+
+
+@pytest.mark.asyncio
+async def test_ask_channel_accepts_same_principal_session_id():
+    """The caller can resume one of their own sessions."""
+    from beever_atlas.api.mcp_server import _ask_runner as runner_mod
+
+    # Mock everything ADK so the test only exercises the session-id guard.
+    fake_agent = MagicMock()
+    fake_session = MagicMock()
+    fake_session.user_id = "alice-hash"
+    fake_session.id = "mcp:alice-hash:my-own-session"
+
+    async def _empty_stream(**kwargs):
+        if False:
+            yield None  # pragma: no cover
+
+    fake_runner = MagicMock()
+    fake_runner.run_async = lambda **kw: _empty_stream()
+
+    # `get_agent_for_mode`, `create_runner`, `create_session` are imported
+    # lazily inside run_ask_channel — patch them at their source modules.
+    with patch(
+        "beever_atlas.agents.query.qa_agent.get_agent_for_mode",
+        return_value=fake_agent,
+    ), patch(
+        "beever_atlas.agents.runner.create_runner",
+        return_value=fake_runner,
+    ), patch(
+        "beever_atlas.agents.runner.create_session",
+        new=AsyncMock(return_value=fake_session),
+    ), patch(
+        "beever_atlas.agents.tools.orchestration_tools.bind_principal",
+        return_value="tok",
+    ), patch(
+        "beever_atlas.agents.tools.orchestration_tools.reset_principal",
+        return_value=None,
+    ):
+        result = await runner_mod.run_ask_channel(
+            principal_id="alice-hash",
+            channel_id="ch-a",
+            question="what did we discuss?",
+            mode="deep",
+            session_id="mcp:alice-hash:my-own-session",
+            ctx=_ctx(),
+        )
+
+    # No "invalid_parameter" — the guard passed and the (mocked) runner returned empty.
+    assert "error" not in result or result.get("error") != "invalid_parameter"
+    assert result["metadata"]["session_id"] == "mcp:alice-hash:my-own-session"
+
+
+@pytest.mark.asyncio
 async def test_ask_channel_access_denied_returns_structured_error():
     """ask_channel returns channel_access_denied when assert_channel_access raises 403."""
     from beever_atlas.api.mcp_server import build_mcp
