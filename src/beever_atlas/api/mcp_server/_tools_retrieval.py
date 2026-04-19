@@ -1,0 +1,327 @@
+"""Retrieval tools: ask_channel, search_channel_facts, get_wiki_page,
+get_recent_activity, search_media_references (Phase 3, tasks 3.4–3.5)."""
+
+from __future__ import annotations
+
+import logging
+import uuid as _uuid
+from typing import Annotated
+
+from fastmcp import Context, FastMCP
+
+from beever_atlas.api.mcp_server._helpers import (
+    _get_principal_id,
+    _validate_id,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def register_retrieval_tools(mcp: FastMCP) -> None:
+
+    @mcp.tool(name="ask_channel", timeout=90.0)
+    async def ask_channel(
+        channel_id: Annotated[
+            str, "The channel id to query (from list_channels)"
+        ],
+        question: Annotated[str, "The natural-language question to answer"],
+        ctx: Context,
+        mode: Annotated[
+            str,
+            "QA mode: 'quick' (fast BM25), 'deep' (full ADK pipeline), or 'summarize'",
+        ] = "deep",
+        session_id: Annotated[
+            str | None,
+            "Session id for conversation continuity; defaults to a per-principal session",
+        ] = None,
+    ) -> dict:
+        """Answer a natural-language question about a channel's knowledge base.
+
+        This is the FLAGSHIP retrieval tool. It invokes the full ADK QA pipeline
+        (embeddings + BM25 hybrid search + graph context + optional multi-hop
+        reasoning) and returns a structured answer with citations.
+
+        When to use: whenever the user asks a question about channel content,
+        wants cited facts, or needs reasoning across multiple messages.
+        Prefer ``search_channel_facts`` for exact keyword search without inference.
+
+        mode options:
+        - ``"quick"``: fast BM25-only retrieval, no ADK reasoning, ~3s
+        - ``"deep"``: full ADK pipeline with graph context, ~20–60s (default)
+        - ``"summarize"``: structured summary with wiki pages, ~10–30s
+
+        The tool enforces a 90-second hard cap. On timeout, returns
+        ``{error: "answer_timeout"}``. On channel access denial, returns
+        ``{error: "channel_access_denied"}``.
+
+        Returns: ``{answer, citations, follow_ups, metadata}``
+        """
+        principal_id = _get_principal_id(ctx)
+        if not principal_id:
+            logger.warning("event=mcp_tool_missing_principal tool=ask_channel")
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        logger.warning(
+            "event=mcp_ask_channel_stub channel_id=%s principal=%s "
+            "detail='ADK runner not yet wired; Phase 9 gate requires real implementation'",
+            channel_id,
+            principal_id,
+        )
+
+        try:
+            from beever_atlas.infra.channel_access import assert_channel_access
+
+            await assert_channel_access(principal_id, channel_id)
+        except Exception as exc:
+            from fastapi import HTTPException
+
+            if isinstance(exc, HTTPException) and exc.status_code == 403:
+                return {"error": "channel_access_denied", "channel_id": channel_id}
+
+        effective_session_id = session_id or f"mcp:{principal_id}"
+        await ctx.info(
+            f"ask_channel stub: channel={channel_id} session={effective_session_id} "
+            f"(ADK runner integration pending Phase 3b)"
+        )
+
+        return {
+            "error": "not_implemented_in_phase3",
+            "detail": (
+                "ask_channel requires Phase 3b ADK runner integration. "
+                "The tool is registered and channel access is enforced, "
+                "but the QA pipeline is not yet wired."
+            ),
+        }
+
+    @mcp.tool(name="search_channel_facts")
+    async def search_channel_facts(
+        channel_id: Annotated[
+            str, "The channel id to search (from list_channels)"
+        ],
+        query: Annotated[
+            str, "Search query — BM25+vector hybrid over atomic facts"
+        ],
+        ctx: Context,
+        time_scope: Annotated[
+            str, "'any' (all time) or 'recent' (last 30 days)"
+        ] = "any",
+        limit: Annotated[
+            int, "Maximum number of facts to return (1–50)"
+        ] = 10,
+    ) -> dict:
+        """Search atomic facts stored from a channel using BM25+vector hybrid retrieval.
+
+        Each returned fact includes ``text``, ``author``, ``timestamp``,
+        ``permalink``, ``channel_id``, ``confidence``, and ``topic_tags``.
+
+        When to use: for targeted keyword or semantic search when you need
+        specific facts with citations. Faster and more precise than ``ask_channel``
+        for lookup queries. Use ``ask_channel`` when you need synthesized answers
+        with reasoning across multiple facts.
+
+        time_scope: ``"any"`` returns all facts; ``"recent"`` restricts to the
+        last 30 days. Default: ``"any"``.
+
+        Returns: ``{facts: [...]}`` or ``{error: "channel_access_denied", ...}``
+        """
+        principal_id = _get_principal_id(ctx)
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import memory as mem_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            facts = await mem_cap.search_channel_facts(
+                principal_id,
+                channel_id,
+                query,
+                time_scope=time_scope,
+                limit=limit,
+            )
+            return {"facts": facts}
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "search_channel_facts: failed principal=%s channel_id=%s",
+                principal_id,
+                channel_id,
+            )
+            return {"facts": []}
+
+    @mcp.tool(name="get_wiki_page")
+    async def get_wiki_page(
+        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        ctx: Context,
+        page_type: Annotated[
+            str,
+            "Wiki page type: overview, faq, decisions, people, glossary, activity, topics",
+        ] = "overview",
+    ) -> dict:
+        """Retrieve a pre-compiled wiki page for a channel.
+
+        Wiki pages are generated offline during the sync pipeline and contain
+        summarised, structured knowledge: ``overview`` (channel purpose and key
+        topics), ``faq`` (common questions), ``decisions`` (key decisions made),
+        ``people`` (active contributors), ``glossary`` (domain terms), and more.
+
+        When to use: for quick structured summaries without invoking the full QA
+        pipeline. Faster than ``ask_channel`` but less precise for specific
+        queries. Use ``ask_channel`` when the wiki page doesn't have the answer.
+
+        Returns the page dict verbatim (``page_type``, ``channel_id``,
+        ``content``, ``summary``, ``text``), or ``null`` if the page has not
+        been generated yet, or ``{error: "channel_access_denied"}`` on denial.
+        """
+        principal_id = _get_principal_id(ctx)
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import wiki as wiki_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            page = await wiki_cap.get_wiki_page(principal_id, channel_id, page_type)
+            return (
+                page
+                if page is not None
+                else {
+                    "page_type": page_type,
+                    "channel_id": channel_id,
+                    "content": None,
+                }
+            )
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "get_wiki_page: failed principal=%s channel_id=%s page_type=%s",
+                principal_id,
+                channel_id,
+                page_type,
+            )
+            return {"page_type": page_type, "channel_id": channel_id, "content": None}
+
+    @mcp.tool(name="get_recent_activity")
+    async def get_recent_activity(
+        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        ctx: Context,
+        days: Annotated[int, "Look-back window in days (1–90)"] = 7,
+        topic: Annotated[
+            str | None,
+            "Optional topic filter — narrows search to facts related to this topic",
+        ] = None,
+        limit: Annotated[
+            int, "Maximum number of activity items to return (1–50)"
+        ] = 20,
+    ) -> dict:
+        """Return the most recent activity from a channel, optionally filtered by topic.
+
+        Results are sorted by timestamp descending and include ``text``,
+        ``author``, ``timestamp``, ``channel_id``, ``topic_tags``, and ``fact_id``.
+
+        When to use: to answer "what has been discussed recently in #channel?"
+        or "what happened with topic X in the last N days?" Use ``ask_channel``
+        when you need reasoning or synthesis across multiple activity items.
+        Use ``search_channel_facts`` for non-time-bounded search.
+
+        Returns: ``{activity: [...]}`` or ``{error: "channel_access_denied", ...}``
+        """
+        principal_id = _get_principal_id(ctx)
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import memory as mem_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            activity = await mem_cap.get_recent_activity(
+                principal_id, channel_id, days=days, topic=topic, limit=limit
+            )
+            return {"activity": activity}
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "get_recent_activity: failed principal=%s channel_id=%s",
+                principal_id,
+                channel_id,
+            )
+            return {"activity": []}
+
+    @mcp.tool(name="search_media_references")
+    async def search_media_references(
+        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        query: Annotated[
+            str, "Search query for finding media-containing messages"
+        ],
+        ctx: Context,
+        media_type: Annotated[
+            str | None,
+            "Filter by media type: 'image', 'pdf', 'link', or null for all",
+        ] = None,
+        limit: Annotated[
+            int, "Maximum number of results to return (1–20)"
+        ] = 5,
+    ) -> dict:
+        """Search for messages containing images, PDFs, or links shared in a channel.
+
+        Each result includes ``text``, ``media_urls``, ``link_urls``,
+        ``link_titles``, ``author``, ``timestamp``, ``media_type``, and
+        ``fact_id``.
+
+        When to use: when the user asks about documents, images, or links shared
+        in a channel, or when you need to find a specific file or URL. Do NOT use
+        for general knowledge search — use ``search_channel_facts`` for that.
+
+        media_type: ``"image"`` (photos/screenshots), ``"pdf"`` (documents),
+        ``"link"`` (URLs), or ``null`` (all types). Default: ``null``.
+
+        Returns: ``{media: [...]}`` or ``{error: "channel_access_denied", ...}``
+        """
+        principal_id = _get_principal_id(ctx)
+        if not principal_id:
+            return {"error": "authentication_missing"}
+
+        err = _validate_id(channel_id, "channel_id")
+        if err:
+            return err
+
+        try:
+            from beever_atlas.capabilities import memory as mem_cap
+            from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+            media = await mem_cap.search_media_references(
+                principal_id,
+                channel_id,
+                query,
+                media_type=media_type,
+                limit=limit,
+            )
+            return {"media": media}
+        except ChannelAccessDenied:
+            return {"error": "channel_access_denied", "channel_id": channel_id}
+        except Exception:
+            logger.exception(
+                "search_media_references: failed principal=%s channel_id=%s",
+                principal_id,
+                channel_id,
+            )
+            return {"media": []}
