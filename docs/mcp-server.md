@@ -2,7 +2,7 @@
 
 ## Overview
 
-Beever Atlas exposes a Model Context Protocol (MCP) server at `/mcp/v2` so external AI agents — Claude Code, Cursor, IDE assistants, custom orchestrators — can discover, query, and operate on team knowledge without relying on the dashboard UI. The MCP surface is a curated subset of the internal capability layer that also powers the dashboard's ADK query agent, with unified auth, channel-access enforcement, and long-running job support.
+Beever Atlas exposes a Model Context Protocol (MCP) server at `/mcp` so external AI agents — Claude Code, Cursor, IDE assistants, custom orchestrators — can discover, query, and operate on team knowledge without relying on the dashboard UI. The MCP surface is a curated subset of the internal capability layer that also powers the dashboard's ADK query agent, with unified auth, channel-access enforcement, and long-running job support.
 
 **Who should use this?** AI coding assistants (Claude Code, Cursor) that need to answer questions like *"How does our auth system work?"* or *"Show me the wiki for the DevOps channel"* without a human browsing the dashboard.
 
@@ -15,7 +15,7 @@ Beever Atlas exposes a Model Context Protocol (MCP) server at `/mcp/v2` so exter
 ```bash
 # Generate a random 32-byte key per external agent
 BEEVER_MCP_API_KEYS="agent-key-1,agent-key-2"   # comma-separated
-BEEVER_MCP_V2=true                               # enable the /mcp/v2 mount (default: false)
+BEEVER_MCP_ENABLED=true                               # enable the /mcp mount (default: false)
 ```
 
 **Key generation:**
@@ -363,7 +363,7 @@ Claude Code reads MCP server configs from `~/.claude/mcp.json` (or per-project `
 {
   "mcpServers": {
     "beever-atlas": {
-      "url": "https://atlas.example.com/mcp/v2",
+      "url": "https://atlas.example.com/mcp",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer ${BEEVER_MCP_KEY}"
@@ -395,7 +395,7 @@ Cursor uses the `mcp-remote` proxy for HTTP transports (since Cursor's native co
     "beever-atlas": {
       "command": "mcp-remote",
       "args": [
-        "--url", "https://atlas.example.com/mcp/v2",
+        "--url", "https://atlas.example.com/mcp",
         "--header", "Authorization: Bearer $BEEVER_MCP_KEY"
       ]
     }
@@ -420,7 +420,7 @@ Then use Cursor normally; it will discover Atlas tools in the context menu or sy
 2. **Add to environment:**
    ```bash
    export BEEVER_MCP_API_KEYS="<your-key>"
-   export BEEVER_MCP_V2=true
+   export BEEVER_MCP_ENABLED=true
    ```
 
 3. **Configure your client:**

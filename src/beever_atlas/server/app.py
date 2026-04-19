@@ -220,12 +220,12 @@ app.include_router(config_router, dependencies=_auth)
 app.include_router(media_router, dependencies=_auth)
 
 # Secure MCP mount (openspec change atlas-mcp-server). Gated behind
-# BEEVER_MCP_V2=true (default off). Auth is enforced by MCPAuthMiddleware at
+# BEEVER_MCP_ENABLED=true (default off). Auth is enforced by MCPAuthMiddleware at
 # the ASGI layer BEFORE any protocol message reaches FastMCP; the caller's
 # mcp:<hash> principal is attached to ASGI scope.state for tool handlers to
 # consume. This is the sole MCP surface; the legacy unauthenticated /mcp
 # mount has been retired.
-if _settings.beever_mcp_v2:
+if _settings.beever_mcp_enabled:
     from starlette.middleware import Middleware
 
     from beever_atlas.api.mcp_server import build_mcp
@@ -239,9 +239,9 @@ if _settings.beever_mcp_v2:
         json_response=True,
         transport="streamable-http",
     )
-    app.mount("/mcp/v2", _mcp_v2_asgi)
+    app.mount("/mcp", _mcp_v2_asgi)
     logging.getLogger(__name__).info(
-        "MCP v2 endpoint mounted at /mcp/v2 with auth middleware"
+        "MCP v2 endpoint mounted at /mcp with auth middleware"
     )
 
 register_health_checks()

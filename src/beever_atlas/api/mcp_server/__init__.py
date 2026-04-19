@@ -1,4 +1,4 @@
-"""FastMCP server factory for the /mcp/v2 mount.
+"""FastMCP server factory for the /mcp mount.
 
 This is the sole agent-facing MCP surface, introduced by openspec change
 ``atlas-mcp-server``. The legacy unauthenticated ``/mcp`` mount has been

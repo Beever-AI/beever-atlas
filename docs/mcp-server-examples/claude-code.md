@@ -21,7 +21,7 @@ Edit `~/.claude/mcp.json` (or create it if it doesn't exist) and add the Beever 
 {
   "mcpServers": {
     "beever-atlas": {
-      "url": "https://atlas.example.com/mcp/v2",
+      "url": "https://atlas.example.com/mcp",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer ${BEEVER_MCP_KEY}"

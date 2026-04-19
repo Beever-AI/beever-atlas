@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- MCP server at `/mcp/v2` with auth middleware, 16 curated tools, 5 resources,
-  3 prompts, and principal-keyed rate limits (gated by `BEEVER_MCP_V2=true`).
+- MCP server at `/mcp` with auth middleware, 16 curated tools, 5 resources,
+  3 prompts, and principal-keyed rate limits (gated by `BEEVER_MCP_ENABLED=true`).
   See `docs/mcp-server.md`.
 - Comprehensive MCP documentation: server architecture, tool catalog, error codes,
   rate limits, long-running job pattern, and client setup guides for Claude Code
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (Security)
 - The legacy unauthenticated `/mcp` mount is removed (previously gated off by
-  a Phase 0 hotfix). The `/mcp/v2` mount is the sole MCP surface; it requires
+  a Phase 0 hotfix). The `/mcp` mount is the sole MCP surface; it requires
   bearer authentication via `BEEVER_MCP_API_KEYS` and enforces per-tool
   channel-access checks.
 
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Legacy unauthenticated `/mcp` mount (`BEEVER_MCP_ENABLED` flag). The secure
-  `/mcp/v2` surface (`BEEVER_MCP_V2`) is the single MCP endpoint. Callers
+  `/mcp` surface (`BEEVER_MCP_ENABLED`) is the single MCP endpoint. Callers
   of the old `search_channel_knowledge` tool still receive a structured
   `tool_renamed` error directing them to `ask_channel` / `search_channel_facts`.
 

@@ -212,7 +212,7 @@ curl -X POST http://localhost:8000/api/channels/C12345/sync \
 
 ### MCP server (for external AI agents)
 
-Beever Atlas exposes a curated MCP (Model Context Protocol) server at `/mcp/v2` for AI agents like Claude Code and Cursor. This allows external code assistants to query your team's knowledge base without using the dashboard.
+Beever Atlas exposes a curated MCP (Model Context Protocol) server at `/mcp` for AI agents like Claude Code and Cursor. This allows external code assistants to query your team's knowledge base without using the dashboard.
 
 See [docs/mcp-server.md](docs/mcp-server.md) for:
 - **Tool catalog** — 16 tools for discovery, retrieval, graph traversal, and long-running operations
@@ -225,7 +225,7 @@ Quick example (Claude Code):
 {
   "mcpServers": {
     "beever-atlas": {
-      "url": "https://atlas.example.com/mcp/v2",
+      "url": "https://atlas.example.com/mcp",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer ${BEEVER_MCP_KEY}"

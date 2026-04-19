@@ -338,13 +338,13 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Mount the /mcp/v2 server (with auth middleware + ACL enforcement).
+    # Mount the /mcp server (with auth middleware + ACL enforcement).
     # Default off; flip to true to expose the sole MCP surface.
-    beever_mcp_v2: bool = Field(
+    beever_mcp_enabled: bool = Field(
         default=False,
-        alias="BEEVER_MCP_V2",
+        alias="BEEVER_MCP_ENABLED",
         description=(
-            "Mount the /mcp/v2 server (with auth middleware + ACL enforcement). "
+            "Mount the /mcp server (with auth middleware + ACL enforcement). "
             "This is the sole MCP surface; the legacy unauthenticated /mcp "
             "mount has been retired."
         ),
@@ -353,7 +353,7 @@ class Settings(BaseSettings):
     # MCP rate-limit backend. "memory" (default) is a per-process sliding
     # window — safe for single-worker deploys. "redis" uses the configured
     # redis_url so counters are shared across workers; required before
-    # flipping BEEVER_MCP_V2=true in multi-worker production.
+    # flipping BEEVER_MCP_ENABLED=true in multi-worker production.
     beever_mcp_rate_limit_backend: Literal["memory", "redis"] = Field(
         default="memory",
         alias="BEEVER_MCP_RATE_LIMIT_BACKEND",

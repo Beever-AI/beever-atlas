@@ -25,7 +25,7 @@ Edit **Cursor settings** (typically in `.cursor/settings.json` or via the Cursor
     "beever-atlas": {
       "command": "mcp-remote",
       "args": [
-        "--url", "https://atlas.example.com/mcp/v2",
+        "--url", "https://atlas.example.com/mcp",
         "--header", "Authorization: Bearer $BEEVER_MCP_KEY"
       ]
     }
@@ -103,7 +103,7 @@ Once configured, Cursor will offer Beever Atlas tools in its AI context. You can
 ## Troubleshooting
 
 **`connection refused` or timeout:**
-- Verify the Atlas URL is correct and accessible: `curl -I https://atlas.example.com/mcp/v2`
+- Verify the Atlas URL is correct and accessible: `curl -I https://atlas.example.com/mcp`
 - Check that TLS is enabled (URL must be `https://`).
 - Confirm your network can reach the Atlas server (no firewall blocking).
 
