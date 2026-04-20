@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       mongodb:
-        image: mongo:7
+        image: mongo:7@sha256:43fddee7e532a920f3dfdee9e8f4834398c155c26bcb92d790cc1cd3c630fc40
         ports:
           - 27017:27017
         options: >-
@@ -25,7 +25,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7
+        image: redis:7@sha256:24ea35ee039d7345bef2377611e3b1a615231746de4cfea74c1414575ee56167
         ports:
           - 6379:6379
         options: >-
@@ -122,3 +122,72 @@ jobs:
 
       - name: Test
         run: npm test
+
+  supply-chain-lint:
+    name: Supply Chain (digest pinning)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject unpinned FROM / image: references
+        run: |
+          set -e
+          violations=0
+          # Dockerfiles: reject FROM <ref> when ref is a real image (has : or /)
+          # without an @sha256: digest suffix. Stage aliases (bare words) pass.
+          for f in Dockerfile web/Dockerfile bot/Dockerfile; do
+            [ -f "$f" ] || continue
+            while IFS= read -r line; do
+              ref="$(echo "$line" | awk '/^FROM /{print $2}')"
+              [ -z "$ref" ] && continue
+              [ "$ref" = "scratch" ] && continue
+              case "$ref" in
+                *@sha256:*) ;;
+                *)
+                  case "$ref" in
+                    *[:/]*)
+                      echo "::error file=$f::unpinned FROM: $line"
+                      violations=$((violations+1))
+                      ;;
+                  esac
+                  ;;
+              esac
+            done < "$f"
+            # Also catch COPY --from=<external> without a digest.
+            while IFS= read -r line; do
+              from_ref="$(echo "$line" | sed -nE 's/.*COPY[[:space:]]+--from=([^[:space:]]+).*/\1/p')"
+              [ -z "$from_ref" ] && continue
+              # Bare stage alias (no : or /): skip.
+              case "$from_ref" in
+                *[:/]*) ;;
+                *) continue ;;
+              esac
+              case "$from_ref" in
+                *@sha256:*) ;;
+                *)
+                  echo "::error file=$f::unpinned COPY --from: $line"
+                  violations=$((violations+1))
+                  ;;
+              esac
+            done < "$f"
+          done
+          # Compose files: reject `image:` lines without @sha256:.
+          for f in docker-compose.yml docker-compose.nebula.yml; do
+            [ -f "$f" ] || continue
+            while IFS= read -r line; do
+              ref="$(echo "$line" | awk '/^[[:space:]]*image:[[:space:]]+/{print $2}')"
+              [ -z "$ref" ] && continue
+              case "$ref" in
+                *@sha256:*) ;;
+                *)
+                  echo "::error file=$f::unpinned image: $line"
+                  violations=$((violations+1))
+                  ;;
+              esac
+            done < "$f"
+          done
+          if [ "$violations" -gt 0 ]; then
+            echo "Found $violations unpinned image reference(s). Pin by @sha256:<digest>."
+            exit 1
+          fi
+          echo "OK — every FROM / image: is digest-pinned."

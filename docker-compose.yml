@@ -38,7 +38,7 @@ services:
       - beever-atlas
 
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0@sha256:58b576d36eace6a33f1a0866b9fd13fd58abfb9ce1eaaa419758c70b6a427e36
     ports: ["127.0.0.1:8080:8080", "127.0.0.1:50051:50051"]
     volumes: [weaviate_data:/var/lib/weaviate]
     environment:
@@ -56,7 +56,7 @@ services:
       retries: 5
 
   neo4j:
-    image: neo4j:5.26-community
+    image: neo4j:5.26-community@sha256:f66304b9511c60d33555a2c451f88e03d82d1ebc893f32d84c98a6b326096435
     ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}
@@ -69,7 +69,7 @@ services:
       retries: 5
 
   mongodb:
-    image: mongo:7.0
+    image: mongo:7.0@sha256:43fddee7e532a920f3dfdee9e8f4834398c155c26bcb92d790cc1cd3c630fc40
     ports: ["127.0.0.1:27017:27017"]
     volumes: [mongo_data:/data/db]
     healthcheck:
@@ -79,7 +79,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
     ports: ["127.0.0.1:6380:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
