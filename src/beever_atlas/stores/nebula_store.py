@@ -275,8 +275,10 @@ class NebulaStore:
                             )
                             try:
                                 self._session.release()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug(
+                                    "NebulaStore: session.release failed: %s", exc, exc_info=False
+                                )
                             self._session = None
                             session_was_invalidated = True
                         wait = 5.0
@@ -493,8 +495,10 @@ class NebulaStore:
         if self._session is not None:
             try:
                 await asyncio.to_thread(self._session.release)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "NebulaStore.shutdown: session.release failed: %s", exc, exc_info=False
+                )
             self._session = None
         if self._pool is not None:
             await asyncio.to_thread(self._pool.close)
@@ -1606,7 +1610,7 @@ class NebulaStore:
                 await self.promote_pending_entity(name)
                 count += 1
             except Exception:
-                pass  # Entity may not be pending
+                pass  # Entity may not be pending  # TODO(res-208): add DEBUG log
         return count
 
     async def batch_find_entities_by_name(self, names: list[str]) -> set[str]:
@@ -1616,6 +1620,11 @@ class NebulaStore:
                 entity = await self.find_entity_by_name(name)
                 if entity is not None:
                     found.add(name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "NebulaStore.batch_find_entities_by_name: lookup failed name=%r: %s",
+                    name,
+                    exc,
+                    exc_info=False,
+                )
         return found

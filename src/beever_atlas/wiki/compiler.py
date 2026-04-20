@@ -203,7 +203,8 @@ def _normalize_url(url: str) -> str:
         path = parsed.path.rstrip("/") if parsed.path else ""
         # Drop query and fragment (tracking params, shares).
         return urlunparse((scheme, host, path, "", "", ""))
-    except Exception:
+    except Exception as exc:
+        logger.debug("_normalize_url failed url=%r: %s", url, exc, exc_info=False)
         return url
 
 
@@ -2524,8 +2525,10 @@ class WikiCompiler:
                 host = urlparse(url).hostname or ""
                 if any(host.endswith(s) for s in shortener_hosts):
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "_filter_media_data: urlparse failed url=%r: %s", url, exc, exc_info=False
+                )
 
             # Skip generic names
             if name in generic_names:
@@ -2568,7 +2571,10 @@ class WikiCompiler:
                 if host == "twitter.com" or host.endswith(".twitter.com"):
                     host = "x.com"
                 domain = host
-            except Exception:
+            except Exception as exc:
+                logger.debug(
+                    "_filter_media_data: domain parse failed url=%r: %s", url, exc, exc_info=False
+                )
                 domain = "unknown"
             if domain in _SOCIAL_DOMAINS:
                 cap = 5

@@ -186,8 +186,8 @@ async def lifespan(app: FastAPI):
     finally:
         try:
             await scheduler.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug("Scheduler shutdown failed: %s", exc, exc_info=False)
         await shutdown_sync_runner()
         await close_adapter()
         await stores.shutdown()

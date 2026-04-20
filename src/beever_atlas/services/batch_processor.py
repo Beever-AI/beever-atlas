@@ -1173,8 +1173,14 @@ class BatchProcessor:
                                 sync_job_id=sync_job_id,
                                 batch_num=batch_index,
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug(
+                                "BatchProcessor: checkpoint delete failed job_id=%s batch=%d: %s",
+                                sync_job_id,
+                                batch_index,
+                                exc,
+                                exc_info=False,
+                            )
                         # Reset breaker on any successful batch
                         async with _consecutive_503_lock:
                             _consecutive_503_count = 0

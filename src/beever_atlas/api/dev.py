@@ -42,15 +42,17 @@ async def reset_all_data() -> dict:
             try:
                 n = await stores.weaviate.delete_by_channel(cid)
                 total_deleted += n
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "DEV RESET: delete_by_channel failed cid=%s: %s", cid, exc, exc_info=False
+                )
 
         # Catch-all: delete any orphaned objects not tied to a tracked channel
         try:
             orphaned = await stores.weaviate.delete_all()
             total_deleted += orphaned
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("DEV RESET: delete_all orphaned failed: %s", exc, exc_info=False)
 
         results["weaviate"] = (
             f"deleted {total_deleted} objects across {len(channels_with_state)} channels"
@@ -75,8 +77,13 @@ async def reset_all_data() -> dict:
             for cid in channels_with_state:
                 try:
                     await stores.graph.delete_channel_data(cid)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "DEV RESET: graph.delete_channel_data failed cid=%s: %s",
+                        cid,
+                        exc,
+                        exc_info=False,
+                    )
             results["graph"] = "cleared (channel-by-channel)"
     except Exception as exc:
         results["graph_error"] = str(exc)
@@ -139,8 +146,8 @@ async def reset_all_data() -> dict:
         from beever_atlas.services.policy_resolver import invalidate_defaults_cache
 
         invalidate_defaults_cache()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("DEV RESET: invalidate_defaults_cache failed: %s", exc, exc_info=False)
 
     logger.warning("DEV RESET: all data wiped — %s", results)
     return {"status": "reset_complete", "details": results}

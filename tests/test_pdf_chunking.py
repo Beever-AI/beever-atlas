@@ -68,40 +68,6 @@ class TestExtractPages:
         assert pages == []
 
 
-class TestGroupPagesIntoChunks:
-    """Tests for PdfExtractor._group_pages_into_chunks()."""
-
-    def test_single_page_single_chunk(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-    def test_exact_multiple(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-    def test_remainder_chunk(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-    def test_empty_pages_filtered(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-    def test_all_empty_returns_fallback(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-    def test_chunk_pages_one(self):
-        pytest.skip(
-            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
-        )
-
-
 class TestPdfExtractorIntegration:
     """Integration tests for the full extract() flow."""
 
