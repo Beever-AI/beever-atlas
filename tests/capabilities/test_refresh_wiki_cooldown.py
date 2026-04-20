@@ -32,7 +32,7 @@ async def test_raises_cooldown_active_within_window():
     last_job = _make_last_wiki_job("completed", completed_minutes_ago=1.0)
 
     mock_stores = MagicMock()
-    mock_stores.mongodb.get_sync_status = AsyncMock(return_value=last_job)
+    mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=last_job)
 
     with patch(
         "beever_atlas.capabilities.wiki.assert_channel_access",
@@ -54,7 +54,7 @@ async def test_no_cooldown_when_window_expired():
     last_job = _make_last_wiki_job("completed", completed_minutes_ago=10)
 
     mock_stores = MagicMock()
-    mock_stores.mongodb.get_sync_status = AsyncMock(return_value=last_job)
+    mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=last_job)
     mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-new"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
@@ -78,14 +78,15 @@ async def test_no_cooldown_when_window_expired():
 @pytest.mark.asyncio
 async def test_no_cooldown_when_last_job_was_sync_not_wiki():
     """A recent *sync* job should NOT trigger the wiki cooldown — the
-    cooldown is kind-specific to ``wiki_refresh``."""
-    recent_sync = SimpleNamespace(
-        kind="sync",
-        status="completed",
-        completed_at=datetime.now(tz=UTC) - timedelta(seconds=30),
-    )
+    cooldown is kind-specific to ``wiki_refresh`` (Fix #4).
+
+    Under the new ``get_last_job_by_kind`` store helper the filter happens
+    at the query boundary, so this test asserts the store returns ``None``
+    when no ``wiki_refresh`` job has ever run and a ``sync`` job is
+    therefore ignored.
+    """
     mock_stores = MagicMock()
-    mock_stores.mongodb.get_sync_status = AsyncMock(return_value=recent_sync)
+    mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=None)
     mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-x"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()

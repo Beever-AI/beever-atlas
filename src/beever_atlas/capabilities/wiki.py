@@ -216,13 +216,14 @@ async def refresh_wiki(
     # window. A still-running job is NOT blocked here — the rate limiter
     # caps concurrency upstream, and callers may legitimately check status
     # via get_job_status while another run is in flight.
+    # Filter by kind so a recent ``sync`` job does not trigger the
+    # wiki-specific cooldown (Fix #4).
     try:
-        recent = await stores.mongodb.get_sync_status(channel_id)
+        recent = await stores.mongodb.get_last_job_by_kind(channel_id, "wiki_refresh")
     except Exception:
         recent = None
     if (
         recent
-        and getattr(recent, "kind", "sync") == "wiki_refresh"
         and recent.status in {"completed", "failed"}
         and recent.completed_at is not None
     ):
@@ -240,6 +241,7 @@ async def refresh_wiki(
     # Create a sync_jobs record and use the *persisted* job id so the
     # atlas://job/<id> resource resolves to the real row (Phase 1 bug fix).
     job_id: str | None = None
+    is_persisted_job = False
     try:
         job = await stores.mongodb.create_sync_job(
             channel_id=channel_id,
@@ -249,6 +251,7 @@ async def refresh_wiki(
             kind="wiki_refresh",
         )
         job_id = job.id
+        is_persisted_job = True
     except Exception:
         logger.warning(
             "refresh_wiki: could not create sync_jobs record for channel=%s — "
@@ -278,10 +281,25 @@ async def refresh_wiki(
         try:
             builder = WikiBuilder(stores.weaviate, stores.graph, cache)
             await builder.refresh_wiki(channel_id)
+            if is_persisted_job:
+                try:
+                    await stores.mongodb.complete_sync_job(job_id, status="completed")
+                except Exception:
+                    logger.warning(
+                        "refresh_wiki: failed to mark job completed job_id=%s",
+                        job_id,
+                    )
         except Exception as exc:
             logger.error(
                 "refresh_wiki: generation failed channel=%s: %s", channel_id, exc
             )
+            if is_persisted_job:
+                try:
+                    await stores.mongodb.complete_sync_job(
+                        job_id, status="failed", errors=[str(exc)]
+                    )
+                except Exception:
+                    pass
             try:
                 await cache.set_generation_status(
                     channel_id, status="failed", stage="error", error=str(exc)

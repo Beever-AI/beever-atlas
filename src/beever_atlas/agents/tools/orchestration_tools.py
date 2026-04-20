@@ -39,6 +39,7 @@ from beever_atlas.capabilities.errors import (
     ConnectionAccessDenied,
     CooldownActive,
     JobNotFound,
+    ServiceUnavailable,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ def _capability_error_to_dict(exc: CapabilityError) -> dict:
         return {"error": "cooldown_active", "retry_after_seconds": exc.retry_after_seconds}
     if isinstance(exc, JobNotFound):
         return {"error": "job_not_found", "job_id": exc.job_id}
+    if isinstance(exc, ServiceUnavailable):
+        return {"error": "service_unavailable", "service": exc.service}
     return {"error": "capability_error", "detail": str(exc)}
 
 

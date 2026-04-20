@@ -60,10 +60,19 @@ class JobNotFound(CapabilityError):
         self.job_id = job_id
 
 
+class ServiceUnavailable(CapabilityError):
+    """A required backing service is unavailable."""
+
+    def __init__(self, service: str) -> None:
+        super().__init__(f"Service unavailable: {service}")
+        self.service = service
+
+
 __all__ = [
     "CapabilityError",
     "ChannelAccessDenied",
     "ConnectionAccessDenied",
     "CooldownActive",
     "JobNotFound",
+    "ServiceUnavailable",
 ]

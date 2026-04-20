@@ -15,7 +15,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from beever_atlas.capabilities.errors import ChannelAccessDenied, CooldownActive
+from beever_atlas.capabilities.errors import (
+    ChannelAccessDenied,
+    CooldownActive,
+    ServiceUnavailable,
+)
 from beever_atlas.infra.channel_access import assert_channel_access
 from beever_atlas.stores import get_stores
 
@@ -61,11 +65,10 @@ async def trigger_sync(
     except Exception as exc:
         raise ChannelAccessDenied(channel_id) from exc
 
-    stores_mod = None
     try:
         stores_mod = get_stores()
-    except Exception:
-        pass
+    except Exception as exc:
+        raise ServiceUnavailable("stores") from exc
 
     # Resolve effective policy for cooldown and default sync_type.
     resolved_sync_type = sync_type

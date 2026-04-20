@@ -62,6 +62,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             from beever_atlas.capabilities.errors import (
                 ChannelAccessDenied,
                 CooldownActive,
+                ServiceUnavailable,
             )
 
             result = await sync_cap.trigger_sync(
@@ -75,6 +76,8 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                 "error": "cooldown_active",
                 "retry_after_seconds": exc.retry_after_seconds,
             }
+        except ServiceUnavailable as exc:
+            return {"error": "service_unavailable", "service": exc.service}
         except Exception:
             logger.exception(
                 "trigger_sync: capability failed principal=%s channel_id=%s",
@@ -122,6 +125,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             from beever_atlas.capabilities.errors import (
                 ChannelAccessDenied,
                 CooldownActive,
+                ServiceUnavailable,
             )
 
             result = await wiki_cap.refresh_wiki(
@@ -135,6 +139,8 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                 "error": "cooldown_active",
                 "retry_after_seconds": exc.retry_after_seconds,
             }
+        except ServiceUnavailable as exc:
+            return {"error": "service_unavailable", "service": exc.service}
         except Exception:
             logger.exception(
                 "refresh_wiki: capability failed principal=%s channel_id=%s",

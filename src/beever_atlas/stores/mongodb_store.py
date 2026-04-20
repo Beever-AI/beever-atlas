@@ -239,6 +239,23 @@ class MongoDBStore:
         doc.pop("_id", None)
         return SyncJob(**doc)
 
+    async def get_last_job_by_kind(
+        self, channel_id: str, kind: str
+    ) -> SyncJob | None:
+        """Return the most recent SyncJob of ``kind`` for *channel_id*, or None.
+
+        Used by the wiki cooldown check so a ``sync`` job does not count
+        against the ``wiki_refresh`` window (Fix #4).
+        """
+        doc = await self._sync_jobs.find_one(
+            {"channel_id": channel_id, "kind": kind},
+            sort=[("started_at", -1)],
+        )
+        if doc is None:
+            return None
+        doc.pop("_id", None)
+        return SyncJob(**doc)
+
     async def get_sync_job(self, job_id: str) -> SyncJob | None:
         """Return the ``SyncJob`` for the given id, or ``None`` if missing.
 
