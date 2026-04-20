@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from beever_atlas.agents.tools import QA_TOOLS, QA_TOOL_DESCRIPTORS
+from beever_atlas.agents.tools.orchestration_tools import ORCHESTRATION_TOOLS
 
 
 def _tool_name(tool) -> str:
@@ -14,17 +15,18 @@ def _tool_name(tool) -> str:
 
 
 def test_descriptor_count_matches_registry():
-    assert len(QA_TOOL_DESCRIPTORS) == len(QA_TOOLS) == 10
+    # Descriptors cover retrieval (QA_TOOLS) + deep-mode orchestration tools.
+    assert len(QA_TOOL_DESCRIPTORS) == len(QA_TOOLS) + len(ORCHESTRATION_TOOLS)
 
 
 def test_every_descriptor_name_in_registry():
-    tool_names = {_tool_name(t) for t in QA_TOOLS}
+    tool_names = {_tool_name(t) for t in QA_TOOLS} | {_tool_name(t) for t in ORCHESTRATION_TOOLS}
     for descriptor in QA_TOOL_DESCRIPTORS:
         assert descriptor["name"] in tool_names, (
-            f"Descriptor {descriptor['name']!r} not found in QA_TOOLS"
+            f"Descriptor {descriptor['name']!r} not found in QA_TOOLS or ORCHESTRATION_TOOLS"
         )
 
 
-def test_all_four_categories_represented():
+def test_all_categories_represented():
     categories = {d["category"] for d in QA_TOOL_DESCRIPTORS}
-    assert categories == {"wiki", "memory", "graph", "external"}
+    assert categories == {"wiki", "memory", "graph", "external", "orchestration"}

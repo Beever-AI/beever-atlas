@@ -193,7 +193,10 @@ async def _run_agent_stream(
                 "requires any of them, politely refuse and name the disabled tool(s)."
             )
             agent = create_qa_agent(
-                mode=mode, tools=filtered, extra_instruction=refusal_clause
+                mode=mode,
+                tools=filtered,
+                extra_instruction=refusal_clause,
+                disabled_names=set(effective_disabled),
             )
         else:
             agent = get_agent_for_mode(mode)

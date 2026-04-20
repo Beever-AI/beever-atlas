@@ -14,9 +14,10 @@ const CATEGORY_LABELS: Record<ToolCategory, string> = {
   memory: "Memory",
   graph: "Graph",
   external: "External",
+  orchestration: "Orchestration",
 };
 
-const CATEGORY_ORDER: ToolCategory[] = ["wiki", "memory", "graph", "external"];
+const CATEGORY_ORDER: ToolCategory[] = ["wiki", "memory", "graph", "external", "orchestration"];
 
 export function ToolsPanel({
   descriptors,
@@ -35,7 +36,7 @@ export function ToolsPanel({
       acc[cat] = descriptors.filter((d) => d.category === cat);
       return acc;
     },
-    { wiki: [], memory: [], graph: [], external: [] },
+    { wiki: [], memory: [], graph: [], external: [], orchestration: [] },
   );
 
   return (

@@ -1,4 +1,4 @@
-export type ToolCategory = "wiki" | "memory" | "graph" | "external";
+export type ToolCategory = "wiki" | "memory" | "graph" | "external" | "orchestration";
 
 export interface ToolDescriptor {
   name: string;

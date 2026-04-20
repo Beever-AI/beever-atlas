@@ -8,9 +8,10 @@ const TOOL_CATEGORY_LABELS: Record<ToolCategory, string> = {
   memory: "Memory",
   graph: "Graph",
   external: "External",
+  orchestration: "Orchestration",
 };
 
-const TOOL_CATEGORY_ORDER: ToolCategory[] = ["wiki", "memory", "graph", "external"];
+const TOOL_CATEGORY_ORDER: ToolCategory[] = ["wiki", "memory", "graph", "external", "orchestration"];
 
 interface ChatInputBarProps {
   onSubmit: (question: string, options?: { mode?: AnswerMode; attachments?: AttachmentFile[] }) => void;
@@ -142,7 +143,7 @@ export function ChatInputBar({
       acc[cat] = toolDescriptors?.filter((d) => d.category === cat) ?? [];
       return acc;
     },
-    { wiki: [], memory: [], graph: [], external: [] },
+    { wiki: [], memory: [], graph: [], external: [], orchestration: [] },
   );
 
   return (

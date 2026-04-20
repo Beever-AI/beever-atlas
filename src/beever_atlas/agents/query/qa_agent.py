@@ -185,6 +185,7 @@ def create_qa_agent(
     mode: str = "deep",
     tools: list | None = None,
     extra_instruction: str = "",
+    disabled_names: set[str] | None = None,
 ) -> LlmAgent:
     """Create a QA LlmAgent for the specified answer mode.
 
@@ -248,7 +249,10 @@ def create_qa_agent(
         # refresh_wiki, get_job_status) are available in deep mode.
         # trigger_sync and refresh_wiki are removed by _filter_tools_for_untrusted
         # when the retrieved context is wrapped in <untrusted> tags.
-        all_tools = [*base_tools, *ORCHESTRATION_TOOLS, *registry.tools]
+        orch_tools = ORCHESTRATION_TOOLS
+        if disabled_names:
+            orch_tools = [t for t in ORCHESTRATION_TOOLS if _tool_name(t) not in disabled_names]
+        all_tools = [*base_tools, *orch_tools, *registry.tools]
         all_tools = _maybe_add_follow_ups_tool(all_tools, include_follow_ups=True)
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True)
         prompt = prompt + extra_instruction

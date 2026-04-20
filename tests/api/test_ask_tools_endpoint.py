@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from beever_atlas.agents.tools import QA_TOOLS
+from beever_atlas.agents.tools.orchestration_tools import ORCHESTRATION_TOOLS
 from beever_atlas.server.app import app
 
 
@@ -30,15 +31,18 @@ async def client():
 
 
 @pytest.mark.anyio
-async def test_get_tools_returns_10(client):
+async def test_get_tools_returns_full_catalog(client):
     resp = await client.get("/api/ask/tools")
     assert resp.status_code == 200
     data = resp.json()
     assert "tools" in data
-    assert len(data["tools"]) == 10
+    # Retrieval tools (QA_TOOLS) + deep-mode orchestration tools.
+    assert len(data["tools"]) == len(QA_TOOLS) + len(ORCHESTRATION_TOOLS)
 
     returned_names = {t["name"] for t in data["tools"]}
-    registry_names = {_tool_name(t) for t in QA_TOOLS}
+    registry_names = {_tool_name(t) for t in QA_TOOLS} | {
+        _tool_name(t) for t in ORCHESTRATION_TOOLS
+    }
     assert returned_names == registry_names
 
 
@@ -48,5 +52,5 @@ async def test_all_categories_present(client):
     assert resp.status_code == 200
     data = resp.json()
     categories = {t["category"] for t in data["tools"]}
-    for required in ("wiki", "memory", "graph", "external"):
+    for required in ("wiki", "memory", "graph", "external", "orchestration"):
         assert required in categories

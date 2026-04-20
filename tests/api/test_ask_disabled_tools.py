@@ -112,7 +112,7 @@ class _AgentStreamPatches:
 async def test_disabled_tools_filtered_from_agent(client, mock_stores):
     captured: dict = {}
 
-    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
+    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction="", **kwargs):
         captured["mode"] = mode
         captured["tools"] = tools
         captured["extra_instruction"] = extra_instruction
@@ -143,7 +143,7 @@ async def test_qa_tools_not_mutated(client, mock_stores):
     before_identity = id(QA_TOOLS)
     before_list = list(QA_TOOLS)
 
-    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
+    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction="", **kwargs):
         return MagicMock()
 
     with _AgentStreamPatches(fake_create_qa_agent):
@@ -164,7 +164,7 @@ async def test_qa_tools_not_mutated(client, mock_stores):
 
 @pytest.mark.anyio
 async def test_unknown_tool_name_ignored(client, mock_stores):
-    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
+    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction="", **kwargs):
         return MagicMock()
 
     from beever_atlas.api import ask as ask_module
@@ -204,7 +204,7 @@ async def test_unknown_tool_name_ignored(client, mock_stores):
 async def test_refusal_clause_appended(client, mock_stores):
     captured: dict = {}
 
-    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction=""):
+    def fake_create_qa_agent(mode="deep", tools=None, extra_instruction="", **kwargs):
         captured["extra_instruction"] = extra_instruction
         return MagicMock()
 

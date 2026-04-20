@@ -40,7 +40,7 @@ ToolDescriptor = TypedDict(
     "ToolDescriptor",
     {
         "name": str,
-        "category": Literal["wiki", "memory", "graph", "external"],
+        "category": Literal["wiki", "memory", "graph", "external", "orchestration"],
         "description": str,
     },
 )
@@ -99,6 +99,33 @@ QA_TOOL_DESCRIPTORS: list[ToolDescriptor] = [
         "name": "search_external_knowledge",
         "category": "external",
         "description": "Search external web knowledge via the Tavily API.",
+    },
+    # Orchestration tools — available in deep mode only. Surfaced here so the
+    # Tools panel can disable them per request via AskRequest.disabled_tools.
+    {
+        "name": "list_connections_tool",
+        "category": "orchestration",
+        "description": "List platform connections available to the caller.",
+    },
+    {
+        "name": "list_channels_tool",
+        "category": "orchestration",
+        "description": "List channels for a given connection.",
+    },
+    {
+        "name": "trigger_sync_tool",
+        "category": "orchestration",
+        "description": "Kick off a background sync for a channel (deep mode only; filtered from untrusted contexts).",
+    },
+    {
+        "name": "refresh_wiki_tool",
+        "category": "orchestration",
+        "description": "Rebuild the wiki for a channel (deep mode only; 5-min cooldown; filtered from untrusted contexts).",
+    },
+    {
+        "name": "get_job_status_tool",
+        "category": "orchestration",
+        "description": "Poll a sync or wiki-refresh job by id.",
     },
 ]
 
