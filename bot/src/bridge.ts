@@ -19,6 +19,8 @@ import type { ChatManager } from "./chat-manager.js";
 export type { PlatformErrorShape } from "./bridge/platformError.js";
 export { classifyPlatformError } from "./bridge/platformError.js";
 import { classifyPlatformError } from "./bridge/platformError.js";
+import { jsonResponse } from "./http-utils.js";
+export { jsonResponse } from "./http-utils.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -218,10 +220,11 @@ async function assertPublicUrl(rawUrl: string): Promise<void> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function jsonResponse(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
+// jsonResponse is imported from ./http-utils.js above and re-exported.
+
+/** Default and maximum message fetch limits for history routes. */
+export const DEFAULT_MESSAGE_LIMIT = 100;
+export const MAX_MESSAGE_LIMIT = 500;
 
 function parseQuery(url: string): URLSearchParams {
   const idx = url.indexOf("?");
@@ -1718,7 +1721,7 @@ async function handleGetMessages(
 ): Promise<void> {
   try {
     const query = parseQuery(req.url || "");
-    const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
+    const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_MESSAGE_LIMIT), 10), MAX_MESSAGE_LIMIT);
     const since = query.get("since") ?? undefined;
     const before = query.get("before") ?? undefined;
     const order = query.get("order") ?? "desc";
@@ -2209,7 +2212,7 @@ export function registerBridgeRoutes(
     if (req.method === "GET" && connMessagesMatch) {
       await handleConnectionRoute(req, res, chatManager, connMessagesMatch[1], async (bridge) => {
         const query = parseQuery(req.url || "");
-        const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
+        const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_MESSAGE_LIMIT), 10), MAX_MESSAGE_LIMIT);
         const since = query.get("since") ?? undefined;
         const before = query.get("before") ?? undefined;
         const order = query.get("order") ?? "desc";

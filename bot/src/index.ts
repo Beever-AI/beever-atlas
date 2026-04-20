@@ -8,6 +8,7 @@ import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
+import { jsonResponse } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 import { WebhookBuffer } from "./webhook-buffer.js";
 
@@ -373,12 +374,11 @@ function startServer(chatManager: ChatManager): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Health check
     if (req.method === "GET" && req.url === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
+      jsonResponse(res, 200, {
         status: "ok",
         adapters: chatManager.listAdapters(),
         transitioning: chatManager.isTransitioning(),
-      }));
+      });
       return;
     }
 
@@ -470,16 +470,14 @@ async function handleConnectionWebhook(
       const recovered = await lazySyncIfNeeded(chatManager);
       bot = chatManager.getCurrentBot();
       if (!bot || !recovered) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Bot not initialized — adapter sync in progress" }));
+        jsonResponse(res, 503, { error: "Bot not initialized — adapter sync in progress" });
         return;
       }
     }
 
     const compositeKey = chatManager.getCompositeKeyForConnection(connectionId);
     if (!compositeKey) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: `Connection ${connectionId} not found` }));
+      jsonResponse(res, 404, { error: `Connection ${connectionId} not found` });
       return;
     }
 
@@ -509,8 +507,7 @@ async function handleConnectionWebhook(
       const resBody = await webRes.text();
       res.end(resBody);
     } else {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: `No webhook handler for connection ${connectionId}` }));
+      jsonResponse(res, 404, { error: `No webhook handler for connection ${connectionId}` });
     }
   } catch (err) {
     console.error(`Connection webhook error (${connectionId}):`, err);
@@ -537,16 +534,14 @@ async function handlePlatformWebhook(
       const recovered = await lazySyncIfNeeded(chatManager);
       bot = chatManager.getCurrentBot();
       if (!bot || !recovered) {
-        res.writeHead(503, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Bot not initialized — adapter sync in progress" }));
+        jsonResponse(res, 503, { error: "Bot not initialized — adapter sync in progress" });
         return;
       }
     }
 
     const adapters = chatManager.getAdaptersByPlatform(platform);
     if (adapters.length === 0) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: `${platform} adapter not connected` }));
+      jsonResponse(res, 404, { error: `${platform} adapter not connected` });
       return;
     }
 
