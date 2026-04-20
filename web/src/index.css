@@ -4,6 +4,9 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource/fraunces/latin-400.css";
 @import "@fontsource/fraunces/latin-500.css";
+@import "@fontsource/encode-sans-expanded/400.css";
+@import "@fontsource/encode-sans-expanded/500.css";
+@import "@fontsource/encode-sans-expanded/600.css";
 @import "@fontsource/ibm-plex-mono/latin-400.css";
 @import "@fontsource/ibm-plex-mono/latin-500.css";
 
@@ -24,7 +27,7 @@ body,
 }
 
 @theme inline {
-  --font-heading: 'Fraunces', serif;
+  --font-heading: 'Encode Sans Expanded', 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-sans: 'Geist Variable', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
   --color-sidebar-ring: var(--sidebar-ring);
