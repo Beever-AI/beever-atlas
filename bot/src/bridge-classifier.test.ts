@@ -22,7 +22,7 @@ import assert from "node:assert";
 //
 // To keep the test hermetic and deps-free, we export the classifier from a
 // tiny shim under bot/src for direct import. See bot/src/bridge-classifier.ts.
-import { classifyPlatformError } from "./bridge-classifier.js";
+import { classifyPlatformError } from "./bridge/platformError.js";
 
 interface Case {
   name: string;

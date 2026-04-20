@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { classifyPlatformError } from "./bridge.js";
+import { classifyPlatformError } from "./bridge/platformError.js";
 
 describe("classifyPlatformError", () => {
   it("maps slack not_in_channel to 403 FORBIDDEN", () => {
