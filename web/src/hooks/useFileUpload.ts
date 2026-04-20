@@ -18,8 +18,12 @@ const MAX_FILES = 5;
 
 export function useFileUpload(channelId: string) {
   const [files, setFiles] = useState<AttachmentFile[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Derive `uploading` from the list so parallel uploads don't race the
+  // single boolean setter (A resolves first → flips to false even while
+  // B is still in flight).  Any pending chip keeps the flag true.
+  const uploading = files.some((f) => f.uploading);
 
   const validateFile = useCallback((file: File): string | null => {
     if (!SUPPORTED_TYPES.has(file.type)) {
@@ -41,7 +45,19 @@ export function useFileUpload(channelId: string) {
       return null;
     }
 
-    setUploading(true);
+    // Optimistic pending chip: appears the moment the user picks a file,
+    // so vision-extraction latency (3–5s for images) doesn't leave the
+    // composer feeling frozen.
+    const pendingId = `pending-${crypto.randomUUID()}`;
+    const pending: AttachmentFile = {
+      file_id: pendingId,
+      filename: file.name,
+      extracted_text: "",
+      mime_type: file.type,
+      size_bytes: file.size,
+      uploading: true,
+    };
+    setFiles((prev) => [...prev, pending]);
     setError(null);
 
     try {
@@ -64,13 +80,18 @@ export function useFileUpload(channelId: string) {
       }
 
       const attachment: AttachmentFile = await res.json();
-      setFiles(prev => [...prev, attachment]);
+      // Swap the pending entry for the resolved one in place so ordering
+      // matches what the user selected.
+      setFiles((prev) =>
+        prev.map((f) => (f.file_id === pendingId ? attachment : f)),
+      );
       return attachment;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
+      // Drop the pending entry so a failed upload doesn't leave a stuck
+      // spinner in the composer.
+      setFiles((prev) => prev.filter((f) => f.file_id !== pendingId));
       return null;
-    } finally {
-      setUploading(false);
     }
   }, [channelId, validateFile]);
 

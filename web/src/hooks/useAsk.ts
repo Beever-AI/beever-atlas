@@ -150,6 +150,7 @@ export function useAsk(channelId: string): UseAskReturn {
           thinking: [],
           metadata: null,
           isStreaming: false,
+          attachments: options?.attachments,
         },
         {
           id: assistantMsgId,

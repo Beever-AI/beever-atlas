@@ -1,7 +1,8 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Send, Square, Paperclip, X, Sparkles, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { Send, Square, Paperclip, X, Sparkles, ChevronDown, SlidersHorizontal, Loader2 } from "lucide-react";
 import type { AnswerMode, AttachmentFile } from "../../types/askTypes";
 import type { ToolDescriptor, ToolCategory } from "../../types/toolTypes";
+import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
 
 const TOOL_CATEGORY_LABELS: Record<ToolCategory, string> = {
   wiki: "Wiki",
@@ -67,6 +68,9 @@ export function ChatInputBar({
   onToggleTool,
 }: ChatInputBarProps) {
   const [text, setText] = useState(initialValue ?? "");
+  // Which attachment (if any) is currently being previewed. Only
+  // finalized chips (no `uploading` flag) are clickable.
+  const [previewAttachment, setPreviewAttachment] = useState<AttachmentFile | null>(null);
 
   // Seed from initialValue when it arrives / changes. Intentionally only
   // reacts to the seed itself — we must not echo `text` back here or we'd
@@ -110,7 +114,10 @@ export function ChatInputBar({
 
   const handleSubmit = () => {
     const trimmed = text.trim();
-    if (!trimmed || isStreaming || disabled) return;
+    // Also gate on `uploading` so an Enter-key press mid-upload doesn't
+    // fire a submit with a pending chip (its `extracted_text` is still
+    // empty until the backend /upload resolves).
+    if (!trimmed || isStreaming || disabled || uploading) return;
     onSubmit(trimmed, { mode, attachments });
     setText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -132,7 +139,9 @@ export function ChatInputBar({
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) ?? MODE_OPTIONS[1];
-  const canSubmit = !!text.trim() && !isStreaming && !disabled;
+  // Gate Send on uploads in flight so we never submit a pending chip (its
+  // extracted_text is still empty until the POST /upload resolves).
+  const canSubmit = !!text.trim() && !isStreaming && !disabled && !uploading;
 
   // Tools popover derived values
   const hasTools = !!toolDescriptors && toolDescriptors.length > 0;
@@ -152,21 +161,74 @@ export function ChatInputBar({
         {/* Attachments row */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
-            {attachments.map((att) => (
-              <span
-                key={att.file_id}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-card rounded-lg text-xs text-foreground/90 border border-border"
-              >
-                <Paperclip className="w-3 h-3 text-muted-foreground/70" />
-                {att.filename}
-                <button
-                  onClick={() => onRemoveAttachment?.(att.file_id)}
-                  className="text-muted-foreground/60 hover:text-foreground transition-colors"
+            {attachments.map((att) => {
+              const sizeKB = att.size_bytes
+                ? (att.size_bytes / 1024).toFixed(0)
+                : null;
+              // Image uploads run a Gemini-vision extraction server-side
+              // before responding (3–5s). Labeling that step as "analyzing"
+              // rather than "uploading" sets correct expectations.
+              const isImage = att.mime_type?.startsWith("image/") ?? false;
+              const pendingLabel = isImage ? "analyzing image…" : "uploading…";
+              const pendingTitle = isImage
+                ? "Running image analysis — this may take a few seconds"
+                : "Uploading…";
+              const chipBody = (
+                <>
+                  {att.uploading ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/80" />
+                  ) : (
+                    <Paperclip className="w-3 h-3 text-muted-foreground/70" />
+                  )}
+                  <span className="truncate max-w-[200px]">{att.filename}</span>
+                  {att.uploading ? (
+                    <span className="text-[10px] text-muted-foreground/70">
+                      {pendingLabel}
+                    </span>
+                  ) : sizeKB ? (
+                    <span className="text-muted-foreground/70">
+                      ({sizeKB}KB)
+                    </span>
+                  ) : null}
+                </>
+              );
+              const wrapperClass = `inline-flex items-center gap-1.5 px-2.5 py-1 bg-card rounded-lg text-xs border transition-colors ${
+                att.uploading
+                  ? "text-muted-foreground border-border/60"
+                  : "text-foreground/90 border-border"
+              }`;
+              return (
+                <span
+                  key={att.file_id}
+                  className="inline-flex items-stretch gap-0"
                 >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
+                  {att.uploading ? (
+                    <span className={wrapperClass} title={pendingTitle}>
+                      {chipBody}
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewAttachment(att)}
+                        className={`${wrapperClass} hover:bg-muted/70 rounded-r-none pr-1.5`}
+                        title={`Preview ${att.filename}`}
+                      >
+                        {chipBody}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveAttachment?.(att.file_id)}
+                        className="inline-flex items-center justify-center px-1.5 bg-card rounded-r-lg border border-l-0 border-border text-muted-foreground/60 hover:text-foreground hover:bg-muted/70 transition-colors"
+                        aria-label={`Remove ${att.filename}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </>
+                  )}
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -383,6 +445,12 @@ export function ChatInputBar({
         </div>
 
       </div>
+      {previewAttachment && (
+        <AttachmentPreviewModal
+          attachment={previewAttachment}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
     </div>
   );
 }

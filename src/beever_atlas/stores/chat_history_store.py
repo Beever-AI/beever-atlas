@@ -127,6 +127,7 @@ class ChatHistoryStore:
         channel_id: str | None = None,
         thinking: dict | None = None,
         tool_calls: list[dict] | None = None,
+        attachments: list[dict] | None = None,
     ) -> None:
         """Append a message to an existing session.
 
@@ -136,7 +137,11 @@ class ChatHistoryStore:
         `thinking` persists the assistant's reasoning trace as
         ``{text, duration_ms, truncated}`` so the UI can re-render the
         collapsed "Thought for Xs" disclosure after reload. `tool_calls`
-        persists the tool timeline used to produce the answer.
+        persists the tool timeline used to produce the answer. `attachments`
+        persists user-uploaded file metadata (filename/mime/size) so the
+        chip UI re-renders on reload; the raw extracted_text is NOT stored
+        here to keep messages small (it already lives inside the prompt
+        when needed for agent context).
         """
         # Phase 1: persist citations in the envelope shape
         # {items, sources, refs}. Legacy callers pass a plain list; the
@@ -157,6 +162,8 @@ class ChatHistoryStore:
             message["thinking"] = thinking
         if tool_calls:
             message["tool_calls"] = tool_calls
+        if attachments:
+            message["attachments"] = attachments
 
         await self._collection.update_one(
             {"session_id": session_id},

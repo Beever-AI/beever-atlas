@@ -299,6 +299,7 @@ export function useAskSession(): UseAskSessionReturn {
           metadata: null,
           isStreaming: false,
           channel_id: options.channelId,
+          attachments: options.attachments,
         },
         {
           id: assistantMsgId,

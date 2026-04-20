@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Hash } from "lucide-react";
-import type { Message } from "@/types/askTypes";
+import type { AttachmentFile, Message } from "@/types/askTypes";
 import { useUserProfile } from "@/hooks/useUserProfile";
+import { AttachmentPreviewModal } from "./AttachmentPreviewModal";
 
 interface UserMessageProps {
   message: Message;
@@ -23,6 +25,7 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
   const { profile } = useUserProfile();
   const emoji = profile.avatarEmoji || "🦫";
   const avatarColor = profile.avatarColor || "hsl(215, 80%, 55%)";
+  const [previewAttachment, setPreviewAttachment] = useState<AttachmentFile | null>(null);
 
   const channelId = message.channel_id;
   const channelLabel = channelId
@@ -30,6 +33,7 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
     : null;
 
   return (
+    <>
     <div className="flex justify-end gap-3">
       <div className="max-w-[70%] min-w-0">
         <div className="bg-primary/10 rounded-2xl px-4 py-3 w-fit ml-auto">
@@ -37,15 +41,20 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
           {message.attachments && message.attachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {message.attachments.map((att) => (
-                <span
+                <button
                   key={att.file_id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted rounded-md text-xs text-foreground/80 border border-border"
+                  type="button"
+                  onClick={() => setPreviewAttachment(att)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-muted rounded-md text-xs text-foreground/80 border border-border hover:bg-muted/70 transition-colors"
+                  title={`Preview ${att.filename}`}
                 >
                   📎 {att.filename}
-                  <span className="text-muted-foreground/70">
-                    ({(att.size_bytes / 1024).toFixed(0)}KB)
-                  </span>
-                </span>
+                  {att.size_bytes ? (
+                    <span className="text-muted-foreground/70">
+                      ({(att.size_bytes / 1024).toFixed(0)}KB)
+                    </span>
+                  ) : null}
+                </button>
               ))}
             </div>
           )}
@@ -74,5 +83,12 @@ export function UserMessage({ message, channelNames }: UserMessageProps) {
         {emoji}
       </div>
     </div>
+    {previewAttachment && (
+      <AttachmentPreviewModal
+        attachment={previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+      />
+    )}
+    </>
   );
 }

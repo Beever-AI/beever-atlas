@@ -9,6 +9,11 @@ export interface AttachmentFile {
   extracted_text: string;
   mime_type: string;
   size_bytes: number;
+  /** Transient client-only flag: true while the POST /upload is in flight.
+   *  Pending entries have a temp `file_id` prefixed with `pending-`; the
+   *  composer renders them with a spinner and disables Send.  Finalized
+   *  entries (from the server response) drop this flag. */
+  uploading?: boolean;
 }
 
 export interface FollowUpSuggestion {

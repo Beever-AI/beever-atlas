@@ -244,14 +244,32 @@ async def _run_agent_stream(
     # Task 4.3: Decompose question and annotate prompt for complex questions
     prompt_text, _decomposition_plan = await _build_decomposed_prompt(question, channel_id)
 
-    # Inject attachment content
+    # Inject attachment content. The `User-attached file` heading is the
+    # cue the QA prompt keys off (see TOOL_SELECTION_HINTS in prompts.py)
+    # to distinguish a user upload from channel-stored media.
     if attachments:
         attachment_sections = []
         for att in attachments:
             attachment_sections.append(
-                f"## Attached file: {att.get('filename', 'unknown')}\n{att.get('extracted_text', '')}"
+                f"## User-attached file: {att.get('filename', 'unknown')}\n"
+                f"(The user uploaded this file in this turn. Questions about "
+                f'"this image/file/document" refer to the content below.)\n'
+                f"{att.get('extracted_text', '')}"
             )
         prompt_text += "\n\n" + "\n\n".join(attachment_sections)
+
+    # Lean metadata list that gets persisted on the user message so the
+    # chip UI re-renders on reload. `extracted_text` is intentionally
+    # dropped to keep chat_history docs small.
+    persisted_attachments: list[dict] = [
+        {
+            "file_id": att.get("file_id"),
+            "filename": att.get("filename"),
+            "mime_type": att.get("mime_type"),
+            "size_bytes": att.get("size_bytes"),
+        }
+        for att in (attachments or [])
+    ]
 
     # Inject history context as a text prefix when prior turns exist
     if history_parts:
@@ -596,6 +614,7 @@ async def _run_agent_stream(
                     thinking_text=accumulated_thinking,
                     thinking_duration_ms=thinking_duration_ms,
                     tool_calls=persisted_tool_calls,
+                    attachments=persisted_attachments,
                 )
                 yield _sse_event("done", {})
                 done_sent = True
@@ -715,6 +734,7 @@ async def _run_agent_stream(
                     thinking_text=accumulated_thinking,
                     thinking_duration_ms=thinking_duration_ms,
                     tool_calls=persisted_tool_calls,
+                    attachments=persisted_attachments,
                 )
             yield _sse_event("done", {})
 
@@ -754,6 +774,7 @@ async def _persist_qa_history(
     thinking_text: str = "",
     thinking_duration_ms: int | None = None,
     tool_calls: list[dict] | None = None,
+    attachments: list[dict] | None = None,
 ) -> None:
     """Write Q&A pair to QAHistoryStore and save messages to ChatHistoryStore.
 
@@ -801,6 +822,7 @@ async def _persist_qa_history(
                 role="user",
                 content=question,
                 channel_id=channel_id,
+                attachments=attachments,
             )
             await chat_store.save_message(
                 session_id=session_id,
@@ -816,7 +838,10 @@ async def _persist_qa_history(
                 session_id=session_id, channel_id=channel_id, user_id=user_id
             )
             await chat_store.save_message(
-                session_id=session_id, role="user", content=question
+                session_id=session_id,
+                role="user",
+                content=question,
+                attachments=attachments,
             )
             await chat_store.save_message(
                 session_id=session_id,
@@ -856,24 +881,61 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
             return f"[Could not extract text from {filename}]"
 
     if mime_type.startswith("image/"):
-        # Use Gemini vision for image description
+        # Use Gemini vision for image description. The project uses the
+        # `google.genai` SDK (not the older `google.generativeai`); see
+        # media_extractors.py for the canonical call pattern.
         try:
-            import google.generativeai as genai
-            from beever_atlas.llm.provider import get_llm_provider
-            provider = get_llm_provider()
-            model_name = provider.resolve_model("qa_router")
-            if isinstance(model_name, str):
-                model = genai.GenerativeModel(model_name)
-                response = await asyncio.to_thread(
-                    model.generate_content,
-                    [
-                        "Describe this image in detail for a knowledge base assistant:",
-                        {"mime_type": mime_type, "data": content},
-                    ]
+            from google import genai
+            from google.genai import types as genai_types
+            from beever_atlas.infra.config import get_settings
+
+            settings = get_settings()
+            api_key = getattr(settings, "google_api_key", "") or ""
+            if not api_key:
+                logger.warning(
+                    "vision: no google_api_key configured; image attachment "
+                    "falls back to placeholder (%s)",
+                    filename,
                 )
-                return response.text
+                return f"[Image: {filename}]"
+
+            client = genai.Client(api_key=api_key)
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=settings.media_vision_model,
+                    contents=[
+                        genai_types.Content(
+                            role="user",
+                            parts=[
+                                genai_types.Part.from_bytes(
+                                    data=content, mime_type=mime_type
+                                ),
+                                genai_types.Part.from_text(
+                                    text=(
+                                        "Describe this image in detail for a "
+                                        "knowledge base assistant. Include any "
+                                        "visible text, people, objects, charts, "
+                                        "diagrams, and overall context."
+                                    )
+                                ),
+                            ],
+                        )
+                    ],
+                ),
+                timeout=60,
+            )
+            text = (getattr(response, "text", None) or "").strip()
+            if text:
+                return text
+            logger.warning(
+                "vision: empty description for image attachment %s (mime=%s)",
+                filename, mime_type,
+            )
         except Exception:
-            pass
+            logger.exception(
+                "vision: image description failed for %s (mime=%s)",
+                filename, mime_type,
+            )
         return f"[Image: {filename}]"
 
     return f"[Unsupported content type: {mime_type}]"
@@ -992,6 +1054,31 @@ async def ask_channel(
     )
 
 
+async def _save_upload_blob(
+    *, content: bytes, filename: str, mime_type: str, owner_user_id: str
+) -> str:
+    """Persist raw upload bytes to GridFS and return the minted file_id.
+
+    The blob survives session reload, so the chips in chat history stay
+    clickable. Owner is stamped server-side and re-checked on GET.
+    """
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.stores.file_store import FileStore
+
+    settings = get_settings()
+    store = FileStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        return await store.save(
+            content=content,
+            filename=filename,
+            mime_type=mime_type,
+            owner_user_id=owner_user_id,
+        )
+    finally:
+        store.close()
+
+
 @router.post("/api/channels/{channel_id}/ask/upload")
 async def upload_attachment(
     channel_id: str,
@@ -1013,7 +1100,12 @@ async def upload_attachment(
     if len(extracted_text) > 4000:
         extracted_text = extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
 
-    file_id = str(uuid.uuid4())
+    file_id = await _save_upload_blob(
+        content=content,
+        filename=file.filename or "unknown",
+        mime_type=mime,
+        owner_user_id=principal.id,
+    )
     return {
         "file_id": file_id,
         "filename": file.filename,
@@ -1719,8 +1811,14 @@ async def get_shared_conversation(
 @router.post("/api/ask/upload")
 async def upload_ask_attachment(
     file: UploadFile = FastAPIFile(...),
+    principal: Principal = Depends(require_user),
 ) -> dict:
-    """Upload a file for text extraction (channel-less variant)."""
+    """Upload a file for text extraction (channel-less variant).
+
+    Bytes are persisted to GridFS so the resulting `file_id` resolves via
+    the `GET /api/ask/files/{file_id}` endpoint — enabling the composer
+    chip and past user-message chips to preview images / download docs.
+    """
     content = await file.read()
     if len(content) > MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=413, detail="File too large. Maximum size: 10MB")
@@ -1733,7 +1831,12 @@ async def upload_ask_attachment(
     if len(extracted_text) > 4000:
         extracted_text = extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
 
-    file_id = str(uuid.uuid4())
+    file_id = await _save_upload_blob(
+        content=content,
+        filename=file.filename or "unknown",
+        mime_type=mime,
+        owner_user_id=principal.id,
+    )
     return {
         "file_id": file_id,
         "filename": file.filename,
@@ -1741,6 +1844,55 @@ async def upload_ask_attachment(
         "mime_type": mime,
         "size_bytes": len(content),
     }
+
+
+@router.get("/api/ask/files/{file_id}")
+async def get_ask_attachment(
+    file_id: str,
+    principal: Principal = Depends(require_user),
+) -> Response:
+    """Serve a stored upload blob back to its owner.
+
+    Auth: fail-closed on unknown id (404) or non-owner caller (403). The
+    owner check reads `metadata.owner_user_id` off the GridFS file doc —
+    the same value stamped at upload time.
+
+    Uploads cap at 10MB (MAX_UPLOAD_SIZE), so a single `read()` into
+    memory is acceptable and keeps lifecycle simple (no streaming chunks
+    that would keep the Mongo cursor open past the finally block).
+    """
+    from beever_atlas.infra.config import get_settings
+    from beever_atlas.stores.file_store import FileStore
+
+    settings = get_settings()
+    store = FileStore(settings.mongodb_uri)
+    await store.startup()
+    try:
+        stream = await store.open(file_id)
+        if stream is None:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        meta = stream.metadata or {}
+        owner = meta.get("owner_user_id")
+        if owner and owner != principal.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        mime = meta.get("mime_type") or "application/octet-stream"
+        filename = stream.filename or "file"
+        data = await stream.read()
+        # `inline` lets <img src> render images directly; the frontend
+        # decides whether to download or preview based on mime_type.
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Cache-Control": "private, max-age=300",
+                "X-Robots-Tag": "noindex, nofollow",
+            },
+        )
+    finally:
+        store.close()
 
 
 @router.post("/api/ask/feedback")

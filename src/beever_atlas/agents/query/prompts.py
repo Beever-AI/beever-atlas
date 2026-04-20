@@ -196,9 +196,18 @@ When the question…
 - names a person or asks 'who': add `search_relationships`.
 - asks how a decision evolved: add `trace_decision_history`.
 - asks 'who knows about X': add `find_experts`.
-- asks about images, diagrams, or attachments: add `search_media_references`.
+- asks about images, diagrams, or media STORED IN THE CHANNEL: add `search_media_references`.
 - asks about recent activity: add `get_recent_activity`.
-If none of those fit, Tier 0 + Tier 2 is usually enough."""
+If none of those fit, Tier 0 + Tier 2 is usually enough.
+
+## User-attached files
+When the user message contains a `## User-attached file:` section, the user
+uploaded that file in THIS turn. References to "this image", "this file",
+"this document", "the attached …", or "what is this" refer to that
+attachment's content — NOT to channel media. Answer directly from the
+extracted text in that section. Do NOT call `search_media_references` for
+user-attached content unless the user explicitly asks to find channel
+media matching it (e.g. "is there a similar image in the channel?")."""
 
 ANTI_META_COMMENTARY = """\
 Never describe your reasoning, plan, or next steps in the final answer. \
