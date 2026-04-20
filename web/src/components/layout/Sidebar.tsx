@@ -9,7 +9,7 @@ import {
   PanelLeft,
   Sun,
   Moon,
-  RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -225,7 +225,15 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     onClick={async () => {
                       if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
                       try {
-                        await api.post("/api/dev/reset", {}, { headers: adminHeaders() });
+                        // RES-199: backend requires explicit confirmation of the
+                        // target Neo4j database + a literal "yes" token. The default
+                        // name is "neo4j"; operators who set NEO4J_DATABASE to a
+                        // custom value must update this call to match.
+                        await api.post(
+                          "/api/dev/reset?database=neo4j&i_understand_data_loss=yes",
+                          {},
+                          { headers: adminHeaders() },
+                        );
                         window.location.reload();
                       } catch (e) {
                         alert("Reset failed. Check console.");
@@ -234,7 +242,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     }}
                     className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                   >
-                    <RotateCcw size={16} />
+                    <Trash2 size={16} />
                   </button>
                 }
               />
@@ -257,7 +265,15 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     onClick={async () => {
                       if (!confirm("Reset all data? This will delete all memories, connections, and settings.")) return;
                       try {
-                        await api.post("/api/dev/reset", {}, { headers: adminHeaders() });
+                        // RES-199: backend requires explicit confirmation of the
+                        // target Neo4j database + a literal "yes" token. The default
+                        // name is "neo4j"; operators who set NEO4J_DATABASE to a
+                        // custom value must update this call to match.
+                        await api.post(
+                          "/api/dev/reset?database=neo4j&i_understand_data_loss=yes",
+                          {},
+                          { headers: adminHeaders() },
+                        );
                         window.location.reload();
                       } catch (e) {
                         alert("Reset failed. Check console.");
@@ -266,7 +282,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     }}
                     className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                   >
-                    <RotateCcw size={16} />
+                    <Trash2 size={16} />
                   </button>
                 }
               />

@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     weaviate_api_key: str = Field(default="")
     neo4j_uri: str = Field(default="bolt://localhost:7687")
     neo4j_auth: str = Field(default="neo4j/beever_atlas_dev")
+    # Name of the Neo4j database targeted by per-session operations. Used by
+    # destructive ops (e.g. /api/dev/reset) to scope wipes away from the
+    # default graph when a shared cluster hosts multiple tenants.
+    neo4j_database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
     mongodb_uri: str = Field(default="mongodb://localhost:27017/beever_atlas")
     redis_url: str = Field(default="redis://localhost:6379")
 

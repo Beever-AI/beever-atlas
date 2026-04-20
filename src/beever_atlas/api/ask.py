@@ -1963,6 +1963,12 @@ async def submit_ask_feedback(
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Submit thumbs up/down feedback on an assistant response (channel-less)."""
+    user_id = principal.id
+    # RES-202: verify the session belongs to the caller before upserting
+    # feedback. Without this, any authenticated user could overwrite
+    # another user's feedback document keyed by (session_id, message_id)
+    # and inject arbitrary channel_id attribution into analytics.
+    await _verify_session_ownership(body.session_id, user_id)
     # RES-177 M7: when the caller supplies channel_id, enforce ownership.
     # This prevents cross-tenant feedback injection against another user's
     # channels. channel_id is optional in FeedbackV2Request so we only
@@ -1973,7 +1979,6 @@ async def submit_ask_feedback(
     from beever_atlas.infra.config import get_settings
     from motor.motor_asyncio import AsyncIOMotorClient
 
-    user_id = principal.id
     settings = get_settings()
     client = AsyncIOMotorClient(settings.mongodb_uri)
     try:
