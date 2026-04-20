@@ -93,3 +93,8 @@ daily_update.md
 .coverage.*
 htmlcov/
 coverage.xml
+
+# OpenSpec scratch artifacts — commit specific change dirs explicitly with `git add -f`
+openspec/changes/
+openspec/specs/
+web/openspec/
