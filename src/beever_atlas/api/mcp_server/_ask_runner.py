@@ -137,9 +137,7 @@ async def run_ask_channel(
 
     agent = get_agent_for_mode(mode)
     runner = create_runner(agent)
-    session = await create_session(
-        user_id=principal_id, session_id=effective_session_id
-    )
+    session = await create_session(user_id=principal_id, session_id=effective_session_id)
 
     new_message = genai_types.Content(
         role="user",
@@ -168,9 +166,7 @@ async def run_ask_channel(
         active_tool_starts: dict[str, float] = {}
         async for event in stream:
             if event.error_code or event.error_message:
-                raise RuntimeError(
-                    event.error_message or f"ADK error: {event.error_code}"
-                )
+                raise RuntimeError(event.error_message or f"ADK error: {event.error_code}")
 
             # Tool call starts — ADK emits FunctionCall parts.
             if not getattr(event, "partial", False):
@@ -212,9 +208,7 @@ async def run_ask_channel(
             try:
                 reset_principal(principal_token)
             except Exception:
-                logger.warning(
-                    "failed to reset principal token in ask_channel", exc_info=True
-                )
+                logger.warning("failed to reset principal token in ask_channel", exc_info=True)
 
     # Citations come from parsing the assembled answer — the QA agent is
     # instructed to emit them in the `[N] Author: ... | Channel: ... | Time: ...`

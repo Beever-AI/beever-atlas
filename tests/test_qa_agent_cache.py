@@ -27,20 +27,20 @@ def test_cache_key_includes_qa_skills_enabled(monkeypatch):
     def fake_create(mode: str = "deep", **_kw):
         # Capture the set of flags at build time so the test can assert
         # that a rebuild happens with the new flag value.
-        build_calls.append((
-            mode,
-            qa_mod._current_registry_flag(),
-            qa_mod._current_new_prompt_flag(),
-            qa_mod._current_skills_flag(),
-        ))
+        build_calls.append(
+            (
+                mode,
+                qa_mod._current_registry_flag(),
+                qa_mod._current_new_prompt_flag(),
+                qa_mod._current_skills_flag(),
+            )
+        )
         return object()
 
     monkeypatch.setattr(qa_mod, "create_qa_agent", fake_create)
     monkeypatch.setattr(qa_mod, "_current_registry_flag", lambda: True)
     monkeypatch.setattr(qa_mod, "_current_new_prompt_flag", lambda: True)
-    monkeypatch.setattr(
-        qa_mod, "_current_skills_flag", lambda: skills_flag["value"]
-    )
+    monkeypatch.setattr(qa_mod, "_current_skills_flag", lambda: skills_flag["value"])
 
     agent_off = qa_mod.get_agent_for_mode("deep")
     # Second fetch with same flags returns the cached instance.

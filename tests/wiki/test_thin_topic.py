@@ -49,7 +49,13 @@ def _cluster(n_facts: int = 3):
         authors=[],
         member_count=n_facts,
         key_facts=[
-            {"memory_text": "f1", "author_name": "a", "fact_type": "claim", "importance": 0.9, "quality_score": 0.9},
+            {
+                "memory_text": "f1",
+                "author_name": "a",
+                "fact_type": "claim",
+                "importance": 0.9,
+                "quality_score": 0.9,
+            },
         ],
         decisions=[],
         people=[],
@@ -86,7 +92,9 @@ async def test_thin_topic_page_has_no_diagram() -> None:
     cluster = _cluster(3)
     facts = [_mk_fact(i) for i in range(3)]
 
-    async def _fake_call_llm(prompt: str, max_retries: int = 1, page_kind: str = "topic", **_kwargs):
+    async def _fake_call_llm(
+        prompt: str, max_retries: int = 1, page_kind: str = "topic", **_kwargs
+    ):
         return CompiledPageContent(
             content="**TL;DR** Small topic.\n\n<<KEY_FACTS_TABLE>>\n\nSummary paragraph.",
             summary="s",

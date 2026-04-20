@@ -115,6 +115,7 @@ class TestChatBridgeAdapter:
 
     def test_no_auth_header_when_no_key(self, monkeypatch):
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "bridge_api_key", "")
         adapter = ChatBridgeAdapter(bridge_url="http://bot:3001", api_key="")
@@ -193,8 +194,22 @@ class TestChatBridgeAdapter:
             200,
             json={
                 "channels": [
-                    {"channel_id": "C1", "name": "general", "platform": "slack", "member_count": 10, "topic": None, "purpose": None},
-                    {"channel_id": "C2", "name": "random", "platform": "slack", "member_count": 5, "topic": None, "purpose": None},
+                    {
+                        "channel_id": "C1",
+                        "name": "general",
+                        "platform": "slack",
+                        "member_count": 10,
+                        "topic": None,
+                        "purpose": None,
+                    },
+                    {
+                        "channel_id": "C2",
+                        "name": "random",
+                        "platform": "slack",
+                        "member_count": 5,
+                        "topic": None,
+                        "purpose": None,
+                    },
                 ]
             },
         )
@@ -210,7 +225,14 @@ class TestChatBridgeAdapter:
         adapter = ChatBridgeAdapter(bridge_url="http://test:3001")
         mock_response = httpx.Response(
             200,
-            json={"channel_id": "C123", "name": "general", "platform": "slack", "member_count": 10, "topic": "Team", "purpose": "General"},
+            json={
+                "channel_id": "C123",
+                "name": "general",
+                "platform": "slack",
+                "member_count": 10,
+                "topic": "Team",
+                "purpose": "General",
+            },
         )
         adapter._client.request = AsyncMock(return_value=mock_response)
 
@@ -278,9 +300,7 @@ class TestMockAdapter:
     @pytest.mark.asyncio
     async def test_fetch_history(self):
         adapter = MockAdapter()
-        messages = await adapter.fetch_history(
-            "C_MOCK_GENERAL", limit=100, order="asc"
-        )
+        messages = await adapter.fetch_history("C_MOCK_GENERAL", limit=100, order="asc")
         assert len(messages) > 0
         for i in range(1, len(messages)):
             assert messages[i].timestamp >= messages[i - 1].timestamp

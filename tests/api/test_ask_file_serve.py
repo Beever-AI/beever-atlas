@@ -40,7 +40,7 @@ def _make_store_stream(filename: str, owner: str = "user:test") -> MagicMock:
     "malicious",
     [
         'a"; X-Injected: evil',
-        'bad\r\nX-Injected: evil',
+        "bad\r\nX-Injected: evil",
         'with"quote.png',
     ],
 )

@@ -87,7 +87,9 @@ def _build_status(doc: dict) -> dict:
         },
         "started_at": started_at.isoformat() if hasattr(started_at, "isoformat") else started_at,
         "updated_at": None,  # not a separate field yet
-        "ended_at": completed_at.isoformat() if hasattr(completed_at, "isoformat") else completed_at,
+        "ended_at": completed_at.isoformat()
+        if hasattr(completed_at, "isoformat")
+        else completed_at,
         "result": None,
         "error": doc.get("errors") or None,
         "target": {"channel_id": doc.get("channel_id")},

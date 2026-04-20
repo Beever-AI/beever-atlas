@@ -85,7 +85,9 @@ def test_is_degenerate_content_exactly_four_sep_rows_not_degenerate() -> None:
 
 def test_is_degenerate_content_five_sep_rows_triggers() -> None:
     """Exactly 5 consecutive separator rows meets the threshold."""
-    prose = "This section contains important architectural decisions made by the engineering team.\n"
+    prose = (
+        "This section contains important architectural decisions made by the engineering team.\n"
+    )
     sep = "| --- | --- |"
     content = "\n".join([prose] + [sep] * 5)
     alnum = sum(1 for c in content if c.isalnum())

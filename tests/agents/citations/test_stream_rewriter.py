@@ -121,9 +121,7 @@ def test_bogus_tool_name_literal_stripped_midstream():
     # Feed a single chunk that already contains the full bogus literal —
     # this is the path that previously leaked because `_find_open_tag`
     # saw the closing `]` and didn't hold the buffer back.
-    emitted = rw.feed(
-        "There is no wiki content [src:get_wiki_page_response]. Sync it?"
-    )
+    emitted = rw.feed("There is no wiki content [src:get_wiki_page_response]. Sync it?")
     assert "[src:" not in emitted
     assert emitted == "There is no wiki content . Sync it?"
     # Flush is a no-op now because the literal was already removed.

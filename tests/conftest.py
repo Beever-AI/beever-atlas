@@ -110,9 +110,7 @@ def mock_stores():
 
     fake = MagicMock(name="MockStoreClients")
     fake.platform = MagicMock()
-    fake.platform.list_connections = AsyncMock(
-        return_value=[_build_mock_connection()]
-    )
+    fake.platform.list_connections = AsyncMock(return_value=[_build_mock_connection()])
     fake.mongodb = MagicMock()
     fake.mongodb.list_synced_channel_ids = AsyncMock(return_value=[])
     fake.mongodb.get_channel_display_name = AsyncMock(return_value=None)

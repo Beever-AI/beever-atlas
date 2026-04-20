@@ -37,7 +37,9 @@ def test_is_simple_greeting():
 
 def test_is_simple_over_10_words():
     # 11-word question should be complex (>10 words)
-    assert _is_simple("tell me everything about the architecture of this project right now") is False
+    assert (
+        _is_simple("tell me everything about the architecture of this project right now") is False
+    )
 
 
 def test_is_simple_with_and():
@@ -97,13 +99,15 @@ def _install_fake_genai(mock_response):
 @pytest.mark.asyncio
 async def test_multi_aspect_decomposes_to_multiple_queries():
     """A multi-aspect question should produce is_simple=False and >=2 internal queries."""
-    llm_response_json = json.dumps({
-        "internal_queries": [
-            {"query": "economic impact of beever atlas", "focus": "economic"},
-            {"query": "tech impact of beever atlas", "focus": "tech"},
-        ],
-        "external_queries": [],
-    })
+    llm_response_json = json.dumps(
+        {
+            "internal_queries": [
+                {"query": "economic impact of beever atlas", "focus": "economic"},
+                {"query": "tech impact of beever atlas", "focus": "tech"},
+            ],
+            "external_queries": [],
+        }
+    )
 
     mock_response = MagicMock()
     mock_response.text = llm_response_json

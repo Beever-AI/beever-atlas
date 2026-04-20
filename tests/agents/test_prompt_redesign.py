@@ -3,7 +3,6 @@
 from unittest.mock import patch, MagicMock
 
 
-
 def _make_settings(*, registry_on: bool = True, new_prompt: bool) -> MagicMock:
     s = MagicMock()
     s.citation_registry_enabled = registry_on
@@ -16,6 +15,7 @@ def test_legacy_prompt_unchanged_when_flag_off():
     settings = _make_settings(new_prompt=False)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
     assert "Required Retrieval Pipeline" in prompt
 
@@ -25,6 +25,7 @@ def test_new_prompt_excludes_prescriptive_steps():
     settings = _make_settings(new_prompt=True)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
     assert "Step 1 —" not in prompt
     assert "ALWAYS" not in prompt
@@ -36,6 +37,7 @@ def test_new_prompt_contains_output_contract():
     settings = _make_settings(new_prompt=True)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
     assert "Your final message is the answer the user reads" in prompt
     assert "Never describe your reasoning" in prompt
@@ -79,4 +81,6 @@ def test_deep_mode_skips_length_hint_both_paths():
         with patch("beever_atlas.infra.config.get_settings", return_value=settings):
             prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
         hint_text = ONBOARDING_LENGTH_HINT.splitlines()[0]
-        assert hint_text not in prompt, f"Length hint found in deep-mode prompt (new_prompt={new_prompt})"
+        assert hint_text not in prompt, (
+            f"Length hint found in deep-mode prompt (new_prompt={new_prompt})"
+        )

@@ -152,6 +152,7 @@ async def update_global_defaults(body: GlobalDefaultsUpdateRequest) -> dict:
     logger.info("Policies API: global defaults updated")
     # Invalidate the in-process cache so subsequent resolves pick up changes
     from beever_atlas.services.policy_resolver import invalidate_defaults_cache
+
     invalidate_defaults_cache()
     return {
         "sync": updated.sync.model_dump(mode="json"),
@@ -259,6 +260,7 @@ async def upsert_channel_policy(
     # Notify scheduler if available
     try:
         from beever_atlas.services.scheduler import get_scheduler
+
         scheduler = get_scheduler()
         if scheduler:
             await scheduler.on_policy_changed(channel_id)
@@ -285,6 +287,7 @@ async def delete_channel_policy(
     # Notify scheduler
     try:
         from beever_atlas.services.scheduler import get_scheduler
+
         scheduler = get_scheduler()
         if scheduler:
             await scheduler.on_policy_changed(channel_id)
@@ -304,16 +307,18 @@ async def list_policies() -> list[dict]:
     result = []
     for policy in policies:
         effective = resolve_policy(policy, defaults)
-        result.append({
-            "channel_id": policy.channel_id,
-            "preset": policy.preset,
-            "enabled": policy.enabled,
-            "trigger_mode": effective.sync.trigger_mode,
-            "interval_minutes": effective.sync.interval_minutes,
-            "consolidation_strategy": effective.consolidation.strategy,
-            "syncs_since_last_consolidation": policy.syncs_since_last_consolidation,
-            "updated_at": policy.updated_at.isoformat(),
-        })
+        result.append(
+            {
+                "channel_id": policy.channel_id,
+                "preset": policy.preset,
+                "enabled": policy.enabled,
+                "trigger_mode": effective.sync.trigger_mode,
+                "interval_minutes": effective.sync.interval_minutes,
+                "consolidation_strategy": effective.consolidation.strategy,
+                "syncs_since_last_consolidation": policy.syncs_since_last_consolidation,
+                "updated_at": policy.updated_at.isoformat(),
+            }
+        )
     return result
 
 
@@ -359,6 +364,7 @@ async def bulk_apply_policy(
     # Notify scheduler for each
     try:
         from beever_atlas.services.scheduler import get_scheduler
+
         scheduler = get_scheduler()
         if scheduler:
             for channel_id in updated:

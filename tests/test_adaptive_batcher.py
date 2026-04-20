@@ -33,7 +33,11 @@ class TestEstimateTokens:
         assert tokens >= 100  # 300 / 3
 
     def test_includes_link_metadata(self):
-        msg = _msg("hi", source_link_titles=["Title One"], source_link_descriptions=["Description text here"])
+        msg = _msg(
+            "hi",
+            source_link_titles=["Title One"],
+            source_link_descriptions=["Description text here"],
+        )
         tokens = estimate_message_tokens(msg)
         assert tokens >= 50
 
@@ -140,7 +144,9 @@ class TestOutputBudget:
             _msg("other", ts="200"),
         ]
         batches = token_aware_batches(
-            msgs, max_tokens=100_000, max_output_tokens=200  # extremely tight
+            msgs,
+            max_tokens=100_000,
+            max_output_tokens=200,  # extremely tight
         )
         # The thread group (ts 100/101/102) must remain together.
         for b in batches:
@@ -155,9 +161,7 @@ class TestOutputBudget:
     def test_no_messages_lost_under_any_budget(self):
         msgs = [_msg(f"m{i}", ts=str(i)) for i in range(50)]
         for out_budget in (None, 200, 1000, 5000):
-            batches = token_aware_batches(
-                msgs, max_tokens=3000, max_output_tokens=out_budget
-            )
+            batches = token_aware_batches(msgs, max_tokens=3000, max_output_tokens=out_budget)
             assert sum(len(b) for b in batches) == 50
 
 
@@ -173,9 +177,7 @@ class TestBatcherPerformance:
         msgs = []
         for i in range(n):
             if i % 10 >= 7 and i > 0:
-                msgs.append(
-                    _msg(f"reply {i}", ts=str(i), thread_ts=str(i - 1))
-                )
+                msgs.append(_msg(f"reply {i}", ts=str(i), thread_ts=str(i - 1)))
             else:
                 msgs.append(_msg(f"msg {i} " + ("x" * 400), ts=str(i)))
         return msgs
@@ -210,9 +212,7 @@ class TestBatcherPerformance:
 
         t0 = time.perf_counter()
         for _ in range(5):
-            token_aware_batches(
-                msgs, max_tokens=12_000, max_output_tokens=90_000
-            )
+            token_aware_batches(msgs, max_tokens=12_000, max_output_tokens=90_000)
         output_t = time.perf_counter() - t0
 
         # Allow generous slack; output path adds one extra sum per group.

@@ -18,9 +18,7 @@ def test_strips_single_out_of_range():
 
 
 def test_reduces_grouped_citations():
-    out = WikiCompiler._strip_out_of_range_inline_citations(
-        "Claim [1, 36, 7, 99].", max_index=12
-    )
+    out = WikiCompiler._strip_out_of_range_inline_citations("Claim [1, 36, 7, 99].", max_index=12)
     assert "[1, 7]" in out
     assert "36" not in out and "99" not in out
 
@@ -48,9 +46,7 @@ def test_preserves_non_numeric_brackets():
 
 
 def test_boundary_index():
-    out = WikiCompiler._strip_out_of_range_inline_citations(
-        "[1][12][13]", max_index=12
-    )
+    out = WikiCompiler._strip_out_of_range_inline_citations("[1][12][13]", max_index=12)
     assert "[1]" in out
     assert "[12]" in out
     assert "[13]" not in out

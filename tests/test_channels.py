@@ -24,6 +24,7 @@ def use_mock_adapter():
     # ADAPTER_MOCK=true. Without this, the first real test run caches the
     # bridge adapter and later tests would not see the mock.
     import beever_atlas.adapters as adapters_mod
+
     saved = adapters_mod._adapter
     adapters_mod._adapter = None
     with patch.dict(os.environ, {"ADAPTER_MOCK": "true"}):

@@ -106,12 +106,8 @@ async def test_single_tenant_mcp_reads_legacy_shared(monkeypatch, single_tenant)
 
 
 @pytest.mark.asyncio
-async def test_single_tenant_mcp_cannot_read_other_principal_job(
-    monkeypatch, single_tenant
-):
-    _patch_stores(
-        monkeypatch, [_make_record(job_id="j5", owner="user:other_dashboard_user")]
-    )
+async def test_single_tenant_mcp_cannot_read_other_principal_job(monkeypatch, single_tenant):
+    _patch_stores(monkeypatch, [_make_record(job_id="j5", owner="user:other_dashboard_user")])
     with pytest.raises(JobNotFound):
         await jobs_mod.get_job_status("mcp:agent_abc_123456", "j5")
 

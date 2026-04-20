@@ -117,9 +117,7 @@ class MockGraphStore:
         to_remove = [
             name
             for name, e in self._entities.items()
-            if e.status == "pending"
-            and e.pending_since is not None
-            and e.pending_since < cutoff
+            if e.status == "pending" and e.pending_since is not None and e.pending_since < cutoff
         ]
         for name in to_remove:
             entity = self._entities.pop(name)
@@ -137,9 +135,7 @@ class MockGraphStore:
         self._relationships.append(rel)
         return rid
 
-    async def batch_upsert_relationships(
-        self, rels: list[GraphRelationship]
-    ) -> list[str]:
+    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
         return [await self.upsert_relationship(r) for r in rels]
 
     async def list_relationships(
@@ -161,14 +157,16 @@ class MockGraphStore:
         media_urls: list[str] | None = None,
         link_urls: list[str] | None = None,
     ) -> None:
-        self._events.append({
-            "entity_name": entity_name,
-            "weaviate_id": weaviate_fact_id,
-            "message_ts": message_ts,
-            "channel_id": channel_id,
-            "media_urls": media_urls or [],
-            "link_urls": link_urls or [],
-        })
+        self._events.append(
+            {
+                "entity_name": entity_name,
+                "weaviate_id": weaviate_fact_id,
+                "message_ts": message_ts,
+                "channel_id": channel_id,
+                "media_urls": media_urls or [],
+                "link_urls": link_urls or [],
+            }
+        )
 
     async def upsert_media(
         self,
@@ -207,9 +205,7 @@ class MockGraphStore:
 
     # -- Traversal -----------------------------------------------------------
 
-    async def get_neighbors(
-        self, entity_id: str, _hops: int = 1, limit: int = 50
-    ) -> Subgraph:
+    async def get_neighbors(self, entity_id: str, _hops: int = 1, limit: int = 50) -> Subgraph:
         name = self._id_map.get(entity_id)
         if name is None:
             return Subgraph()
@@ -225,21 +221,13 @@ class MockGraphStore:
                     nodes[rel.target] = self._entities[rel.target]
         return Subgraph(nodes=list(nodes.values())[:limit], edges=edges[:limit])
 
-    async def get_decisions(
-        self, channel_id: str, limit: int = 20
-    ) -> list[GraphEntity]:
-        return await self.list_entities(
-            channel_id=channel_id, entity_type="Decision", limit=limit
-        )
+    async def get_decisions(self, channel_id: str, limit: int = 20) -> list[GraphEntity]:
+        return await self.list_entities(channel_id=channel_id, entity_type="Decision", limit=limit)
 
     # -- Delete --------------------------------------------------------------
 
     async def delete_channel_data(self, channel_id: str) -> dict[str, int]:
-        to_remove = [
-            name
-            for name, e in self._entities.items()
-            if e.channel_id == channel_id
-        ]
+        to_remove = [name for name, e in self._entities.items() if e.channel_id == channel_id]
         for name in to_remove:
             entity = self._entities.pop(name)
             self._id_map.pop(entity.id, None)
@@ -259,9 +247,7 @@ class MockGraphStore:
             for e in sorted(self._entities.values(), key=lambda x: x.name)
         ]
 
-    async def register_alias(
-        self, canonical: str, alias: str, _entity_type: str
-    ) -> None:
+    async def register_alias(self, canonical: str, alias: str, _entity_type: str) -> None:
         entity = self._entities.get(canonical)
         if entity is None:
             return  # no-op
@@ -287,15 +273,9 @@ class MockGraphStore:
         ]
 
     async def get_entities_missing_name_vectors(self) -> list[str]:
-        return [
-            e.name
-            for e in self._entities.values()
-            if e.name_vector is None
-        ]
+        return [e.name for e in self._entities.values() if e.name_vector is None]
 
-    async def store_name_vector(
-        self, entity_name: str, vector: list[float]
-    ) -> None:
+    async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         entity = self._entities.get(entity_name)
         if entity:
             entity.name_vector = vector
@@ -385,20 +365,14 @@ class TestMockGraphStore:
 
     @pytest.mark.asyncio
     async def test_batch_upsert_entities(self, store: MockGraphStore):
-        entities = [
-            GraphEntity(name=f"Entity{i}", type="Test") for i in range(55)
-        ]
+        entities = [GraphEntity(name=f"Entity{i}", type="Test") for i in range(55)]
         ids = await store.batch_upsert_entities(entities)
         assert len(ids) == 55
         assert await store.count_entities() == 55
 
     @pytest.mark.asyncio
-    async def test_upsert_relationship_between_nonexistent_entities(
-        self, store: MockGraphStore
-    ):
-        rel = GraphRelationship(
-            type="USES", source="NonexistentA", target="NonexistentB"
-        )
+    async def test_upsert_relationship_between_nonexistent_entities(self, store: MockGraphStore):
+        rel = GraphRelationship(type="USES", source="NonexistentA", target="NonexistentB")
         rid = await store.upsert_relationship(rel)
         # Returns empty string — entities don't exist
         assert rid == ""
@@ -436,24 +410,16 @@ class TestMockGraphStore:
 
     @pytest.mark.asyncio
     async def test_delete_channel_data(self, store: MockGraphStore):
-        await store.upsert_entity(
-            GraphEntity(name="ChannelEntity", type="Test", channel_id="C001")
-        )
-        await store.upsert_entity(
-            GraphEntity(name="GlobalEntity", type="Test")
-        )
+        await store.upsert_entity(GraphEntity(name="ChannelEntity", type="Test", channel_id="C001"))
+        await store.upsert_entity(GraphEntity(name="GlobalEntity", type="Test"))
         result = await store.delete_channel_data("C001")
         assert result["entities_deleted"] == 1
         assert await store.count_entities() == 1
 
     @pytest.mark.asyncio
     async def test_get_all_entities_summary(self, store: MockGraphStore):
-        await store.upsert_entity(
-            GraphEntity(name="Redis", type="Technology", aliases=["redis"])
-        )
-        await store.upsert_entity(
-            GraphEntity(name="Atlas", type="Project")
-        )
+        await store.upsert_entity(GraphEntity(name="Redis", type="Technology", aliases=["redis"]))
+        await store.upsert_entity(GraphEntity(name="Atlas", type="Project"))
         summary = await store.get_all_entities_summary()
         assert len(summary) == 2
         names = [s["name"] for s in summary]
@@ -583,9 +549,7 @@ class TestFuzzyMatchParity:
     ]
 
     @pytest.mark.parametrize("name_a,name_b,expected", KNOWN_PAIRS)
-    def test_jellyfish_jaro_winkler_scores(
-        self, name_a: str, name_b: str, expected: float
-    ):
+    def test_jellyfish_jaro_winkler_scores(self, name_a: str, name_b: str, expected: float):
         score = jellyfish.jaro_winkler_similarity(name_a, name_b)
         assert abs(score - expected) < 0.05, (
             f"jellyfish({name_a!r}, {name_b!r}) = {score:.4f}, "
@@ -635,8 +599,7 @@ class TestFuzzyMatchPerformance:
         elapsed_ms = (time.monotonic() - t0) * 1000
 
         assert elapsed_ms < 500, (
-            f"fuzzy_match_entities took {elapsed_ms:.0f}ms for 10K entities "
-            f"(must be <500ms)"
+            f"fuzzy_match_entities took {elapsed_ms:.0f}ms for 10K entities (must be <500ms)"
         )
         # Should find at least the exact or near-exact match
         assert len(results) >= 1

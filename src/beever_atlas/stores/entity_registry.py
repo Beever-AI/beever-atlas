@@ -46,9 +46,7 @@ class EntityRegistry:
 
         No-op if the entity does not exist.
         """
-        await self._graph.register_alias(
-            canonical=canonical, alias=alias, entity_type=entity_type
-        )
+        await self._graph.register_alias(canonical=canonical, alias=alias, entity_type=entity_type)
 
     async def get_canonical(self, name: str) -> str | None:
         """Find an entity by exact name or by alias. Returns the canonical
@@ -62,9 +60,7 @@ class EntityRegistry:
         """
         return await self._graph.get_all_entities_summary()
 
-    async def fuzzy_match(
-        self, name: str, threshold: float = 0.8
-    ) -> list[tuple[str, float]]:
+    async def fuzzy_match(self, name: str, threshold: float = 0.8) -> list[tuple[str, float]]:
         """Return (canonical_name, score) pairs for entities similar to `name`.
 
         Delegates to the graph store's portable Jaro-Winkler implementation.
@@ -75,9 +71,7 @@ class EntityRegistry:
     # Embedding-based semantic similarity (Group 2)
     # ------------------------------------------------------------------
 
-    async def compute_name_embeddings_batch(
-        self, names: list[str]
-    ) -> dict[str, list[float]]:
+    async def compute_name_embeddings_batch(self, names: list[str]) -> dict[str, list[float]]:
         """Compute Jina embeddings for multiple entity names in a single API call.
 
         Returns a dict mapping name -> embedding vector.
@@ -170,9 +164,7 @@ class EntityRegistry:
         results.sort(key=lambda x: x[1], reverse=True)
         return results
 
-    async def store_name_vector(
-        self, entity_name: str, vector: list[float]
-    ) -> None:
+    async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         """Cache a name embedding vector on a graph Entity node."""
         await self._graph.store_name_vector(entity_name, vector)
 

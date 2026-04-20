@@ -20,8 +20,6 @@ def test_truncation_report_recovered_count_and_estimated_lost() -> None:
 
     facts = result.get("facts", [])
     assert len(facts) == 3, f"Expected 3 recovered facts, got {len(facts)}"
-    assert report.estimated_lost >= 1, (
-        f"Expected estimated_lost >= 1, got {report.estimated_lost}"
-    )
+    assert report.estimated_lost >= 1, f"Expected estimated_lost >= 1, got {report.estimated_lost}"
     assert report.raw_bytes == len(truncated.encode())
     assert report.last_boundary_offset > 0

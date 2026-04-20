@@ -111,9 +111,7 @@ def test_file_platform_falls_back_to_internal_route():
 
 def test_wiki_page_internal_route():
     r = PermalinkResolver()
-    s = _source(
-        "wiki_page", {"channel_id": "C1", "page_type": "overview"}
-    )
+    s = _source("wiki_page", {"channel_id": "C1", "page_type": "overview"})
     assert r.resolve(s) == "/channel/C1/wiki/overview"
 
 

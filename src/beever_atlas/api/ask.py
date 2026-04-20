@@ -14,7 +14,15 @@ from typing import TYPE_CHECKING, AsyncGenerator
 if TYPE_CHECKING:
     from beever_atlas.agents.query.decomposer import QueryPlan
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File as FastAPIFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    File as FastAPIFile,
+)
 
 from beever_atlas.infra.auth import Principal, require_user
 from beever_atlas.infra.channel_access import assert_channel_access
@@ -33,9 +41,12 @@ router = APIRouter()
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 SUPPORTED_MIME_TYPES = {
-    "application/pdf", "image/png", "image/jpeg",
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/plain", "text/csv",
+    "text/plain",
+    "text/csv",
 }
 
 
@@ -75,14 +86,16 @@ def _extract_citations_from_text(text: str) -> list[dict]:
         r"\[(\d+)\]\s+Author:\s*([^|]+)\|?\s*(?:Channel:\s*([^|]+)\|?)?\s*(?:Time:\s*([^\[]+))?",
         text,
     ):
-        citations.append({
-            "type": "channel_fact",
-            "text": match.group(0).strip(),
-            "number": match.group(1),
-            "author": match.group(2).strip() if match.group(2) else "",
-            "channel": match.group(3).strip() if match.group(3) else "",
-            "timestamp": match.group(4).strip() if match.group(4) else "",
-        })
+        citations.append(
+            {
+                "type": "channel_fact",
+                "text": match.group(0).strip(),
+                "number": match.group(1),
+                "author": match.group(2).strip() if match.group(2) else "",
+                "channel": match.group(3).strip() if match.group(3) else "",
+                "timestamp": match.group(4).strip() if match.group(4) else "",
+            }
+        )
     return citations
 
 
@@ -99,16 +112,17 @@ async def _build_decomposed_prompt(
     plan = await decompose(question)
     logger.info(
         "QueryDecomposer result: is_simple=%s internal=%d external=%d for %r",
-        plan.is_simple, len(plan.internal_queries), len(plan.external_queries), question[:80],
+        plan.is_simple,
+        len(plan.internal_queries),
+        len(plan.external_queries),
+        question[:80],
     )
     if plan.is_simple:
         return f"[Channel: {channel_id}]\n\n{question}", None
 
     # For complex questions, hint the agent about sub-queries so it can
     # plan tool calls more efficiently.
-    sub_q_lines = "\n".join(
-        f"  - [{sq.focus}] {sq.query}" for sq in plan.internal_queries
-    )
+    sub_q_lines = "\n".join(f"  - [{sq.focus}] {sq.query}" for sq in plan.internal_queries)
     ext_lines = (
         "\n".join(f"  - [{sq.focus}] {sq.query}" for sq in plan.external_queries)
         if plan.external_queries
@@ -181,9 +195,7 @@ async def _run_agent_stream(
             if name in known_names:
                 effective_disabled.append(name)
             else:
-                logger.warning(
-                    "Ignoring unknown tool name in disabled_tools: %r", name
-                )
+                logger.warning("Ignoring unknown tool name in disabled_tools: %r", name)
         if effective_disabled:
             # Build a NEW list — never mutate QA_TOOLS.
             filtered = [t for t in QA_TOOLS if _tool_name(t) not in effective_disabled]
@@ -207,6 +219,7 @@ async def _run_agent_stream(
 
     # ----- Settings flags ---------------------------------------------
     from beever_atlas.infra.config import get_settings
+
     _settings = get_settings()
     sse_streaming = bool(getattr(_settings, "qa_adk_streaming_sse", False))
 
@@ -221,6 +234,7 @@ async def _run_agent_stream(
     # using tool names, regardless of the registry flag. When the registry
     # is enabled below, this default is replaced with the full StreamRewriter.
     from beever_atlas.agents.query.stream_rewriter import LiteralSrcStripper
+
     _rewriter = LiteralSrcStripper()
     # Principal bind for orchestration tools (openspec atlas-mcp-server
     # Phase 6): the QA agent's orchestration_tools read the principal from
@@ -280,8 +294,7 @@ async def _run_agent_stream(
             history_lines.append(f"[{role_label}]: {text}")
         history_ctx = "\n".join(history_lines)
         prompt_text = (
-            f"<prior_conversation>\n{history_ctx}\n</prior_conversation>\n\n"
-            + prompt_text
+            f"<prior_conversation>\n{history_ctx}\n</prior_conversation>\n\n" + prompt_text
         )
 
     new_message = genai_types.Content(
@@ -314,16 +327,19 @@ async def _run_agent_stream(
     # Emit decomposition event before the agent starts, when the question was
     # complex enough to warrant sub-query planning.
     if _decomposition_plan is not None:
-        yield _sse_event("decomposition", {
-            "internal": [
-                {"label": sq.focus, "query": sq.query}
-                for sq in _decomposition_plan.internal_queries
-            ],
-            "external": [
-                {"label": sq.focus, "query": sq.query}
-                for sq in _decomposition_plan.external_queries
-            ],
-        })
+        yield _sse_event(
+            "decomposition",
+            {
+                "internal": [
+                    {"label": sq.focus, "query": sq.query}
+                    for sq in _decomposition_plan.internal_queries
+                ],
+                "external": [
+                    {"label": sq.focus, "query": sq.query}
+                    for sq in _decomposition_plan.external_queries
+                ],
+            },
+        )
 
     try:
         # Bind the principal for the orchestration tools' contextvar so
@@ -331,6 +347,7 @@ async def _run_agent_stream(
         # principal during this agent turn.
         try:
             from beever_atlas.agents.tools.orchestration_tools import bind_principal
+
             _principal_token = bind_principal(session.user_id)
         except Exception:
             logger.warning(
@@ -356,10 +373,13 @@ async def _run_agent_stream(
                 break
 
             if event.error_code or event.error_message:
-                yield _sse_event("error", {
-                    "message": event.error_message or "Unknown error",
-                    "code": event.error_code or "AGENT_ERROR",
-                })
+                yield _sse_event(
+                    "error",
+                    {
+                        "message": event.error_message or "Unknown error",
+                        "code": event.error_code or "AGENT_ERROR",
+                    },
+                )
                 done_sent = True
                 return
 
@@ -374,7 +394,10 @@ async def _run_agent_stream(
                     normalized_input = tool_input if isinstance(tool_input, dict) else {}
                     # Repeat tool-call suppression: warn if same tool+args ran twice in a row.
                     try:
-                        _sig = (tool_name, json.dumps(normalized_input, sort_keys=True, default=str))
+                        _sig = (
+                            tool_name,
+                            json.dumps(normalized_input, sort_keys=True, default=str),
+                        )
                     except Exception:
                         _sig = (tool_name, str(normalized_input))
                     if _last_tool_sig is not None and _sig == _last_tool_sig:
@@ -384,15 +407,20 @@ async def _run_agent_stream(
                             session_id,
                         )
                     _last_tool_sig = _sig
-                    persisted_tool_calls.append({
-                        "tool_name": tool_name,
-                        "input": normalized_input,
-                        "status": "running",
-                    })
-                    yield _sse_event("tool_call_start", {
-                        "tool_name": tool_name,
-                        "input": normalized_input,
-                    })
+                    persisted_tool_calls.append(
+                        {
+                            "tool_name": tool_name,
+                            "input": normalized_input,
+                            "status": "running",
+                        }
+                    )
+                    yield _sse_event(
+                        "tool_call_start",
+                        {
+                            "tool_name": tool_name,
+                            "input": normalized_input,
+                        },
+                    )
 
             # Tool call end — ADK emits FunctionResponse parts after tool returns
             for fr in event.get_function_responses():
@@ -420,12 +448,15 @@ async def _run_agent_stream(
                         entry["facts_found"] = facts_found
                         break
 
-                yield _sse_event("tool_call_end", {
-                    "tool_name": tool_name,
-                    "result_summary": result_summary,
-                    "latency_ms": latency_ms,
-                    "facts_found": facts_found,
-                })
+                yield _sse_event(
+                    "tool_call_end",
+                    {
+                        "tool_name": tool_name,
+                        "result_summary": result_summary,
+                        "latency_ms": latency_ms,
+                        "facts_found": facts_found,
+                    },
+                )
 
             # Text content streaming (with thinking detection)
             # INVARIANT: parts with thought=True MUST only yield "thinking" events,
@@ -489,8 +520,7 @@ async def _run_agent_stream(
                             if rewritten:
                                 # Defensive dedup: skip verbatim repeats.
                                 if rewritten == _last_emitted_chunk or (
-                                    len(rewritten) >= 40
-                                    and accumulated_text.endswith(rewritten)
+                                    len(rewritten) >= 40 and accumulated_text.endswith(rewritten)
                                 ):
                                     logger.warning(
                                         "dedup: skipped duplicate response_delta "
@@ -504,12 +534,10 @@ async def _run_agent_stream(
                                     _last_emitted_chunk = rewritten
                         else:
                             if part.text == _last_emitted_chunk or (
-                                len(part.text) >= 40
-                                and accumulated_text.endswith(part.text)
+                                len(part.text) >= 40 and accumulated_text.endswith(part.text)
                             ):
                                 logger.warning(
-                                    "dedup: skipped duplicate response_delta "
-                                    "(len=%d, session=%s)",
+                                    "dedup: skipped duplicate response_delta (len=%d, session=%s)",
                                     len(part.text),
                                     session_id,
                                 )
@@ -533,6 +561,7 @@ async def _run_agent_stream(
                     from beever_atlas.agents.query.gallery_fallback import (
                         maybe_build_gallery,
                     )
+
                     _gallery = maybe_build_gallery(_registry, accumulated_text)
                     if _gallery:
                         yield _sse_event("response_delta", {"delta": _gallery})
@@ -569,14 +598,12 @@ async def _run_agent_stream(
                 if _follow_ups_collector is not None and _follow_ups_collector.questions:
                     follow_ups = list(_follow_ups_collector.questions)
                 if not follow_ups:
-                    follow_up_match = re.search(
-                        r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text
-                    )
+                    follow_up_match = re.search(r"FOLLOW_UPS:\s*\[([^\]]*)\]", accumulated_text)
                     if follow_up_match:
                         try:
-                            follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
+                            follow_ups = json.loads(f"[{follow_up_match.group(1)}]")
                             accumulated_text = re.sub(
-                                r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
+                                r"\n*---\n*FOLLOW_UPS:\s*\[.*?\]", "", accumulated_text
                             ).rstrip()
                         except (json.JSONDecodeError, ValueError):
                             pass
@@ -587,6 +614,7 @@ async def _run_agent_stream(
                 # Onboarding length monitor (warn-only, no truncation).
                 try:
                     from beever_atlas.infra.config import get_settings
+
                     _monitor_on = get_settings().qa_onboarding_length_monitor
                 except Exception:
                     _monitor_on = True
@@ -595,14 +623,17 @@ async def _run_agent_stream(
                         "onboarding response exceeded 1500 chars: %d", len(accumulated_text)
                     )
 
-                yield _sse_event("metadata", {
-                    "route": "qa_agent",
-                    "confidence": 0.85,
-                    "cost_usd": 0.0,
-                    "channel_id": channel_id,
-                    "session_id": session_id,
-                    "mode": mode,
-                })
+                yield _sse_event(
+                    "metadata",
+                    {
+                        "route": "qa_agent",
+                        "confidence": 0.85,
+                        "cost_usd": 0.0,
+                        "channel_id": channel_id,
+                        "session_id": session_id,
+                        "mode": mode,
+                    },
+                )
                 await _persist_qa_history(
                     question=question,
                     answer=accumulated_text,
@@ -622,35 +653,44 @@ async def _run_agent_stream(
 
     except asyncio.CancelledError:
         logger.info("Agent stream cancelled")
-        yield _sse_event("error", {
-            "message": "Request cancelled",
-            "code": "CANCELLED",
-        })
+        yield _sse_event(
+            "error",
+            {
+                "message": "Request cancelled",
+                "code": "CANCELLED",
+            },
+        )
         done_sent = True
     except Exception as e:
         logger.exception("Agent error during streaming")
-        yield _sse_event("error", {
-            "message": str(e),
-            "code": "AGENT_ERROR",
-        })
+        yield _sse_event(
+            "error",
+            {
+                "message": str(e),
+                "code": "AGENT_ERROR",
+            },
+        )
         done_sent = True
     finally:
         # Reset citation registry contextvars regardless of how we got here.
         if _registry_token is not None:
             try:
                 from beever_atlas.agents.citations import registry as _citation_registry_mod
+
                 _citation_registry_mod.reset(_registry_token)
             except Exception:
                 logger.warning("failed to reset citation registry token", exc_info=True)
         if _follow_ups_token is not None:
             try:
                 from beever_atlas.agents.query.follow_ups_tool import reset_collector
+
                 reset_collector(_follow_ups_token)
             except Exception:
                 logger.warning("failed to reset follow_ups collector", exc_info=True)
         if _principal_token is not None:
             try:
                 from beever_atlas.agents.tools.orchestration_tools import reset_principal
+
                 reset_principal(_principal_token)
             except Exception:
                 logger.warning("failed to reset principal", exc_info=True)
@@ -676,6 +716,7 @@ async def _run_agent_stream(
                 from beever_atlas.agents.query.gallery_fallback import (
                     maybe_build_gallery,
                 )
+
                 _gallery2 = maybe_build_gallery(_registry, accumulated_text)
                 if _gallery2:
                     yield _sse_event("response_delta", {"delta": _gallery2})
@@ -701,28 +742,29 @@ async def _run_agent_stream(
                 if _follow_ups_collector is not None and _follow_ups_collector.questions:
                     follow_ups = list(_follow_ups_collector.questions)
                 if not follow_ups:
-                    follow_up_match = re.search(
-                        r'FOLLOW_UPS:\s*\[([^\]]*)\]', accumulated_text
-                    )
+                    follow_up_match = re.search(r"FOLLOW_UPS:\s*\[([^\]]*)\]", accumulated_text)
                     if follow_up_match:
                         try:
-                            follow_ups = json.loads(f'[{follow_up_match.group(1)}]')
+                            follow_ups = json.loads(f"[{follow_up_match.group(1)}]")
                             accumulated_text = re.sub(
-                                r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', accumulated_text
+                                r"\n*---\n*FOLLOW_UPS:\s*\[.*?\]", "", accumulated_text
                             ).rstrip()
                         except (json.JSONDecodeError, ValueError):
                             pass
                 if follow_ups:
                     yield _sse_event("follow_ups", {"suggestions": follow_ups})
 
-                yield _sse_event("metadata", {
-                    "route": "qa_agent",
-                    "confidence": 0.85,
-                    "cost_usd": 0.0,
-                    "channel_id": channel_id,
-                    "session_id": session_id,
-                    "mode": mode,
-                })
+                yield _sse_event(
+                    "metadata",
+                    {
+                        "route": "qa_agent",
+                        "confidence": 0.85,
+                        "cost_usd": 0.0,
+                        "channel_id": channel_id,
+                        "session_id": session_id,
+                        "mode": mode,
+                    },
+                )
                 await _persist_qa_history(
                     question=question,
                     answer=accumulated_text,
@@ -742,9 +784,7 @@ async def _run_agent_stream(
 THINKING_MAX_BYTES = 20 * 1024  # Cap persisted reasoning text per message
 
 
-def _build_thinking_doc(
-    thinking_text: str, thinking_duration_ms: int | None
-) -> dict | None:
+def _build_thinking_doc(thinking_text: str, thinking_duration_ms: int | None) -> dict | None:
     """Return the persisted thinking subdoc, or None if nothing to save.
 
     Truncates raw reasoning to THINKING_MAX_BYTES so a single message can't
@@ -814,9 +854,7 @@ async def _persist_qa_history(
         thinking_doc = _build_thinking_doc(thinking_text, thinking_duration_ms)
         persisted_tool_calls = tool_calls or None
         if use_v2_schema:
-            await chat_store.create_session_v2(
-                session_id=session_id, user_id=user_id
-            )
+            await chat_store.create_session_v2(session_id=session_id, user_id=user_id)
             await chat_store.save_message(
                 session_id=session_id,
                 role="user",
@@ -865,6 +903,7 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
         try:
             import io
             from pypdf import PdfReader
+
             reader = PdfReader(io.BytesIO(content))
             pages = [page.extract_text() or "" for page in reader.pages]
             return "\n\n".join(pages)
@@ -875,6 +914,7 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
         try:
             import io
             from docx import Document
+
             doc = Document(io.BytesIO(content))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception:
@@ -907,9 +947,7 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
                         genai_types.Content(
                             role="user",
                             parts=[
-                                genai_types.Part.from_bytes(
-                                    data=content, mime_type=mime_type
-                                ),
+                                genai_types.Part.from_bytes(data=content, mime_type=mime_type),
                                 genai_types.Part.from_text(
                                     text=(
                                         "Describe this image in detail for a "
@@ -929,12 +967,14 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
                 return text
             logger.warning(
                 "vision: empty description for image attachment %s (mime=%s)",
-                filename, mime_type,
+                filename,
+                mime_type,
             )
         except Exception:
             logger.exception(
                 "vision: image description failed for %s (mime=%s)",
-                filename, mime_type,
+                filename,
+                mime_type,
             )
         return f"[Image: {filename}]"
 
@@ -1005,13 +1045,17 @@ async def ask_history(
             if msgs:
                 first_q = msgs[0].get("content", "")[:120]
             created = doc.get("created_at")
-            sessions.append({
-                "session_id": doc["session_id"],
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
-                "first_question": first_q,
-                "title": doc.get("title"),
-                "pinned": doc.get("pinned", False),
-            })
+            sessions.append(
+                {
+                    "session_id": doc["session_id"],
+                    "created_at": created.isoformat()
+                    if hasattr(created, "isoformat")
+                    else str(created or ""),
+                    "first_question": first_q,
+                    "title": doc.get("title"),
+                    "pinned": doc.get("pinned", False),
+                }
+            )
     finally:
         client.close()
 
@@ -1098,7 +1142,9 @@ async def upload_attachment(
     extracted_text = await _extract_text(content, mime, file.filename or "unknown")
     # Truncate to 4000 chars
     if len(extracted_text) > 4000:
-        extracted_text = extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+        extracted_text = (
+            extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+        )
 
     file_id = await _save_upload_blob(
         content=content,
@@ -1829,7 +1875,9 @@ async def upload_ask_attachment(
 
     extracted_text = await _extract_text(content, mime, file.filename or "unknown")
     if len(extracted_text) > 4000:
-        extracted_text = extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+        extracted_text = (
+            extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+        )
 
     file_id = await _save_upload_blob(
         content=content,
@@ -1897,8 +1945,7 @@ async def get_ask_attachment(
             media_type=mime,
             headers={
                 "Content-Disposition": (
-                    f'inline; filename="{safe_ascii}"; '
-                    f"filename*=UTF-8''{encoded}"
+                    f"inline; filename=\"{safe_ascii}\"; filename*=UTF-8''{encoded}"
                 ),
                 "Cache-Control": "private, max-age=300",
                 "X-Robots-Tag": "noindex, nofollow",

@@ -45,10 +45,14 @@ class AtomicFact(BaseModel):
     fact_type: str = ""  # "decision", "opinion", "observation", "action_item", "question"
     thread_context_summary: str = ""  # Brief summary of thread deliberation
     source_lang: str = "en"  # BCP-47 tag of the source message (e.g. "en", "zh-HK", "ja")
-    derived_from: str = ""  # Provenance marker, e.g. "heuristic_word_overlap" for low-confidence attribution
+    derived_from: str = (
+        ""  # Provenance marker, e.g. "heuristic_word_overlap" for low-confidence attribution
+    )
 
     @staticmethod
-    def deterministic_id(platform: str, channel_id: str, message_ts: str, fact_index: int = 0) -> str:
+    def deterministic_id(
+        platform: str, channel_id: str, message_ts: str, fact_index: int = 0
+    ) -> str:
         """Generate a deterministic UUID for idempotent upserts."""
         namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
         return str(uuid.uuid5(namespace, f"{platform}:{channel_id}:{message_ts}:{fact_index}"))
@@ -118,7 +122,9 @@ class TopicCluster(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     # Enrichment fields (R4)
     key_entities: list[dict[str, str]] = Field(default_factory=list)  # [{"id", "name", "type"}]
-    key_relationships: list[dict[str, str]] = Field(default_factory=list)  # [{"source", "type", "target", "confidence"}]
+    key_relationships: list[dict[str, str]] = Field(
+        default_factory=list
+    )  # [{"source", "type", "target", "confidence"}]
     date_range_start: str = ""
     date_range_end: str = ""
     authors: list[str] = Field(default_factory=list)

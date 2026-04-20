@@ -44,8 +44,7 @@ async def test_wiki_cache_shares_motor_client() -> None:
 
         # Only one AsyncIOMotorClient should have been constructed.
         assert len(created_clients) == 1, (
-            f"Expected 1 Motor client, got {len(created_clients)}. "
-            "WikiCache is leaking clients."
+            f"Expected 1 Motor client, got {len(created_clients)}. WikiCache is leaking clients."
         )
 
         # The underlying Motor client stored in the singleton dict must be

@@ -87,6 +87,7 @@ def resolve_model_object(model_string: str) -> Any:
         settings = get_settings()
         os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
         from google.adk.models.lite_llm import LiteLlm
+
         return LiteLlm(model=model_string)
     return model_string
 

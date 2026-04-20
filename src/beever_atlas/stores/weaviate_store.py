@@ -191,7 +191,9 @@ class WeaviateStore:
         assert self._client is not None, "WeaviateStore not started"
         # Auto-create collection if it was deleted (e.g., during development resets)
         if not self._client.collections.exists(COLLECTION_NAME):
-            logger.warning("WeaviateStore: collection %s missing, recreating schema", COLLECTION_NAME)
+            logger.warning(
+                "WeaviateStore: collection %s missing, recreating schema", COLLECTION_NAME
+            )
             self._ensure_schema_sync()
         return self._client.collections.get(COLLECTION_NAME)
 
@@ -205,8 +207,7 @@ class WeaviateStore:
             vectorizer_config=Configure.Vectorizer.none(),
             vector_index_config=Configure.VectorIndex.hnsw(),
             properties=[
-                Property(name=name, data_type=dtype)
-                for name, dtype in self._EXPECTED_PROPERTIES
+                Property(name=name, data_type=dtype) for name, dtype in self._EXPECTED_PROPERTIES
             ],
         )
 
@@ -221,6 +222,7 @@ class WeaviateStore:
         if isinstance(value, datetime):
             if value.tzinfo is None:
                 from datetime import timezone
+
                 return value.replace(tzinfo=timezone.utc)
             return value
         if isinstance(value, str):
@@ -228,6 +230,7 @@ class WeaviateStore:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 if parsed.tzinfo is None:
                     from datetime import timezone
+
                     return parsed.replace(tzinfo=timezone.utc)
                 return parsed
             except (ValueError, TypeError):
@@ -463,10 +466,9 @@ class WeaviateStore:
             collection = self._collection()
 
             # Build filter chain starting with channel_id (always required)
-            weaviate_filter: Any = (
-                Filter.by_property("channel_id").equal(channel_id)
-                & Filter.by_property("tier").equal("atomic")
-            )
+            weaviate_filter: Any = Filter.by_property("channel_id").equal(
+                channel_id
+            ) & Filter.by_property("tier").equal("atomic")
 
             if filters.topic:
                 weaviate_filter = weaviate_filter & Filter.by_property("topic_tags").contains_any(
@@ -599,9 +601,7 @@ class WeaviateStore:
 
             # Exclude cluster/summary objects from fact search
             tier_filter = Filter.by_property("tier").equal("atomic")
-            weaviate_filter = (
-                weaviate_filter & tier_filter if weaviate_filter else tier_filter
-            )
+            weaviate_filter = weaviate_filter & tier_filter if weaviate_filter else tier_filter
 
             result = collection.query.near_vector(
                 near_vector=query_vector,
@@ -624,10 +624,12 @@ class WeaviateStore:
                 # indexed in the schema).
                 if not include_superseded and fact.invalid_at is not None:
                     continue
-                results.append({
-                    "fact": fact,
-                    "similarity_score": round(similarity, 4),
-                })
+                results.append(
+                    {
+                        "fact": fact,
+                        "similarity_score": round(similarity, 4),
+                    }
+                )
             return results
 
         return await asyncio.to_thread(_search)
@@ -656,7 +658,9 @@ class WeaviateStore:
         try:
             return await asyncio.to_thread(_search)
         except Exception:
-            logger.exception("WeaviateStore.bm25_search failed for query=%r channel=%s", query, channel_id)
+            logger.exception(
+                "WeaviateStore.bm25_search failed for query=%r channel=%s", query, channel_id
+            )
             return []
 
     async def true_hybrid_search(
@@ -726,10 +730,12 @@ class WeaviateStore:
                 # indexed in the schema).
                 if not include_superseded and fact.invalid_at is not None:
                     continue
-                results.append({
-                    "fact": fact,
-                    "similarity_score": round(float(score), 4),
-                })
+                results.append(
+                    {
+                        "fact": fact,
+                        "similarity_score": round(float(score), 4),
+                    }
+                )
             return results
 
         try:
@@ -775,6 +781,7 @@ class WeaviateStore:
 
         # Field-filter results (existing exact search)
         from beever_atlas.models import MemoryFilters
+
         field_result = await self.list_facts(
             channel_id=channel_id,
             filters=filters or MemoryFilters(),
@@ -806,10 +813,12 @@ class WeaviateStore:
                         break
                 continue
             seen_ids.add(fact.id)
-            merged.append({
-                "fact": fact,
-                "similarity_score": 0.5,  # Default score for field-filter matches
-            })
+            merged.append(
+                {
+                    "fact": fact,
+                    "similarity_score": 0.5,  # Default score for field-filter matches
+                }
+            )
 
         # Sort by similarity score descending
         merged.sort(key=lambda x: x["similarity_score"], reverse=True)
@@ -880,7 +889,9 @@ class WeaviateStore:
     # ------------------------------------------------------------------
 
     async def get_unclustered_facts(
-        self, channel_id: str, limit: int | None = None,
+        self,
+        channel_id: str,
+        limit: int | None = None,
     ) -> list[AtomicFact]:
         """Fetch atomic facts that have no cluster assignment, with vectors.
 
@@ -895,7 +906,9 @@ class WeaviateStore:
         return facts
 
     async def iter_unclustered_facts(
-        self, channel_id: str, page_size: int = 200,
+        self,
+        channel_id: str,
+        page_size: int = 200,
     ) -> AsyncIterator[AtomicFact]:
         """Yield unclustered atomic facts (with vectors), one page at a time.
 
@@ -915,12 +928,14 @@ class WeaviateStore:
 
         def _fetch_page(offset: int) -> list[Any]:
             collection = self._collection()
-            return list(collection.query.fetch_objects(
-                filters=weaviate_filter,
-                limit=page_size,
-                offset=offset,
-                include_vector=True,
-            ).objects)
+            return list(
+                collection.query.fetch_objects(
+                    filters=weaviate_filter,
+                    limit=page_size,
+                    offset=offset,
+                    include_vector=True,
+                ).objects
+            )
 
         offset = 0
         while True:
@@ -934,7 +949,9 @@ class WeaviateStore:
             offset += page_size
 
     async def iter_all_fact_ids(
-        self, channel_id: str, page_size: int = 500,
+        self,
+        channel_id: str,
+        page_size: int = 500,
     ) -> AsyncIterator[tuple[str, str]]:
         """Yield ``(uuid, cluster_id)`` pairs for every atomic fact in a channel.
 
@@ -942,19 +959,20 @@ class WeaviateStore:
         text — so each page is a few KB. Uses offset pagination (cursor ``after``
         is incompatible with filters in Weaviate).
         """
-        weaviate_filter = (
-            Filter.by_property("channel_id").equal(channel_id)
-            & Filter.by_property("tier").equal("atomic")
-        )
+        weaviate_filter = Filter.by_property("channel_id").equal(channel_id) & Filter.by_property(
+            "tier"
+        ).equal("atomic")
 
         def _fetch_page(offset: int) -> list[Any]:
             collection = self._collection()
-            return list(collection.query.fetch_objects(
-                filters=weaviate_filter,
-                limit=page_size,
-                offset=offset,
-                return_properties=["cluster_id"],
-            ).objects)
+            return list(
+                collection.query.fetch_objects(
+                    filters=weaviate_filter,
+                    limit=page_size,
+                    offset=offset,
+                    return_properties=["cluster_id"],
+                ).objects
+            )
 
         offset = 0
         while True:
@@ -1061,38 +1079,40 @@ class WeaviateStore:
                 vec = obj.vector
                 if isinstance(vec, dict):
                     vec = vec.get("default", [])
-                clusters.append(TopicCluster(
-                    id=str(obj.uuid),
-                    channel_id=props.get("channel_id", ""),
-                    title=props.get("title", ""),
-                    summary=props.get("memory_text", ""),
-                    current_state=props.get("current_state", ""),
-                    open_questions=props.get("open_questions", ""),
-                    impact_note=props.get("impact_note", ""),
-                    topic_tags=props.get("topic_tags") or [],
-                    member_ids=props.get("member_ids") or [],
-                    member_count=int(props.get("member_count", 0)),
-                    centroid_vector=vec if vec else None,
-                    key_entities=json.loads(props.get("key_entities_json") or "[]"),
-                    key_relationships=json.loads(props.get("key_relationships_json") or "[]"),
-                    date_range_start=props.get("date_range_start", ""),
-                    date_range_end=props.get("date_range_end", ""),
-                    authors=props.get("authors") or [],
-                    media_refs=props.get("media_refs") or [],
-                    media_names=props.get("media_names") or [],
-                    link_refs=props.get("link_refs") or [],
-                    high_importance_count=int(props.get("high_importance_count", 0)),
-                    related_cluster_ids=props.get("related_cluster_ids") or [],
-                    staleness_score=float(props.get("staleness_score", 0.0)),
-                    status=props.get("status", "active"),
-                    fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
-                    key_facts=json.loads(props.get("key_facts_json") or "[]"),
-                    decisions=json.loads(props.get("decisions_json") or "[]"),
-                    people=json.loads(props.get("people_json") or "[]"),
-                    technologies=json.loads(props.get("technologies_json") or "[]"),
-                    projects=json.loads(props.get("projects_json") or "[]"),
-                    faq_candidates=json.loads(props.get("faq_candidates_json") or "[]"),
-                ))
+                clusters.append(
+                    TopicCluster(
+                        id=str(obj.uuid),
+                        channel_id=props.get("channel_id", ""),
+                        title=props.get("title", ""),
+                        summary=props.get("memory_text", ""),
+                        current_state=props.get("current_state", ""),
+                        open_questions=props.get("open_questions", ""),
+                        impact_note=props.get("impact_note", ""),
+                        topic_tags=props.get("topic_tags") or [],
+                        member_ids=props.get("member_ids") or [],
+                        member_count=int(props.get("member_count", 0)),
+                        centroid_vector=vec if vec else None,
+                        key_entities=json.loads(props.get("key_entities_json") or "[]"),
+                        key_relationships=json.loads(props.get("key_relationships_json") or "[]"),
+                        date_range_start=props.get("date_range_start", ""),
+                        date_range_end=props.get("date_range_end", ""),
+                        authors=props.get("authors") or [],
+                        media_refs=props.get("media_refs") or [],
+                        media_names=props.get("media_names") or [],
+                        link_refs=props.get("link_refs") or [],
+                        high_importance_count=int(props.get("high_importance_count", 0)),
+                        related_cluster_ids=props.get("related_cluster_ids") or [],
+                        staleness_score=float(props.get("staleness_score", 0.0)),
+                        status=props.get("status", "active"),
+                        fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                        key_facts=json.loads(props.get("key_facts_json") or "[]"),
+                        decisions=json.loads(props.get("decisions_json") or "[]"),
+                        people=json.loads(props.get("people_json") or "[]"),
+                        technologies=json.loads(props.get("technologies_json") or "[]"),
+                        projects=json.loads(props.get("projects_json") or "[]"),
+                        faq_candidates=json.loads(props.get("faq_candidates_json") or "[]"),
+                    )
+                )
             return clusters
 
         return await asyncio.to_thread(_list)
@@ -1151,7 +1171,9 @@ class WeaviateStore:
         return await asyncio.to_thread(_get)
 
     async def get_cluster_members(
-        self, cluster_id: str, limit: int = 100,
+        self,
+        cluster_id: str,
+        limit: int = 100,
     ) -> list[AtomicFact]:
         """Fetch atomic facts assigned to a specific cluster."""
 
@@ -1377,7 +1399,9 @@ class WeaviateStore:
         return await asyncio.to_thread(_get)
 
     async def list_entity_cards(
-        self, channel_id: str | None = None, limit: int = 50,
+        self,
+        channel_id: str | None = None,
+        limit: int = 50,
     ) -> list["EntityKnowledgeCard"]:
         """List EntityKnowledgeCards, optionally filtered by channel_id."""
         from beever_atlas.models.domain import EntityKnowledgeCard
@@ -1386,9 +1410,9 @@ class WeaviateStore:
             collection = self._collection()
             weaviate_filter = Filter.by_property("tier").equal("entity_card")
             if channel_id:
-                weaviate_filter = weaviate_filter & Filter.by_property(
-                    "channel_ids"
-                ).contains_any([channel_id])
+                weaviate_filter = weaviate_filter & Filter.by_property("channel_ids").contains_any(
+                    [channel_id]
+                )
             result = collection.query.fetch_objects(
                 filters=weaviate_filter,
                 limit=limit,
@@ -1396,27 +1420,34 @@ class WeaviateStore:
             cards: list[EntityKnowledgeCard] = []
             for obj in result.objects:
                 props = obj.properties
-                cards.append(EntityKnowledgeCard(
-                    id=str(obj.uuid),
-                    entity_id=props.get("entity_id", ""),
-                    entity_name=props.get("entity_name", ""),
-                    entity_type=props.get("entity_type", ""),
-                    channel_ids=props.get("channel_ids") or [],
-                    cluster_ids=props.get("cluster_ids") or [],
-                    fact_count=int(props.get("fact_count", 0)),
-                    fact_type_breakdown=json.loads(props.get("fact_type_breakdown_json") or "{}"),
-                    key_facts=props.get("key_facts") or [],
-                    related_entities=json.loads(props.get("related_entities_json") or "[]"),
-                    last_mentioned_at=props.get("last_mentioned_at", ""),
-                    staleness_score=float(props.get("staleness_score", 0.0)),
-                    summary=props.get("memory_text", ""),
-                ))
+                cards.append(
+                    EntityKnowledgeCard(
+                        id=str(obj.uuid),
+                        entity_id=props.get("entity_id", ""),
+                        entity_name=props.get("entity_name", ""),
+                        entity_type=props.get("entity_type", ""),
+                        channel_ids=props.get("channel_ids") or [],
+                        cluster_ids=props.get("cluster_ids") or [],
+                        fact_count=int(props.get("fact_count", 0)),
+                        fact_type_breakdown=json.loads(
+                            props.get("fact_type_breakdown_json") or "{}"
+                        ),
+                        key_facts=props.get("key_facts") or [],
+                        related_entities=json.loads(props.get("related_entities_json") or "[]"),
+                        last_mentioned_at=props.get("last_mentioned_at", ""),
+                        staleness_score=float(props.get("staleness_score", 0.0)),
+                        summary=props.get("memory_text", ""),
+                    )
+                )
             return cards
 
         return await asyncio.to_thread(_list)
 
     async def fetch_all_cluster_members(
-        self, channel_id: str, cluster_id: str, limit: int = 500,
+        self,
+        channel_id: str,
+        cluster_id: str,
+        limit: int = 500,
     ) -> list[AtomicFact]:
         """Fetch ALL Tier 2 AtomicFacts for a specific cluster in a channel."""
 
@@ -1435,7 +1466,9 @@ class WeaviateStore:
         return await asyncio.to_thread(_fetch)
 
     async def fetch_media_facts(
-        self, channel_id: str, limit: int = 500,
+        self,
+        channel_id: str,
+        limit: int = 500,
     ) -> list[AtomicFact]:
         """Fetch facts with non-empty source_media_urls or source_link_urls."""
 
@@ -1460,7 +1493,10 @@ class WeaviateStore:
         return await asyncio.to_thread(_fetch)
 
     async def fetch_recent_facts(
-        self, channel_id: str, days: int = 7, limit: int = 500,
+        self,
+        channel_id: str,
+        days: int = 7,
+        limit: int = 500,
     ) -> list[AtomicFact]:
         """Fetch Tier 2 facts from the last N days for a channel."""
         from datetime import timedelta, timezone
@@ -1483,7 +1519,8 @@ class WeaviateStore:
         return await asyncio.to_thread(_fetch)
 
     async def batch_update_fact_clusters(
-        self, updates: list[tuple[str, str]],
+        self,
+        updates: list[tuple[str, str]],
     ) -> None:
         """Batch update cluster_id on multiple facts."""
 

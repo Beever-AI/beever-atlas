@@ -67,9 +67,7 @@ async def test_true_hybrid_search_no_is_none_filter():
     filters = call_kwargs.get("filters")
     # Serialise to string and assert no is_none / nullstate in there
     filters_repr = repr(filters)
-    assert "is_none" not in filters_repr.lower(), (
-        f"is_none found in filter: {filters_repr}"
-    )
+    assert "is_none" not in filters_repr.lower(), f"is_none found in filter: {filters_repr}"
 
 
 @pytest.mark.asyncio
@@ -154,9 +152,7 @@ async def test_semantic_search_no_is_none_filter():
     call_kwargs = fake_collection.query.near_vector.call_args.kwargs
     filters = call_kwargs.get("filters")
     filters_repr = repr(filters)
-    assert "is_none" not in filters_repr.lower(), (
-        f"is_none found in filter: {filters_repr}"
-    )
+    assert "is_none" not in filters_repr.lower(), f"is_none found in filter: {filters_repr}"
 
 
 @pytest.mark.asyncio

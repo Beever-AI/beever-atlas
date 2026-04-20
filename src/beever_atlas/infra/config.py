@@ -21,6 +21,7 @@ def validate_keys_disjoint(
     ``ValueError`` if any key appears in more than one pool so a
     misconfiguration is caught before any request is served.
     """
+
     def _split(raw: str) -> set[str]:
         return {k.strip() for k in raw.split(",") if k.strip()}
 
@@ -221,8 +222,18 @@ class Settings(BaseSettings):
     # leaves headroom for schema overhead and estimator drift.
     # Set to 0 to disable output-aware batching (input-only, legacy behaviour).
     batch_max_output_tokens: int = Field(default=24000, alias="BATCH_MAX_OUTPUT_TOKENS")
-    batch_max_messages: int = Field(default=30, ge=5, le=60, description="Hard cap on messages per batch. Derived from observed bench data — successful batches had ≤65 msgs; failure cluster started at 89. Prevents output truncation at the source.")
-    llm_outage_breaker_threshold: int = Field(default=3, ge=1, le=10, description="After this many consecutive cross-batch Gemini 5xx, fail fast instead of burning per-batch retry budget.")
+    batch_max_messages: int = Field(
+        default=30,
+        ge=5,
+        le=60,
+        description="Hard cap on messages per batch. Derived from observed bench data — successful batches had ≤65 msgs; failure cluster started at 89. Prevents output truncation at the source.",
+    )
+    llm_outage_breaker_threshold: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="After this many consecutive cross-batch Gemini 5xx, fail fast instead of burning per-batch retry budget.",
+    )
     fact_max_retries: int = Field(default=3)
     stale_job_threshold_hours: float = Field(default=1.0)
 
@@ -278,12 +289,8 @@ class Settings(BaseSettings):
     # target language. When OFF, everything hardcodes source_lang="en".
     # Default ON so multilang channels (zh-HK, ja, es, …) work without manual
     # env configuration. Set LANGUAGE_DETECTION_ENABLED=false to force English.
-    language_detection_enabled: bool = Field(
-        default=True, alias="LANGUAGE_DETECTION_ENABLED"
-    )
-    default_target_language: str = Field(
-        default="en", alias="DEFAULT_TARGET_LANGUAGE"
-    )
+    language_detection_enabled: bool = Field(default=True, alias="LANGUAGE_DETECTION_ENABLED")
+    default_target_language: str = Field(default="en", alias="DEFAULT_TARGET_LANGUAGE")
     supported_languages: str = Field(
         default=(
             # CJK + Japanese + Korean (script fast-path)
@@ -371,9 +378,7 @@ class Settings(BaseSettings):
     # on /api/memories, /api/channels/*/data, etc. Set to True only as a
     # temporary escape hatch if a downstream integration breaks; every
     # boot with True logs a loud warning so operators notice.
-    allow_bridge_as_user: bool = Field(
-        default=False, alias="BEEVER_ALLOW_BRIDGE_AS_USER"
-    )
+    allow_bridge_as_user: bool = Field(default=False, alias="BEEVER_ALLOW_BRIDGE_AS_USER")
 
     # Single-tenant compatibility mode for the v1.0 OSS launch. When True,
     # any authenticated user principal is granted access to channels whose
@@ -383,9 +388,7 @@ class Settings(BaseSettings):
     # ownership. Post-v1.0 this default flips to ``False`` so multi-tenant
     # operators must explicitly backfill ownership on legacy rows (see
     # ``stores.platform_store.PlatformStore.backfill_legacy_owners``).
-    beever_single_tenant: bool = Field(
-        default=True, alias="BEEVER_SINGLE_TENANT"
-    )
+    beever_single_tenant: bool = Field(default=True, alias="BEEVER_SINGLE_TENANT")
 
     @property
     def neo4j_user(self) -> str:

@@ -6,6 +6,7 @@ extraction, entity extraction) are not re-run.
 
 Phase 1 Step 2 — ingestion-pipeline-hardening plan.
 """
+
 from __future__ import annotations
 
 import json as _json
@@ -22,6 +23,7 @@ from pydantic import ValidationError as PydanticValidationError
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_response_500() -> httpx.Response:
     """Build a minimal httpx.Response with status 500."""
@@ -187,6 +189,7 @@ async def test_checkpoint_reloaded_on_httpx_error_retry():
 # A4: Parametrized resume test — all 4 resumable exception types
 # ---------------------------------------------------------------------------
 
+
 def _make_server_error() -> ServerError:
     err = ServerError.__new__(ServerError)
     Exception.__init__(err, "503 UNAVAILABLE")
@@ -262,7 +265,10 @@ async def test_checkpoint_reloaded_on_resumable_exception(exc_factory):
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=mock_runner),
         patch("beever_atlas.services.batch_processor.create_session", return_value=session),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),

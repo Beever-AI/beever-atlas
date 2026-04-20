@@ -20,8 +20,12 @@ def _cluster(title, entities):
 
 def test_collect_merges_dict_terms_with_cluster_entities():
     glossary = [
-        {"term": "Beever", "definition": "Memory system",
-         "first_mentioned_by": "Alice", "related_topics": ["Arch"]},
+        {
+            "term": "Beever",
+            "definition": "Memory system",
+            "first_mentioned_by": "Alice",
+            "related_topics": ["Arch"],
+        },
         "MCP",
     ]
     clusters = [
@@ -41,8 +45,7 @@ def test_collect_merges_dict_terms_with_cluster_entities():
 
 def test_render_terms_table_escapes_pipes_and_falls_back():
     rows = [
-        {"term": "X|Y", "definition": "", "first_mentioned_by": "",
-         "related_topics": []},
+        {"term": "X|Y", "definition": "", "first_mentioned_by": "", "related_topics": []},
     ]
     table = _render_glossary_terms_table(rows)
     assert "X\\|Y" in table
@@ -52,8 +55,14 @@ def test_render_terms_table_escapes_pipes_and_falls_back():
 
 def test_splice_adds_both_missing_sections():
     diagram_only = "## Relationship diagram\n```mermaid\ngraph TD\nA-->B\n```\n"
-    glossary = [{"term": "Beever", "definition": "Memory sys",
-                 "first_mentioned_by": "Alice", "related_topics": ["Arch"]}]
+    glossary = [
+        {
+            "term": "Beever",
+            "definition": "Memory sys",
+            "first_mentioned_by": "Alice",
+            "related_topics": ["Arch"],
+        }
+    ]
     clusters = []
     out = _splice_glossary_sections(diagram_only, glossary, clusters)
     assert "## Introduction" in out
@@ -90,8 +99,14 @@ def test_splice_after_postprocess_closes_mermaid_first():
     # Splicing onto the sealed content appends sections *after* the close.
     out = _splice_glossary_sections(
         closed,
-        [{"term": "Beever", "definition": "Memory", "first_mentioned_by": "Alice",
-          "related_topics": []}],
+        [
+            {
+                "term": "Beever",
+                "definition": "Memory",
+                "first_mentioned_by": "Alice",
+                "related_topics": [],
+            }
+        ],
         [],
     )
     assert "## Introduction" in out

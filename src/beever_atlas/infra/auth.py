@@ -41,9 +41,7 @@ class Principal(str):
 
     __slots__ = ("_kind",)
 
-    def __new__(
-        cls, id: str, kind: Literal["user", "bridge", "mcp"]
-    ) -> "Principal":
+    def __new__(cls, id: str, kind: Literal["user", "bridge", "mcp"]) -> "Principal":
         inst = super().__new__(cls, id)
         inst._kind = kind
         return inst

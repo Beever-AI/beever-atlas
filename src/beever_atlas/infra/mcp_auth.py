@@ -69,8 +69,7 @@ def _record_auth_failure(ip: str) -> None:
         last_alert = _ip_last_alert.get(ip, 0.0)
         if now - last_alert >= _BRUTEFORCE_ALERT_COOLDOWN_SECONDS:
             logger.warning(
-                "event=mcp_auth_bruteforce_suspected ip=%s window_seconds=%d "
-                "failure_count=%d",
+                "event=mcp_auth_bruteforce_suspected ip=%s window_seconds=%d failure_count=%d",
                 ip,
                 _BRUTEFORCE_WINDOW_SECONDS,
                 len(entries),
@@ -141,9 +140,7 @@ class MCPAuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Only enforce on HTTP — websocket / lifespan pass through.
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
@@ -181,9 +178,7 @@ class MCPAuthMiddleware:
                 ip,
             )
             _record_auth_failure(ip)
-            await _unauthorized(
-                request_id, "missing_bearer"
-            )(scope, receive, send)
+            await _unauthorized(request_id, "missing_bearer")(scope, receive, send)
             return
 
         settings = get_settings()
@@ -211,9 +206,7 @@ class MCPAuthMiddleware:
                 ip,
             )
             _record_auth_failure(ip)
-            await _unauthorized(
-                request_id, "invalid_bearer"
-            )(scope, receive, send)
+            await _unauthorized(request_id, "invalid_bearer")(scope, receive, send)
             return
 
         # Strip the Authorization header so tool handlers cannot observe

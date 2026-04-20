@@ -168,10 +168,7 @@ class TestSSEEventFormat:
         )
         # Runner may emit either "response_delta" (regular text) or "thinking"
         # (thought parts) depending on mock output shape.
-        assert (
-            "event: response_delta" in response.text
-            or "event: thinking" in response.text
-        )
+        assert "event: response_delta" in response.text or "event: thinking" in response.text
 
     @pytest.mark.asyncio
     async def test_stream_contains_citations_event(self, client: AsyncClient, mock_runner):
@@ -351,9 +348,7 @@ class TestDoneEventGuarantee:
         body = response.text
         # Should have either an error event or a done event (or both)
         has_terminal = "event: error" in body or "event: done" in body
-        assert has_terminal, (
-            "Runner exception did not produce any terminal SSE event"
-        )
+        assert has_terminal, "Runner exception did not produce any terminal SSE event"
 
     @pytest.mark.asyncio
     async def test_error_event_contains_error_details(

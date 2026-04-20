@@ -193,15 +193,19 @@ def test_skills_allowed_tools_pins_overlap():
     # Patch the settings accessor, the skill-pack builder, AND
     # SkillToolset at the import-time resolution sites inside
     # `_maybe_wrap_with_skills`.
-    with patch(
-        "beever_atlas.infra.config.get_settings",
-        return_value=fake_settings,
-    ), patch(
-        "beever_atlas.agents.query.skills.build_qa_skill_pack",
-        return_value=synthetic_pack,
-    ), patch(
-        "google.adk.tools.skill_toolset.SkillToolset",
-        _RecorderToolset,
+    with (
+        patch(
+            "beever_atlas.infra.config.get_settings",
+            return_value=fake_settings,
+        ),
+        patch(
+            "beever_atlas.agents.query.skills.build_qa_skill_pack",
+            return_value=synthetic_pack,
+        ),
+        patch(
+            "google.adk.tools.skill_toolset.SkillToolset",
+            _RecorderToolset,
+        ),
     ):
         result = _maybe_wrap_with_skills(list(QA_TOOLS))
 

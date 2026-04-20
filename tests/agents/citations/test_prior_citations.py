@@ -48,8 +48,13 @@ def test_extract_prior_citations_from_envelope():
 def test_extract_prior_citations_from_legacy_list():
     past_entry = {
         "citations": [
-            {"type": "channel_fact", "author": "bob", "channel": "general",
-             "timestamp": "2026-01-01", "text": "some fact"},
+            {
+                "type": "channel_fact",
+                "author": "bob",
+                "channel": "general",
+                "timestamp": "2026-01-01",
+                "text": "some fact",
+            },
         ]
     }
     out = _extract_prior_citations(past_entry)
@@ -70,8 +75,7 @@ def test_extract_prior_citations_truncates_to_five():
         "citations": {
             "items": [],
             "sources": [
-                {"id": f"src_{i}", "kind": "channel_message", "native": {}}
-                for i in range(10)
+                {"id": f"src_{i}", "kind": "channel_message", "native": {}} for i in range(10)
             ],
             "refs": [],
         }

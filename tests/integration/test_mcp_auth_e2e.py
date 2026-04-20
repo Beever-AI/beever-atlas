@@ -118,8 +118,9 @@ def test_valid_mcp_key_passes_through(monkeypatch):
     body = r.json()
     assert body["principal_kind"] == "mcp"
     assert body["principal_id"].startswith("mcp:")
-    assert body["auth_header_present"] is False, \
+    assert body["auth_header_present"] is False, (
         "Authorization header MUST be stripped before reaching the inner app"
+    )
     assert body["request_id"] is not None and len(body["request_id"]) > 0
 
 

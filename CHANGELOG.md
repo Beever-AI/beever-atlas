@@ -17,17 +17,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Cursor.
 - MCP client configuration examples for Claude Code (`.mcp.json`) and Cursor
   (mcp-remote proxy).
+- Mobile-responsive wiki sidebar and chat input (commit `a7beb04`).
+- End-to-end attachments UX — intent detection, persistence, vision preview
+  (commit `3e2e8f3`).
+- Brand refresh: updated logo, favicons, and heading font (commit `74c1c7c`).
+- Mattermost integration via Chat SDK (commit `692c774`).
+- "Suggest sync/wiki when retrieval comes up empty" QA fallback (commit `c8fe068`).
+- Surface orchestration tools in the Ask Tools panel (commit `38fcc56`).
+- Redis-backed MCP rate-limit backend — shared sliding-window counters for
+  multi-worker deploys (commit `e7f855e`).
+- MCP operator metrics view at `/api/admin/mcp-metrics` (commit `4653df6`).
 
 ### Changed
 - Internal capability layer extracted to `src/beever_atlas/capabilities/` —
   ADK tools and MCP tools now share a single implementation.
 - README Quick Start section now includes MCP server overview with link to full docs.
 
+### Fixed
+- Streaming citation-marker scrubbing — bogus `[src:tool_name_response]`
+  literals stripped at stream time (commits `4ac46a1`, `32be76f`, `1511cbd`).
+- Weaviate 10 MB gRPC cap: fixed consolidation pagination to stay under the
+  per-message limit (commit `0a53e8d`).
+- MCP session reuse and principal job access (commit `1f01cba`).
+- Wiki jobs: completion detection, cooldown filter, and store init fail-closed
+  (commit `d200b99`).
+- `list_channels` scoping alignment with dashboard view (commit `cd337c4`).
+- FastMCP lifespan chaining (commit `5da0c14`).
+- MCP H4 refresh_wiki cooldown, M1 rate-limit fallback, M2 question cap
+  (commit `660fc00`).
+- MCP session_id spoofing prevention (commit `612d559`).
+- ASK principal contextvar binding for orchestration tools (commit `6f89e3c`).
+- H1/H2/H3/H4/M1/M6 security hardening bundle (PR #42, umbrella RES-177).
+
 ### Fixed (Security)
 - The legacy unauthenticated `/mcp` mount is removed (previously gated off by
   a Phase 0 hotfix). The `/mcp` mount is the sole MCP surface; it requires
   bearer authentication via `BEEVER_MCP_API_KEYS` and enforces per-tool
   channel-access checks.
+
+### Security
+- Mako path-traversal CVE patch (commit `b7b2679`).
+- Three moderate Dependabot CVEs patched (commit `9228155`).
+- Content-Disposition filename sanitization and `X-Content-Type-Options: nosniff`
+  header (commit `043a0c6`).
+- MCP principal ACL single-tenant fallback (commit `9dff213`).
+- `/mcp` rename and legacy mount retirement (commits `3a50cfc`, `0d84ad6`).
 
 ### Deprecated
 - The legacy `search_channel_knowledge` MCP tool is removed. Callers now
@@ -111,4 +145,4 @@ follow-up polish documented below.
 ### Removed
 - Unused `ANTHROPIC_API_KEY` environment variable.
 
-[Unreleased]: https://github.com/votee/beever-atlas/compare/HEAD...HEAD
+[Unreleased]: https://github.com/votee/beever-atlas/compare/v0.1.1...HEAD

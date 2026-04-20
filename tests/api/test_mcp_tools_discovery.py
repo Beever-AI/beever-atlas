@@ -39,6 +39,7 @@ def _patch_http_request(principal_id: str | None):
 # going through the FastMCP machinery. The cleanest way is to call the
 # registered tool's underlying function via the tool manager after build_mcp().
 
+
 def _get_tool_fn(mcp, name: str):
     """Return the underlying async function for a registered tool.
 
@@ -62,10 +63,24 @@ async def test_whoami_returns_principal_and_connections(monkeypatch):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_conns = [
-        {"connection_id": "conn-1", "platform": "slack", "display_name": "WS1",
-         "status": "connected", "last_synced_at": None, "selected_channel_count": 3, "source": "ui"},
-        {"connection_id": "conn-2", "platform": "discord", "display_name": "DS1",
-         "status": "connected", "last_synced_at": None, "selected_channel_count": 1, "source": "ui"},
+        {
+            "connection_id": "conn-1",
+            "platform": "slack",
+            "display_name": "WS1",
+            "status": "connected",
+            "last_synced_at": None,
+            "selected_channel_count": 3,
+            "source": "ui",
+        },
+        {
+            "connection_id": "conn-2",
+            "platform": "discord",
+            "display_name": "DS1",
+            "status": "connected",
+            "last_synced_at": None,
+            "selected_channel_count": 1,
+            "source": "ui",
+        },
     ]
 
     request_mock = MagicMock()
@@ -74,12 +89,15 @@ async def test_whoami_returns_principal_and_connections(monkeypatch):
     ctx_mock = MagicMock()
     ctx_mock.info = AsyncMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=fake_conns),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=fake_conns),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "whoami")
@@ -123,12 +141,15 @@ async def test_whoami_empty_connections(monkeypatch):
     ctx_mock = MagicMock()
     ctx_mock.info = AsyncMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=[]),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "whoami")
@@ -149,20 +170,30 @@ async def test_list_connections_returns_full_dicts(monkeypatch):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_conns = [
-        {"connection_id": "c1", "platform": "slack", "display_name": "WS",
-         "status": "connected", "last_synced_at": None, "selected_channel_count": 2, "source": "ui"},
+        {
+            "connection_id": "c1",
+            "platform": "slack",
+            "display_name": "WS",
+            "status": "connected",
+            "last_synced_at": None,
+            "selected_channel_count": 2,
+            "source": "ui",
+        },
     ]
     request_mock = MagicMock()
     request_mock.scope = {"state": {"mcp_principal_id": "mcp:testhash"}}
     ctx_mock = MagicMock()
     ctx_mock.info = AsyncMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=fake_conns),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=fake_conns),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "list_connections")
@@ -180,12 +211,15 @@ async def test_list_connections_empty(monkeypatch):
     request_mock.scope = {"state": {"mcp_principal_id": "mcp:testhash"}}
     ctx_mock = MagicMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=[]),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "list_connections")
@@ -205,21 +239,36 @@ async def test_list_channels_returns_channel_dicts(monkeypatch):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_channels = [
-        {"channel_id": "ch-a", "name": "ch-a", "platform": "slack",
-         "last_sync_ts": None, "sync_status": None, "message_count_estimate": None},
-        {"channel_id": "ch-b", "name": "ch-b", "platform": "slack",
-         "last_sync_ts": None, "sync_status": None, "message_count_estimate": None},
+        {
+            "channel_id": "ch-a",
+            "name": "ch-a",
+            "platform": "slack",
+            "last_sync_ts": None,
+            "sync_status": None,
+            "message_count_estimate": None,
+        },
+        {
+            "channel_id": "ch-b",
+            "name": "ch-b",
+            "platform": "slack",
+            "last_sync_ts": None,
+            "sync_status": None,
+            "message_count_estimate": None,
+        },
     ]
     request_mock = MagicMock()
     request_mock.scope = {"state": {"mcp_principal_id": "mcp:testhash"}}
     ctx_mock = MagicMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_channels",
-        new=AsyncMock(return_value=fake_channels),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_channels",
+            new=AsyncMock(return_value=fake_channels),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "list_channels")
@@ -238,12 +287,15 @@ async def test_list_channels_access_denied_returns_structured_error(monkeypatch)
     request_mock.scope = {"state": {"mcp_principal_id": "mcp:testhash"}}
     ctx_mock = MagicMock()
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.capabilities.connections.list_channels",
-        new=AsyncMock(side_effect=ConnectionAccessDenied("conn-other")),
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_channels",
+            new=AsyncMock(side_effect=ConnectionAccessDenied("conn-other")),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "list_channels")

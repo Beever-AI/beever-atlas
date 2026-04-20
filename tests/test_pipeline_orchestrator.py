@@ -49,6 +49,7 @@ def _make_resolved(strategy: ConsolidationStrategy, after_n: int = 3) -> Resolve
 def _clear_tasks():
     """Clear consolidation task tracking between tests."""
     from beever_atlas.services import pipeline_orchestrator
+
     pipeline_orchestrator._consolidation_tasks.clear()
     yield
     pipeline_orchestrator._consolidation_tasks.clear()

@@ -78,8 +78,10 @@ def cite_tool_output(
                 # Unwrap list-valued envelopes first.
                 for key in ("results", "items", "data"):
                     inner = result.get(key)
-                    if isinstance(inner, list) and inner and all(
-                        isinstance(x, dict) for x in inner
+                    if (
+                        isinstance(inner, list)
+                        and inner
+                        and all(isinstance(x, dict) for x in inner)
                     ):
                         for item in inner:
                             _annotate(item, kind, tool_name, query, registry, ctx)
@@ -99,9 +101,7 @@ def cite_tool_output(
     return decorator
 
 
-def _bind_call_args(
-    fn: Callable[..., Any], args: tuple, kwargs: dict
-) -> dict[str, Any]:
+def _bind_call_args(fn: Callable[..., Any], args: tuple, kwargs: dict) -> dict[str, Any]:
     """Bind `args`/`kwargs` to `fn`'s parameter names. Returns a flat name→value
     dict. Uses `bind_partial` so optional params are simply absent rather than
     raising. Never throws; falls back to plain kwargs on any reflection error.
@@ -173,7 +173,9 @@ def _annotate(
             item["_src_id"] = source_id
     except Exception:
         logger.warning(
-            "cite_tool_output: annotation failed for kind=%s tool=%s", kind, tool_name,
+            "cite_tool_output: annotation failed for kind=%s tool=%s",
+            kind,
+            tool_name,
             exc_info=True,
         )
 
@@ -199,7 +201,9 @@ def _derive_native_identity(kind: str, item: dict) -> str | None:
     if kind == "web_result":
         return str(item.get("url") or "")
     if kind == "graph_relationship":
-        return f"{item.get('subject_id', '')}:{item.get('predicate', '')}:{item.get('object_id', '')}"
+        return (
+            f"{item.get('subject_id', '')}:{item.get('predicate', '')}:{item.get('object_id', '')}"
+        )
     if kind == "decision_record":
         return str(item.get("decision_id") or "")
     if kind == "media":
@@ -224,10 +228,7 @@ def _extract_title(kind: str, item: dict) -> str:
         channel = item.get("channel_name") or item.get("channel_id") or ""
         return f"{author} in #{channel}" if author or channel else "Channel message"
     if kind == "wiki_page":
-        return (
-            item.get("title")
-            or f"Wiki: {item.get('page_type', '')}"
-        )
+        return item.get("title") or f"Wiki: {item.get('page_type', '')}"
     if kind == "qa_history":
         return item.get("question") or "Past Q&A"
     if kind == "uploaded_file":
@@ -333,9 +334,7 @@ def _channel_attachments(item: dict) -> Iterable[MediaAttachment]:
         yield MediaAttachment(kind=mapped, url=str(url))
     # Back-compat single-url field if no list.
     if not item.get("media_urls") and item.get("source_media_url"):
-        yield MediaAttachment(
-            kind=mapped, url=str(item.get("source_media_url"))
-        )
+        yield MediaAttachment(kind=mapped, url=str(item.get("source_media_url")))
 
     link_urls = item.get("link_urls") or []
     link_titles = item.get("link_titles") or []
@@ -343,9 +342,7 @@ def _channel_attachments(item: dict) -> Iterable[MediaAttachment]:
         if not url:
             continue
         title = link_titles[i] if i < len(link_titles) else None
-        yield MediaAttachment(
-            kind="link_preview", url=str(url), title=title
-        )
+        yield MediaAttachment(kind="link_preview", url=str(url), title=title)
 
 
 def _media_type_to_kind(raw: str) -> str:

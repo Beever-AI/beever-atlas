@@ -5,6 +5,7 @@ Any LlmAgent that uses ``output_schema=`` MUST be created via
 code path.  This prevents individual agents from silently swallowing
 truncation errors or re-introducing the cliff independently.
 """
+
 from __future__ import annotations
 
 import json

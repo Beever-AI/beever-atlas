@@ -25,9 +25,7 @@ def _make_stores(*, create_raises: bool = False, builder_raises: bool = False):
         kind="wiki_refresh",
     )
     if create_raises:
-        mock_stores.mongodb.create_sync_job = AsyncMock(
-            side_effect=RuntimeError("DB unavailable")
-        )
+        mock_stores.mongodb.create_sync_job = AsyncMock(side_effect=RuntimeError("DB unavailable"))
     else:
         mock_stores.mongodb.create_sync_job = AsyncMock(return_value=fake_job)
     mock_stores.mongodb.complete_sync_job = AsyncMock()
@@ -35,9 +33,7 @@ def _make_stores(*, create_raises: bool = False, builder_raises: bool = False):
 
     mock_builder_instance = MagicMock()
     if builder_raises:
-        mock_builder_instance.refresh_wiki = AsyncMock(
-            side_effect=RuntimeError("builder boom")
-        )
+        mock_builder_instance.refresh_wiki = AsyncMock(side_effect=RuntimeError("builder boom"))
     else:
         mock_builder_instance.refresh_wiki = AsyncMock()
 
@@ -58,25 +54,19 @@ async def test_success_path_marks_job_completed():
         captured.append(coro)
         return MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache", return_value=mock_cache
-    ), patch(
-        "beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance
-    ), patch(
-        "asyncio.ensure_future", side_effect=_ensure_future
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache", return_value=mock_cache),
+        patch("beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance),
+        patch("asyncio.ensure_future", side_effect=_ensure_future),
     ):
         await refresh_wiki("mcp:testhash", "ch-a")
         # Manually drive the captured background coroutine to completion.
         assert len(captured) == 1
         await captured[0]
 
-    mock_stores.mongodb.complete_sync_job.assert_awaited_once_with(
-        fake_job.id, status="completed"
-    )
+    mock_stores.mongodb.complete_sync_job.assert_awaited_once_with(fake_job.id, status="completed")
 
 
 @pytest.mark.asyncio
@@ -91,16 +81,12 @@ async def test_failure_path_marks_job_failed_with_errors():
         captured.append(coro)
         return MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache", return_value=mock_cache
-    ), patch(
-        "beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance
-    ), patch(
-        "asyncio.ensure_future", side_effect=_ensure_future
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache", return_value=mock_cache),
+        patch("beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance),
+        patch("asyncio.ensure_future", side_effect=_ensure_future),
     ):
         await refresh_wiki("mcp:testhash", "ch-a")
         await captured[0]
@@ -130,16 +116,12 @@ async def test_synthetic_uuid_fallback_never_calls_complete_sync_job():
         captured.append(coro)
         return MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache", return_value=mock_cache
-    ), patch(
-        "beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance
-    ), patch(
-        "asyncio.ensure_future", side_effect=_ensure_future
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache", return_value=mock_cache),
+        patch("beever_atlas.wiki.builder.WikiBuilder", return_value=mock_builder_instance),
+        patch("asyncio.ensure_future", side_effect=_ensure_future),
     ):
         await refresh_wiki("mcp:testhash", "ch-a")
         await captured[0]

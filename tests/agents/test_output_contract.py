@@ -14,6 +14,7 @@ def _build(mode: str = "deep") -> str:
     settings = _make_settings(new_prompt=True)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         return build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode=mode)
 
 
@@ -37,6 +38,7 @@ def test_strict_block_absent_when_flag_off() -> None:
     settings = _make_settings(new_prompt=False)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
     # Strict block is scoped to the new-prompt branch only.
     assert "## From your knowledge base" not in prompt

@@ -54,7 +54,9 @@ class _Status:
 
 
 @pytest.mark.asyncio
-async def test_fetch_all_messages_filters_inclusive_cursor_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fetch_all_messages_filters_inclusive_cursor_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     t1 = datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
     t2 = datetime(2026, 3, 1, 11, 0, tzinfo=UTC)
     t3 = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
@@ -99,7 +101,9 @@ async def test_fetch_all_messages_parses_iso_since_string(monkeypatch: pytest.Mo
     )
 
     runner = sync_runner_module.SyncRunner()
-    await runner._fetch_all_messages("C123", adapter=_adapter_instance, since="2026-03-15T00:00:00Z")
+    await runner._fetch_all_messages(
+        "C123", adapter=_adapter_instance, since="2026-03-15T00:00:00Z"
+    )
 
     assert isinstance(seen_since, datetime)
     assert seen_since == datetime(2026, 3, 15, 0, 0, tzinfo=UTC)
@@ -112,17 +116,27 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
     calls: dict[str, object] = {}
 
     class _Mongo:
-        async def complete_sync_job(self, job_id: str, status: str, errors: list[str] | None = None, failed_stage: str | None = None) -> None:
+        async def complete_sync_job(
+            self,
+            job_id: str,
+            status: str,
+            errors: list[str] | None = None,
+            failed_stage: str | None = None,
+        ) -> None:
             calls["complete"] = {"job_id": job_id, "status": status, "errors": errors}
 
-        async def log_activity(self, event_type: str, channel_id: str, details: dict[str, object]) -> None:
+        async def log_activity(
+            self, event_type: str, channel_id: str, details: dict[str, object]
+        ) -> None:
             calls["activity"] = {
                 "event_type": event_type,
                 "channel_id": channel_id,
                 "details": details,
             }
 
-        async def update_channel_sync_state(self, channel_id: str, last_sync_ts: str, increment: int = 0, **kwargs) -> None:
+        async def update_channel_sync_state(
+            self, channel_id: str, last_sync_ts: str, increment: int = 0, **kwargs
+        ) -> None:
             calls["sync_state"] = {
                 "channel_id": channel_id,
                 "last_sync_ts": last_sync_ts,
@@ -134,6 +148,7 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
 
     async def _fake_resolve_policy(channel_id):
         from types import SimpleNamespace as NS
+
         return NS(ingestion=NS(), sync=NS(max_messages=100))
 
     monkeypatch.setattr(
@@ -150,9 +165,7 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
         )
 
     runner = sync_runner_module.SyncRunner()
-    runner._batch_processor = SimpleNamespace(
-        process_messages=_process_messages
-    )
+    runner._batch_processor = SimpleNamespace(process_messages=_process_messages)
 
     await runner._run_sync(
         job_id="job-1",
@@ -190,10 +203,20 @@ async def test_start_sync_recovers_stale_running_job(monkeypatch: pytest.MonkeyP
         async def get_channel_sync_state(self, channel_id: str):
             return None
 
-        async def complete_sync_job(self, job_id: str, status: str, errors: list[str] | None = None) -> None:
+        async def complete_sync_job(
+            self, job_id: str, status: str, errors: list[str] | None = None
+        ) -> None:
             calls["complete_sync_job"] = {"job_id": job_id, "status": status, "errors": errors}
 
-        async def create_sync_job(self, channel_id: str, sync_type: str, total_messages: int, batch_size: int, parent_messages: int = 0, **kwargs):
+        async def create_sync_job(
+            self,
+            channel_id: str,
+            sync_type: str,
+            total_messages: int,
+            batch_size: int,
+            parent_messages: int = 0,
+            **kwargs,
+        ):
             calls["create_sync_job"] = {
                 "channel_id": channel_id,
                 "sync_type": sync_type,
@@ -214,9 +237,11 @@ async def test_start_sync_recovers_stale_running_job(monkeypatch: pytest.MonkeyP
     class _FakeCollection:
         def find(self, *args, **kwargs):
             return self
+
         def to_list(self, length=None):
             async def _empty():
                 return []
+
             return _empty()
 
     class _FakeDb:
@@ -227,7 +252,13 @@ async def test_start_sync_recovers_stale_running_job(monkeypatch: pytest.MonkeyP
     mongo.db = _FakeDb()
     stores = SimpleNamespace(mongodb=mongo)
     monkeypatch.setattr(sync_runner_module, "get_stores", lambda: stores)
-    monkeypatch.setattr(sync_runner_module, "get_settings", lambda: SimpleNamespace(sync_max_messages=100, sync_batch_size=50, stale_job_threshold_hours=2))
+    monkeypatch.setattr(
+        sync_runner_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            sync_max_messages=100, sync_batch_size=50, stale_job_threshold_hours=2
+        ),
+    )
     monkeypatch.setattr(sync_runner_module, "get_adapter", lambda: _Adapter())
 
     import beever_atlas.services.policy_resolver as _policy_mod

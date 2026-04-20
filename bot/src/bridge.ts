@@ -16,6 +16,12 @@ import type { TeamsAdapter } from "@chat-adapter/teams";
 import type { Message as ChatSDKMessage } from "chat";
 import { cleanSlackMrkdwn } from "./slack-mrkdwn.js";
 import type { ChatManager } from "./chat-manager.js";
+export type { PlatformErrorShape } from "./bridge/platformError.js";
+export { classifyPlatformError } from "./bridge/platformError.js";
+import { classifyPlatformError } from "./bridge/platformError.js";
+import { jsonResponse } from "./http-utils.js";
+export { jsonResponse } from "./http-utils.js";
+import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -215,81 +221,18 @@ async function assertPublicUrl(rawUrl: string): Promise<void> {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function jsonResponse(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
+// jsonResponse is imported from ./http-utils.js above and re-exported.
+
+/** Default and maximum message fetch limits for history routes. */
+export const DEFAULT_MESSAGE_LIMIT = 100;
+export const MAX_MESSAGE_LIMIT = 500;
 
 function parseQuery(url: string): URLSearchParams {
   const idx = url.indexOf("?");
   return new URLSearchParams(idx >= 0 ? url.slice(idx + 1) : "");
 }
 
-/**
- * Shape of a Slack/Discord/etc. platform SDK error. The SDK wraps the raw
- * HTTP payload under `data` and exposes a semantic `code` at the top level.
- * All fields are optional because upstream SDKs disagree on what they set.
- */
-interface PlatformErrorShape {
-  code?: string;
-  data?: { error?: string };
-}
-
-/** Classify a platform SDK error into an appropriate HTTP status code. */
-export function classifyPlatformError(err: unknown): { status: number; code: string } {
-  const msg = String(err).toLowerCase();
-  const shape = (err ?? {}) as PlatformErrorShape;
-  const errData = shape.data?.error ?? "";
-  const errCode = shape.code ?? "";
-
-  // Not-found errors (Slack: channel_not_found, file_not_found; Discord: 404; generic)
-  if (
-    errData === "channel_not_found" ||
-    errData === "file_not_found" ||
-    errData === "thread_not_found" ||
-    errData === "not_found" ||
-    msg.includes("not found") ||
-    msg.includes("not_found") ||
-    msg.includes(": 404")
-  ) {
-    return { status: 404, code: "NOT_FOUND" };
-  }
-
-  // Permission / auth errors
-  if (
-    errData === "not_authed" ||
-    errData === "invalid_auth" ||
-    errData === "token_revoked" ||
-    errData === "missing_scope" ||
-    errData === "not_allowed_token_type" ||
-    (errCode === "slack_webapi_platform_error" && errData === "not_in_channel") ||
-    msg.includes("forbidden") ||
-    msg.includes(": 403")
-  ) {
-    return { status: 403, code: "FORBIDDEN" };
-  }
-
-  // Rate limiting (shouldn't normally reach here, but just in case)
-  if (
-    errData === "ratelimited" ||
-    msg.includes("rate limit") ||
-    msg.includes(": 429")
-  ) {
-    return { status: 429, code: "RATE_LIMITED" };
-  }
-
-  // Not supported (Teams/Telegram stubs)
-  if (
-    errData === "not_supported" ||
-    (err as any)?.code === "NOT_SUPPORTED" ||
-    msg.includes("not supported")
-  ) {
-    return { status: 501, code: "NOT_SUPPORTED" };
-  }
-
-  // Default: upstream platform error — use 502 (bad gateway)
-  return { status: 502, code: "PLATFORM_ERROR" };
-}
+// classifyPlatformError is imported from ./bridge/platformError.js above and re-exported.
 
 async function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -581,14 +524,14 @@ class SlackBridge implements PlatformBridge {
     if (response.status === 429 && retries > 0) {
       const retryAfter = parseInt(response.headers.get("retry-after") || "2", 10);
       const waitMs = retryAfter * 1000;
-      console.log(`Bridge: Slack rate limited (429), retrying after ${retryAfter}s (${retries} retries left)`);
+      logger.debug(`Bridge: Slack rate limited (429), retrying after ${retryAfter}s (${retries} retries left)`);
       await new Promise((r) => setTimeout(r, waitMs));
       return this._proxyFileInner(fileUrl, retries - 1);
     }
 
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("text/html") && decodedUrl.includes("files-pri")) {
-      console.log("Bridge: fileProxy got HTML, trying files.sharedPublicURL fallback");
+      logger.debug("Bridge: fileProxy got HTML, trying files.sharedPublicURL fallback");
       const match = decodedUrl.match(/files-pri\/[^/]+-(F[^/]+)\//);
       if (match) {
         const fileId = match[1];
@@ -602,7 +545,7 @@ class SlackBridge implements PlatformBridge {
             // Retry on 429 for fallback URL too
             if (response.status === 429 && retries > 0) {
               const retryAfter = parseInt(response.headers.get("retry-after") || "2", 10);
-              console.log(`Bridge: Slack rate limited on fallback (429), retrying after ${retryAfter}s`);
+              logger.debug(`Bridge: Slack rate limited on fallback (429), retrying after ${retryAfter}s`);
               await new Promise((r) => setTimeout(r, retryAfter * 1000));
               return this._proxyFileInner(fileUrl, retries - 1);
             }
@@ -1779,7 +1722,7 @@ async function handleGetMessages(
 ): Promise<void> {
   try {
     const query = parseQuery(req.url || "");
-    const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
+    const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_MESSAGE_LIMIT), 10), MAX_MESSAGE_LIMIT);
     const since = query.get("since") ?? undefined;
     const before = query.get("before") ?? undefined;
     const order = query.get("order") ?? "desc";
@@ -2270,7 +2213,7 @@ export function registerBridgeRoutes(
     if (req.method === "GET" && connMessagesMatch) {
       await handleConnectionRoute(req, res, chatManager, connMessagesMatch[1], async (bridge) => {
         const query = parseQuery(req.url || "");
-        const limit = Math.min(parseInt(query.get("limit") || "100", 10), 500);
+        const limit = Math.min(parseInt(query.get("limit") || String(DEFAULT_MESSAGE_LIMIT), 10), MAX_MESSAGE_LIMIT);
         const since = query.get("since") ?? undefined;
         const before = query.get("before") ?? undefined;
         const order = query.get("order") ?? "desc";
@@ -2374,11 +2317,11 @@ export function registerBridgeRoutes(
 
     // GET /bridge/files?url=...&connection_id=...
     if (req.method === "GET" && url.startsWith("/bridge/files")) {
-      console.log("Bridge: /bridge/files route matched, url:", url.slice(0, 80));
+      logger.debug("Bridge: /bridge/files route matched, url:", url.slice(0, 80));
       const fileQuery = parseQuery(url);
       const fileUrl = fileQuery.get("url");
       const connId = fileQuery.get("connection_id") || undefined;
-      console.log("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60), "connection_id:", connId || "(auto-detect)");
+      logger.debug("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60), "connection_id:", connId || "(auto-detect)");
       if (fileUrl) {
         await handleFileProxy(req, res, chatManager, fileUrl, undefined, connId);
         return true;

@@ -87,6 +87,7 @@ async def _check_rate_limit(principal_id: str, tool_name: str) -> dict | None:
 # Phase 7: Audit log wrapper
 # ---------------------------------------------------------------------------
 
+
 def _get_request_id() -> str:
     """Extract the MCP request id from the current ASGI scope, or generate one."""
     try:
@@ -127,6 +128,7 @@ def _audit_tool(tool_name: str):
        tool, target, outcome, and duration_ms.
     6. On unhandled exception: emits with ``outcome="exception"`` and re-raises.
     """
+
     def decorator(fn):
         @wraps(fn)
         async def wrapper(*args, **kwargs):
@@ -190,6 +192,7 @@ def _audit_tool(tool_name: str):
                     )
 
         return wrapper
+
     return decorator
 
 
@@ -245,6 +248,7 @@ def _emit_audit(
 # Deprecation shim (Phase 2, retained permanently)
 # ---------------------------------------------------------------------------
 
+
 def _register_deprecation_shim(mcp: FastMCP) -> None:
     """Register the tool-renamed shim for the legacy ``search_channel_knowledge``.
 
@@ -280,6 +284,7 @@ def _register_deprecation_shim(mcp: FastMCP) -> None:
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def build_mcp() -> FastMCP:
     """Construct the v2 FastMCP instance used by the ``/mcp`` mount.
@@ -320,9 +325,7 @@ def build_mcp() -> FastMCP:
     # Phase 7: patch every registered tool with the audit+rate-limit wrapper.
     _apply_audit_wrappers(mcp)
 
-    tool_count = sum(
-        1 for k in mcp._local_provider._components if k.startswith("tool:")
-    )
+    tool_count = sum(1 for k in mcp._local_provider._components if k.startswith("tool:"))
     logger.info(
         "event=mcp_build name=beever-atlas version=%s tools_registered=%d",
         _atlas_version(),
@@ -344,7 +347,7 @@ def _apply_audit_wrappers(mcp: FastMCP) -> None:
             continue
         # Extract the tool name from the registry key ("tool:<name>@<version>"
         # or "tool:<name>").
-        raw_name = key[len("tool:"):]
+        raw_name = key[len("tool:") :]
         tool_name = raw_name.split("@")[0]
 
         if not hasattr(component, "fn"):

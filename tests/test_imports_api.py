@@ -23,6 +23,7 @@ from beever_atlas.api.imports import router
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # Redirect the staging dir into tmp_path so tests don't pollute .omc/imports.
     from beever_atlas.infra.config import get_settings
+
     settings = get_settings()
     monkeypatch.setattr(settings, "file_import_staging_dir", str(tmp_path / "imports"))
     # Turn off the LLM by default so tests are deterministic and offline.
@@ -35,14 +36,12 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # this ad-hoc test app.
     from beever_atlas.infra.auth import Principal, require_user
 
-    app.dependency_overrides[require_user] = lambda: Principal(
-        "user:test", kind="user"
-    )
+    app.dependency_overrides[require_user] = lambda: Principal("user:test", kind="user")
     return TestClient(app)
 
 
 DISCORD_CSV = (
-    'AuthorID,Author,Date,Content,Attachments,Reactions\n'
+    "AuthorID,Author,Date,Content,Attachments,Reactions\n"
     '"111","alice","2024-01-01T10:00:00+00:00","hello world","",""\n'
     '"222","bob","2024-01-01T11:30:00+00:00","酒干倘賣無","",""\n'
 )
@@ -109,6 +108,7 @@ def test_commit_expired_file_id_returns_410(
 ) -> None:
     # Force TTL to 0 so any stage is immediately expired.
     from beever_atlas.infra.config import get_settings
+
     settings = get_settings()
 
     # First, create a valid stage by calling preview.

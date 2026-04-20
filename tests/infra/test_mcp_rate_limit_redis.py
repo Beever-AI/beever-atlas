@@ -41,11 +41,12 @@ async def test_backend_dispatch_uses_redis_when_configured():
         script_load=AsyncMock(return_value="sha-abc"),
         evalsha=AsyncMock(return_value=[1, 0]),  # allowed, retry=0
     )
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(),
-    ), patch(
-        "redis.asyncio.from_url", return_value=fake_client
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
     ):
         allowed, retry = await mcp_rate_limit.check_and_record("mcp:alice", "ask_channel")
 
@@ -67,10 +68,13 @@ async def test_backend_dispatch_stays_memory_by_default():
         script_load=AsyncMock(return_value="unused"),
         evalsha=AsyncMock(return_value=[1, 0]),
     )
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(backend="memory"),
-    ), patch("redis.asyncio.from_url", return_value=fake_client):
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(backend="memory"),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
+    ):
         allowed, _ = await mcp_rate_limit.check_and_record("mcp:bob", "ask_channel")
 
     assert allowed is True
@@ -85,13 +89,14 @@ async def test_redis_denied_response_returns_retry_after():
         script_load=AsyncMock(return_value="sha-xyz"),
         evalsha=AsyncMock(return_value=[0, 37]),  # denied, retry=37
     )
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(),
-    ), patch("redis.asyncio.from_url", return_value=fake_client):
-        allowed, retry = await mcp_rate_limit.check_and_record(
-            "mcp:alice", "trigger_sync"
-        )
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
+    ):
+        allowed, retry = await mcp_rate_limit.check_and_record("mcp:alice", "trigger_sync")
 
     assert allowed is False
     assert retry == 37
@@ -110,14 +115,15 @@ async def test_redis_failure_falls_back_to_memory_limiter():
         evalsha=AsyncMock(side_effect=ConnectionError("redis down")),
         eval=AsyncMock(side_effect=ConnectionError("redis down")),
     )
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(),
-    ), patch("redis.asyncio.from_url", return_value=fake_client):
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
+    ):
         # First call goes through — memory limiter has capacity.
-        allowed, retry = await mcp_rate_limit.check_and_record(
-            "mcp:charlie", "ask_channel"
-        )
+        allowed, retry = await mcp_rate_limit.check_and_record("mcp:charlie", "ask_channel")
         assert allowed is True
         assert retry is None
 
@@ -139,19 +145,18 @@ async def test_redis_failure_falls_back_to_memory_limiter():
 async def test_redis_evalsha_refreshes_script_on_noscript():
     """If Redis evicts the cached script, the limiter reloads and retries."""
     # First evalsha call raises (script evicted), second succeeds.
-    evalsha = AsyncMock(
-        side_effect=[Exception("NOSCRIPT"), [1, 0]]
-    )
+    evalsha = AsyncMock(side_effect=[Exception("NOSCRIPT"), [1, 0]])
     script_load = AsyncMock(return_value="sha-reloaded")
     fake_client = SimpleNamespace(script_load=script_load, evalsha=evalsha)
 
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(),
-    ), patch("redis.asyncio.from_url", return_value=fake_client):
-        allowed, _ = await mcp_rate_limit.check_and_record(
-            "mcp:alice", "ask_channel"
-        )
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
+    ):
+        allowed, _ = await mcp_rate_limit.check_and_record("mcp:alice", "ask_channel")
 
     assert allowed is True
     # Initial load + reload = 2
@@ -169,13 +174,14 @@ async def test_redis_eval_fallback_when_script_load_fails_on_init():
         eval=eval_call,
     )
 
-    with patch(
-        "beever_atlas.infra.mcp_rate_limit.get_settings",
-        return_value=_redis_settings(),
-    ), patch("redis.asyncio.from_url", return_value=fake_client):
-        allowed, _ = await mcp_rate_limit.check_and_record(
-            "mcp:alice", "ask_channel"
-        )
+    with (
+        patch(
+            "beever_atlas.infra.mcp_rate_limit.get_settings",
+            return_value=_redis_settings(),
+        ),
+        patch("redis.asyncio.from_url", return_value=fake_client),
+    ):
+        allowed, _ = await mcp_rate_limit.check_and_record("mcp:alice", "ask_channel")
 
     assert allowed is True
     script_load.assert_awaited_once()

@@ -20,6 +20,7 @@ from beever_atlas.wiki.compiler import WikiCompiler
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_compiler() -> WikiCompiler:
     provider = MagicMock()
     provider.get_model_string.return_value = "gemini-2.5-flash"
@@ -50,16 +51,18 @@ def _minimal_gathered(clusters: list[TopicCluster] | None = None) -> dict:
         topic_tags=["python"],
         member_ids=["f1"],
         member_count=1,
-        key_facts=[{
-            "fact_id": "f1",
-            "memory_text": "Team uses Python",
-            "author_name": "Alice",
-            "message_ts": "1704067200",
-            "fact_type": "observation",
-            "importance": "high",
-            "quality_score": 0.8,
-            "source_message_id": "msg1",
-        }],
+        key_facts=[
+            {
+                "fact_id": "f1",
+                "memory_text": "Team uses Python",
+                "author_name": "Alice",
+                "message_ts": "1704067200",
+                "fact_type": "observation",
+                "importance": "high",
+                "quality_score": 0.8,
+                "source_message_id": "msg1",
+            }
+        ],
         faq_candidates=[],
     )
     channel_summary = ChannelSummary(
@@ -87,13 +90,16 @@ def _minimal_gathered(clusters: list[TopicCluster] | None = None) -> dict:
     }
 
 
-def _good_response(content: str = "This is a detailed page content with real prose about the topic being discussed.") -> str:
+def _good_response(
+    content: str = "This is a detailed page content with real prose about the topic being discussed.",
+) -> str:
     return json.dumps({"content": content, "summary": "Summary."})
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_translate_and_fixed_pages_run_concurrently() -> None:
@@ -125,7 +131,9 @@ async def test_translate_and_fixed_pages_run_concurrently() -> None:
     async def _run():
         with patch.object(compiler, "_translate_cluster_titles", _patched_translate):
             with patch.object(compiler, "_compile_people", _patched_people):
-                with patch.object(compiler, "_llm_generate_json", AsyncMock(return_value=_good_response())):
+                with patch.object(
+                    compiler, "_llm_generate_json", AsyncMock(return_value=_good_response())
+                ):
                     with patch("beever_atlas.infra.config.get_settings") as mock_settings:
                         mock_settings.return_value.wiki_parse_hardening = True
                         mock_settings.return_value.wiki_parallel_dispatch = True
@@ -156,9 +164,16 @@ async def test_failed_subpage_dropped_from_children_refs() -> None:
 
     # Large cluster to trigger sub-page analysis.
     facts_data = [
-        {"fact_id": f"f{i}", "memory_text": f"Fact {i} about this topic.", "author_name": "Alice",
-         "message_ts": str(1704067200 + i), "fact_type": "observation", "importance": "medium",
-         "quality_score": 0.7, "source_message_id": f"msg{i}"}
+        {
+            "fact_id": f"f{i}",
+            "memory_text": f"Fact {i} about this topic.",
+            "author_name": "Alice",
+            "message_ts": str(1704067200 + i),
+            "fact_type": "observation",
+            "importance": "medium",
+            "quality_score": 0.7,
+            "source_message_id": f"msg{i}",
+        }
         for i in range(20)
     ]
     facts = [
@@ -193,13 +208,15 @@ async def test_failed_subpage_dropped_from_children_refs() -> None:
     gathered["cluster_facts"] = {"big-cluster": facts}
     gathered["total_facts"] = 20
 
-    analysis_response = json.dumps({
-        "needs_subpages": True,
-        "subpages": [
-            {"title": "Sub-page A", "fact_indices": [0, 1, 2, 3, 4]},
-            {"title": "Sub-page B (will fail)", "fact_indices": [5, 6, 7, 8, 9]},
-        ],
-    })
+    analysis_response = json.dumps(
+        {
+            "needs_subpages": True,
+            "subpages": [
+                {"title": "Sub-page A", "fact_indices": [0, 1, 2, 3, 4]},
+                {"title": "Sub-page B (will fail)", "fact_indices": [5, 6, 7, 8, 9]},
+            ],
+        }
+    )
 
     call_count = {"n": 0}
 
@@ -226,7 +243,9 @@ async def test_failed_subpage_dropped_from_children_refs() -> None:
     # Sub-page B failed; only sub-page A (or parent) should appear.
     page_ids = list(pages.keys())
     # No page should have "fail" in its id.
-    failing_pages = [pid for pid in page_ids if "fail" in pid.lower() or "sub-page-b" in pid.lower()]
+    failing_pages = [
+        pid for pid in page_ids if "fail" in pid.lower() or "sub-page-b" in pid.lower()
+    ]
     assert failing_pages == [], f"Failed sub-page leaked into results: {failing_pages}"
 
 
@@ -242,7 +261,9 @@ async def test_parallel_dispatch_flag_off_serial_behavior() -> None:
         mock_settings.return_value.wiki_token_budget_v2 = True
         mock_settings.return_value.wiki_compiler_v2 = False
 
-        with patch.object(WikiCompiler, "_llm_generate_json", AsyncMock(return_value=_good_response())):
+        with patch.object(
+            WikiCompiler, "_llm_generate_json", AsyncMock(return_value=_good_response())
+        ):
             pages = await compiler.compile(gathered)
 
     assert len(pages) > 0, "Serial path produced no pages"

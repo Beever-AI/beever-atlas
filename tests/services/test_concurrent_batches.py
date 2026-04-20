@@ -5,6 +5,7 @@ time is less than 250ms (would be ~400ms if sequential at 100ms/batch).
 
 Phase 4 — ingestion-pipeline-hardening plan.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ from beever_atlas.services.batch_processor import BatchProcessor
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_stores_mock() -> MagicMock:
     stores = MagicMock()
@@ -46,6 +48,7 @@ def _make_settings_mock(concurrency: int = 2) -> MagicMock:
 
 def _make_runner_mock(sleep_seconds: float = 0.1) -> MagicMock:
     """Runner whose run_async sleeps then yields a single event."""
+
     async def _run_async(**kwargs):
         await asyncio.sleep(sleep_seconds)
 
@@ -53,7 +56,9 @@ def _make_runner_mock(sleep_seconds: float = 0.1) -> MagicMock:
         event = MagicMock()
         event.author = "persister"
         actions = MagicMock()
-        actions.state_delta = {"persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}}
+        actions.state_delta = {
+            "persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}
+        }
         actions.stateDelta = None
         event.actions = actions
         yield event
@@ -80,6 +85,7 @@ def _make_session_service_mock() -> MagicMock:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_concurrent_batches_faster_than_sequential() -> None:
     """4 batches, concurrency=2 → total wall-clock < 250ms (sequential ≈ 400ms)."""
@@ -96,9 +102,15 @@ async def test_concurrent_batches_faster_than_sequential() -> None:
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.agents.runner.get_session_service", return_value=session_svc),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
@@ -114,7 +126,7 @@ async def test_concurrent_batches_faster_than_sequential() -> None:
         )
         elapsed = time.monotonic() - start
 
-    assert elapsed < 0.25, f"Expected <250ms with concurrency=2, got {elapsed*1000:.0f}ms"
+    assert elapsed < 0.25, f"Expected <250ms with concurrency=2, got {elapsed * 1000:.0f}ms"
     assert len(result.batch_breakdowns) == 4
     assert len(result.errors) == 0
 
@@ -135,9 +147,15 @@ async def test_all_batches_complete_and_ordered() -> None:
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.agents.runner.get_session_service", return_value=session_svc),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):

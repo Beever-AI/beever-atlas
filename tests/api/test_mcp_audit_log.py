@@ -27,6 +27,7 @@ from beever_atlas.infra import mcp_rate_limit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _ListHandler(logging.Handler):
     """Simple handler that collects LogRecord objects into a list."""
 
@@ -86,16 +87,18 @@ def reset_rate_limiter():
 # 7.5.1: Tool call emits exactly one mcp_tool_call event
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_tool_call_emits_audit_event():
     """A successful tool call emits exactly one mcp_tool_call structured log entry."""
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request", return_value=_req()
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=[]),
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "whoami")
@@ -108,8 +111,7 @@ async def test_tool_call_emits_audit_event():
 
     # Find mcp_tool_call log entries (exclude mcp_tool_call_metric lines)
     audit_records = [
-        r for r in handler.records
-        if getattr(r, "data", {}).get("event") == "mcp_tool_call"
+        r for r in handler.records if getattr(r, "data", {}).get("event") == "mcp_tool_call"
     ]
     assert len(audit_records) == 1, (
         f"Expected exactly 1 mcp_tool_call audit record, got {len(audit_records)}: "
@@ -128,11 +130,12 @@ async def test_audit_event_has_all_required_keys():
     """The structured data dict on the audit record contains all required keys."""
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request", return_value=_req()
-    ), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=[]),
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "whoami")
@@ -141,8 +144,7 @@ async def test_audit_event_has_all_required_keys():
             await fn(ctx=_ctx())
 
     audit_records = [
-        r for r in handler.records
-        if getattr(r, "data", {}).get("event") == "mcp_tool_call"
+        r for r in handler.records if getattr(r, "data", {}).get("event") == "mcp_tool_call"
     ]
     assert len(audit_records) >= 1
 
@@ -154,6 +156,7 @@ async def test_audit_event_has_all_required_keys():
 # ---------------------------------------------------------------------------
 # 7.5.2: Rate-limited call has outcome="rate_limited"
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_rate_limited_call_audit_outcome():
@@ -185,7 +188,8 @@ async def test_rate_limited_call_audit_outcome():
     assert "retry_after_seconds" in result
 
     rate_limited_audits = [
-        r for r in handler.records
+        r
+        for r in handler.records
         if getattr(r, "data", {}).get("event") == "mcp_tool_call"
         and getattr(r, "data", {}).get("outcome") == "rate_limited"
     ]
@@ -199,17 +203,19 @@ async def test_rate_limited_call_audit_outcome():
 # 7.5.3: Access-denied call has outcome="channel_access_denied"
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_access_denied_call_audit_outcome():
     """When a tool returns channel_access_denied, audit records outcome accordingly."""
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request", return_value=_req()
-    ), patch(
-        "beever_atlas.capabilities.memory.search_channel_facts",
-        new=AsyncMock(side_effect=ChannelAccessDenied("ch-secret")),
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-secret")),
+        ),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_channel_facts")
@@ -224,7 +230,8 @@ async def test_access_denied_call_audit_outcome():
     assert result.get("error") == "channel_access_denied"
 
     denied_audits = [
-        r for r in handler.records
+        r
+        for r in handler.records
         if getattr(r, "data", {}).get("event") == "mcp_tool_call"
         and getattr(r, "data", {}).get("outcome") == "channel_access_denied"
     ]
@@ -237,6 +244,7 @@ async def test_access_denied_call_audit_outcome():
 # ---------------------------------------------------------------------------
 # 7.3: rate_limited return shape is exactly correct
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_rate_limited_return_shape():

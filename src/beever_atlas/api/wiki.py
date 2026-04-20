@@ -147,9 +147,7 @@ async def get_wiki_version_page(
     """Return a single page from an archived wiki version."""
     await assert_channel_access(principal, channel_id)
     cache = _get_cache()
-    page = await cache.version_store.get_version_page(
-        channel_id, version_number, page_id
-    )
+    page = await cache.version_store.get_version_page(channel_id, version_number, page_id)
     if page is None:
         raise HTTPException(
             status_code=404,
@@ -222,8 +220,7 @@ async def download_wiki_markdown(
         media_type="text/markdown",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="{safe_ascii}"; '
-                f"filename*=UTF-8''{encoded}"
+                f"attachment; filename=\"{safe_ascii}\"; filename*=UTF-8''{encoded}"
             ),
             "X-Content-Type-Options": "nosniff",
         },
@@ -264,7 +261,9 @@ async def refresh_wiki(
 
     # Set status to "running" immediately so the frontend sees it on first poll
     await cache.set_generation_status(
-        channel_id, status="running", stage="starting",
+        channel_id,
+        status="running",
+        stage="starting",
         stage_detail="Initiating wiki generation…",
         target_lang=lang,
     )
@@ -273,13 +272,17 @@ async def refresh_wiki(
     return {"status": "started", "channel_id": channel_id}
 
 
-async def _run_generation(builder, channel_id: str, cache: WikiCache, target_lang: str = "en") -> None:
+async def _run_generation(
+    builder, channel_id: str, cache: WikiCache, target_lang: str = "en"
+) -> None:
     try:
         await builder.refresh_wiki(channel_id, target_lang=target_lang)
     except Exception as exc:
         logger.error("Wiki generation failed channel=%s: %s", channel_id, exc, exc_info=True)
         await cache.set_generation_status(
-            channel_id, status="failed", stage="error",
+            channel_id,
+            status="failed",
+            stage="error",
             error=str(exc),
             target_lang=target_lang,
         )

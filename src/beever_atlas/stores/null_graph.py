@@ -69,12 +69,15 @@ class NullGraphStore:
         return ""
 
     async def batch_upsert_relationships(
-        self, rels: list[GraphRelationship],
+        self,
+        rels: list[GraphRelationship],
     ) -> list[str]:
         return []
 
     async def list_relationships(
-        self, channel_id: str | None = None, limit: int = 200,
+        self,
+        channel_id: str | None = None,
+        limit: int = 200,
     ) -> list[GraphRelationship]:
         return []
 
@@ -110,12 +113,16 @@ class NullGraphStore:
         pass
 
     async def list_media(
-        self, channel_id: str | None = None, limit: int = 50,
+        self,
+        channel_id: str | None = None,
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return []
 
     async def list_media_relationships(
-        self, channel_id: str | None = None, limit: int = 200,
+        self,
+        channel_id: str | None = None,
+        limit: int = 200,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -124,12 +131,17 @@ class NullGraphStore:
     # ------------------------------------------------------------------
 
     async def get_neighbors(
-        self, entity_id: str, hops: int = 1, limit: int = 50,
+        self,
+        entity_id: str,
+        hops: int = 1,
+        limit: int = 50,
     ) -> Subgraph:
         return Subgraph()
 
     async def get_decisions(
-        self, channel_id: str, limit: int = 20,
+        self,
+        channel_id: str,
+        limit: int = 20,
     ) -> list[GraphEntity]:
         return []
 
@@ -151,12 +163,17 @@ class NullGraphStore:
         return []
 
     async def register_alias(
-        self, canonical: str, alias: str, entity_type: str,
+        self,
+        canonical: str,
+        alias: str,
+        entity_type: str,
     ) -> None:
         pass
 
     async def fuzzy_match_entities(
-        self, name: str, threshold: float = 0.8,
+        self,
+        name: str,
+        threshold: float = 0.8,
     ) -> list[tuple[str, float]]:
         return []
 
@@ -167,7 +184,9 @@ class NullGraphStore:
         return []
 
     async def store_name_vector(
-        self, entity_name: str, vector: list[float],
+        self,
+        entity_name: str,
+        vector: list[float],
     ) -> None:
         pass
 

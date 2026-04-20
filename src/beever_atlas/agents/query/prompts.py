@@ -357,6 +357,7 @@ def build_qa_system_prompt(
     """
     try:
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
         registry_on = bool(settings.citation_registry_enabled)
         new_prompt = bool(settings.qa_new_prompt)
@@ -391,14 +392,16 @@ def build_qa_system_prompt(
             MAX_TOOL_CALLS_INSTRUCTION.format(max_tool_calls=max_tool_calls),
         ]
         if mode == "deep":
-            parts.extend([
-                "",
-                DEEP_MODE_INSTRUCTIONS,
-                "",
-                ORCHESTRATION_TOOLS_GUIDANCE,
-                "",
-                EMPTY_RETRIEVAL_RECOVERY,
-            ])
+            parts.extend(
+                [
+                    "",
+                    DEEP_MODE_INSTRUCTIONS,
+                    "",
+                    ORCHESTRATION_TOOLS_GUIDANCE,
+                    "",
+                    EMPTY_RETRIEVAL_RECOVERY,
+                ]
+            )
         else:
             parts.extend(["", ONBOARDING_LENGTH_HINT])
         if include_follow_ups:
@@ -427,14 +430,16 @@ def build_qa_system_prompt(
         LANGUAGE_DIRECTIVE,
     ]
     if mode == "deep":
-        parts.extend([
-            "",
-            DEEP_MODE_INSTRUCTIONS,
-            "",
-            ORCHESTRATION_TOOLS_GUIDANCE,
-            "",
-            EMPTY_RETRIEVAL_RECOVERY,
-        ])
+        parts.extend(
+            [
+                "",
+                DEEP_MODE_INSTRUCTIONS,
+                "",
+                ORCHESTRATION_TOOLS_GUIDANCE,
+                "",
+                EMPTY_RETRIEVAL_RECOVERY,
+            ]
+        )
     else:
         parts.extend(["", ONBOARDING_LENGTH_HINT])
     if include_follow_ups:

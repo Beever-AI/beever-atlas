@@ -36,7 +36,9 @@ def _make_session_doc(session_id: str, user_id: str) -> dict:
         "user_id": user_id,
         "title": "Test session",
         "created_at": datetime.now(UTC),
-        "messages": [{"role": "user", "content": "hello", "timestamp": datetime.now(UTC).isoformat()}],
+        "messages": [
+            {"role": "user", "content": "hello", "timestamp": datetime.now(UTC).isoformat()}
+        ],
         "is_deleted": False,
         "pinned": False,
     }

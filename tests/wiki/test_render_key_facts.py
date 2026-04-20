@@ -5,8 +5,13 @@ from __future__ import annotations
 from beever_atlas.wiki.render import escape_gfm_cell, render_key_facts_table
 
 
-def _fact(text: str, source: str = "alice", ftype: str = "claim",
-          importance: float = 0.5, quality_score: float = 0.5) -> dict:
+def _fact(
+    text: str,
+    source: str = "alice",
+    ftype: str = "claim",
+    importance: float = 0.5,
+    quality_score: float = 0.5,
+) -> dict:
     return {
         "memory_text": text,
         "author_name": source,
@@ -65,6 +70,7 @@ def test_escape_gfm_cell_backslash_pipe_collision() -> None:
     out = escape_gfm_cell("a\\|b")
     # Embed inside a cell and parse — round-trip via markdown-it-py.
     import markdown_it
+
     md = markdown_it.MarkdownIt().enable("table")
     doc = f"| {out} |\n|---|\n"
     tokens = md.parse(doc)

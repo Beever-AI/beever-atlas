@@ -19,11 +19,13 @@ def test_no_collector_bound_is_safe():
 def test_collector_receives_cleaned_questions():
     c, tok = bind_collector()
     try:
-        result = suggest_follow_ups([
-            "  What next?  ",
-            "",
-            "When did this happen?",
-        ])
+        result = suggest_follow_ups(
+            [
+                "  What next?  ",
+                "",
+                "When did this happen?",
+            ]
+        )
     finally:
         reset_collector(tok)
     assert result == {"ok": True, "count": 2}
@@ -64,11 +66,13 @@ def test_scrubs_bogus_src_literal_from_question():
     collector stores the question."""
     c, tok = bind_collector()
     try:
-        suggest_follow_ups([
-            "Why did that fail [src:get_wiki_page_response]?",
-            "What happened [External: meeting] here?",
-            "Plain question?",
-        ])
+        suggest_follow_ups(
+            [
+                "Why did that fail [src:get_wiki_page_response]?",
+                "What happened [External: meeting] here?",
+                "Plain question?",
+            ]
+        )
     finally:
         reset_collector(tok)
     assert c.questions == [

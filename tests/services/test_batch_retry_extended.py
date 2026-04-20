@@ -7,6 +7,7 @@ Verifies that:
 
 Step 3 — ingestion-batch-cap-retry-v2 plan.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,6 +20,7 @@ from beever_atlas.services.batch_processor import BatchProcessor
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_stores_mock() -> MagicMock:
     stores = MagicMock()
@@ -83,6 +85,7 @@ def _make_runner_mock_failing(fail_times: int) -> MagicMock:
 # Test 1 — base backoff values (jitter = 0)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_retry_sleep_calls_base_values():
     """With random.uniform patched to 0.0, sleep args equal the base ladder."""
@@ -107,9 +110,15 @@ async def test_retry_sleep_calls_base_values():
         patch("beever_atlas.services.batch_processor.asyncio.sleep", side_effect=_fake_sleep),
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
         await processor.process_messages(
@@ -126,6 +135,7 @@ async def test_retry_sleep_calls_base_values():
 # ---------------------------------------------------------------------------
 # Test 2 — jitter applied (uniform returns 0.25)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_retry_sleep_last_call_with_jitter():
@@ -151,9 +161,15 @@ async def test_retry_sleep_last_call_with_jitter():
         patch("beever_atlas.services.batch_processor.asyncio.sleep", side_effect=_fake_sleep),
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
         await processor.process_messages(

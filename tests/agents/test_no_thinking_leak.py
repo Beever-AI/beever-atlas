@@ -110,9 +110,9 @@ async def test_part_thought_not_in_response_delta():
             for line in chunk.split("\n"):
                 line = line.strip()
                 if line.startswith("event:"):
-                    collected_event_types.append(line[len("event:"):].strip())
+                    collected_event_types.append(line[len("event:") :].strip())
                 elif line.startswith("data:"):
-                    payload_str = line[len("data:"):].strip()
+                    payload_str = line[len("data:") :].strip()
                     try:
                         payload = json.loads(payload_str)
                     except Exception:

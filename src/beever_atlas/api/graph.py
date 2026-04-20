@@ -23,7 +23,9 @@ async def list_entities(
     if channel_id:
         await assert_channel_access(principal, channel_id)
     stores = get_stores()
-    return await stores.graph.list_entities(channel_id=channel_id, entity_type=entity_type, limit=limit)
+    return await stores.graph.list_entities(
+        channel_id=channel_id, entity_type=entity_type, limit=limit
+    )
 
 
 @router.get("/relationships", response_model=list[GraphRelationship])
@@ -41,11 +43,13 @@ async def list_relationships(
     # Also fetch entity→media relationships and convert to GraphRelationship
     media_rels_raw = await stores.graph.list_media_relationships(channel_id=channel_id, limit=100)
     for mr in media_rels_raw:
-        entity_rels.append(GraphRelationship(
-            type=mr["type"],
-            source=mr["source"],
-            target=mr["target"],
-        ))
+        entity_rels.append(
+            GraphRelationship(
+                type=mr["type"],
+                source=mr["source"],
+                target=mr["target"],
+            )
+        )
 
     return entity_rels
 

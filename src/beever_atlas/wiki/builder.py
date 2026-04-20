@@ -80,6 +80,7 @@ class WikiBuilder:
         """
         # Resolve languages.
         from beever_atlas.infra.config import get_settings as _get_settings
+
         _settings = _get_settings()
         if target_lang is None:
             target_lang = _settings.default_target_language or "en"
@@ -90,11 +91,10 @@ class WikiBuilder:
             # Try to read the channel's primary_language from sync state.
             try:
                 from beever_atlas.stores import get_stores as _gs
+
                 _state = await _gs().mongodb.get_channel_sync_state(channel_id)
                 if _state is not None:
-                    resolved_source_lang = (
-                        getattr(_state, "primary_language", "en") or "en"
-                    )
+                    resolved_source_lang = getattr(_state, "primary_language", "en") or "en"
             except Exception:  # noqa: BLE001
                 pass
         source_lang = resolved_source_lang
@@ -119,9 +119,7 @@ class WikiBuilder:
         source_lang: str,
     ) -> WikiResponse:
         _ACTIVE_GENERATIONS.add(channel_id)
-        compiler = self._make_compiler(
-            target_lang=target_lang, source_lang=source_lang
-        )
+        compiler = self._make_compiler(target_lang=target_lang, source_lang=source_lang)
         model_name = get_llm_provider().get_model_string("wiki_compiler")
 
         try:
@@ -170,7 +168,9 @@ class WikiBuilder:
                 target_lang=target_lang,
             )
 
-            async def on_page_compiled(page_id: str, pages_done: int, pages_completed: list[str]) -> None:
+            async def on_page_compiled(
+                page_id: str, pages_done: int, pages_completed: list[str]
+            ) -> None:
                 await self._cache.set_generation_status(
                     channel_id=channel_id,
                     status="running",
@@ -253,7 +253,9 @@ class WikiBuilder:
 
             logger.info(
                 "WikiBuilder: generated wiki channel=%s pages=%d duration_ms=%d",
-                channel_id, len(pages), duration_ms,
+                channel_id,
+                len(pages),
+                duration_ms,
             )
             return wiki
 

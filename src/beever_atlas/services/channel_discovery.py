@@ -67,7 +67,8 @@ def make_bridge_adapter(connection_id: str):
 
 
 async def fetch_file_connection_channels(
-    conn_id: str, selected: list[str],
+    conn_id: str,
+    selected: list[str],
 ) -> list[ChannelInfo]:
     """Synthesise ChannelInfo for file-import channels from MongoDB.
 
@@ -169,7 +170,10 @@ async def fetch_connection_channels_safe(
     """
     try:
         return await fetch_connection_channels(
-            conn_id, selected, platform, is_member_only=is_member_only,
+            conn_id,
+            selected,
+            platform,
+            is_member_only=is_member_only,
         )
     except Exception:
         logger.warning(

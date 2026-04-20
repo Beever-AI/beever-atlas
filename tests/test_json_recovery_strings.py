@@ -18,9 +18,7 @@ from beever_atlas.services.json_recovery import (
 
 
 def test_boundary_scanner_ignores_brace_comma_inside_string():
-    payload = json.dumps(
-        {"facts": [{"text": "tricky: \"}, {\" is inside a string", "id": 1}]}
-    )
+    payload = json.dumps({"facts": [{"text": 'tricky: "}, {" is inside a string', "id": 1}]})
     # Truncate one character before the final "]}" so only the first
     # object is safely recoverable.
     boundary = _find_last_complete_boundary(payload)
@@ -41,9 +39,7 @@ def test_recovers_when_string_contains_brace_comma_sequence():
 
 
 def test_truncated_recovery_preserves_string_with_brace_comma():
-    complete_first = (
-        '{"facts": [{"id": 1, "text": "has }, inside"}, {"id": 2, "text": "cut'
-    )
+    complete_first = '{"facts": [{"id": 1, "text": "has }, inside"}, {"id": 2, "text": "cut'
     result = recover_facts_from_truncated(complete_first)
     assert result is not None
     facts = result["facts"]
@@ -53,10 +49,7 @@ def test_truncated_recovery_preserves_string_with_brace_comma():
 
 
 def test_escaped_quote_in_string_does_not_break_boundary():
-    text = (
-        '{"facts": [{"id": 1, "text": "he said \\"},{\\" today"},'
-        ' {"id": 2, "text": "truncated'
-    )
+    text = '{"facts": [{"id": 1, "text": "he said \\"},{\\" today"}, {"id": 2, "text": "truncated'
     result = recover_facts_from_truncated(text)
     assert result is not None
     assert len(result["facts"]) == 1

@@ -155,15 +155,11 @@ def recover_facts_from_truncated(text: str) -> dict | None:
     """
     result, report = recover_truncated_json_with_report(text)
     if result is None:
-        logger.warning(
-            "json_recovery: could not recover any facts from truncated JSON"
-        )
+        logger.warning("json_recovery: could not recover any facts from truncated JSON")
         return None
 
     if not isinstance(result, dict):
-        logger.warning(
-            "json_recovery: expected dict at top level, got %s", type(result).__name__
-        )
+        logger.warning("json_recovery: expected dict at top level, got %s", type(result).__name__)
         return None
 
     facts = result.get("facts", [])
@@ -201,15 +197,11 @@ def recover_entities_from_truncated(text: str) -> dict | None:
     """
     result, report = recover_truncated_json_with_report(text)
     if result is None:
-        logger.warning(
-            "json_recovery: could not recover any entities from truncated JSON"
-        )
+        logger.warning("json_recovery: could not recover any entities from truncated JSON")
         return None
 
     if not isinstance(result, dict):
-        logger.warning(
-            "json_recovery: expected dict at top level, got %s", type(result).__name__
-        )
+        logger.warning("json_recovery: expected dict at top level, got %s", type(result).__name__)
         return None
 
     entities = result.get("entities", [])
@@ -249,15 +241,11 @@ def recover_validation_from_truncated(text: str) -> dict | None:
     """
     result, report = recover_truncated_json_with_report(text)
     if result is None:
-        logger.warning(
-            "json_recovery: could not recover any validation result from truncated JSON"
-        )
+        logger.warning("json_recovery: could not recover any validation result from truncated JSON")
         return None
 
     if not isinstance(result, dict):
-        logger.warning(
-            "json_recovery: expected dict at top level, got %s", type(result).__name__
-        )
+        logger.warning("json_recovery: expected dict at top level, got %s", type(result).__name__)
         return None
 
     entities = result.get("entities", [])

@@ -84,10 +84,12 @@ class TestSemanticEntityDedup:
         from beever_atlas.stores.entity_registry import EntityRegistry
 
         mock_graph = AsyncMock()
-        mock_graph.get_entities_with_name_vectors = AsyncMock(return_value=[
-            {"name": "Beever Atlas", "vec": [0.9, 0.1, 0.0]},
-            {"name": "Redis Cache", "vec": [0.1, 0.9, 0.0]},
-        ])
+        mock_graph.get_entities_with_name_vectors = AsyncMock(
+            return_value=[
+                {"name": "Beever Atlas", "vec": [0.9, 0.1, 0.0]},
+                {"name": "Redis Cache", "vec": [0.1, 0.9, 0.0]},
+            ]
+        )
 
         registry = EntityRegistry(mock_graph)
         results = await registry.find_similar_by_embedding(
@@ -139,18 +141,16 @@ class TestMediaExtractors:
         )
 
         registry = create_default_registry()
-        assert isinstance(
-            registry.get_extractor(mimetype="video/mp4"), VideoExtractor
-        )
-        assert isinstance(
-            registry.get_extractor(mimetype="audio/mpeg"), AudioExtractor
-        )
+        assert isinstance(registry.get_extractor(mimetype="video/mp4"), VideoExtractor)
+        assert isinstance(registry.get_extractor(mimetype="audio/mpeg"), AudioExtractor)
 
     def test_registry_unknown_type_returns_none(self):
         from beever_atlas.services.media_extractors import create_default_registry
 
         registry = create_default_registry()
-        assert registry.get_extractor(filename="data.xyz", mimetype="application/octet-stream") is None
+        assert (
+            registry.get_extractor(filename="data.xyz", mimetype="application/octet-stream") is None
+        )
 
     @pytest.mark.asyncio
     async def test_registry_fallback_for_unknown(self):
@@ -169,6 +169,7 @@ class TestMediaExtractors:
         # Create a minimal valid PDF
         try:
             from pypdf import PdfWriter
+
             writer = PdfWriter()
             writer.add_blank_page(width=72, height=72)
             buf = io.BytesIO()
@@ -202,8 +203,10 @@ class TestMediaExtractors:
         extractor = OfficeExtractor()
         # Mock _digest_document to return raw text (avoid hitting Gemini API in tests)
         from unittest.mock import AsyncMock, patch
+
         with patch.object(
-            extractor, "_digest_document",
+            extractor,
+            "_digest_document",
             new_callable=AsyncMock,
             side_effect=lambda text: text,
         ):
@@ -234,8 +237,10 @@ class TestMediaExtractors:
 
         extractor = OfficeExtractor()
         from unittest.mock import AsyncMock, patch
+
         with patch.object(
-            extractor, "_digest_document",
+            extractor,
+            "_digest_document",
             new_callable=AsyncMock,
             side_effect=lambda text: text,
         ):
@@ -262,8 +267,10 @@ class TestMediaExtractors:
 
         extractor = OfficeExtractor()
         from unittest.mock import AsyncMock, patch
+
         with patch.object(
-            extractor, "_digest_document",
+            extractor,
+            "_digest_document",
             new_callable=AsyncMock,
             side_effect=lambda text: text,
         ):

@@ -30,26 +30,19 @@ async def test_store_called_with_kind_filter():
     """refresh_wiki must query ``get_last_job_by_kind(..., 'wiki_refresh')``."""
     mock_stores = MagicMock()
     mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=None)
-    mock_stores.mongodb.create_sync_job = AsyncMock(
-        return_value=SimpleNamespace(id="job-k")
-    )
+    mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-k"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         await refresh_wiki("mcp:alice", "ch-a")
 
-    mock_stores.mongodb.get_last_job_by_kind.assert_awaited_once_with(
-        "ch-a", "wiki_refresh"
-    )
+    mock_stores.mongodb.get_last_job_by_kind.assert_awaited_once_with("ch-a", "wiki_refresh")
 
 
 @pytest.mark.asyncio
@@ -60,12 +53,10 @@ async def test_recent_wiki_refresh_triggers_cooldown():
         return_value=_make_wiki_job("completed", completed_minutes_ago=2.0)
     )
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
     ):
         with pytest.raises(CooldownActive):
             await refresh_wiki("mcp:alice", "ch-a")
@@ -78,20 +69,15 @@ async def test_wiki_refresh_older_than_window_no_cooldown():
     mock_stores.mongodb.get_last_job_by_kind = AsyncMock(
         return_value=_make_wiki_job("completed", completed_minutes_ago=10.0)
     )
-    mock_stores.mongodb.create_sync_job = AsyncMock(
-        return_value=SimpleNamespace(id="job-fresh")
-    )
+    mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-fresh"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         result = await refresh_wiki("mcp:alice", "ch-a")
 
@@ -107,20 +93,15 @@ async def test_no_prior_wiki_job_no_cooldown_even_with_recent_sync():
     mock_stores = MagicMock()
     # Store returns None because no wiki_refresh has ever run on this channel.
     mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=None)
-    mock_stores.mongodb.create_sync_job = AsyncMock(
-        return_value=SimpleNamespace(id="job-nf")
-    )
+    mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-nf"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch("beever_atlas.capabilities.wiki.assert_channel_access", new=AsyncMock()),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         result = await refresh_wiki("mcp:alice", "ch-a")
 

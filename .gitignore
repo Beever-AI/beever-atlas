@@ -70,9 +70,6 @@ web/dist/
 .impeccable.md
 *.pen
 
-# OpenSpec workflow artifacts
-openspec/
-
 # Stray version artifacts (e.g. pip's '=3.6.0' sentinel files)
 =*
 
@@ -90,3 +87,9 @@ daily_update.md
 
 # hypothesis cache
 .hypothesis/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

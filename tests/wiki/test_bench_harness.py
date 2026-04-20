@@ -30,6 +30,7 @@ _FULL_CASSETTE = _FIXTURE_DIR / "cassette_llm.json"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_tiny_fixture() -> dict:
     """Build a minimal in-memory fixture with 1 cluster and the bare minimum
     ChannelSummary for a compile to succeed."""
@@ -57,16 +58,18 @@ def _make_tiny_fixture() -> dict:
         topic_tags=["python", "backend"],
         member_ids=["tf1"],
         member_count=1,
-        key_facts=[{
-            "fact_id": "tf1",
-            "memory_text": "Team uses Python for backend services",
-            "author_name": "Alice",
-            "message_ts": "1704067200",
-            "fact_type": "observation",
-            "importance": "high",
-            "quality_score": 0.8,
-            "source_message_id": "tmsg1",
-        }],
+        key_facts=[
+            {
+                "fact_id": "tf1",
+                "memory_text": "Team uses Python for backend services",
+                "author_name": "Alice",
+                "message_ts": "1704067200",
+                "fact_type": "observation",
+                "importance": "high",
+                "quality_score": 0.8,
+                "source_message_id": "tmsg1",
+            }
+        ],
         faq_candidates=[],
     )
     channel_summary = ChannelSummary(
@@ -94,10 +97,22 @@ def _make_tiny_fixture() -> dict:
 def _make_tiny_cassette_entries() -> dict:
     return {
         "entries": {
-            "overview": {"content": "## Overview\n\nA tiny test channel with Python backend content. The team builds services in Python.", "summary": "Python backend channel."},
-            "people": {"content": "## Team\n\n### Alice\nBackend developer working on Python services.", "summary": "Alice: backend developer."},
-            "activity": {"content": "## Recent Activity\n\nActive development on Python services.", "summary": "Active Python development."},
-            "topic": {"content": "## Python Backend\n\n**TL;DR**: The team uses Python for all backend services.\n\nThis is a stable technology choice that has been in production for some time.", "summary": "Python backend services."},
+            "overview": {
+                "content": "## Overview\n\nA tiny test channel with Python backend content. The team builds services in Python.",
+                "summary": "Python backend channel.",
+            },
+            "people": {
+                "content": "## Team\n\n### Alice\nBackend developer working on Python services.",
+                "summary": "Alice: backend developer.",
+            },
+            "activity": {
+                "content": "## Recent Activity\n\nActive development on Python services.",
+                "summary": "Active Python development.",
+            },
+            "topic": {
+                "content": "## Python Backend\n\n**TL;DR**: The team uses Python for all backend services.\n\nThis is a stable technology choice that has been in production for some time.",
+                "summary": "Python backend services.",
+            },
             "translation": "{}",
             "analysis": {"needs_subpages": False, "subpages": []},
         }
@@ -107,6 +122,7 @@ def _make_tiny_cassette_entries() -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_bench_harness_produces_baseline_schema(tmp_path: Path) -> None:
     """Harness must produce a baseline.json with all required keys and correct types."""
@@ -179,9 +195,7 @@ def test_cassette_covers_all_calls(tmp_path: Path) -> None:
 
     import asyncio
 
-    wall_ms, records, pages = asyncio.run(
-        wiki_bench._run_once(gathered, cassette)
-    )
+    wall_ms, records, pages = asyncio.run(wiki_bench._run_once(gathered, cassette))
 
     # Zero misses means every LLM call was covered by the cassette.
     assert cassette.misses == [], (

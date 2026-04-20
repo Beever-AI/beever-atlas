@@ -42,9 +42,7 @@ class FileStore:
 
     async def startup(self) -> None:
         self._client = AsyncIOMotorClient(self._uri)
-        self._bucket = AsyncIOMotorGridFSBucket(
-            self._client[self._db_name], bucket_name=_BUCKET
-        )
+        self._bucket = AsyncIOMotorGridFSBucket(self._client[self._db_name], bucket_name=_BUCKET)
 
     def close(self) -> None:
         if self._client is not None:
@@ -83,16 +81,17 @@ class FileStore:
         # we never hand GridFS a fake file-object. Using our own `file_id`
         # as the GridFS `_id` means GETs look the blob up directly by id
         # (no extra `files.find({"metadata.file_id": ...})` round-trip).
-        stream = bucket.open_upload_stream_with_id(
-            file_id, filename, metadata=metadata
-        )
+        stream = bucket.open_upload_stream_with_id(file_id, filename, metadata=metadata)
         try:
             await stream.write(content)
         finally:
             await stream.close()
         logger.info(
             "file_store: saved file_id=%s owner=%s size=%d mime=%s",
-            file_id, owner_user_id, len(content), mime_type,
+            file_id,
+            owner_user_id,
+            len(content),
+            mime_type,
         )
         return file_id
 

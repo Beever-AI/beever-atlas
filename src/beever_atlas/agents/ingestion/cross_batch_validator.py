@@ -1,4 +1,5 @@
 """Cross-batch validator agent — Stage 5 of the ingestion pipeline."""
+
 from __future__ import annotations
 
 import logging

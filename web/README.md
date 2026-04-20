@@ -1,73 +1,47 @@
-# React + TypeScript + Vite
+# Beever Atlas Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The Beever Atlas v2 web app — React/TypeScript frontend for the knowledge-memory platform.
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js 20+
+- A running Beever Atlas backend (see root README)
 
-## React Compiler
+## Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Command | Description |
+|---|---|
+| `npm install` | Install dependencies |
+| `npm run dev` | Start Vite dev server at `http://localhost:5173` with HMR |
+| `npm test` | Run Vitest unit tests |
+| `npm run lint` | Run ESLint across `src/` |
+| `npm run build` | Production build into `dist/` (Vite bundles and tree-shakes) |
 
-## Expanding the ESLint configuration
+## Environment Variables
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+These are **baked into the Vite bundle at build time** — changing them requires a full `npm run build`. See [`.env.example`](../.env.example) for the canonical list and descriptions.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+| Variable | Purpose |
+|---|---|
+| `VITE_API_URL` | Base URL of the backend API (default: `http://localhost:8000`) |
+| `VITE_BEEVER_API_KEY` | Bearer token injected into every `/api/*` request |
+| `VITE_BEEVER_ADMIN_TOKEN` | Admin token for `/api/dev/*` calls |
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+> **Note**: Vite inlines these values at build time. They are visible in the browser bundle — treat `VITE_BEEVER_API_KEY` as a low-privilege read-only key.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Copy the root `.env.example` to `.env` and fill in values before running `npm run dev`.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Project Layout
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Path | Contents |
+|---|---|
+| `src/pages/` | Top-level route pages (one file per route) |
+| `src/components/` | Reusable UI components, organized by feature area |
+| `src/hooks/` | Custom React hooks |
+| `src/lib/` | API client (`api.ts`) and shared utilities |
+| `public/` | Static assets served as-is (favicons, logo) |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Further Reading
+
+- [Root README](../README.md) — architecture overview, quick-start, Docker setup
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — commit conventions, PR workflow, pre-commit hooks

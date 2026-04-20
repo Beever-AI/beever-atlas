@@ -48,6 +48,7 @@ def _make_resolved() -> ResolvedPolicy:
 @pytest.fixture(autouse=True)
 def _clear_state():
     from beever_atlas.services import pipeline_orchestrator
+
     pipeline_orchestrator._consolidation_tasks.clear()
     yield
     pipeline_orchestrator._consolidation_tasks.clear()
@@ -70,15 +71,15 @@ async def test_concurrent_spawn_only_creates_one_task():
         started.set()
         await release.wait()
 
-    with patch.object(
-        pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation
-    ):
+    with patch.object(pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation):
         for _ in range(25):
             pipeline_orchestrator._spawn_consolidation("C123")
         await started.wait()
         # Exactly one task should have been created.
-        assert len([t for t in pipeline_orchestrator._consolidation_tasks.values()
-                    if not t.done()]) == 1
+        assert (
+            len([t for t in pipeline_orchestrator._consolidation_tasks.values() if not t.done()])
+            == 1
+        )
         release.set()
         # Let the background task finish cleanly.
         task = pipeline_orchestrator._consolidation_tasks.get("C123")
@@ -144,9 +145,7 @@ async def test_different_channels_spawn_independent_tasks():
         invocations.append(channel_id)
         await release.wait()
 
-    with patch.object(
-        pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation
-    ):
+    with patch.object(pipeline_orchestrator, "_run_consolidation", side_effect=_slow_consolidation):
         pipeline_orchestrator._spawn_consolidation("C1")
         pipeline_orchestrator._spawn_consolidation("C2")
         pipeline_orchestrator._spawn_consolidation("C3")

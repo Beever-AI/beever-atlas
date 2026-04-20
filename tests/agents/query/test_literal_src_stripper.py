@@ -19,10 +19,7 @@ def test_strips_tool_name_src_literal() -> None:
 
 def test_strips_multiple_literals() -> None:
     rw = LiteralSrcStripper()
-    text = (
-        "Start [src:foo_response] middle [src:bar_response] "
-        "and [src:baz_response] end"
-    )
+    text = "Start [src:foo_response] middle [src:bar_response] and [src:baz_response] end"
     out = rw.feed(text) + rw.flush()
     assert "[src:" not in out
     assert "Start " in out
@@ -108,7 +105,7 @@ def test_chunked_streaming_with_nested_src_and_text() -> None:
     out = ""
     # Feed in 3-char slices
     for i in range(0, len(text), 3):
-        out += rw.feed(text[i:i + 3])
+        out += rw.feed(text[i : i + 3])
     out += rw.flush()
     assert "[src:" not in out
     assert out == "alpha  beta  gamma"

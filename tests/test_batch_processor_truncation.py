@@ -28,9 +28,7 @@ class TestIsTruncationError:
         assert _is_truncation_error(RuntimeError("stop_reason=MAX_TOKENS")) is True
 
     def test_unexpected_eof_string(self):
-        assert (
-            _is_truncation_error(RuntimeError("unexpected EOF while parsing")) is True
-        )
+        assert _is_truncation_error(RuntimeError("unexpected EOF while parsing")) is True
 
     def test_json_invalid_string(self):
         assert _is_truncation_error(RuntimeError("json_invalid: bad")) is True

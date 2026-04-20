@@ -12,15 +12,22 @@ from beever_atlas.wiki.compiler import _splice_subtopic_sections
 
 def _fact(text, author, fact_type="observation", importance="high"):
     return SimpleNamespace(
-        memory_text=text, author_name=author, fact_type=fact_type,
-        importance=importance, quality_score=0.9, message_ts="2026-04-01",
+        memory_text=text,
+        author_name=author,
+        fact_type=fact_type,
+        importance=importance,
+        quality_score=0.9,
+        message_ts="2026-04-01",
     )
 
 
 def _key_fact_dict(text, author, fact_type="observation", importance="high"):
     return {
-        "memory_text": text, "author_name": author, "fact_type": fact_type,
-        "importance": importance, "quality_score": 0.9,
+        "memory_text": text,
+        "author_name": author,
+        "fact_type": fact_type,
+        "importance": importance,
+        "quality_score": 0.9,
     }
 
 
@@ -52,7 +59,9 @@ def test_splice_preserves_existing_sections():
 
 def test_splice_treats_details_as_overview_alias():
     content = "**TL;DR.**\n\n## Key Facts\n\n| F | S | T | I |\n|---|---|---|---|\n| x | y | z | w |\n\n## Details\n\nBody.\n"
-    out = _splice_subtopic_sections(content, "Sub", [_fact("F", "A")], "Parent", [_key_fact_dict("F", "A")])
+    out = _splice_subtopic_sections(
+        content, "Sub", [_fact("F", "A")], "Parent", [_key_fact_dict("F", "A")]
+    )
     # Details satisfies the overview alias — no duplicate ## Overview appended.
     assert out.count("## Overview") == 0
 

@@ -92,6 +92,7 @@ def test_unknown_host_is_rejected(monkeypatch, auth_headers):
 
 def test_legitimate_slack_url_is_forwarded_encoded(monkeypatch, auth_headers):
     """Legitimate URL on the allowlist is percent-encoded and forwarded."""
+
     # Short-circuit DNS: the host IS on the allowlist, so resolve_and_validate
     # would still do a DNS lookup. Stub validate_proxy_url so the test
     # exercises the route's encoding + forwarding contract, not DNS.

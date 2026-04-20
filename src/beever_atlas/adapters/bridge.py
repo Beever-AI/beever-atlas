@@ -50,6 +50,7 @@ class ChatBridgeAdapter(BaseAdapter):
     ) -> None:
         self._connection_id = connection_id
         from beever_atlas.infra.config import get_settings
+
         _settings = get_settings()
         self._bridge_url = bridge_url or _settings.bridge_url
         self._api_key = api_key or _settings.bridge_api_key

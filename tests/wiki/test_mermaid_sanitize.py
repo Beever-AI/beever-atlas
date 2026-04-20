@@ -4,6 +4,7 @@ A real compile produced ``EEACBA -->|drives| ELLMS`` where ``EEACBA`` was a
 typo of ``EACBA`` and never defined as ``ID[Label]`` in the same block. The
 post-processor should drop such edges (gated on ``wiki_parse_hardening``).
 """
+
 from __future__ import annotations
 
 from beever_atlas.wiki.compiler import WikiCompiler
@@ -14,12 +15,7 @@ def _block(body: str) -> str:
 
 
 def test_drops_edge_with_undefined_source() -> None:
-    src = _block(
-        "graph TD\n"
-        "EACBA[Foo]\n"
-        "ELLMS[Bar]\n"
-        "EEACBA -->|drives| ELLMS"
-    )
+    src = _block("graph TD\nEACBA[Foo]\nELLMS[Bar]\nEEACBA -->|drives| ELLMS")
     out = WikiCompiler._postprocess_content(src)
     assert "EEACBA" not in out
     assert "EACBA[Foo]" in out
@@ -27,12 +23,7 @@ def test_drops_edge_with_undefined_source() -> None:
 
 
 def test_drops_edge_with_undefined_target() -> None:
-    src = _block(
-        "graph TD\n"
-        "EACBA[Foo]\n"
-        "ELLMS[Bar]\n"
-        "EACBA -->|drives| EXYZQ"
-    )
+    src = _block("graph TD\nEACBA[Foo]\nELLMS[Bar]\nEACBA -->|drives| EXYZQ")
     out = WikiCompiler._postprocess_content(src)
     assert "EXYZQ" not in out
     assert "EACBA[Foo]" in out
@@ -40,14 +31,7 @@ def test_drops_edge_with_undefined_target() -> None:
 
 
 def test_keeps_valid_edges() -> None:
-    src = _block(
-        "graph TD\n"
-        "A[Alpha]\n"
-        "B[Beta]\n"
-        "C[Gamma]\n"
-        "A -->|x| B\n"
-        "B --> C"
-    )
+    src = _block("graph TD\nA[Alpha]\nB[Beta]\nC[Gamma]\nA -->|x| B\nB --> C")
     out = WikiCompiler._postprocess_content(src)
     assert "A -->|x| B" in out
     assert "B --> C" in out

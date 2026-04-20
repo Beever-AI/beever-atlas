@@ -102,9 +102,7 @@ class GraphStore(Protocol):
         """Insert or update a relationship.  Returns an opaque backend ID."""
         ...
 
-    async def batch_upsert_relationships(
-        self, rels: list[GraphRelationship]
-    ) -> list[str]:
+    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
         """Upsert multiple relationships.  Returns opaque backend IDs."""
         ...
 
@@ -165,15 +163,11 @@ class GraphStore(Protocol):
     # Traversal
     # ------------------------------------------------------------------
 
-    async def get_neighbors(
-        self, entity_id: str, hops: int = 1, limit: int = 50
-    ) -> Subgraph:
+    async def get_neighbors(self, entity_id: str, hops: int = 1, limit: int = 50) -> Subgraph:
         """Return the neighborhood subgraph up to *hops* from an entity."""
         ...
 
-    async def get_decisions(
-        self, channel_id: str, limit: int = 20
-    ) -> list[GraphEntity]:
+    async def get_decisions(self, channel_id: str, limit: int = 20) -> list[GraphEntity]:
         """Return entities of type 'Decision' visible in a channel."""
         ...
 
@@ -203,9 +197,7 @@ class GraphStore(Protocol):
         and ``aliases`` keys.  Used for pipeline state injection."""
         ...
 
-    async def register_alias(
-        self, canonical: str, alias: str, entity_type: str
-    ) -> None:
+    async def register_alias(self, canonical: str, alias: str, entity_type: str) -> None:
         """Append *alias* to the aliases list of the entity named
         *canonical*.  No-op if the entity does not exist."""
         ...
@@ -231,9 +223,7 @@ class GraphStore(Protocol):
         """Return entity names that do **not** have a ``name_vector``."""
         ...
 
-    async def store_name_vector(
-        self, entity_name: str, vector: list[float]
-    ) -> None:
+    async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         """Persist a pre-computed name-embedding vector on an entity node."""
         ...
 

@@ -199,9 +199,7 @@ class ChatHistoryStore:
         refs survive across page reloads. The frontend's `MessageCitations`
         type accepts either envelope or legacy flat list.
         """
-        doc = await self._collection.find_one(
-            {"session_id": session_id}, {"_id": 0}
-        )
+        doc = await self._collection.find_one({"session_id": session_id}, {"_id": 0})
         return doc
 
     async def load_session_with_channels(self, session_id: str) -> dict | None:
@@ -277,11 +275,15 @@ class ChatHistoryStore:
             if msgs:
                 first_q = msgs[0].get("content", "")[:120]
             created = doc.get("created_at")
-            results.append({
-                "session_id": doc["session_id"],
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
-                "first_question": first_q,
-            })
+            results.append(
+                {
+                    "session_id": doc["session_id"],
+                    "created_at": created.isoformat()
+                    if hasattr(created, "isoformat")
+                    else str(created or ""),
+                    "first_question": first_q,
+                }
+            )
         return results
 
     async def list_sessions_global(
@@ -347,21 +349,23 @@ class ChatHistoryStore:
                     channel_ids.append(cid)
 
             created = doc.get("created_at")
-            results.append({
-                "session_id": doc["session_id"],
-                "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
-                "first_question": first_q,
-                "title": doc.get("title"),
-                "pinned": doc.get("pinned", False),
-                "channel_ids": channel_ids,
-            })
+            results.append(
+                {
+                    "session_id": doc["session_id"],
+                    "created_at": created.isoformat()
+                    if hasattr(created, "isoformat")
+                    else str(created or ""),
+                    "first_question": first_q,
+                    "title": doc.get("title"),
+                    "pinned": doc.get("pinned", False),
+                    "channel_ids": channel_ids,
+                }
+            )
         return results
 
     # ----- Phase 3 citation audit queries -----
 
-    async def find_messages_citing_source(
-        self, source_id: str, limit: int = 50
-    ) -> list[dict]:
+    async def find_messages_citing_source(self, source_id: str, limit: int = 50) -> list[dict]:
         """Return messages whose citations contain `source_id`.
 
         Output shape per entry: `{session_id, channel_id, role, content,
@@ -386,10 +390,7 @@ class ChatHistoryStore:
             for m in doc.get("messages", []):
                 env = upgrade_envelope(m.get("citations"))
                 sources = env.get("sources") or []
-                if not any(
-                    isinstance(s, dict) and s.get("id") == source_id
-                    for s in sources
-                ):
+                if not any(isinstance(s, dict) and s.get("id") == source_id for s in sources):
                     continue
                 out.append(
                     {
@@ -413,9 +414,7 @@ class ChatHistoryStore:
         from beever_atlas.agents.citations.persistence import upgrade_envelope
         from beever_atlas.agents.citations.audit import dedup_by_id
 
-        doc = await self._collection.find_one(
-            {"session_id": session_id}, {"_id": 0, "messages": 1}
-        )
+        doc = await self._collection.find_one({"session_id": session_id}, {"_id": 0, "messages": 1})
         if doc is None:
             return []
         all_sources: list[dict] = []
@@ -424,9 +423,7 @@ class ChatHistoryStore:
             all_sources.extend(env.get("sources") or [])
         return dedup_by_id(all_sources)
 
-    async def top_sources_for_channel(
-        self, channel_id: str, limit: int = 20
-    ) -> list[dict]:
+    async def top_sources_for_channel(self, channel_id: str, limit: int = 20) -> list[dict]:
         """Top `limit` sources by citation count across a channel's sessions.
 
         Handles BOTH citation storage shapes that coexist in the
@@ -508,5 +505,3 @@ class ChatHistoryStore:
 
     def close(self) -> None:
         self._client.close()
-
-

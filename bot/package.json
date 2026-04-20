@@ -8,21 +8,25 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "find src -name '*.test.ts' -exec tsx --test {} +"
+    "test": "find src -name '*.test.ts' -exec tsx --test {} +",
+    "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@chat-adapter/discord": "^4.26.0",
-    "@chat-adapter/slack": "^4.26.0",
-    "@chat-adapter/state-redis": "^4.26.0",
-    "@chat-adapter/teams": "^4.26.0",
-    "@chat-adapter/telegram": "^4.26.0",
-    "chat": "^4.26.0",
-    "chat-adapter-mattermost": "^1.1.2",
+    "@chat-adapter/discord": "4.26.0",
+    "@chat-adapter/slack": "4.26.0",
+    "@chat-adapter/state-redis": "4.26.0",
+    "@chat-adapter/teams": "4.26.0",
+    "@chat-adapter/telegram": "4.26.0",
+    "chat": "4.26.0",
+    "chat-adapter-mattermost": "1.1.2",
     "dotenv": "^17.3.1",
     "ioredis": "^5.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
+    "eslint": "^8.57.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

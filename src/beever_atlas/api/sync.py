@@ -22,6 +22,7 @@ def get_sync_runner():
     global _sync_runner
     if _sync_runner is None:
         from beever_atlas.services.sync_runner import SyncRunner
+
         _sync_runner = SyncRunner()
     return _sync_runner
 
@@ -51,6 +52,7 @@ async def trigger_sync(
     stores = get_stores()
     try:
         from beever_atlas.services.policy_resolver import resolve_effective_policy
+
         effective = await resolve_effective_policy(channel_id)
 
         # Cooldown enforcement — bypassed when the last sync failed so users
@@ -58,11 +60,7 @@ async def trigger_sync(
         cooldown = effective.sync.min_sync_interval_minutes or 0
         if cooldown > 0:
             last_job = await stores.mongodb.get_sync_status(channel_id)
-            if (
-                last_job
-                and last_job.completed_at
-                and last_job.status != "failed"
-            ):
+            if last_job and last_job.completed_at and last_job.status != "failed":
                 completed = last_job.completed_at
                 if completed.tzinfo is None:
                     completed = completed.replace(tzinfo=UTC)
@@ -72,14 +70,11 @@ async def trigger_sync(
                     raise HTTPException(
                         status_code=429,
                         detail=(
-                            f"Cooldown active. Try again in "
-                            f"{int(remaining.total_seconds())}s."
+                            f"Cooldown active. Try again in {int(remaining.total_seconds())}s."
                         ),
                         headers={
                             "Retry-After": str(int(remaining.total_seconds())),
-                            "X-Cooldown-Remaining-Seconds": str(
-                                int(remaining.total_seconds())
-                            ),
+                            "X-Cooldown-Remaining-Seconds": str(int(remaining.total_seconds())),
                         },
                     )
 
@@ -95,6 +90,7 @@ async def trigger_sync(
     scheduler = None
     try:
         from beever_atlas.services.scheduler import get_scheduler
+
         scheduler = get_scheduler()
         if scheduler:
             await scheduler.acquire_sync_semaphore()
@@ -138,7 +134,8 @@ async def get_sync_history(
     await assert_channel_access(principal, channel_id)
     stores = get_stores()
     jobs = await stores.mongodb.get_sync_jobs_for_channel(
-        channel_id=channel_id, limit=limit,
+        channel_id=channel_id,
+        limit=limit,
     )
     return [
         {
@@ -184,7 +181,9 @@ async def get_sync_status(
         sync_runner = get_sync_runner()
         if not sync_runner.has_active_sync(channel_id):
             # Job was running but has no active task — process restarted or crashed before completion.
-            _interrupted_errors = ["Sync was interrupted — server restarted or crashed before the job finished"]
+            _interrupted_errors = [
+                "Sync was interrupted — server restarted or crashed before the job finished"
+            ]
             logger.info(
                 "Sync API: recovering stale running job channel=%s job_id=%s — marking failed",
                 channel_id,

@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CJK_RANGES = [
-    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
-    (0x3400, 0x4DBF),    # CJK Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0x3400, 0x4DBF),  # CJK Extension A
     (0x20000, 0x2A6DF),  # CJK Extension B
 ]
 _HIRAGANA_RANGE = (0x3040, 0x309F)
@@ -97,6 +97,7 @@ _detect_langs_fn = None
 try:
     from langdetect import DetectorFactory  # type: ignore[import-not-found]
     from langdetect import detect_langs as _detect_langs_fn  # type: ignore[import-not-found]
+
     DetectorFactory.seed = 0  # deterministic
     _LANGDETECT_AVAILABLE = True
 except ImportError:  # pragma: no cover
@@ -221,8 +222,7 @@ def detect_language(
     greek = counts.get("greek", 0)
     latin = counts.get("latin", 0)
     total_script = (
-        cjk + hira + kata + hangul + cyrillic + arabic
-        + devanagari + hebrew + thai + greek + latin
+        cjk + hira + kata + hangul + cyrillic + arabic + devanagari + hebrew + thai + greek + latin
     )
 
     if total_script == 0:

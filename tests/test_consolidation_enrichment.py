@@ -149,7 +149,9 @@ class TestEnrichDecisions:
             GraphEntity(name="Use HS256", type="Decision", properties={"decided_by": "Alice"}),
         ]
         graph.list_relationships.return_value = [
-            GraphRelationship(type="SUPERSEDES", source="Use RS256", target="Use HS256", confidence=1.0),
+            GraphRelationship(
+                type="SUPERSEDES", source="Use RS256", target="Use HS256", confidence=1.0
+            ),
         ]
         svc = _make_consolidation_service(graph=graph)
         result = await svc._enrich_decisions(["use rs256", "use hs256"], "ch1")
@@ -228,8 +230,12 @@ class TestEnrichProjects:
             GraphEntity(name="Rate Limiting", type="Project", properties={"status": "blocked"}),
         ]
         graph.list_relationships.return_value = [
-            GraphRelationship(type="BLOCKED_BY", source="Rate Limiting", target="Redis Upgrade", confidence=0.9),
-            GraphRelationship(type="WORKS_ON", source="Bob", target="Rate Limiting", confidence=0.8),
+            GraphRelationship(
+                type="BLOCKED_BY", source="Rate Limiting", target="Redis Upgrade", confidence=0.9
+            ),
+            GraphRelationship(
+                type="WORKS_ON", source="Bob", target="Rate Limiting", confidence=0.8
+            ),
         ]
         svc = _make_consolidation_service(graph=graph)
         result = await svc._enrich_projects(["rate limiting"], "ch1")
@@ -262,7 +268,9 @@ class TestKeyFactsSelection:
     def test_superseded_excluded(self):
         facts = [
             AtomicFact(id="f1", memory_text="Active fact", quality_score=0.9),
-            AtomicFact(id="f2", memory_text="Superseded fact", quality_score=0.95, superseded_by="f3"),
+            AtomicFact(
+                id="f2", memory_text="Superseded fact", quality_score=0.95, superseded_by="f3"
+            ),
             AtomicFact(id="f3", memory_text="Newer fact", quality_score=0.8),
         ]
         active = [f for f in facts if f.superseded_by is None]
@@ -338,17 +346,28 @@ class TestRecentActivitySummary:
 
         svc._weaviate.list_facts.return_value = PaginatedFacts(
             memories=[
-                AtomicFact(id="f1", memory_text="Decision fact", fact_type="decision",
-                           importance="high", quality_score=0.9, message_ts=recent_ts),
-                AtomicFact(id="f2", memory_text="Observation", fact_type="observation",
-                           importance="medium", quality_score=0.6, message_ts=recent_ts),
+                AtomicFact(
+                    id="f1",
+                    memory_text="Decision fact",
+                    fact_type="decision",
+                    importance="high",
+                    quality_score=0.9,
+                    message_ts=recent_ts,
+                ),
+                AtomicFact(
+                    id="f2",
+                    memory_text="Observation",
+                    fact_type="observation",
+                    importance="medium",
+                    quality_score=0.6,
+                    message_ts=recent_ts,
+                ),
             ],
             total=2,
         )
 
         clusters = [
-            TopicCluster(id="c1", channel_id="ch1", title="Auth",
-                         created_at=now, updated_at=now),
+            TopicCluster(id="c1", channel_id="ch1", title="Auth", created_at=now, updated_at=now),
         ]
         result = await svc._compute_recent_activity("ch1", clusters)
         assert result["facts_added_7d"] == 2
@@ -381,11 +400,15 @@ class TestChannelAggregation:
 
         clusters = [
             TopicCluster(
-                id="c1", channel_id="ch1", title="Auth",
+                id="c1",
+                channel_id="ch1",
+                title="Auth",
                 people=[{"name": "Alice", "role": "contributor", "entity_id": ""}],
             ),
             TopicCluster(
-                id="c2", channel_id="ch1", title="API",
+                id="c2",
+                channel_id="ch1",
+                title="API",
                 people=[{"name": "Alice", "role": "decision_maker", "entity_id": ""}],
             ),
         ]
@@ -404,7 +427,9 @@ class TestChannelAggregation:
                 else:
                     people_map[name]["topic_count"] += 1
                     people_map[name]["expertise_topics"].append(c.title)
-                    if role_priority.get(p["role"], 0) > role_priority.get(people_map[name]["role"], 0):
+                    if role_priority.get(p["role"], 0) > role_priority.get(
+                        people_map[name]["role"], 0
+                    ):
                         people_map[name]["role"] = p["role"]
 
         assert people_map["Alice"]["role"] == "decision_maker"
@@ -414,11 +439,13 @@ class TestChannelAggregation:
         """Technologies appearing in multiple clusters get topic_count > 1."""
         clusters = [
             TopicCluster(
-                id="c1", channel_id="ch1",
+                id="c1",
+                channel_id="ch1",
                 technologies=[{"name": "Redis", "category": "database", "champion": "Alice"}],
             ),
             TopicCluster(
-                id="c2", channel_id="ch1",
+                id="c2",
+                channel_id="ch1",
                 technologies=[{"name": "Redis", "category": "database", "champion": "Bob"}],
             ),
         ]
@@ -438,12 +465,23 @@ class TestChannelAggregation:
         """Projects deduplicated by name, last cluster wins."""
         clusters = [
             TopicCluster(
-                id="c1", channel_id="ch1",
-                projects=[{"name": "Atlas", "status": "in_progress", "owner": "Alice", "blockers": []}],
+                id="c1",
+                channel_id="ch1",
+                projects=[
+                    {"name": "Atlas", "status": "in_progress", "owner": "Alice", "blockers": []}
+                ],
             ),
             TopicCluster(
-                id="c2", channel_id="ch1",
-                projects=[{"name": "Atlas", "status": "active", "owner": "Alice", "blockers": ["Redis Upgrade"]}],
+                id="c2",
+                channel_id="ch1",
+                projects=[
+                    {
+                        "name": "Atlas",
+                        "status": "active",
+                        "owner": "Alice",
+                        "blockers": ["Redis Upgrade"],
+                    }
+                ],
             ),
         ]
 

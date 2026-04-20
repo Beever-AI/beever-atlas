@@ -104,7 +104,9 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def on_sync_complete(
-        self, channel_id: str, channel_name: str = "",
+        self,
+        channel_id: str,
+        channel_name: str = "",
     ) -> ConsolidationResult:
         """Run incremental consolidation after a channel sync."""
         result = ConsolidationResult(channel_id=channel_id)
@@ -115,7 +117,9 @@ class ConsolidationService:
             if touched:
                 await self._generate_summaries(channel_id, touched, result)
                 await self._generate_channel_summary(
-                    channel_id, result, channel_name=channel_name,
+                    channel_id,
+                    result,
+                    channel_name=channel_name,
                 )
                 await self._apply_cross_cluster_links(channel_id)
             await self._health_check(channel_id, result)
@@ -127,6 +131,7 @@ class ConsolidationService:
         try:
             from beever_atlas.infra.config import get_settings
             from beever_atlas.wiki.cache import WikiCache
+
             settings = get_settings()
             cache = WikiCache(settings.mongodb_uri)
             await cache.mark_all_stale(channel_id)
@@ -136,7 +141,9 @@ class ConsolidationService:
         return result
 
     async def full_reconsolidate(
-        self, channel_id: str, channel_name: str = "",
+        self,
+        channel_id: str,
+        channel_name: str = "",
     ) -> ConsolidationResult:
         """Full rebuild: reset all clusters and re-cluster from scratch."""
         result = ConsolidationResult(channel_id=channel_id)
@@ -169,7 +176,9 @@ class ConsolidationService:
             if touched:
                 await self._generate_summaries(channel_id, touched, result)
                 await self._generate_channel_summary(
-                    channel_id, result, channel_name=channel_name,
+                    channel_id,
+                    result,
+                    channel_name=channel_name,
                 )
                 await self._apply_cross_cluster_links(channel_id)
         except Exception as exc:
@@ -183,7 +192,9 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def _incremental_cluster(
-        self, channel_id: str, result: ConsolidationResult,
+        self,
+        channel_id: str,
+        result: ConsolidationResult,
     ) -> tuple[list[str], list[str]]:
         """Assign unclustered facts to existing or new clusters."""
         created_ids: list[str] = []
@@ -292,7 +303,9 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def _build_cluster_context(
-        self, members: list[AtomicFact], channel_id: str,
+        self,
+        members: list[AtomicFact],
+        channel_id: str,
     ) -> ClusterContext:
         """Build aggregated context from cluster member facts."""
         # Filter out superseded facts, keep potential_contradiction
@@ -341,7 +354,8 @@ class ConsolidationService:
         if self._graph is not None:
             try:
                 entities_list = await self._graph.list_entities(
-                    channel_id=channel_id, limit=200,
+                    channel_id=channel_id,
+                    limit=200,
                 )
                 entity_lookup = {e.name.lower(): e for e in entities_list}
 
@@ -351,17 +365,20 @@ class ConsolidationService:
                     entity = entity_lookup.get(tag.lower())
                     if entity and entity.id not in seen_ids:
                         seen_ids.add(entity.id)
-                        graph_entities.append({
-                            "id": entity.id,
-                            "name": entity.name,
-                            "type": entity.type,
-                        })
+                        graph_entities.append(
+                            {
+                                "id": entity.id,
+                                "name": entity.name,
+                                "type": entity.type,
+                            }
+                        )
             except Exception:
                 logger.debug("Graph entity lookup failed for channel %s", channel_id)
 
             try:
                 rels = await self._graph.list_relationships(
-                    channel_id=channel_id, limit=100,
+                    channel_id=channel_id,
+                    limit=100,
                 )
                 graph_relationships = [
                     {
@@ -370,7 +387,8 @@ class ConsolidationService:
                         "target": r.target,
                         "confidence": str(r.confidence),
                     }
-                    for r in rels if r.confidence >= 0.3
+                    for r in rels
+                    if r.confidence >= 0.3
                 ]
             except Exception:
                 logger.debug("Graph relationship lookup failed for channel %s", channel_id)
@@ -449,8 +467,10 @@ class ConsolidationService:
 
         # Available topic tags for selection
         if ctx.all_topic_tags:
-            parts.append(f"\nAvailable topic tags (select 3 most representative): "
-                         f"{', '.join(ctx.all_topic_tags)}")
+            parts.append(
+                f"\nAvailable topic tags (select 3 most representative): "
+                f"{', '.join(ctx.all_topic_tags)}"
+            )
 
         # Facts section
         fact_lines: list[str] = []
@@ -480,7 +500,9 @@ class ConsolidationService:
         return "\n".join(parts)
 
     async def _build_channel_context(
-        self, clusters: list[TopicCluster], channel_id: str,
+        self,
+        clusters: list[TopicCluster],
+        channel_id: str,
     ) -> ChannelContext:
         """Build aggregated context for a channel-level summary."""
         graph_decisions: list[dict[str, str]] = []
@@ -494,9 +516,7 @@ class ConsolidationService:
                     self._graph.list_entities(channel_id=channel_id, limit=20),
                     self._graph.list_relationships(channel_id=channel_id, limit=20),
                 )
-                graph_decisions = [
-                    {"name": e.name, "type": e.type} for e in decisions_raw
-                ]
+                graph_decisions = [{"name": e.name, "type": e.type} for e in decisions_raw]
                 graph_entities = [
                     {"id": e.id, "name": e.name, "type": e.type} for e in entities_raw
                 ]
@@ -619,8 +639,10 @@ class ConsolidationService:
         active_count = sum(1 for c in ctx.clusters if c.status == "active")
         completed_count = sum(1 for c in ctx.clusters if c.status == "completed")
         stale_count = sum(1 for c in ctx.clusters if c.status == "stale")
-        parts.append(f"\nTopic status: {active_count} active, {completed_count} completed, "
-                     f"{stale_count} stale")
+        parts.append(
+            f"\nTopic status: {active_count} active, {completed_count} completed, "
+            f"{stale_count} stale"
+        )
 
         return "\n".join(parts)
 
@@ -679,7 +701,16 @@ class ConsolidationService:
         if staleness_score > 0.8:
             return "stale"
 
-        completion_prefixes = ("ship", "complet", "done", "close", "resolv", "finish", "deliver", "launch")
+        completion_prefixes = (
+            "ship",
+            "complet",
+            "done",
+            "close",
+            "resolv",
+            "finish",
+            "deliver",
+            "launch",
+        )
         if fact_type_counts.get("decision", 0) > 0:
             for tag in action_tags:
                 tag_lower = tag.lower()
@@ -693,7 +724,9 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def _enrich_decisions(
-        self, entity_tags: list[str], channel_id: str,
+        self,
+        entity_tags: list[str],
+        channel_id: str,
     ) -> list[dict[str, Any]]:
         """Query Neo4j for Decision-type entities and resolve SUPERSEDES chains."""
         if not self._graph:
@@ -702,7 +735,8 @@ class ConsolidationService:
         decisions: list[dict[str, Any]] = []
         try:
             decision_entities = await self._graph.get_decisions(
-                channel_id=channel_id, limit=50,
+                channel_id=channel_id,
+                limit=50,
             )
             if not decision_entities:
                 return []
@@ -710,9 +744,9 @@ class ConsolidationService:
             # Filter to decisions matching cluster entity_tags
             tag_lower = {t.lower() for t in entity_tags}
             relevant = [
-                e for e in decision_entities
-                if e.name.lower() in tag_lower
-                or any(a.lower() in tag_lower for a in e.aliases)
+                e
+                for e in decision_entities
+                if e.name.lower() in tag_lower or any(a.lower() in tag_lower for a in e.aliases)
             ]
             # If no tag match, include all channel decisions
             if not relevant:
@@ -720,7 +754,8 @@ class ConsolidationService:
 
             # Build supersede map via relationships
             rels = await self._graph.list_relationships(
-                channel_id=channel_id, limit=200,
+                channel_id=channel_id,
+                limit=200,
             )
             # SUPERSEDES: source supersedes target
             supersedes_map: dict[str, str] = {}  # target_name -> source_name
@@ -732,29 +767,32 @@ class ConsolidationService:
                 decided_by = ""
                 if e.properties:
                     decided_by = (
-                        e.properties.get("decided_by", "")
-                        or e.properties.get("owner", "")
-                        or ""
+                        e.properties.get("decided_by", "") or e.properties.get("owner", "") or ""
                     )
 
                 superseded_by = supersedes_map.get(e.name.lower())
                 status = "superseded" if superseded_by else "active"
 
-                decisions.append({
-                    "name": e.name,
-                    "decided_by": decided_by,
-                    "status": status,
-                    "superseded_by": superseded_by or "",
-                    "date": e.message_ts or e.created_at.isoformat() if e.created_at else "",
-                    "context": "",
-                })
+                decisions.append(
+                    {
+                        "name": e.name,
+                        "decided_by": decided_by,
+                        "status": status,
+                        "superseded_by": superseded_by or "",
+                        "date": e.message_ts or e.created_at.isoformat() if e.created_at else "",
+                        "context": "",
+                    }
+                )
         except Exception:
             logger.debug("Decision enrichment failed for channel %s", channel_id)
 
         return decisions
 
     async def _enrich_people(
-        self, entity_tags: list[str], authors: list[str], channel_id: str,
+        self,
+        entity_tags: list[str],
+        authors: list[str],
+        channel_id: str,
     ) -> list[dict[str, str]]:
         """Derive people with roles from Neo4j graph edges.
 
@@ -769,10 +807,13 @@ class ConsolidationService:
 
         try:
             entities = await self._graph.list_entities(
-                channel_id=channel_id, entity_type="Person", limit=100,
+                channel_id=channel_id,
+                entity_type="Person",
+                limit=100,
             )
             rels = await self._graph.list_relationships(
-                channel_id=channel_id, limit=300,
+                channel_id=channel_id,
+                limit=300,
             )
 
             tag_lower = {t.lower() for t in entity_tags}
@@ -796,15 +837,12 @@ class ConsolidationService:
 
                     # Is this a Person?
                     is_person = any(
-                        e.name.lower() == pn_lower and e.type == "Person"
-                        for e in entities
+                        e.name.lower() == pn_lower and e.type == "Person" for e in entities
                     )
                     if not is_person:
                         continue
 
-                    person_connections[person_name] = (
-                        person_connections.get(person_name, 0) + 1
-                    )
+                    person_connections[person_name] = person_connections.get(person_name, 0) + 1
 
                     if r.type == "DECIDED":
                         current = person_roles.get(person_name, "mentioned")
@@ -825,7 +863,8 @@ class ConsolidationService:
             # Build result from graph-derived people
             for name, role in person_roles.items():
                 entity = next(
-                    (e for e in entities if e.name.lower() == name.lower()), None,
+                    (e for e in entities if e.name.lower() == name.lower()),
+                    None,
                 )
                 people[name] = {
                     "name": name,
@@ -849,7 +888,9 @@ class ConsolidationService:
         return list(people.values())
 
     async def _enrich_technologies(
-        self, entity_tags: list[str], channel_id: str,
+        self,
+        entity_tags: list[str],
+        channel_id: str,
     ) -> list[dict[str, str]]:
         """Query Neo4j for Technology-type entities with category and champion."""
         if not self._graph:
@@ -858,13 +899,15 @@ class ConsolidationService:
         technologies: list[dict[str, str]] = []
         try:
             entities = await self._graph.list_entities(
-                channel_id=channel_id, entity_type="Technology", limit=100,
+                channel_id=channel_id,
+                entity_type="Technology",
+                limit=100,
             )
             tag_lower = {t.lower() for t in entity_tags}
             relevant = [
-                e for e in entities
-                if e.name.lower() in tag_lower
-                or any(a.lower() in tag_lower for a in e.aliases)
+                e
+                for e in entities
+                if e.name.lower() in tag_lower or any(a.lower() in tag_lower for a in e.aliases)
             ]
 
             if not relevant:
@@ -872,7 +915,8 @@ class ConsolidationService:
 
             # Find champions via USES/WORKS_ON relationships
             rels = await self._graph.list_relationships(
-                channel_id=channel_id, limit=200,
+                channel_id=channel_id,
+                limit=200,
             )
             tech_champions: dict[str, str] = {}
             for r in rels:
@@ -887,22 +931,24 @@ class ConsolidationService:
                 category = ""
                 if e.properties:
                     category = (
-                        e.properties.get("category", "")
-                        or e.properties.get("language", "")
-                        or ""
+                        e.properties.get("category", "") or e.properties.get("language", "") or ""
                     )
-                technologies.append({
-                    "name": e.name,
-                    "category": category,
-                    "champion": tech_champions.get(e.name, ""),
-                })
+                technologies.append(
+                    {
+                        "name": e.name,
+                        "category": category,
+                        "champion": tech_champions.get(e.name, ""),
+                    }
+                )
         except Exception:
             logger.debug("Technology enrichment failed for channel %s", channel_id)
 
         return technologies
 
     async def _enrich_projects(
-        self, entity_tags: list[str], channel_id: str,
+        self,
+        entity_tags: list[str],
+        channel_id: str,
     ) -> list[dict[str, Any]]:
         """Query Neo4j for Project-type entities with status, owner, and blockers."""
         if not self._graph:
@@ -911,13 +957,15 @@ class ConsolidationService:
         projects: list[dict[str, Any]] = []
         try:
             entities = await self._graph.list_entities(
-                channel_id=channel_id, entity_type="Project", limit=100,
+                channel_id=channel_id,
+                entity_type="Project",
+                limit=100,
             )
             tag_lower = {t.lower() for t in entity_tags}
             relevant = [
-                e for e in entities
-                if e.name.lower() in tag_lower
-                or any(a.lower() in tag_lower for a in e.aliases)
+                e
+                for e in entities
+                if e.name.lower() in tag_lower or any(a.lower() in tag_lower for a in e.aliases)
             ]
 
             if not relevant:
@@ -925,7 +973,8 @@ class ConsolidationService:
 
             # Find owners and blockers via relationships
             rels = await self._graph.list_relationships(
-                channel_id=channel_id, limit=200,
+                channel_id=channel_id,
+                limit=200,
             )
             project_owners: dict[str, str] = {}
             project_blockers: dict[str, list[str]] = {}
@@ -942,12 +991,14 @@ class ConsolidationService:
                 status = ""
                 if e.properties:
                     status = e.properties.get("status", "") or ""
-                projects.append({
-                    "name": e.name,
-                    "status": status or e.status,
-                    "owner": project_owners.get(e.name, ""),
-                    "blockers": project_blockers.get(e.name, []),
-                })
+                projects.append(
+                    {
+                        "name": e.name,
+                        "status": status or e.status,
+                        "owner": project_owners.get(e.name, ""),
+                        "blockers": project_blockers.get(e.name, []),
+                    }
+                )
         except Exception:
             logger.debug("Project enrichment failed for channel %s", channel_id)
 
@@ -984,7 +1035,7 @@ class ConsolidationService:
         links: dict[str, list[str]] = {}
         cluster_list = list(clusters)
         for i, a in enumerate(cluster_list):
-            for b in cluster_list[i + 1:]:
+            for b in cluster_list[i + 1 :]:
                 overlap = cluster_tags.get(a.id, set()) & cluster_tags.get(b.id, set())
                 if len(overlap) >= 2:
                     links.setdefault(a.id, []).append(b.id)
@@ -1010,16 +1061,18 @@ class ConsolidationService:
         edges: list[dict[str, Any]] = []
         cluster_list = list(clusters)
         for i, a in enumerate(cluster_list):
-            for b in cluster_list[i + 1:]:
+            for b in cluster_list[i + 1 :]:
                 overlap = cluster_tags.get(a.id, set()) & cluster_tags.get(b.id, set())
                 if len(overlap) >= 2:
-                    edges.append({
-                        "source_cluster_id": a.id,
-                        "target_cluster_id": b.id,
-                        "source_title": a.title or ", ".join(a.topic_tags[:3]) or "General",
-                        "target_title": b.title or ", ".join(b.topic_tags[:3]) or "General",
-                        "shared_entities": sorted(overlap),
-                    })
+                    edges.append(
+                        {
+                            "source_cluster_id": a.id,
+                            "target_cluster_id": b.id,
+                            "source_title": a.title or ", ".join(a.topic_tags[:3]) or "General",
+                            "target_title": b.title or ", ".join(b.topic_tags[:3]) or "General",
+                            "shared_entities": sorted(overlap),
+                        }
+                    )
         return edges
 
     async def _apply_cross_cluster_links(self, channel_id: str) -> None:
@@ -1058,7 +1111,10 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def _generate_summaries(
-        self, channel_id: str, cluster_ids: list[str], result: ConsolidationResult,
+        self,
+        channel_id: str,
+        cluster_ids: list[str],
+        result: ConsolidationResult,
     ) -> None:
         """Generate LLM summaries for touched clusters."""
         sem = asyncio.Semaphore(self._settings.consolidation_max_concurrent_llm)
@@ -1135,16 +1191,21 @@ class ConsolidationService:
 
                     # Graph-derived enrichment
                     cluster.decisions = await self._enrich_decisions(
-                        ctx.aggregated_entity_tags, channel_id,
+                        ctx.aggregated_entity_tags,
+                        channel_id,
                     )
                     cluster.people = await self._enrich_people(
-                        ctx.aggregated_entity_tags, ctx.authors, channel_id,
+                        ctx.aggregated_entity_tags,
+                        ctx.authors,
+                        channel_id,
                     )
                     cluster.technologies = await self._enrich_technologies(
-                        ctx.aggregated_entity_tags, channel_id,
+                        ctx.aggregated_entity_tags,
+                        channel_id,
                     )
                     cluster.projects = await self._enrich_projects(
-                        ctx.aggregated_entity_tags, channel_id,
+                        ctx.aggregated_entity_tags,
+                        channel_id,
                     )
 
                     # Populate existing enrichment fields from context
@@ -1176,14 +1237,14 @@ class ConsolidationService:
                 except Exception as exc:
                     logger.warning(
                         "Failed to generate summary for cluster %s: %s",
-                        cluster.id, exc,
+                        cluster.id,
+                        exc,
                     )
                     result.errors.append(f"summary:{cluster.id}:{exc}")
 
-        await asyncio.gather(*[
-            _summarize_one(cluster, members, ctx)
-            for cluster, members, ctx in contexts
-        ])
+        await asyncio.gather(
+            *[_summarize_one(cluster, members, ctx) for cluster, members, ctx in contexts]
+        )
 
     async def _generate_channel_summary(
         self,
@@ -1203,7 +1264,8 @@ class ConsolidationService:
 
         total_facts = sum(c.member_count for c in clusters)
         worst_staleness = max(
-            (c.staleness_score for c in clusters), default=0.0,
+            (c.staleness_score for c in clusters),
+            default=0.0,
         )
 
         # Aggregate top_decisions from all clusters
@@ -1336,7 +1398,9 @@ class ConsolidationService:
         await self._weaviate.upsert_channel_summary(channel_summary)
 
     async def _compute_recent_activity(
-        self, channel_id: str, clusters: list[TopicCluster],
+        self,
+        channel_id: str,
+        clusters: list[TopicCluster],
     ) -> dict[str, Any]:
         """Compute recent activity summary for the last 7 days."""
         from beever_atlas.models.api import MemoryFilters
@@ -1440,7 +1504,9 @@ class ConsolidationService:
     # ------------------------------------------------------------------
 
     async def _health_check(
-        self, channel_id: str, result: ConsolidationResult,
+        self,
+        channel_id: str,
+        result: ConsolidationResult,
     ) -> None:
         """Split oversized clusters, merge similar ones, delete empty ones."""
         clusters = await self._weaviate.list_clusters(channel_id)
@@ -1467,7 +1533,10 @@ class ConsolidationService:
             await self._merge_similar_clusters(channel_id, clusters, result)
 
     async def _split_cluster(
-        self, channel_id: str, cluster: TopicCluster, result: ConsolidationResult,
+        self,
+        channel_id: str,
+        cluster: TopicCluster,
+        result: ConsolidationResult,
     ) -> None:
         """Split an oversized cluster into two by partitioning members."""
         members = await self._weaviate.get_cluster_members(
@@ -1515,7 +1584,7 @@ class ConsolidationService:
         for i, a in enumerate(clusters):
             if a.id in merged_ids:
                 continue
-            for b in clusters[i + 1:]:
+            for b in clusters[i + 1 :]:
                 if b.id in merged_ids:
                     continue
                 if not a.centroid_vector or not b.centroid_vector:

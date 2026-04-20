@@ -227,12 +227,15 @@ async def test_mcp_get_job_status_tool_returns_structured_error_on_not_found():
 
     stores_mock = _mock_stores(None)
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=stores_mock,
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=stores_mock,
+        ),
     ):
         mcp = build_mcp()
 
@@ -262,12 +265,15 @@ async def test_mcp_get_job_status_tool_returns_status_for_owner():
     job_doc = _make_job_doc(_JOB_ID_MCP, owner=_MCP_PRINCIPAL)
     stores_mock = _mock_stores(job_doc)
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=request_mock,
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=stores_mock,
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=request_mock,
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=stores_mock,
+        ),
     ):
         mcp = build_mcp()
 

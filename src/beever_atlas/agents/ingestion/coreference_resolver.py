@@ -1,4 +1,5 @@
 """Coreference resolution agent — resolves pronouns before extraction."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

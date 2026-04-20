@@ -98,6 +98,7 @@ def _wrap_async_methods(cls: type) -> type:
         setattr(cls, attr_name, _make(attr))
     return cls
 
+
 # Maximum vertices/edges per single INSERT statement (Nebula practical limit).
 _BATCH_CHUNK_SIZE = 500
 
@@ -274,13 +275,20 @@ class NebulaStore:
                             )
                             try:
                                 self._session.release()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug(
+                                    "NebulaStore: session.release failed: %s", exc, exc_info=False
+                                )
                             self._session = None
                             session_was_invalidated = True
                         wait = 5.0
-                        logger.warning("Nebula not ready (%s), retrying in %.0fs (attempt %d/%d)...",
-                                       err.split("|")[0].strip(), wait, attempt + 1, retries)
+                        logger.warning(
+                            "Nebula not ready (%s), retrying in %.0fs (attempt %d/%d)...",
+                            err.split("|")[0].strip(),
+                            wait,
+                            attempt + 1,
+                            retries,
+                        )
                         await asyncio.sleep(wait)
                         continue
                     raise
@@ -291,7 +299,9 @@ class NebulaStore:
             try:
                 await self._init_persistent_session()
             except Exception:
-                logger.warning("Could not re-init persistent session; will keep using fallback path")
+                logger.warning(
+                    "Could not re-init persistent session; will keep using fallback path"
+                )
 
         return result
 
@@ -300,6 +310,7 @@ class NebulaStore:
 
         Called after ensure_schema when the space is confirmed ready.
         """
+
         def _init() -> Any:
             pool = self._get_pool()
             session = pool.get_session(self._user, self._password)
@@ -308,6 +319,7 @@ class NebulaStore:
                 session.release()
                 raise RuntimeError(f"USE {self._space} failed: {resp.error_msg()}")
             return session
+
         self._session = await asyncio.to_thread(_init)
         logger.info("Persistent session initialized for space '%s'", self._space)
 
@@ -433,9 +445,7 @@ class NebulaStore:
             edge_type,
         )
         safe_type = _escape(edge_type)
-        await self._execute_with_space(
-            f"CREATE EDGE IF NOT EXISTS `{safe_type}` ({_EDGE_PROPS})"
-        )
+        await self._execute_with_space(f"CREATE EDGE IF NOT EXISTS `{safe_type}` ({_EDGE_PROPS})")
         # Backoff: wait for schema propagation
         wait = 5.0
         for attempt in range(2):
@@ -485,8 +495,10 @@ class NebulaStore:
         if self._session is not None:
             try:
                 await asyncio.to_thread(self._session.release)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "NebulaStore.shutdown: session.release failed: %s", exc, exc_info=False
+                )
             self._session = None
         if self._pool is not None:
             await asyncio.to_thread(self._pool.close)
@@ -512,7 +524,11 @@ class NebulaStore:
                 logger.info("Space '%s' ready after ~%ds", self._space, (attempt + 1) * 5)
                 break
             except RuntimeError:
-                logger.info("Waiting for space '%s' partition assignment (attempt %d/12)...", self._space, attempt + 1)
+                logger.info(
+                    "Waiting for space '%s' partition assignment (attempt %d/12)...",
+                    self._space,
+                    attempt + 1,
+                )
         else:
             raise RuntimeError(
                 f"Space '{self._space}' did not become ready after 60s. "
@@ -563,9 +579,7 @@ class NebulaStore:
         # Edge types from vocabulary
         for etype in _EDGE_TYPE_VOCABULARY:
             safe = _escape(etype)
-            await self._execute_with_space(
-                f"CREATE EDGE IF NOT EXISTS `{safe}` ({_EDGE_PROPS})"
-            )
+            await self._execute_with_space(f"CREATE EDGE IF NOT EXISTS `{safe}` ({_EDGE_PROPS})")
 
         # Wait for schema propagation, then verify
         await self._wait_for_schema("DESCRIBE TAG Entity")
@@ -592,9 +606,14 @@ class NebulaStore:
         # may not have propagated to storaged yet.  We poll until the first
         # index is visible in SHOW TAG INDEXES output, then rebuild all.
         _index_names = [
-            "idx_entity_name", "idx_entity_type", "idx_entity_channel",
-            "idx_entity_status", "idx_event_weaviate", "idx_event_channel",
-            "idx_media_url", "idx_media_channel",
+            "idx_entity_name",
+            "idx_entity_type",
+            "idx_entity_channel",
+            "idx_entity_status",
+            "idx_event_weaviate",
+            "idx_event_channel",
+            "idx_media_url",
+            "idx_media_channel",
         ]
 
         # Wait for indexes to propagate (poll up to ~60s).
@@ -631,12 +650,12 @@ class NebulaStore:
                     f'INSERT VERTEX IF NOT EXISTS Entity (name) VALUES "{sentinel_vid}":("{sentinel_vid}")'
                 )
                 # Clean up probe vertex
-                await self._execute_with_space(
-                    f'DELETE VERTEX "{sentinel_vid}" WITH EDGE'
-                )
+                await self._execute_with_space(f'DELETE VERTEX "{sentinel_vid}" WITH EDGE')
                 break
             except RuntimeError:
-                logger.info("Schema probe INSERT failed, waiting 5s (attempt %d/6)...", probe_attempt + 1)
+                logger.info(
+                    "Schema probe INSERT failed, waiting 5s (attempt %d/6)...", probe_attempt + 1
+                )
                 await asyncio.sleep(5.0)
         else:
             logger.warning("Schema probe never succeeded — space may not be fully operational yet")
@@ -676,12 +695,12 @@ class NebulaStore:
 
         # UPDATE for the ON MATCH path (idempotent upsert)
         await self._execute_with_space(
-            f'UPDATE VERTEX ON Entity {_quote(vid)} SET '
-            f'properties = {_quote(props_json)}, '
-            f'aliases = {_quote(aliases_json)}, '
-            f'source_message_id = {_quote(entity.source_message_id)}, '
-            f'message_ts = {_quote(entity.message_ts)}, '
-            f'updated_at = {_quote(now_iso)}'
+            f"UPDATE VERTEX ON Entity {_quote(vid)} SET "
+            f"properties = {_quote(props_json)}, "
+            f"aliases = {_quote(aliases_json)}, "
+            f"source_message_id = {_quote(entity.source_message_id)}, "
+            f"message_ts = {_quote(entity.message_ts)}, "
+            f"updated_at = {_quote(now_iso)}"
         )
 
         return vid
@@ -705,12 +724,12 @@ class NebulaStore:
                 pending_since = entity.pending_since.isoformat() if entity.pending_since else ""
 
                 values_parts.append(
-                    f'{_quote(vid)}:('
-                    f'{_quote(entity.name)}, {_quote(entity.type)}, {_quote(entity.scope)}, '
-                    f'{_quote(entity.channel_id or "")}, {_quote(props_json)}, '
-                    f'{_quote(aliases_json)}, {_quote(entity.status)}, '
-                    f'{_quote(pending_since)}, {_quote(entity.source_message_id)}, '
-                    f'{_quote(entity.message_ts)}, {_quote(now_iso)}, {_quote(now_iso)})'
+                    f"{_quote(vid)}:("
+                    f"{_quote(entity.name)}, {_quote(entity.type)}, {_quote(entity.scope)}, "
+                    f"{_quote(entity.channel_id or '')}, {_quote(props_json)}, "
+                    f"{_quote(aliases_json)}, {_quote(entity.status)}, "
+                    f"{_quote(pending_since)}, {_quote(entity.source_message_id)}, "
+                    f"{_quote(entity.message_ts)}, {_quote(now_iso)}, {_quote(now_iso)})"
                 )
 
             values_str = ", ".join(values_parts)
@@ -727,12 +746,12 @@ class NebulaStore:
                 props_json = json.dumps(entity.properties)
                 aliases_json = json.dumps(entity.aliases)
                 await self._execute_with_space(
-                    f'UPDATE VERTEX ON Entity {_quote(vid)} SET '
-                    f'properties = {_quote(props_json)}, '
-                    f'aliases = {_quote(aliases_json)}, '
-                    f'source_message_id = {_quote(entity.source_message_id)}, '
-                    f'message_ts = {_quote(entity.message_ts)}, '
-                    f'updated_at = {_quote(now_iso)}'
+                    f"UPDATE VERTEX ON Entity {_quote(vid)} SET "
+                    f"properties = {_quote(props_json)}, "
+                    f"aliases = {_quote(aliases_json)}, "
+                    f"source_message_id = {_quote(entity.source_message_id)}, "
+                    f"message_ts = {_quote(entity.message_ts)}, "
+                    f"updated_at = {_quote(now_iso)}"
                 )
 
         return vids
@@ -796,7 +815,7 @@ class NebulaStore:
         if entity_type is not None:
             conditions.append(f"Entity.type == {_quote(entity_type)}")
         if not include_pending:
-            conditions.append("Entity.status == \"active\"")
+            conditions.append('Entity.status == "active"')
 
         if conditions:
             where = " AND ".join(conditions)
@@ -877,21 +896,21 @@ class NebulaStore:
     async def promote_pending_entity(self, entity_name: str) -> None:
         resp = await self._execute_with_space(
             f"LOOKUP ON Entity WHERE Entity.name == {_quote(entity_name)} "
-            f"AND Entity.status == \"pending\" "
+            f'AND Entity.status == "pending" '
             f"YIELD id(vertex) AS vid"
         )
         rows = self._parse_result_to_dicts(resp)
         for row in rows:
             vid = row["vid"]
             await self._execute_with_space(
-                f'UPDATE VERTEX ON Entity {_quote(str(vid))} SET '
+                f"UPDATE VERTEX ON Entity {_quote(str(vid))} SET "
                 f'status = "active", pending_since = ""'
             )
 
     async def prune_expired_pending(self, grace_period_days: int = 7) -> int:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=grace_period_days)).isoformat()
         resp = await self._execute_with_space(
-            "LOOKUP ON Entity WHERE Entity.status == \"pending\" "
+            'LOOKUP ON Entity WHERE Entity.status == "pending" '
             "YIELD id(vertex) AS vid, "
             "properties(vertex).pending_since AS pending_since"
         )
@@ -901,9 +920,7 @@ class NebulaStore:
             ps = row.get("pending_since", "")
             if ps and ps < cutoff:
                 vid = row["vid"]
-                await self._execute_with_space(
-                    f"DELETE VERTEX {_quote(str(vid))} WITH EDGE"
-                )
+                await self._execute_with_space(f"DELETE VERTEX {_quote(str(vid))} WITH EDGE")
                 pruned += 1
         return pruned
 
@@ -954,9 +971,7 @@ class NebulaStore:
         # Return a composite edge ID
         return f"{src_vid}->{rel.type}->{tgt_vid}"
 
-    async def batch_upsert_relationships(
-        self, rels: list[GraphRelationship]
-    ) -> list[str]:
+    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
         if not rels:
             return []
 
@@ -999,11 +1014,11 @@ class NebulaStore:
                         continue
 
                     values_parts.append(
-                        f'{_quote(src_vid)} -> {_quote(tgt_vid)}:('
-                        f'{rel.confidence}, {_quote(rel.valid_from or "")}, '
-                        f'{_quote(rel.valid_until or "")}, {_quote(rel.context)}, '
-                        f'{_quote(rel.source_message_id)}, {_quote(rel.source_fact_id)}, '
-                        f'{_quote(now_iso)})'
+                        f"{_quote(src_vid)} -> {_quote(tgt_vid)}:("
+                        f"{rel.confidence}, {_quote(rel.valid_from or '')}, "
+                        f"{_quote(rel.valid_until or '')}, {_quote(rel.context)}, "
+                        f"{_quote(rel.source_message_id)}, {_quote(rel.source_fact_id)}, "
+                        f"{_quote(now_iso)})"
                     )
                     ids.append(f"{src_vid}->{etype}->{tgt_vid}")
 
@@ -1054,13 +1069,15 @@ class NebulaStore:
                     if e.id == str(row.get("tgt_vid", "")):
                         tgt_name = e.name
                 if src_name in entity_names and tgt_name in entity_names:
-                    rels.append(GraphRelationship(
-                        type=etype,
-                        source=src_name,
-                        target=tgt_name,
-                        confidence=float(row.get("confidence") or 0.0),
-                        context=row.get("context") or "",
-                    ))
+                    rels.append(
+                        GraphRelationship(
+                            type=etype,
+                            source=src_name,
+                            target=tgt_name,
+                            confidence=float(row.get("confidence") or 0.0),
+                            context=row.get("context") or "",
+                        )
+                    )
 
             if len(rels) >= limit:
                 break
@@ -1115,7 +1132,7 @@ class NebulaStore:
             f"confidence, valid_from, valid_until, context, "
             f"source_message_id, source_fact_id, created_at"
             f") VALUES {_quote(entity_vid)} -> {_quote(ev_vid)}:("
-            f"1.0, \"\", \"\", \"\", \"\", {_quote(weaviate_fact_id)}, {_quote(now_iso)})"
+            f'1.0, "", "", "", "", {_quote(weaviate_fact_id)}, {_quote(now_iso)})'
         )
 
     async def upsert_media(
@@ -1137,8 +1154,7 @@ class NebulaStore:
         # Update title if provided (ON MATCH equivalent)
         if title:
             await self._execute_with_space(
-                f'UPDATE VERTEX ON Media {_quote(vid)} SET '
-                f'title = {_quote(title)}'
+                f"UPDATE VERTEX ON Media {_quote(vid)} SET title = {_quote(title)}"
             )
 
     async def link_entity_to_media(self, entity_name: str, media_url: str) -> None:
@@ -1159,7 +1175,7 @@ class NebulaStore:
             f"confidence, valid_from, valid_until, context, "
             f"source_message_id, source_fact_id, created_at"
             f") VALUES {_quote(entity_vid)} -> {_quote(media_vid)}:("
-            f"1.0, \"\", \"\", \"\", \"\", \"\", {_quote(now_iso)})"
+            f'1.0, "", "", "", "", "", {_quote(now_iso)})'
         )
 
     async def list_media(
@@ -1249,11 +1265,13 @@ class NebulaStore:
                     else:
                         tgt_name = url.split("/")[-1] if "/" in url else url
 
-            rels.append({
-                "source": src_name,
-                "target": tgt_name,
-                "type": "REFERENCES_MEDIA",
-            })
+            rels.append(
+                {
+                    "source": src_name,
+                    "target": tgt_name,
+                    "type": "REFERENCES_MEDIA",
+                }
+            )
 
         return rels[:limit]
 
@@ -1261,9 +1279,7 @@ class NebulaStore:
     # Traversal
     # ------------------------------------------------------------------
 
-    async def get_neighbors(
-        self, entity_id: str, hops: int = 1, limit: int = 50
-    ) -> Subgraph:
+    async def get_neighbors(self, entity_id: str, hops: int = 1, limit: int = 50) -> Subgraph:
         hops = max(1, hops)
         node_map: dict[str, GraphEntity] = {}
         edges: list[GraphRelationship] = []
@@ -1317,22 +1333,20 @@ class NebulaStore:
             tgt_vid = str(row.get("tgt_vid", ""))
             src_entity = node_map.get(src_vid)
             tgt_entity = node_map.get(tgt_vid)
-            edges.append(GraphRelationship(
-                type=row.get("etype") or "RELATED_TO",
-                source=src_entity.name if src_entity else src_vid,
-                target=tgt_entity.name if tgt_entity else tgt_vid,
-                confidence=float(row.get("confidence") or 0.0),
-                context=row.get("context") or "",
-            ))
+            edges.append(
+                GraphRelationship(
+                    type=row.get("etype") or "RELATED_TO",
+                    source=src_entity.name if src_entity else src_vid,
+                    target=tgt_entity.name if tgt_entity else tgt_vid,
+                    confidence=float(row.get("confidence") or 0.0),
+                    context=row.get("context") or "",
+                )
+            )
 
         return Subgraph(nodes=list(node_map.values()), edges=edges)
 
-    async def get_decisions(
-        self, channel_id: str, limit: int = 20
-    ) -> list[GraphEntity]:
-        return await self.list_entities(
-            channel_id=channel_id, entity_type="Decision", limit=limit
-        )
+    async def get_decisions(self, channel_id: str, limit: int = 20) -> list[GraphEntity]:
+        return await self.list_entities(channel_id=channel_id, entity_type="Decision", limit=limit)
 
     # ------------------------------------------------------------------
     # Delete
@@ -1347,9 +1361,7 @@ class NebulaStore:
         ev_rows = self._parse_result_to_dicts(ev_resp)
         events_deleted = len(ev_rows)
         for row in ev_rows:
-            await self._execute_with_space(
-                f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE"
-            )
+            await self._execute_with_space(f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE")
 
         # Delete media for this channel
         media_resp = await self._execute_with_space(
@@ -1359,9 +1371,7 @@ class NebulaStore:
         media_rows = self._parse_result_to_dicts(media_resp)
         media_deleted = len(media_rows)
         for row in media_rows:
-            await self._execute_with_space(
-                f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE"
-            )
+            await self._execute_with_space(f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE")
 
         # Delete channel-scoped entities
         entity_resp = await self._execute_with_space(
@@ -1371,14 +1381,11 @@ class NebulaStore:
         entity_rows = self._parse_result_to_dicts(entity_resp)
         entities_deleted = len(entity_rows)
         for row in entity_rows:
-            await self._execute_with_space(
-                f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE"
-            )
+            await self._execute_with_space(f"DELETE VERTEX {_quote(str(row['vid']))} WITH EDGE")
 
         # Clean up orphaned global entities with no edges
         global_resp = await self._execute_with_space(
-            "LOOKUP ON Entity WHERE Entity.scope == \"global\" "
-            "YIELD id(vertex) AS vid"
+            'LOOKUP ON Entity WHERE Entity.scope == "global" YIELD id(vertex) AS vid'
         )
         global_rows = self._parse_result_to_dicts(global_resp)
         orphans_deleted = 0
@@ -1386,14 +1393,11 @@ class NebulaStore:
             vid = str(row["vid"])
             # Check if vertex has any edges
             edge_resp = await self._execute_with_space(
-                f"GO FROM {_quote(vid)} OVER * BIDIRECT "
-                f"YIELD id($$) AS neighbor | LIMIT 1"
+                f"GO FROM {_quote(vid)} OVER * BIDIRECT YIELD id($$) AS neighbor | LIMIT 1"
             )
             edge_rows = self._parse_result_to_dicts(edge_resp)
             if not edge_rows:
-                await self._execute_with_space(
-                    f"DELETE VERTEX {_quote(vid)} WITH EDGE"
-                )
+                await self._execute_with_space(f"DELETE VERTEX {_quote(vid)} WITH EDGE")
                 orphans_deleted += 1
 
         return {
@@ -1447,20 +1451,22 @@ class NebulaStore:
         for row in rows:
             raw_aliases = row.get("aliases", "[]")
             try:
-                aliases = json.loads(raw_aliases) if isinstance(raw_aliases, str) else (raw_aliases or [])
+                aliases = (
+                    json.loads(raw_aliases) if isinstance(raw_aliases, str) else (raw_aliases or [])
+                )
             except (json.JSONDecodeError, ValueError):
                 aliases = []
-            result.append({
-                "name": row.get("name", ""),
-                "type": row.get("type", ""),
-                "aliases": aliases,
-            })
+            result.append(
+                {
+                    "name": row.get("name", ""),
+                    "type": row.get("type", ""),
+                    "aliases": aliases,
+                }
+            )
         result.sort(key=lambda x: x["name"])
         return result
 
-    async def register_alias(
-        self, canonical: str, alias: str, entity_type: str
-    ) -> None:
+    async def register_alias(self, canonical: str, alias: str, entity_type: str) -> None:
         resp = await self._execute_with_space(
             f"LOOKUP ON Entity WHERE Entity.name == {_quote(canonical)} "
             f"AND Entity.type == {_quote(entity_type)} "
@@ -1474,7 +1480,9 @@ class NebulaStore:
         vid = str(rows[0]["vid"])
         raw_aliases = rows[0].get("aliases", "[]")
         try:
-            aliases = json.loads(raw_aliases) if isinstance(raw_aliases, str) else (raw_aliases or [])
+            aliases = (
+                json.loads(raw_aliases) if isinstance(raw_aliases, str) else (raw_aliases or [])
+            )
         except (json.JSONDecodeError, ValueError):
             aliases = []
 
@@ -1482,16 +1490,14 @@ class NebulaStore:
             aliases.append(alias)
             aliases_json = json.dumps(aliases)
             await self._execute_with_space(
-                f'UPDATE VERTEX ON Entity {_quote(vid)} SET '
-                f'aliases = {_quote(aliases_json)}'
+                f"UPDATE VERTEX ON Entity {_quote(vid)} SET aliases = {_quote(aliases_json)}"
             )
 
     async def fuzzy_match_entities(
         self, name: str, threshold: float = 0.8
     ) -> list[tuple[str, float]]:
         resp = await self._execute_with_space(
-            "LOOKUP ON Entity "
-            "YIELD properties(vertex).name AS name"
+            "LOOKUP ON Entity YIELD properties(vertex).name AS name"
         )
         rows = self._parse_result_to_dicts(resp)
         results: list[tuple[str, float]] = []
@@ -1541,9 +1547,7 @@ class NebulaStore:
                     names.append(name)
         return names
 
-    async def store_name_vector(
-        self, entity_name: str, vector: list[float]
-    ) -> None:
+    async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         resp = await self._execute_with_space(
             f"LOOKUP ON Entity WHERE Entity.name == {_quote(entity_name)} "
             f"YIELD id(vertex) AS vid | LIMIT 1"
@@ -1554,8 +1558,7 @@ class NebulaStore:
         vid = str(rows[0]["vid"])
         vec_json = json.dumps(vector)
         await self._execute_with_space(
-            f'UPDATE VERTEX ON Entity {_quote(vid)} SET '
-            f'name_vector = {_quote(vec_json)}'
+            f"UPDATE VERTEX ON Entity {_quote(vid)} SET name_vector = {_quote(vec_json)}"
         )
 
     # ------------------------------------------------------------------
@@ -1569,7 +1572,11 @@ class NebulaStore:
                 await self.create_episodic_link(**link)
                 count += 1
             except Exception:
-                logger.warning("NebulaStore: batch episodic link failed for %s", link.get("entity_name", "?"), exc_info=True)
+                logger.warning(
+                    "NebulaStore: batch episodic link failed for %s",
+                    link.get("entity_name", "?"),
+                    exc_info=True,
+                )
         return count
 
     async def batch_upsert_media(self, items: list[dict[str, Any]]) -> int:
@@ -1579,7 +1586,11 @@ class NebulaStore:
                 await self.upsert_media(**item)
                 count += 1
             except Exception:
-                logger.warning("NebulaStore: batch upsert_media failed for %s", item.get("url", "?")[:60], exc_info=True)
+                logger.warning(
+                    "NebulaStore: batch upsert_media failed for %s",
+                    item.get("url", "?")[:60],
+                    exc_info=True,
+                )
         return count
 
     async def batch_link_entities_to_media(self, links: list[dict[str, Any]]) -> int:
@@ -1599,7 +1610,7 @@ class NebulaStore:
                 await self.promote_pending_entity(name)
                 count += 1
             except Exception:
-                pass  # Entity may not be pending
+                pass  # Entity may not be pending  # TODO(res-208): add DEBUG log
         return count
 
     async def batch_find_entities_by_name(self, names: list[str]) -> set[str]:
@@ -1609,6 +1620,11 @@ class NebulaStore:
                 entity = await self.find_entity_by_name(name)
                 if entity is not None:
                     found.add(name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "NebulaStore.batch_find_entities_by_name: lookup failed name=%r: %s",
+                    name,
+                    exc,
+                    exc_info=False,
+                )
         return found

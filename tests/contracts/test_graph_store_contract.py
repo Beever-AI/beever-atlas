@@ -9,6 +9,7 @@ error-mapping helpers directly via mocking.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,12 @@ from beever_atlas.stores import (
     GraphConflict,
     GraphNotFound,  # noqa: F401 — re-exported, ensures symbol is public
     GraphStoreError,
+)
+
+_NEBULA3_AVAILABLE = importlib.util.find_spec("nebula3") is not None
+_skip_without_nebula3 = pytest.mark.skipif(
+    not _NEBULA3_AVAILABLE,
+    reason="nebula3 not installed; install with `uv sync --extra nebula`",
 )
 
 
@@ -231,6 +238,7 @@ async def test_neo4j_mapping_generic_neo4j_error():
 
 
 @pytest.mark.asyncio
+@_skip_without_nebula3
 async def test_nebula_mapping_backend_unavailable():
     """Nebula 'connection is lost' must surface as
     GraphBackendUnavailable."""
@@ -251,6 +259,7 @@ async def test_nebula_mapping_backend_unavailable():
 
 
 @pytest.mark.asyncio
+@_skip_without_nebula3
 async def test_nebula_mapping_conflict():
     """Nebula 'Vertex existed' must surface as GraphConflict."""
     from beever_atlas.stores.nebula_store import NebulaStore
@@ -262,9 +271,7 @@ async def test_nebula_mapping_conflict():
     store._space = "s"  # type: ignore[attr-defined]
 
     async def boom(*_a: Any, **_kw: Any) -> None:
-        raise RuntimeError(
-            "nGQL error: Vertex existed | query: INSERT VERTEX ..."
-        )
+        raise RuntimeError("nGQL error: Vertex existed | query: INSERT VERTEX ...")
 
     with patch.object(NebulaStore, "_execute_with_space", side_effect=boom):
         with pytest.raises(GraphConflict):
@@ -272,6 +279,7 @@ async def test_nebula_mapping_conflict():
 
 
 @pytest.mark.asyncio
+@_skip_without_nebula3
 async def test_nebula_mapping_generic():
     """Unmapped nGQL error falls back to GraphStoreError."""
     from beever_atlas.stores.nebula_store import NebulaStore

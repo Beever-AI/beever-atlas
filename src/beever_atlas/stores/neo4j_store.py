@@ -110,28 +110,14 @@ class Neo4jStore:
     async def ensure_schema(self) -> None:
         """Create indexes and backfill optional fields.  Idempotent."""
         async with self._driver.session() as session:
+            await session.run("CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)")
+            await session.run("CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)")
             await session.run(
-                "CREATE INDEX entity_name IF NOT EXISTS "
-                "FOR (e:Entity) ON (e.name)"
+                "CREATE INDEX event_weaviate_id IF NOT EXISTS FOR (ev:Event) ON (ev.weaviate_id)"
             )
-            await session.run(
-                "CREATE INDEX entity_type IF NOT EXISTS "
-                "FOR (e:Entity) ON (e.type)"
-            )
-            await session.run(
-                "CREATE INDEX event_weaviate_id IF NOT EXISTS "
-                "FOR (ev:Event) ON (ev.weaviate_id)"
-            )
-            await session.run(
-                "CREATE INDEX media_url IF NOT EXISTS "
-                "FOR (m:Media) ON (m.url)"
-            )
-            await session.run(
-                "MATCH (e:Entity) WHERE e.aliases IS NULL SET e.aliases = []"
-            )
-            await session.run(
-                "MATCH (e:Entity) WHERE e.status IS NULL SET e.status = 'active'"
-            )
+            await session.run("CREATE INDEX media_url IF NOT EXISTS FOR (m:Media) ON (m.url)")
+            await session.run("MATCH (e:Entity) WHERE e.aliases IS NULL SET e.aliases = []")
+            await session.run("MATCH (e:Entity) WHERE e.status IS NULL SET e.status = 'active'")
 
     async def shutdown(self) -> None:
         """Close the Neo4j driver."""
@@ -178,7 +164,9 @@ class Neo4jStore:
             updated_at=_parse_dt(props.get("updated_at")),
         )
 
-    def _rel_from_record(self, rel: Any, source_name: str = "", target_name: str = "") -> GraphRelationship:
+    def _rel_from_record(
+        self, rel: Any, source_name: str = "", target_name: str = ""
+    ) -> GraphRelationship:
         """Construct a GraphRelationship from a Neo4j relationship."""
         props = dict(rel)
 
@@ -248,7 +236,9 @@ class Neo4jStore:
                     source_message_id=entity.source_message_id,
                     message_ts=entity.message_ts,
                     status=entity.status,
-                    pending_since=entity.pending_since.isoformat() if entity.pending_since else None,
+                    pending_since=entity.pending_since.isoformat()
+                    if entity.pending_since
+                    else None,
                     now=now_iso,
                 )
             else:
@@ -280,7 +270,9 @@ class Neo4jStore:
                     source_message_id=entity.source_message_id,
                     message_ts=entity.message_ts,
                     status=entity.status,
-                    pending_since=entity.pending_since.isoformat() if entity.pending_since else None,
+                    pending_since=entity.pending_since.isoformat()
+                    if entity.pending_since
+                    else None,
                     now=now_iso,
                 )
             record = await result.single()
@@ -342,7 +334,9 @@ class Neo4jStore:
             if record is None:
                 logger.warning(
                     "Neo4jStore: relationship skipped — entity not found (source=%s target=%s type=%s)",
-                    rel.source, rel.target, rel.type,
+                    rel.source,
+                    rel.target,
+                    rel.type,
                 )
                 return ""
             return record["eid"]
@@ -364,7 +358,10 @@ class Neo4jStore:
             if isinstance(res, BaseException):
                 logger.warning(
                     "Neo4jStore: relationship upsert failed (source=%s target=%s type=%s): %s",
-                    rel.source, rel.target, rel.type, res,
+                    rel.source,
+                    rel.target,
+                    rel.type,
+                    res,
                 )
                 ids.append("")
             else:
@@ -444,9 +441,7 @@ class Neo4jStore:
                 message_ts=message_ts,
             )
 
-    async def link_entity_to_media(
-        self, entity_name: str, media_url: str
-    ) -> None:
+    async def link_entity_to_media(self, entity_name: str, media_url: str) -> None:
         """Create REFERENCES_MEDIA relationship from Entity to Media."""
         async with self._driver.session() as session:
             await session.run(
@@ -471,8 +466,7 @@ class Neo4jStore:
         async with self._driver.session() as session:
             # Delete Event nodes and their relationships for this channel
             result = await session.run(
-                "MATCH (ev:Event {channel_id: $channel_id}) "
-                "DETACH DELETE ev RETURN count(ev) AS n",
+                "MATCH (ev:Event {channel_id: $channel_id}) DETACH DELETE ev RETURN count(ev) AS n",
                 channel_id=channel_id,
             )
             record = await result.single()
@@ -480,8 +474,7 @@ class Neo4jStore:
 
             # Delete Media nodes for this channel
             result = await session.run(
-                "MATCH (m:Media {channel_id: $channel_id}) "
-                "DETACH DELETE m RETURN count(m) AS n",
+                "MATCH (m:Media {channel_id: $channel_id}) DETACH DELETE m RETURN count(m) AS n",
                 channel_id=channel_id,
             )
             record = await result.single()
@@ -489,8 +482,7 @@ class Neo4jStore:
 
             # Delete channel-scoped entities
             result = await session.run(
-                "MATCH (e:Entity {channel_id: $channel_id}) "
-                "DETACH DELETE e RETURN count(e) AS n",
+                "MATCH (e:Entity {channel_id: $channel_id}) DETACH DELETE e RETURN count(e) AS n",
                 channel_id=channel_id,
             )
             record = await result.single()
@@ -547,10 +539,16 @@ class Neo4jStore:
         # Filter out pending entities by default
         if not include_pending:
             pending_filter = "(e.status = 'active' OR e.status IS NULL)"
-            match_clause += f" AND {pending_filter}" if "WHERE" in match_clause else f" WHERE {pending_filter}"
+            match_clause += (
+                f" AND {pending_filter}" if "WHERE" in match_clause else f" WHERE {pending_filter}"
+            )
 
         if entity_type is not None:
-            match_clause += " AND e.type = $entity_type" if "WHERE" in match_clause else " WHERE e.type = $entity_type"
+            match_clause += (
+                " AND e.type = $entity_type"
+                if "WHERE" in match_clause
+                else " WHERE e.type = $entity_type"
+            )
             params["entity_type"] = entity_type
 
         query = f"{match_clause} RETURN e LIMIT $limit"  # noqa: S608
@@ -584,9 +582,7 @@ class Neo4jStore:
             return None
         return self._entity_from_record(record["e"])
 
-    async def get_neighbors(
-        self, entity_id: str, hops: int = 1, limit: int = 50
-    ) -> Subgraph:
+    async def get_neighbors(self, entity_id: str, hops: int = 1, limit: int = 50) -> Subgraph:
         """Return the neighborhood subgraph up to `hops` hops from an entity."""
         hops = max(1, min(int(hops), 4))
         async with self._driver.session() as session:
@@ -658,13 +654,15 @@ class Neo4jStore:
             records = await result.data()
         rels: list[GraphRelationship] = []
         for row in records:
-            rels.append(GraphRelationship(
-                type=row.get("rel_type", "RELATED_TO"),
-                source=row.get("src", ""),
-                target=row.get("tgt", ""),
-                confidence=float(row.get("confidence") or 0.0),
-                context=row.get("context") or "",
-            ))
+            rels.append(
+                GraphRelationship(
+                    type=row.get("rel_type", "RELATED_TO"),
+                    source=row.get("src", ""),
+                    target=row.get("tgt", ""),
+                    confidence=float(row.get("confidence") or 0.0),
+                    context=row.get("context") or "",
+                )
+            )
         return rels
 
     async def list_media_relationships(
@@ -702,11 +700,13 @@ class Neo4jStore:
                         tgt_name = url
                 else:
                     tgt_name = url.split("/")[-1] if "/" in url else url
-            rels.append({
-                "source": row.get("src", ""),
-                "target": tgt_name,
-                "type": row.get("rel_type", "REFERENCES_MEDIA"),
-            })
+            rels.append(
+                {
+                    "source": row.get("src", ""),
+                    "target": tgt_name,
+                    "type": row.get("rel_type", "REFERENCES_MEDIA"),
+                }
+            )
         return rels
 
     async def list_media(
@@ -730,24 +730,26 @@ class Neo4jStore:
         for r in records:
             node = r["m"]
             props = dict(node)
-            media_list.append({
-                "id": getattr(node, "element_id", None) or props.get("url", ""),
-                "url": props.get("url", ""),
-                "media_type": props.get("media_type", ""),
-                "title": props.get("title", ""),
-                "channel_id": props.get("channel_id", ""),
-                "message_ts": props.get("message_ts", ""),
-            })
+            media_list.append(
+                {
+                    "id": getattr(node, "element_id", None) or props.get("url", ""),
+                    "url": props.get("url", ""),
+                    "media_type": props.get("media_type", ""),
+                    "title": props.get("title", ""),
+                    "channel_id": props.get("channel_id", ""),
+                    "message_ts": props.get("message_ts", ""),
+                }
+            )
         return media_list
 
     async def get_decisions(self, channel_id: str, limit: int = 20) -> list[GraphEntity]:
         """Return entities of type 'Decision' visible in a channel."""
-        return await self.list_entities(
-            channel_id=channel_id, entity_type="Decision", limit=limit
-        )
+        return await self.list_entities(channel_id=channel_id, entity_type="Decision", limit=limit)
 
     async def list_person_entities_with_edges(
-        self, channel_id: str, limit: int = 100,
+        self,
+        channel_id: str,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Return Person entities with their edge types and connected entity names.
 
@@ -775,14 +777,18 @@ class Neo4jStore:
         for row in records:
             entity = self._entity_from_record(row["p"])
             edges = [e for e in row.get("edges", []) if e.get("type")]
-            persons.append({
-                "entity": entity,
-                "edges": edges,
-            })
+            persons.append(
+                {
+                    "entity": entity,
+                    "edges": edges,
+                }
+            )
         return persons
 
     async def list_technology_entities(
-        self, channel_id: str, limit: int = 100,
+        self,
+        channel_id: str,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Return Technology entities visible in a channel with USES edges."""
         query = """
@@ -800,14 +806,18 @@ class Neo4jStore:
         techs: list[dict[str, Any]] = []
         for row in records:
             entity = self._entity_from_record(row["t"])
-            techs.append({
-                "entity": entity,
-                "used_by": row.get("used_by", []),
-            })
+            techs.append(
+                {
+                    "entity": entity,
+                    "used_by": row.get("used_by", []),
+                }
+            )
         return techs
 
     async def list_project_entities(
-        self, channel_id: str, limit: int = 100,
+        self,
+        channel_id: str,
+        limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Return Project entities with BLOCKED_BY/DEPENDS_ON edges."""
         query = """
@@ -829,15 +839,19 @@ class Neo4jStore:
         for row in records:
             entity = self._entity_from_record(row["p"])
             deps = [d for d in row.get("deps", []) if d.get("type")]
-            projects.append({
-                "entity": entity,
-                "dependencies": deps,
-                "owners": row.get("owners", []),
-            })
+            projects.append(
+                {
+                    "entity": entity,
+                    "dependencies": deps,
+                    "owners": row.get("owners", []),
+                }
+            )
         return projects
 
     async def get_decisions_with_chains(
-        self, channel_id: str, limit: int = 50,
+        self,
+        channel_id: str,
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Return Decision entities with SUPERSEDES chains and DECIDED-by persons."""
         query = """
@@ -860,12 +874,14 @@ class Neo4jStore:
         decisions: list[dict[str, Any]] = []
         for row in records:
             entity = self._entity_from_record(row["d"])
-            decisions.append({
-                "entity": entity,
-                "decided_by": [n for n in row.get("decided_by", []) if n],
-                "supersedes": [n for n in row.get("supersedes", []) if n],
-                "superseded_by": [n for n in row.get("superseded_by", []) if n],
-            })
+            decisions.append(
+                {
+                    "entity": entity,
+                    "decided_by": [n for n in row.get("decided_by", []) if n],
+                    "supersedes": [n for n in row.get("supersedes", []) if n],
+                    "superseded_by": [n for n in row.get("superseded_by", []) if n],
+                }
+            )
         return decisions
 
     async def count_entities(self, channel_id: str | None = None) -> int:
@@ -942,6 +958,7 @@ class Neo4jStore:
         Returns count of pruned entities.
         """
         from datetime import timedelta
+
         cutoff = (datetime.now(tz=UTC) - timedelta(days=grace_period_days)).isoformat()
         async with self._driver.session() as session:
             result = await session.run(
@@ -954,9 +971,7 @@ class Neo4jStore:
             record = await result.single()
         return int(record["n"]) if record else 0
 
-    async def fuzzy_match_entity(
-        self, name: str, threshold: float = 0.8
-    ) -> list[GraphEntity]:
+    async def fuzzy_match_entity(self, name: str, threshold: float = 0.8) -> list[GraphEntity]:
         """Find entities whose name is similar to `name` using Jaro-Winkler distance.
 
         Internal method kept for backwards compatibility.  The protocol-level
@@ -1006,13 +1021,10 @@ class Neo4jStore:
             )
             records = await result.data()
         return [
-            {"name": r["name"], "type": r["type"], "aliases": list(r["aliases"])}
-            for r in records
+            {"name": r["name"], "type": r["type"], "aliases": list(r["aliases"])} for r in records
         ]
 
-    async def register_alias(
-        self, canonical: str, alias: str, entity_type: str
-    ) -> None:
+    async def register_alias(self, canonical: str, alias: str, entity_type: str) -> None:
         """Append alias to the aliases list of the named entity."""
         async with self._driver.session() as session:
             await session.run(
@@ -1033,9 +1045,7 @@ class Neo4jStore:
         import jellyfish  # lazy import — optional dependency
 
         async with self._driver.session() as session:
-            result = await session.run(
-                "MATCH (e:Entity) RETURN e.name AS name"
-            )
+            result = await session.run("MATCH (e:Entity) RETURN e.name AS name")
             records = await result.data()
         matches: list[tuple[str, float]] = []
         for r in records:
@@ -1062,15 +1072,12 @@ class Neo4jStore:
         """Return entity names that do not have a name_vector."""
         async with self._driver.session() as session:
             result = await session.run(
-                "MATCH (e:Entity) WHERE e.name_vector IS NULL "
-                "RETURN e.name AS name"
+                "MATCH (e:Entity) WHERE e.name_vector IS NULL RETURN e.name AS name"
             )
             records = await result.data()
         return [r["name"] for r in records if r.get("name")]
 
-    async def store_name_vector(
-        self, entity_name: str, vector: list[float]
-    ) -> None:
+    async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         """Persist a name-embedding vector on an entity node."""
         async with self._driver.session() as session:
             await session.run(
@@ -1148,9 +1155,7 @@ class Neo4jStore:
             return set()
         async with self._driver.session() as session:
             result = await session.run(
-                "UNWIND $names AS name "
-                "MATCH (e:Entity {name: name}) "
-                "RETURN e.name AS found",
+                "UNWIND $names AS name MATCH (e:Entity {name: name}) RETURN e.name AS found",
                 names=list(names),
             )
             found: set[str] = set()

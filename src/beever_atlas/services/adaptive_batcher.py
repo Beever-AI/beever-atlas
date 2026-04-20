@@ -21,9 +21,7 @@ AVG_TOKENS_PER_ENTITY = 144  # 20% headroom; re-tune from Phase 1.5 telemetry.
 EXPECTED_ENTITIES_PER_MESSAGE = 1  # empirical; most messages contribute ≤1 new entity.
 
 
-def estimate_message_output_tokens(
-    msg: dict[str, Any], max_facts_per_message: int = 2
-) -> int:
+def estimate_message_output_tokens(msg: dict[str, Any], max_facts_per_message: int = 2) -> int:
     """Estimate the output tokens a message will produce across both extractors.
 
     Used by ``token_aware_batches`` when an output-token budget is provided,
@@ -154,9 +152,7 @@ def token_aware_batches(
     current_output_tokens = 0
 
     def _group_output(g: list[dict[str, Any]]) -> int:
-        return sum(
-            estimate_message_output_tokens(m, max_facts_per_message) for m in g
-        )
+        return sum(estimate_message_output_tokens(m, max_facts_per_message) for m in g)
 
     for group in thread_groups:
         group_tokens = sum(estimate_message_tokens(m) for m in group)
@@ -164,9 +160,7 @@ def token_aware_batches(
 
         # If this single group exceeds either budget, it gets its own batch.
         oversized_input = group_tokens >= max_tokens
-        oversized_output = (
-            max_output_tokens is not None and group_output >= max_output_tokens
-        )
+        oversized_output = max_output_tokens is not None and group_output >= max_output_tokens
         if oversized_input or oversized_output:
             if current_batch:
                 batches.append(current_batch)
@@ -175,8 +169,7 @@ def token_aware_batches(
                 current_output_tokens = 0
             batches.append(group)
             logger.info(
-                "AdaptiveBatcher: oversized thread group (%d in, %d out, %d msgs) "
-                "in own batch",
+                "AdaptiveBatcher: oversized thread group (%d in, %d out, %d msgs) in own batch",
                 group_tokens,
                 group_output,
                 len(group),
@@ -218,15 +211,11 @@ def token_aware_batches(
         token_ests = [sum(estimate_message_tokens(m) for m in b) for b in batches]
         if max_output_tokens is not None:
             output_ests = [
-                sum(
-                    estimate_message_output_tokens(m, max_facts_per_message)
-                    for m in b
-                )
+                sum(estimate_message_output_tokens(m, max_facts_per_message) for m in b)
                 for b in batches
             ]
             logger.info(
-                "AdaptiveBatcher: %d messages → %d batches "
-                "(sizes=%s, in_tokens=%s, out_tokens=%s)",
+                "AdaptiveBatcher: %d messages → %d batches (sizes=%s, in_tokens=%s, out_tokens=%s)",
                 len(messages),
                 len(batches),
                 sizes,

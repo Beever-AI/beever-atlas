@@ -67,9 +67,7 @@ def main() -> None:
         "--channel-id",
         help="Override channel ID (default: extracted from filename)",
     )
-    parser.add_argument(
-        "--limit", type=int, default=0, help="Max messages to import (0 = all)"
-    )
+    parser.add_argument("--limit", type=int, default=0, help="Max messages to import (0 = all)")
     args = parser.parse_args()
 
     csv_path = Path(args.csv_path)
@@ -92,6 +90,7 @@ def main() -> None:
         from beever_atlas.agents.ingestion.csv_mapper import (
             infer_mapping_deterministic,
         )
+
         mapping_result = infer_mapping_deterministic(csv_path)
         mapping = mapping_result.mapping
         if mapping_result.needs_review:

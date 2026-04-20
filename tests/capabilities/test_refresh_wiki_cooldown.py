@@ -34,11 +34,12 @@ async def test_raises_cooldown_active_within_window():
     mock_stores = MagicMock()
     mock_stores.mongodb.get_last_job_by_kind = AsyncMock(return_value=last_job)
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
     ):
         with pytest.raises(CooldownActive) as exc_info:
             await refresh_wiki("mcp:alice", "ch-a")
@@ -59,15 +60,14 @@ async def test_no_cooldown_when_window_expired():
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         result = await refresh_wiki("mcp:alice", "ch-a")
 
@@ -91,15 +91,14 @@ async def test_no_cooldown_when_last_job_was_sync_not_wiki():
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         # Should NOT raise — the recent job is kind=sync, not wiki_refresh.
         result = await refresh_wiki("mcp:alice", "ch-a")
@@ -111,24 +110,21 @@ async def test_no_cooldown_when_last_job_was_sync_not_wiki():
 async def test_no_cooldown_when_last_job_still_running():
     """A still-running wiki job does not trigger cooldown — rate limiter
     upstream caps concurrency, and callers may legitimately poll."""
-    running = SimpleNamespace(
-        kind="wiki_refresh", status="running", completed_at=None
-    )
+    running = SimpleNamespace(kind="wiki_refresh", status="running", completed_at=None)
     mock_stores = MagicMock()
     mock_stores.mongodb.get_sync_status = AsyncMock(return_value=running)
     mock_stores.mongodb.create_sync_job = AsyncMock(return_value=SimpleNamespace(id="job-y"))
     mock_stores.weaviate = MagicMock()
     mock_stores.graph = MagicMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "beever_atlas.stores.get_stores", return_value=mock_stores
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache"
-    ), patch(
-        "asyncio.ensure_future"
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=mock_stores),
+        patch("beever_atlas.wiki.cache.WikiCache"),
+        patch("asyncio.ensure_future"),
     ):
         result = await refresh_wiki("mcp:alice", "ch-a")
 

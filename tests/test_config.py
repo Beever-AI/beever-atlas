@@ -1,7 +1,6 @@
 """Tests for config system and LiteLLM model routing."""
 
 
-
 class TestSettings:
     def test_config_loads_defaults(self):
         from beever_atlas.infra.config import Settings

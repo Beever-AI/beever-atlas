@@ -12,6 +12,7 @@ from beever_atlas.wiki.compiler import WikiCompiler
 def _make_compiler() -> WikiCompiler:
     """Return a WikiCompiler with a mocked LLM provider."""
     from unittest.mock import MagicMock
+
     provider = MagicMock()
     provider.get_model_string.return_value = "gemini-2.5-flash"
     with patch("beever_atlas.wiki.compiler.get_llm_provider", return_value=provider):

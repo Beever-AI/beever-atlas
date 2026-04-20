@@ -102,7 +102,7 @@ class EmbedderAgent(BaseAgent):
                         attempt += 1
                         if attempt > _MAX_RETRIES:
                             raise
-                        wait = (2 ** attempt) * (1 + random.uniform(-0.2, 0.2))
+                        wait = (2**attempt) * (1 + random.uniform(-0.2, 0.2))
                         logger.warning(
                             "EmbedderAgent: transient %s job_id=%s channel=%s batch=%s chunk=%d/%d retry_in=%.1fs attempt=%d/%d",
                             type(transient_err).__name__,
@@ -123,7 +123,7 @@ class EmbedderAgent(BaseAgent):
                         if attempt > _MAX_RETRIES:
                             response.raise_for_status()
                         # ±20% jitter to decorrelate concurrent batches
-                        wait = (2 ** attempt) * (1 + random.uniform(-0.2, 0.2))
+                        wait = (2**attempt) * (1 + random.uniform(-0.2, 0.2))
                         logger.warning(
                             "EmbedderAgent: retryable status=%d job_id=%s channel=%s batch=%s chunk=%d/%d retry_in=%.1fs attempt=%d/%d",
                             response.status_code,
@@ -163,6 +163,7 @@ class EmbedderAgent(BaseAgent):
     ) -> AsyncGenerator[Event, None]:
         """Embed all classified facts and write results to session state."""
         from beever_atlas.agents.callbacks.checkpoint_skip import should_skip_stage
+
         if should_skip_stage(ctx.session.state, "embedded_facts", self.name):
             yield Event(author=self.name, invocation_id=ctx.invocation_id)
             return

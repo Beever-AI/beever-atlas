@@ -89,9 +89,7 @@ def snapshot_counters(now: float | None = None) -> dict[str, Any]:
             "outcome": outcome,
             "count": count,
         }
-        for (principal, tool, outcome), count in sorted(
-            by_key.items(), key=lambda x: -x[1]
-        )
+        for (principal, tool, outcome), count in sorted(by_key.items(), key=lambda x: -x[1])
     ]
 
     by_tool_latency = {
@@ -173,9 +171,7 @@ def record_tool_call(
         # Record into the in-memory rolling buffer powering the operator view.
         now = time.time()
         with _buffer_lock:
-            _event_buffer.append(
-                (now, principal_hash, tool_name, outcome, float(duration_ms))
-            )
+            _event_buffer.append((now, principal_hash, tool_name, outcome, float(duration_ms)))
             if len(_event_buffer) > _MAX_BUFFER_SIZE:
                 # Drop oldest ~5% to amortise the cost and prevent unbounded
                 # growth under a runaway client.
@@ -183,9 +179,7 @@ def record_tool_call(
                 del _event_buffer[:drop_n]
     except Exception:
         # Best-effort — never let observability crash the tool.
-        logger.debug(
-            "mcp_metrics: failed to emit record for tool=%s", tool_name, exc_info=True
-        )
+        logger.debug("mcp_metrics: failed to emit record for tool=%s", tool_name, exc_info=True)
 
 
 __all__ = ["record_tool_call", "snapshot_counters", "reset_counters"]

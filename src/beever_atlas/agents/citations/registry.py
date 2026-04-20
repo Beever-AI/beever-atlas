@@ -29,9 +29,7 @@ _EXCERPT_CAP = 400
 
 # The current-turn registry. Agents/tools read via `current_registry()`.
 # Set at the top of _run_agent_stream and reset in its finally block.
-_current: ContextVar["SourceRegistry | None"] = ContextVar(
-    "citation_source_registry", default=None
-)
+_current: ContextVar["SourceRegistry | None"] = ContextVar("citation_source_registry", default=None)
 
 
 def current_registry() -> "SourceRegistry | None":
@@ -118,9 +116,7 @@ class SourceRegistry:
 
     # ---- marker assignment --------------------------------------------
 
-    def mark_referenced(
-        self, source_id: str, marker: int, inline: bool = False
-    ) -> bool:
+    def mark_referenced(self, source_id: str, marker: int, inline: bool = False) -> bool:
         """Record a [N] marker → source mapping. Return True if source exists.
 
         If the caller requests `inline=True` on a source without attachments,
@@ -141,9 +137,7 @@ class SourceRegistry:
 
         existing = self._markers.get(source_id)
         if existing is None:
-            self._markers[source_id] = _MarkerRecord(
-                marker=marker, inline=effective_inline
-            )
+            self._markers[source_id] = _MarkerRecord(marker=marker, inline=effective_inline)
             self._order.append(source_id)
         else:
             # Inline sticks once set true.
@@ -176,9 +170,7 @@ class SourceRegistry:
             )
 
         items = _build_legacy_items(referenced_sources, refs)
-        return CitationEnvelope(
-            items=items, sources=referenced_sources, refs=refs
-        )
+        return CitationEnvelope(items=items, sources=referenced_sources, refs=refs)
 
     # ---- resolver injection -------------------------------------------
 
@@ -193,9 +185,7 @@ class SourceRegistry:
         try:
             return resolver.resolve(source)
         except Exception:
-            logger.warning(
-                "permalink resolver failed for source=%s", source.id, exc_info=True
-            )
+            logger.warning("permalink resolver failed for source=%s", source.id, exc_info=True)
             return None
 
     # ---- introspection (observability + API) --------------------------
@@ -274,9 +264,7 @@ def _is_higher(new: Any, old: Any) -> bool:
         return False
 
 
-def _build_legacy_items(
-    sources: list[Source], refs: list[CitationRef]
-) -> list[dict[str, Any]]:
+def _build_legacy_items(sources: list[Source], refs: list[CitationRef]) -> list[dict[str, Any]]:
     """Emit the legacy flat `items` shape from structured sources.
 
     Shape matches what `_extract_citations_from_text` produces today so

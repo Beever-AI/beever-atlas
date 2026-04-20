@@ -33,6 +33,7 @@ from typing import Any
 
 # Load .env before any other imports
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 
@@ -52,6 +53,7 @@ async def _run_batch_api_dry_run(args: Any, settings: Any) -> None:
     else:
         print(f"\n🔄 Fetching messages from bridge for channel {args.channel_id}...")
         from beever_atlas.adapters.bridge import ChatBridgeAdapter
+
         adapter = ChatBridgeAdapter(bridge_url=settings.bridge_url, api_key=settings.bridge_api_key)
         messages = await adapter.fetch_history(args.channel_id, limit=500)
         raw_messages = [vars(m) for m in messages]
@@ -62,15 +64,16 @@ async def _run_batch_api_dry_run(args: Any, settings: Any) -> None:
         raw_messages = raw_messages[: args.limit]
 
     from beever_atlas.services.adaptive_batcher import token_aware_batches
+
     batches = token_aware_batches(
         raw_messages,
         max_tokens=settings.batch_max_prompt_tokens,
         time_window_seconds=settings.batch_time_window_seconds,
     )
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  BATCH API DRY-RUN ESTIMATE")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Total messages:  {len(raw_messages)}")
     print(f"  Token budget:    {settings.batch_max_prompt_tokens} tokens/batch")
     print(f"  Total batches:   {len(batches)}  (adaptive, token-aware)")
@@ -106,9 +109,9 @@ async def _run_batch_api_dry_run(args: Any, settings: Any) -> None:
         print(f"    Total prompt tokens:  ~{fact_prompt_tokens + entity_prompt_tokens}")
         print()
 
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("  TOTALS")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Message tokens (est):   {total_tokens}")
     print(f"  Batch API requests:     {len(batches) * 2}")
     print("  (Each request = 1 Gemini Batch API job submission)")
@@ -120,12 +123,18 @@ async def main() -> None:
 
     parser = argparse.ArgumentParser(description="Dry-run extraction pipeline")
     parser.add_argument("channel_id", help="Slack channel ID")
-    parser.add_argument("--cached", action="store_true", help="Use cached messages (skip bridge fetch)")
+    parser.add_argument(
+        "--cached", action="store_true", help="Use cached messages (skip bridge fetch)"
+    )
     parser.add_argument("--facts-only", action="store_true", help="Only run fact extraction")
     parser.add_argument("--entities-only", action="store_true", help="Only run entity extraction")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of messages")
     parser.add_argument("--batch-size", type=int, default=10, help="Messages per batch")
-    parser.add_argument("--batch-api", action="store_true", help="Simulate Batch API path: show token estimates and request counts without running LLM calls")
+    parser.add_argument(
+        "--batch-api",
+        action="store_true",
+        help="Simulate Batch API path: show token estimates and request counts without running LLM calls",
+    )
     args = parser.parse_args()
 
     from google.adk.runners import Runner
@@ -154,6 +163,7 @@ async def main() -> None:
     else:
         print(f"\n🔄 Fetching messages from bridge for channel {args.channel_id}...")
         from beever_atlas.adapters.bridge import ChatBridgeAdapter
+
         adapter = ChatBridgeAdapter(bridge_url=settings.bridge_url, api_key=settings.bridge_api_key)
         messages = await adapter.fetch_history(args.channel_id, limit=500)
         print(f"   Fetched {len(messages)} top-level messages")
@@ -196,22 +206,30 @@ async def main() -> None:
 
     # Run preprocessor
     import uuid
+
     prep_session = await session_service.create_session(
-        app_name="dry_run", user_id="dev", session_id=str(uuid.uuid4()),
+        app_name="dry_run",
+        user_id="dev",
+        session_id=str(uuid.uuid4()),
         state={"messages": raw_messages, "channel_id": args.channel_id},
     )
     prep_runner = Runner(agent=preprocessor, app_name="dry_run", session_service=session_service)
     async for _ in prep_runner.run_async(
-        user_id="dev", session_id=prep_session.id,
+        user_id="dev",
+        session_id=prep_session.id,
         new_message=types.Content(role="user", parts=[types.Part(text="preprocess")]),
     ):
         pass
-    final_prep = await session_service.get_session(app_name="dry_run", user_id="dev", session_id=prep_session.id)
+    final_prep = await session_service.get_session(
+        app_name="dry_run", user_id="dev", session_id=prep_session.id
+    )
     preprocessed = final_prep.state.get("preprocessed_messages") or [] if final_prep else []
     print(f"✅ Preprocessor: {len(preprocessed)} messages retained\n")
 
     # --- 3. Run extraction in batches ---
-    batches = [preprocessed[i : i + args.batch_size] for i in range(0, len(preprocessed), args.batch_size)]
+    batches = [
+        preprocessed[i : i + args.batch_size] for i in range(0, len(preprocessed), args.batch_size)
+    ]
 
     all_facts: list[dict[str, Any]] = []
     all_entities: list[dict[str, Any]] = []
@@ -219,9 +237,9 @@ async def main() -> None:
 
     for batch_num, batch in enumerate(batches):
         batch_label = f"Batch {batch_num + 1}/{len(batches)}"
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  {batch_label} ({len(batch)} messages)")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Show message previews
         for msg in batch:
@@ -233,9 +251,12 @@ async def main() -> None:
         if not args.entities_only:
             # --- Fact extraction ---
             from beever_atlas.agents.ingestion.fact_extractor import create_fact_extractor
+
             fact_agent = create_fact_extractor()
             fact_session = await session_service.create_session(
-                app_name="dry_run", user_id="dev", session_id=str(uuid.uuid4()),
+                app_name="dry_run",
+                user_id="dev",
+                session_id=str(uuid.uuid4()),
                 state={
                     "preprocessed_messages": batch,
                     "channel_id": args.channel_id,
@@ -243,15 +264,20 @@ async def main() -> None:
                     "max_facts_per_message": settings.max_facts_per_message,
                 },
             )
-            fact_runner = Runner(agent=fact_agent, app_name="dry_run", session_service=session_service)
+            fact_runner = Runner(
+                agent=fact_agent, app_name="dry_run", session_service=session_service
+            )
             t0 = time.monotonic()
             async for _ in fact_runner.run_async(
-                user_id="dev", session_id=fact_session.id,
+                user_id="dev",
+                session_id=fact_session.id,
                 new_message=types.Content(role="user", parts=[types.Part(text="extract facts")]),
             ):
                 pass
             elapsed = time.monotonic() - t0
-            final_fact = await session_service.get_session(app_name="dry_run", user_id="dev", session_id=fact_session.id)
+            final_fact = await session_service.get_session(
+                app_name="dry_run", user_id="dev", session_id=fact_session.id
+            )
             raw_facts = final_fact.state.get("extracted_facts") or {} if final_fact else {}
             facts = raw_facts.get("facts") if isinstance(raw_facts, dict) else raw_facts
             if not isinstance(facts, list):
@@ -270,7 +296,11 @@ async def main() -> None:
                     pm_id = pm.get("ts") or pm.get("message_id", "")
                     if pm_id == src_msg_id and pm.get("source_media_type"):
                         media_type = pm["source_media_type"]
-                        media_badge = f" 🖼️[from {media_type}]" if media_type == "image" else f" 📄[from {media_type}]"
+                        media_badge = (
+                            f" 🖼️[from {media_type}]"
+                            if media_type == "image"
+                            else f" 📄[from {media_type}]"
+                        )
                         break
                 print(f"    {emoji} [{score:.2f}|{imp}]{media_badge} {text}")
             all_facts.extend(facts)
@@ -279,9 +309,12 @@ async def main() -> None:
         if not args.facts_only:
             # --- Entity extraction ---
             from beever_atlas.agents.ingestion.entity_extractor import create_entity_extractor
+
             entity_agent = create_entity_extractor()
             entity_session = await session_service.create_session(
-                app_name="dry_run", user_id="dev", session_id=str(uuid.uuid4()),
+                app_name="dry_run",
+                user_id="dev",
+                session_id=str(uuid.uuid4()),
                 state={
                     "preprocessed_messages": batch,
                     "channel_id": args.channel_id,
@@ -289,24 +322,35 @@ async def main() -> None:
                     "known_entities": [],
                 },
             )
-            entity_runner = Runner(agent=entity_agent, app_name="dry_run", session_service=session_service)
+            entity_runner = Runner(
+                agent=entity_agent, app_name="dry_run", session_service=session_service
+            )
             t0 = time.monotonic()
             async for _ in entity_runner.run_async(
-                user_id="dev", session_id=entity_session.id,
+                user_id="dev",
+                session_id=entity_session.id,
                 new_message=types.Content(role="user", parts=[types.Part(text="extract entities")]),
             ):
                 pass
             elapsed = time.monotonic() - t0
-            final_entity = await session_service.get_session(app_name="dry_run", user_id="dev", session_id=entity_session.id)
-            raw_entities = final_entity.state.get("extracted_entities") or {} if final_entity else {}
+            final_entity = await session_service.get_session(
+                app_name="dry_run", user_id="dev", session_id=entity_session.id
+            )
+            raw_entities = (
+                final_entity.state.get("extracted_entities") or {} if final_entity else {}
+            )
             entities = raw_entities.get("entities") if isinstance(raw_entities, dict) else []
-            relationships = raw_entities.get("relationships") if isinstance(raw_entities, dict) else []
+            relationships = (
+                raw_entities.get("relationships") if isinstance(raw_entities, dict) else []
+            )
             if not isinstance(entities, list):
                 entities = []
             if not isinstance(relationships, list):
                 relationships = []
 
-            print(f"  🔗 Entities: {len(entities)} | Relationships: {len(relationships)} ({elapsed:.1f}s)")
+            print(
+                f"  🔗 Entities: {len(entities)} | Relationships: {len(relationships)} ({elapsed:.1f}s)"
+            )
             for e in entities:
                 etype = e.get("type", "?")
                 name = e.get("name", "?")
@@ -324,9 +368,9 @@ async def main() -> None:
             print()
 
     # --- 4. Summary ---
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Messages processed: {len(preprocessed)}")
     print(f"  Facts extracted:    {len(all_facts)}")
     print(f"  Entities found:     {len(all_entities)}")
@@ -341,11 +385,17 @@ async def main() -> None:
 
     # Save results for inspection
     results_file = cache_dir / f"dry-run-{args.channel_id}.json"
-    results_file.write_text(json.dumps({
-        "facts": all_facts,
-        "entities": all_entities,
-        "relationships": all_relationships,
-    }, default=str, indent=2))
+    results_file.write_text(
+        json.dumps(
+            {
+                "facts": all_facts,
+                "entities": all_entities,
+                "relationships": all_relationships,
+            },
+            default=str,
+            indent=2,
+        )
+    )
     print(f"  📄 Full results saved to {results_file}")
     print("  💡 Re-run with --cached to skip bridge fetch\n")
 

@@ -2,6 +2,7 @@
 
 import logging
 import warnings
+
 warnings.filterwarnings("ignore", category=ResourceWarning, module=r"neo4j\..*")
 warnings.filterwarnings("ignore", category=ResourceWarning, module=r"aiohttp\..*")
 from contextlib import asynccontextmanager
@@ -117,9 +118,7 @@ async def _migrate_env_connection(stores: StoreClients, settings) -> None:
             "Env-to-DB migration: created source='env' platform connection id=%s", conn.id
         )
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "Env-to-DB migration failed (non-fatal): %s", exc
-        )
+        logging.getLogger(__name__).warning("Env-to-DB migration failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +158,7 @@ async def lifespan(app: FastAPI):
 
     # Start the sync scheduler
     from beever_atlas.services.scheduler import SyncScheduler, init_scheduler
+
     scheduler = SyncScheduler(settings.mongodb_uri)
     try:
         await scheduler.startup()
@@ -168,6 +168,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize outbound MCP registry — non-blocking, skips unreachable servers
     from beever_atlas.agents.mcp_registry import init_mcp_registry
+
     try:
         await init_mcp_registry()
     except Exception as exc:
@@ -185,8 +186,8 @@ async def lifespan(app: FastAPI):
     finally:
         try:
             await scheduler.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).debug("Scheduler shutdown failed: %s", exc, exc_info=False)
         await shutdown_sync_runner()
         await close_adapter()
         await stores.shutdown()
@@ -229,9 +230,7 @@ app.include_router(ask_public_router)
 app.include_router(channels_router, dependencies=_auth)
 app.include_router(connections_router, dependencies=_auth)
 # Internal bot→backend routes: bridge key only, never exposed to end users.
-app.include_router(
-    connections_internal_router, dependencies=[Depends(require_bridge)]
-)
+app.include_router(connections_internal_router, dependencies=[Depends(require_bridge)])
 app.include_router(imports_router, dependencies=_auth)
 app.include_router(sync_router, dependencies=_auth)
 app.include_router(memories_router, dependencies=_auth)
@@ -259,9 +258,7 @@ app.include_router(media_router, dependencies=_auth)
 # attached to ASGI scope.state for tool handlers to consume.
 if _mcp_asgi is not None:
     app.mount("/mcp", _mcp_asgi)
-    logging.getLogger(__name__).info(
-        "MCP endpoint mounted at /mcp with auth middleware"
-    )
+    logging.getLogger(__name__).info("MCP endpoint mounted at /mcp with auth middleware")
 
 register_health_checks()
 

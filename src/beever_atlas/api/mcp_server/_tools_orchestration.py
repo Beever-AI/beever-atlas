@@ -37,17 +37,29 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             "when no active job exists, or after a previous job has completed or failed.\n\n"
             "sync_type: 'incremental' (default — fetches only new messages since last "
             "sync), 'full' (re-fetches all messages; expensive), or 'auto' (server "
-            "chooses based on sync history)."
+            "chooses based on sync history).\n\n"
+            "connection_id: OPTIONAL but STRONGLY RECOMMENDED when the workspace has "
+            "multiple same-platform connections (e.g. two Slack workspaces). Without "
+            "it, the server falls back to matching the channel against each "
+            "connection's selected_channels pick-list; if the channel hasn't been "
+            "added to any pick-list yet, the sync may route to the wrong connection "
+            "and fail with channel_not_found. Prefer to pass the connection_id you "
+            "got from list_channels — it disambiguates the target connection "
+            "deterministically."
         ),
     )
     async def trigger_sync(
-        channel_id: Annotated[
-            str, "The channel id to sync (from list_channels)"
-        ],
+        channel_id: Annotated[str, "The channel id to sync (from list_channels)"],
         ctx: Context,
         sync_type: Annotated[
             str, "Sync mode: 'incremental' (default), 'full', or 'auto'"
         ] = "incremental",
+        connection_id: Annotated[
+            str | None,
+            "Optional: the connection the channel belongs to (from list_connections / "
+            "list_channels). Pass it when the user has multiple same-platform "
+            "connections to avoid mis-routing.",
+        ] = None,
     ) -> dict:
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -56,6 +68,10 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         err = _validate_id(channel_id, "channel_id")
         if err:
             return err
+        if connection_id is not None:
+            err = _validate_id(connection_id, "connection_id")
+            if err:
+                return err
 
         try:
             from beever_atlas.capabilities import sync as sync_cap
@@ -66,7 +82,10 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             )
 
             result = await sync_cap.trigger_sync(
-                principal_id, channel_id, sync_type=sync_type
+                principal_id,
+                channel_id,
+                sync_type=sync_type,
+                connection_id=connection_id,
             )
             return result
         except ChannelAccessDenied:
@@ -128,9 +147,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                 ServiceUnavailable,
             )
 
-            result = await wiki_cap.refresh_wiki(
-                principal_id, channel_id, page_types=page_types
-            )
+            result = await wiki_cap.refresh_wiki(principal_id, channel_id, page_types=page_types)
             return result
         except ChannelAccessDenied:
             return {"error": "channel_access_denied", "channel_id": channel_id}
@@ -166,9 +183,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         ),
     )
     async def get_job_status(
-        job_id: Annotated[
-            str, "The job id returned by trigger_sync or refresh_wiki"
-        ],
+        job_id: Annotated[str, "The job id returned by trigger_sync or refresh_wiki"],
         ctx: Context,
     ) -> dict:
         principal_id = _get_principal_id(ctx)

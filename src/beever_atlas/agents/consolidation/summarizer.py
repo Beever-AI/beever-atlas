@@ -1,4 +1,5 @@
 """Consolidation summarizer agents — generate topic and channel summaries."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

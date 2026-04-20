@@ -46,7 +46,7 @@ def _prompt_names(mcp) -> frozenset[str]:
     names: set[str] = set()
     for key in mcp._local_provider._components:
         if key.startswith("prompt:"):
-            raw = key[len("prompt:"):]  # e.g. "summarize_channel@"
+            raw = key[len("prompt:") :]  # e.g. "summarize_channel@"
             name = raw.rsplit("@", 1)[0]
             names.add(name)
     return frozenset(names)
@@ -82,13 +82,15 @@ def _patch_principal(principal_id: str | None = "mcp:testhash"):
 # 4.9a: resources/list declares all 5 URI templates
 # ---------------------------------------------------------------------------
 
-EXPECTED_RESOURCE_URIS = frozenset({
-    "atlas://connection/{connection_id}",
-    "atlas://connection/{connection_id}/channels",
-    "atlas://channel/{channel_id}/wiki",
-    "atlas://channel/{channel_id}/wiki/page/{page_id}",
-    "atlas://job/{job_id}",
-})
+EXPECTED_RESOURCE_URIS = frozenset(
+    {
+        "atlas://connection/{connection_id}",
+        "atlas://connection/{connection_id}/channels",
+        "atlas://channel/{channel_id}/wiki",
+        "atlas://channel/{channel_id}/wiki/page/{page_id}",
+        "atlas://job/{job_id}",
+    }
+)
 
 
 def test_resources_list_returns_all_five_uris():
@@ -105,11 +107,13 @@ def test_resources_list_returns_all_five_uris():
 # 4.9b: prompts/list returns the 3 prompt names
 # ---------------------------------------------------------------------------
 
-EXPECTED_PROMPT_NAMES = frozenset({
-    "summarize_channel",
-    "investigate_decision",
-    "onboard_new_channel",
-})
+EXPECTED_PROMPT_NAMES = frozenset(
+    {
+        "summarize_channel",
+        "investigate_decision",
+        "onboard_new_channel",
+    }
+)
 
 
 def test_prompts_list_returns_three_names():
@@ -153,9 +157,12 @@ async def test_wiki_index_resource_returns_structured_error_on_access_denied():
     mcp = build_mcp()
     fn = _get_resource_fn(mcp, "atlas://channel/{channel_id}/wiki")
 
-    with _patch_principal("mcp:testhash"), patch(
-        "beever_atlas.capabilities.wiki.get_topic_overview",
-        new=AsyncMock(side_effect=ChannelAccessDenied("ch-denied")),
+    with (
+        _patch_principal("mcp:testhash"),
+        patch(
+            "beever_atlas.capabilities.wiki.get_topic_overview",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-denied")),
+        ),
     ):
         result = await fn(channel_id="ch-denied")
 
@@ -171,9 +178,12 @@ async def test_wiki_page_resource_returns_structured_error_on_access_denied():
     mcp = build_mcp()
     fn = _get_resource_fn(mcp, "atlas://channel/{channel_id}/wiki/page/{page_id}")
 
-    with _patch_principal("mcp:testhash"), patch(
-        "beever_atlas.capabilities.wiki.get_wiki_page",
-        new=AsyncMock(side_effect=ChannelAccessDenied("ch-denied")),
+    with (
+        _patch_principal("mcp:testhash"),
+        patch(
+            "beever_atlas.capabilities.wiki.get_wiki_page",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-denied")),
+        ),
     ):
         result = await fn(channel_id="ch-denied", page_id="overview")
 
@@ -244,9 +254,12 @@ async def test_job_resource_returns_job_not_found():
     mcp = build_mcp()
     fn = _get_resource_fn(mcp, "atlas://job/{job_id}")
 
-    with _patch_principal("mcp:testhash"), patch(
-        "beever_atlas.capabilities.jobs.get_job_status",
-        new=AsyncMock(side_effect=JobNotFound("job-xyz")),
+    with (
+        _patch_principal("mcp:testhash"),
+        patch(
+            "beever_atlas.capabilities.jobs.get_job_status",
+            new=AsyncMock(side_effect=JobNotFound("job-xyz")),
+        ),
     ):
         result = await fn(job_id="job-xyz")
 
@@ -265,9 +278,12 @@ async def test_connection_resource_returns_not_found_for_unowned():
     mcp = build_mcp()
     fn = _get_resource_fn(mcp, "atlas://connection/{connection_id}")
 
-    with _patch_principal("mcp:testhash"), patch(
-        "beever_atlas.capabilities.connections.list_connections",
-        new=AsyncMock(return_value=[]),  # no connections visible → not found
+    with (
+        _patch_principal("mcp:testhash"),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=[]),  # no connections visible → not found
+        ),
     ):
         result = await fn(connection_id="conn-other")
 

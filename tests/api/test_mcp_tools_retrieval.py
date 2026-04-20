@@ -50,13 +50,24 @@ async def test_ask_channel_returns_structured_answer_from_runner():
         "answer": "Alice owns billing.",
         "citations": [{"type": "channel_fact", "number": "1", "author": "@alice"}],
         "follow_ups": [],
-        "metadata": {"session_id": "mcp:testhash", "mode": "deep", "duration_ms": 42, "tool_calls": []},
+        "metadata": {
+            "session_id": "mcp:testhash",
+            "mode": "deep",
+            "duration_ms": 42,
+            "tool_calls": [],
+        },
     }
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(return_value=None)), \
-         patch("beever_atlas.api.mcp_server._ask_runner.run_ask_channel",
-               new=AsyncMock(return_value=fake_answer)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "beever_atlas.api.mcp_server._ask_runner.run_ask_channel",
+            new=AsyncMock(return_value=fake_answer),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
         result = await fn(channel_id="ch-a", question="Who owns the billing module?", ctx=_ctx())
@@ -72,11 +83,17 @@ async def test_ask_channel_timeout_returns_answer_timeout():
 
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(return_value=None)), \
-         patch("beever_atlas.api.mcp_server._ask_runner.run_ask_channel",
-               new=AsyncMock(side_effect=_asyncio.TimeoutError())):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "beever_atlas.api.mcp_server._ask_runner.run_ask_channel",
+            new=AsyncMock(side_effect=_asyncio.TimeoutError()),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
         result = await fn(channel_id="ch-a", question="Long question", ctx=_ctx())
@@ -88,14 +105,16 @@ async def test_ask_channel_timeout_returns_answer_timeout():
 async def test_ask_channel_invalid_mode_returns_invalid_parameter():
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(return_value=None)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
-        result = await fn(
-            channel_id="ch-a", question="anything", mode="reckless", ctx=_ctx()
-        )
+        result = await fn(channel_id="ch-a", question="anything", mode="reckless", ctx=_ctx())
 
     assert result["error"] == "invalid_parameter"
     assert result["parameter"] == "mode"
@@ -106,9 +125,13 @@ async def test_ask_channel_rejects_oversized_question():
     """Length cap prevents cost/availability abuse via huge prompts."""
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(return_value=None)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
         result = await fn(
@@ -125,9 +148,13 @@ async def test_ask_channel_rejects_oversized_question():
 async def test_ask_channel_rejects_empty_question():
     from beever_atlas.api.mcp_server import build_mcp
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(return_value=None)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
         result = await fn(channel_id="ch-a", question="", ctx=_ctx())
@@ -182,21 +209,27 @@ async def test_ask_channel_accepts_same_principal_session_id():
 
     # `get_agent_for_mode`, `create_runner`, `create_session` are imported
     # lazily inside run_ask_channel — patch them at their source modules.
-    with patch(
-        "beever_atlas.agents.query.qa_agent.get_agent_for_mode",
-        return_value=fake_agent,
-    ), patch(
-        "beever_atlas.agents.runner.create_runner",
-        return_value=fake_runner,
-    ), patch(
-        "beever_atlas.agents.runner.create_session",
-        new=AsyncMock(return_value=fake_session),
-    ), patch(
-        "beever_atlas.agents.tools.orchestration_tools.bind_principal",
-        return_value="tok",
-    ), patch(
-        "beever_atlas.agents.tools.orchestration_tools.reset_principal",
-        return_value=None,
+    with (
+        patch(
+            "beever_atlas.agents.query.qa_agent.get_agent_for_mode",
+            return_value=fake_agent,
+        ),
+        patch(
+            "beever_atlas.agents.runner.create_runner",
+            return_value=fake_runner,
+        ),
+        patch(
+            "beever_atlas.agents.runner.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
+        patch(
+            "beever_atlas.agents.tools.orchestration_tools.bind_principal",
+            return_value="tok",
+        ),
+        patch(
+            "beever_atlas.agents.tools.orchestration_tools.reset_principal",
+            return_value=None,
+        ),
     ):
         result = await runner_mod.run_ask_channel(
             principal_id="alice-hash",
@@ -218,9 +251,13 @@ async def test_ask_channel_access_denied_returns_structured_error():
     from beever_atlas.api.mcp_server import build_mcp
     from fastapi import HTTPException
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.infra.channel_access.assert_channel_access",
-               new=AsyncMock(side_effect=HTTPException(status_code=403))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403)),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "ask_channel")
         result = await fn(channel_id="ch-x", question="anything", ctx=_ctx())
@@ -265,13 +302,23 @@ async def test_ask_channel_invalid_channel_id():
 async def test_search_channel_facts_returns_dict_from_capability():
     from beever_atlas.api.mcp_server import build_mcp
 
-    fake_facts = [{"text": "Billing is owned by Alice", "author": "alice",
-                   "timestamp": "2024-01-01", "permalink": "https://example.com/1",
-                   "channel_id": "ch-a"}]
+    fake_facts = [
+        {
+            "text": "Billing is owned by Alice",
+            "author": "alice",
+            "timestamp": "2024-01-01",
+            "permalink": "https://example.com/1",
+            "channel_id": "ch-a",
+        }
+    ]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.search_channel_facts",
-               new=AsyncMock(return_value=fake_facts)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(return_value=fake_facts),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_channel_facts")
         result = await fn(channel_id="ch-a", query="billing", ctx=_ctx())
@@ -284,9 +331,13 @@ async def test_search_channel_facts_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.search_channel_facts",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_channel_facts")
         result = await fn(channel_id="ch-x", query="billing", ctx=_ctx())
@@ -304,12 +355,20 @@ async def test_search_channel_facts_access_denied():
 async def test_get_wiki_page_returns_dict_from_capability():
     from beever_atlas.api.mcp_server import build_mcp
 
-    fake_page = {"page_type": "overview", "channel_id": "ch-a",
-                 "content": "This is the overview.", "summary": "Overview summary", "text": "Overview summary"}
+    fake_page = {
+        "page_type": "overview",
+        "channel_id": "ch-a",
+        "content": "This is the overview.",
+        "summary": "Overview summary",
+        "text": "Overview summary",
+    }
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.wiki.get_wiki_page",
-               new=AsyncMock(return_value=fake_page)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.wiki.get_wiki_page", new=AsyncMock(return_value=fake_page)
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_wiki_page")
         result = await fn(channel_id="ch-a", ctx=_ctx())
@@ -323,9 +382,13 @@ async def test_get_wiki_page_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.wiki.get_wiki_page",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.wiki.get_wiki_page",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_wiki_page")
         result = await fn(channel_id="ch-x", ctx=_ctx())
@@ -345,9 +408,13 @@ async def test_get_recent_activity_returns_dict():
 
     fake_activity = [{"text": "Meeting notes", "author": "bob", "timestamp": "2024-01-15"}]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.get_recent_activity",
-               new=AsyncMock(return_value=fake_activity)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.get_recent_activity",
+            new=AsyncMock(return_value=fake_activity),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_recent_activity")
         result = await fn(channel_id="ch-a", ctx=_ctx())
@@ -360,9 +427,13 @@ async def test_get_recent_activity_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.get_recent_activity",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.get_recent_activity",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_recent_activity")
         result = await fn(channel_id="ch-x", ctx=_ctx())
@@ -381,9 +452,13 @@ async def test_search_media_references_returns_dict():
 
     fake_media = [{"text": "See attached diagram", "media_urls": ["https://img.example.com/a.png"]}]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.search_media_references",
-               new=AsyncMock(return_value=fake_media)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_media_references",
+            new=AsyncMock(return_value=fake_media),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_media_references")
         result = await fn(channel_id="ch-a", query="diagram", ctx=_ctx())
@@ -396,9 +471,13 @@ async def test_search_media_references_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.memory.search_media_references",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_media_references",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_media_references")
         result = await fn(channel_id="ch-x", query="diagram", ctx=_ctx())

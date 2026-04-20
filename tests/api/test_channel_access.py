@@ -298,6 +298,80 @@ async def test_bare_mcp_string_principal_detected_by_prefix(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# RES-232: MCP must reach dashboard-created connections that are explicitly
+# selected (channel in selected_channels) AND owned by a user principal.
+# Before the fix, the `all_legacy` branch excluded user-owned rows and MCP
+# got 403 on channels the user had just added to `selected_channels`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_principal_admitted_on_user_owned_selected_channel_single_tenant(monkeypatch):
+    """Reproduces the exact bug: user creates "EXAMPLE" Slack connection via
+    the dashboard and adds channel ``C1`` to ``selected_channels``. The
+    connection is stamped ``owner_principal_id = "user:<hash>"``. MCP tool
+    then calls a channel-scoped op on ``C1`` — must NOT raise 403.
+    """
+    mcp = Principal("mcp:abc123", kind="mcp")
+    _install_fake_stores(
+        monkeypatch,
+        [_conn(connection_id="c1", selected=["C1"], owner="user:dashboard-user")],
+    )
+    _force_settings(monkeypatch, beever_single_tenant=True)
+    await channel_access_mod.assert_channel_access(mcp, "C1")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_mcp_principal_denied_on_user_owned_selected_channel_multi_tenant(monkeypatch):
+    """Multi-tenant boundary unchanged: MCP without explicit ownership stays 403."""
+    from fastapi import HTTPException
+
+    mcp = Principal("mcp:abc123", kind="mcp")
+    _install_fake_stores(
+        monkeypatch,
+        [_conn(connection_id="c1", selected=["C1"], owner="user:dashboard-user")],
+    )
+    _force_settings(monkeypatch, beever_single_tenant=False)
+    with pytest.raises(HTTPException) as exc:
+        await channel_access_mod.assert_channel_access(mcp, "C1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_user_principal_blocked_from_other_user_selected_channel_single_tenant(monkeypatch):
+    """Regression guard: user-A must NOT inherit user-B's rows even in
+    single-tenant mode. The MCP fallback widens MCP's scope only.
+    """
+    from fastapi import HTTPException
+
+    user_a = Principal("user:aaaa", kind="user")
+    _install_fake_stores(
+        monkeypatch,
+        [_conn(connection_id="c1", selected=["C1"], owner="user:bbbb")],
+    )
+    _force_settings(monkeypatch, beever_single_tenant=True)
+    with pytest.raises(HTTPException) as exc:
+        await channel_access_mod.assert_channel_access(user_a, "C1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bridge_principal_blocked_on_user_owned_channel_single_tenant(monkeypatch):
+    """Regression guard: bridge principals never inherit even with single_tenant=true."""
+    from fastapi import HTTPException
+
+    bridge = Principal("bridge", kind="bridge")
+    _install_fake_stores(
+        monkeypatch,
+        [_conn(connection_id="c1", selected=["C1"], owner="user:dashboard-user")],
+    )
+    _force_settings(monkeypatch, beever_single_tenant=True)
+    with pytest.raises(HTTPException) as exc:
+        await channel_access_mod.assert_channel_access(bridge, "C1")
+    assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # Integration: bridge key on DELETE /api/channels/{id}/data
 # ---------------------------------------------------------------------------
 
@@ -327,6 +401,7 @@ def test_bridge_key_delete_blocked_by_guard_when_flag_on(monkeypatch):
 
     # Disable the conftest fake-user override — we want the real dependency.
     from beever_atlas.infra.auth import require_user
+
     app.dependency_overrides.pop(require_user, None)
 
     _patch_auth_settings(monkeypatch, allow_bridge_as_user=True)

@@ -23,6 +23,16 @@ updates:
       day: "monday"
     open-pull-requests-limit: 10
     labels: ["dependencies", "bot"]
+    # Group chat SDK family so version churn in the Vercel `chat` + adapter
+    # packages lands in a single reviewable PR rather than 6+ separate ones.
+    # Exact-version pins in package.json (security finding H6, RES-195) mean
+    # every bump is visible; grouping keeps reviewer load manageable.
+    groups:
+      chat-sdk-family:
+        patterns:
+          - "chat"
+          - "@chat-adapter/*"
+          - "chat-adapter-mattermost"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -33,6 +43,20 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "docker"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "docker"
+    directory: "/bot"
     schedule:
       interval: "weekly"
       day: "monday"

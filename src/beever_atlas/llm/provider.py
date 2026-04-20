@@ -1,4 +1,5 @@
 """Centralized LLM model selection with per-agent configuration."""
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,9 @@ class LLMProvider:
         if resolved != model:
             logger.warning(
                 "LLMProvider: remapping deprecated model %s -> %s for %s",
-                model, resolved, context,
+                model,
+                resolved,
+                context,
             )
         return resolved
 
@@ -73,9 +76,9 @@ class LLMProvider:
         if is_ollama_model(model_str):
             if not self._check_ollama_cached():
                 logger.warning(
-                    "LLMProvider: Ollama unreachable for agent '%s', "
-                    "falling back to '%s'",
-                    agent_name, _OLLAMA_FALLBACK,
+                    "LLMProvider: Ollama unreachable for agent '%s', falling back to '%s'",
+                    agent_name,
+                    _OLLAMA_FALLBACK,
                 )
                 return _OLLAMA_FALLBACK
 
@@ -96,6 +99,7 @@ class LLMProvider:
     def get_all_model_strings(self) -> dict[str, str]:
         """Get the effective model string for every known agent."""
         from beever_atlas.llm.model_resolver import AGENT_NAMES
+
         return {name: self.get_model_string(name) for name in AGENT_NAMES}
 
     def _check_ollama_cached(self) -> bool:
@@ -107,6 +111,7 @@ class LLMProvider:
             return False
         try:
             import httpx
+
             resp = httpx.get(
                 f"{self._settings.ollama_api_base}/api/tags",
                 timeout=3,
@@ -136,6 +141,7 @@ class LLMProvider:
         """Load per-agent model config from MongoDB."""
         try:
             from beever_atlas.stores import get_stores
+
             doc = await get_stores().mongodb.get_agent_model_config()
             overrides = doc.get("models", {}) if doc else {}
             self.reload(overrides)
@@ -194,5 +200,7 @@ def init_llm_provider(settings: Settings) -> None:
 
 def get_llm_provider() -> LLMProvider:
     if _provider is None:
-        raise RuntimeError("LLM provider not initialized. Call init_llm_provider() during app startup.")
+        raise RuntimeError(
+            "LLM provider not initialized. Call init_llm_provider() during app startup."
+        )
     return _provider

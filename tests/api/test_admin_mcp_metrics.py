@@ -77,7 +77,8 @@ def test_record_tool_call_accumulates_into_snapshot():
     assert snap["by_outcome"]["rate_limited"] == 1
     # Per-(principal, tool, outcome) rows present.
     alice_ok = next(
-        r for r in snap["by_principal_tool"]
+        r
+        for r in snap["by_principal_tool"]
         if r["principal"] == "mcp:alice" and r["tool"] == "ask_channel"
     )
     assert alice_ok["count"] == 2
@@ -95,12 +96,8 @@ def test_snapshot_prunes_events_outside_window(monkeypatch):
     now = real_time.time()
     # Stale event (2 hours ago), fresh event (now).
     with metrics_mod._buffer_lock:
-        metrics_mod._event_buffer.append(
-            (now - 7200, "mcp:alice", "ask_channel", "ok", 10.0)
-        )
-        metrics_mod._event_buffer.append(
-            (now, "mcp:bob", "ask_channel", "ok", 20.0)
-        )
+        metrics_mod._event_buffer.append((now - 7200, "mcp:alice", "ask_channel", "ok", 10.0))
+        metrics_mod._event_buffer.append((now, "mcp:bob", "ask_channel", "ok", 20.0))
 
     snap = metrics_mod.snapshot_counters(now=now)
     assert snap["total_calls"] == 1
@@ -122,21 +119,15 @@ def test_mcp_metrics_requires_admin_token(monkeypatch):
 def test_mcp_metrics_rejects_wrong_admin_token(monkeypatch):
     _patch_admin(monkeypatch, token="admin-token-abc")
     client = TestClient(_app())
-    r = client.get(
-        "/api/admin/mcp-metrics", headers={"X-Admin-Token": "wrong"}
-    )
+    r = client.get("/api/admin/mcp-metrics", headers={"X-Admin-Token": "wrong"})
     assert r.status_code == 401
 
 
 def test_mcp_metrics_returns_snapshot_with_valid_admin(monkeypatch):
     _patch_admin(monkeypatch, token="admin-token-abc")
     # Seed some data.
-    metrics_mod.record_tool_call(
-        "ask_channel", "mcp:alice", "ok", 42.0
-    )
-    metrics_mod.record_tool_call(
-        "trigger_sync", "mcp:bob", "rate_limited", 3.0
-    )
+    metrics_mod.record_tool_call("ask_channel", "mcp:alice", "ok", 42.0)
+    metrics_mod.record_tool_call("trigger_sync", "mcp:bob", "rate_limited", 3.0)
 
     client = TestClient(_app())
     r = client.get(
@@ -154,9 +145,7 @@ def test_mcp_metrics_returns_snapshot_with_valid_admin(monkeypatch):
 
 def test_mcp_metrics_reset_clears_buffer(monkeypatch):
     _patch_admin(monkeypatch, token="admin-token-abc")
-    metrics_mod.record_tool_call(
-        "ask_channel", "mcp:alice", "ok", 42.0
-    )
+    metrics_mod.record_tool_call("ask_channel", "mcp:alice", "ok", 42.0)
     assert metrics_mod.snapshot_counters()["total_calls"] == 1
 
     client = TestClient(_app())
@@ -172,9 +161,7 @@ def test_mcp_metrics_reset_clears_buffer(monkeypatch):
 def test_mcp_metrics_principal_hash_exposed_verbatim(monkeypatch):
     """Principal ids are mcp:<hash16> — non-reversible — safe to surface to admin."""
     _patch_admin(monkeypatch, token="admin-token-abc")
-    metrics_mod.record_tool_call(
-        "ask_channel", "mcp:deadbeef12345678", "ok", 10.0
-    )
+    metrics_mod.record_tool_call("ask_channel", "mcp:deadbeef12345678", "ok", 10.0)
     client = TestClient(_app())
     r = client.get(
         "/api/admin/mcp-metrics",

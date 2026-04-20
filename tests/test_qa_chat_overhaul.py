@@ -29,6 +29,7 @@ class TestCitationExtraction:
 
     def _extract(self, text: str) -> list[dict]:
         from beever_atlas.api.ask import _extract_citations_from_text
+
         return _extract_citations_from_text(text)
 
     def test_single_citation_correct_groups(self):
@@ -75,32 +76,38 @@ class TestAskRequestModel:
 
     def test_default_mode_is_deep(self):
         from beever_atlas.api.ask import AskRequest
+
         req = AskRequest(question="test")
         assert req.mode == "deep"
 
     def test_quick_mode_accepted(self):
         from beever_atlas.api.ask import AskRequest
+
         req = AskRequest(question="test", mode="quick")
         assert req.mode == "quick"
 
     def test_summarize_mode_accepted(self):
         from beever_atlas.api.ask import AskRequest
+
         req = AskRequest(question="test", mode="summarize")
         assert req.mode == "summarize"
 
     def test_invalid_mode_rejected(self):
         from beever_atlas.api.ask import AskRequest
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             AskRequest(question="test", mode="invalid")
 
     def test_attachments_default_empty(self):
         from beever_atlas.api.ask import AskRequest
+
         req = AskRequest(question="test")
         assert req.attachments == []
 
     def test_attachments_with_data(self):
         from beever_atlas.api.ask import AskRequest
+
         req = AskRequest(
             question="test",
             attachments=[{"file_id": "abc", "filename": "doc.pdf", "extracted_text": "hello"}],
@@ -116,11 +123,13 @@ class TestFeedbackRequestModel:
 
     def test_thumbs_up(self):
         from beever_atlas.api.ask import FeedbackRequest
+
         req = FeedbackRequest(session_id="s1", message_id="m1", rating="up")
         assert req.rating == "up"
 
     def test_thumbs_down_with_comment(self):
         from beever_atlas.api.ask import FeedbackRequest
+
         req = FeedbackRequest(
             session_id="s1", message_id="m1", rating="down", comment="Wrong answer"
         )
@@ -129,6 +138,7 @@ class TestFeedbackRequestModel:
     def test_invalid_rating_rejected(self):
         from beever_atlas.api.ask import FeedbackRequest
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             FeedbackRequest(session_id="s1", message_id="m1", rating="neutral")
 
@@ -141,20 +151,20 @@ class TestFollowUpExtraction:
 
     def test_follow_ups_parsed(self):
         text = 'Some answer here.\n---\nFOLLOW_UPS: ["What else?", "Tell me more"]'
-        match = re.search(r'FOLLOW_UPS:\s*\[([^\]]*)\]', text)
+        match = re.search(r"FOLLOW_UPS:\s*\[([^\]]*)\]", text)
         assert match is not None
-        follow_ups = json.loads(f'[{match.group(1)}]')
+        follow_ups = json.loads(f"[{match.group(1)}]")
         assert follow_ups == ["What else?", "Tell me more"]
 
     def test_follow_ups_stripped_from_text(self):
         text = 'Some answer here.\n---\nFOLLOW_UPS: ["What else?", "Tell me more"]'
-        cleaned = re.sub(r'\n*---\n*FOLLOW_UPS:\s*\[.*?\]', '', text).rstrip()
+        cleaned = re.sub(r"\n*---\n*FOLLOW_UPS:\s*\[.*?\]", "", text).rstrip()
         assert cleaned == "Some answer here."
         assert "FOLLOW_UPS" not in cleaned
 
     def test_no_follow_ups_graceful(self):
         text = "Some answer without follow-ups."
-        match = re.search(r'FOLLOW_UPS:\s*\[([^\]]*)\]', text)
+        match = re.search(r"FOLLOW_UPS:\s*\[([^\]]*)\]", text)
         assert match is None
 
 
@@ -166,6 +176,7 @@ class TestFileUploadValidation:
 
     def test_supported_mime_types(self):
         from beever_atlas.api.ask import SUPPORTED_MIME_TYPES
+
         assert "application/pdf" in SUPPORTED_MIME_TYPES
         assert "image/png" in SUPPORTED_MIME_TYPES
         assert "image/jpeg" in SUPPORTED_MIME_TYPES
@@ -174,10 +185,12 @@ class TestFileUploadValidation:
 
     def test_exe_not_supported(self):
         from beever_atlas.api.ask import SUPPORTED_MIME_TYPES
+
         assert "application/x-msdownload" not in SUPPORTED_MIME_TYPES
 
     def test_max_upload_size(self):
         from beever_atlas.api.ask import MAX_UPLOAD_SIZE
+
         assert MAX_UPLOAD_SIZE == 10 * 1024 * 1024
 
 
@@ -189,19 +202,23 @@ class TestTimestampFormatting:
 
     def test_valid_epoch(self):
         from beever_atlas.agents.tools.memory_tools import _format_timestamp
+
         result = _format_timestamp("1712345678.123456")
         assert re.match(r"\d{4}-\d{2}-\d{2}", result)
 
     def test_null_timestamp(self):
         from beever_atlas.agents.tools.memory_tools import _format_timestamp
+
         assert _format_timestamp(None) == "(unavailable)"
 
     def test_empty_timestamp(self):
         from beever_atlas.agents.tools.memory_tools import _format_timestamp
+
         assert _format_timestamp("") == "(unavailable)"
 
     def test_invalid_timestamp(self):
         from beever_atlas.agents.tools.memory_tools import _format_timestamp
+
         assert _format_timestamp("not_a_number") == "(unavailable)"
 
 
@@ -215,6 +232,7 @@ class TestGraphThreshold:
         """Check that the source code passes threshold=0.6."""
         import inspect
         from beever_atlas.agents.tools import graph_tools
+
         source = inspect.getsource(graph_tools.search_relationships)
         assert "threshold=0.6" in source
 
@@ -222,6 +240,7 @@ class TestGraphThreshold:
         """Check that the source code passes threshold=0.6."""
         import inspect
         from beever_atlas.agents.tools import graph_tools
+
         source = inspect.getsource(graph_tools.trace_decision_history)
         assert "threshold=0.6" in source
 
@@ -234,6 +253,7 @@ class TestAgentModeConfig:
 
     def test_prompts_module_exists(self):
         from beever_atlas.agents.query import prompts
+
         assert hasattr(prompts, "build_qa_system_prompt")
         assert hasattr(prompts, "QA_QUICK_SUFFIX")
         assert hasattr(prompts, "QA_SUMMARIZE_SUFFIX")
@@ -241,12 +261,14 @@ class TestAgentModeConfig:
 
     def test_identity_in_prompt(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt()
         assert "Beever Atlas" in prompt
         assert "Do not disclose" in prompt
 
     def test_retrieval_pipeline_in_prompt(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt()
         assert "Required Retrieval Pipeline" in prompt
         assert "Step 1" in prompt
@@ -260,6 +282,7 @@ class TestAgentModeConfig:
         channel_name / NOT-raw-channel_id guidance.
         """
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt()
         registry_on = "_cite" in prompt
         if registry_on:
@@ -272,6 +295,7 @@ class TestAgentModeConfig:
     def test_follow_up_instruction_in_deep_mode(self):
         """Deep mode must instruct follow-ups in whichever regime is active."""
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(include_follow_ups=True)
         registry_on = "_cite" in prompt
         if registry_on:
@@ -281,12 +305,14 @@ class TestAgentModeConfig:
 
     def test_no_follow_up_in_quick_mode(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt(include_follow_ups=False)
         assert "FOLLOW_UPS" not in prompt
         assert "suggest_follow_ups" not in prompt
 
     def test_max_tool_calls_configurable(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt2 = build_qa_system_prompt(max_tool_calls=2)
         prompt8 = build_qa_system_prompt(max_tool_calls=8)
         assert "2 tool calls" in prompt2
@@ -294,6 +320,7 @@ class TestAgentModeConfig:
 
     def test_query_type_tool_map(self):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
         prompt = build_qa_system_prompt()
         assert "who is X" in prompt
         assert "search_relationships" in prompt
@@ -330,6 +357,7 @@ class TestSSEEventFormat:
 
     def test_sse_event_format(self):
         from beever_atlas.api.ask import _sse_event
+
         event = _sse_event("thinking", {"text": "Let me analyze..."})
         assert event.startswith("event: thinking\n")
         assert '"text": "Let me analyze..."' in event
@@ -337,6 +365,7 @@ class TestSSEEventFormat:
 
     def test_sse_event_metadata_includes_mode(self):
         from beever_atlas.api.ask import _sse_event
+
         event = _sse_event("metadata", {"mode": "quick", "route": "qa_agent"})
         data_line = event.split("\n")[1]
         payload = json.loads(data_line.replace("data: ", ""))
@@ -352,6 +381,7 @@ class TestTextExtraction:
     @pytest.mark.asyncio
     async def test_plain_text_extraction(self):
         from beever_atlas.api.ask import _extract_text
+
         content = b"Hello, this is a test document."
         result = await _extract_text(content, "text/plain", "test.txt")
         assert result == "Hello, this is a test document."
@@ -359,6 +389,7 @@ class TestTextExtraction:
     @pytest.mark.asyncio
     async def test_csv_extraction(self):
         from beever_atlas.api.ask import _extract_text
+
         content = b"name,age\nAlice,30\nBob,25"
         result = await _extract_text(content, "text/csv", "data.csv")
         assert "Alice" in result
@@ -367,6 +398,7 @@ class TestTextExtraction:
     @pytest.mark.asyncio
     async def test_unsupported_type_fallback(self):
         from beever_atlas.api.ask import _extract_text
+
         content = b"binary content"
         result = await _extract_text(content, "application/zip", "archive.zip")
         assert "Unsupported" in result
@@ -380,17 +412,21 @@ class TestDecomposer:
 
     def test_simple_question(self):
         from beever_atlas.agents.query.decomposer import _is_simple
+
         assert _is_simple("who is Thomas?") is True
 
     def test_complex_question_with_and(self):
         from beever_atlas.agents.query.decomposer import _is_simple
+
         assert _is_simple("What is our JWT approach and who decided on it?") is False
 
     def test_complex_question_with_compare(self):
         from beever_atlas.agents.query.decomposer import _is_simple
+
         assert _is_simple("Compare our auth approaches") is False
 
     def test_long_question_is_complex(self):
         from beever_atlas.agents.query.decomposer import _is_simple
+
         long_q = " ".join(["word"] * 20)
         assert _is_simple(long_q) is False

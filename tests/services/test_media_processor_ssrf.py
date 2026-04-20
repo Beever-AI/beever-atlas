@@ -91,7 +91,5 @@ async def test_allowlisted_host_proceeds_to_fetch(processor, monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
 
-    result = await processor._download_file(
-        "https://cdn.discordapp.com/attachments/1/2/image.png"
-    )
+    result = await processor._download_file("https://cdn.discordapp.com/attachments/1/2/image.png")
     assert result == b"PNG\x89image-bytes-here"

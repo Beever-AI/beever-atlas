@@ -195,6 +195,7 @@ async def get_channel_summary(
             # to the raw id.
             try:
                 from beever_atlas.adapters.bridge import BridgeClient
+
                 async with BridgeClient() as client:
                     info = await client.get_channel_info(channel_id)
                     display = info.channel_name
@@ -292,16 +293,18 @@ async def trigger_consolidation(
 
     async def _run() -> None:
         try:
-            channel_name = (
-                await stores.mongodb.get_channel_display_name(channel_id) or ""
-            )
+            channel_name = await stores.mongodb.get_channel_display_name(channel_id) or ""
             result = await service.full_reconsolidate(
-                channel_id, channel_name=channel_name,
+                channel_id,
+                channel_name=channel_name,
             )
             logger.info(
                 "Consolidation complete channel=%s created=%d updated=%d facts=%d errors=%d",
-                channel_id, result.clusters_created, result.clusters_updated,
-                result.facts_clustered, len(result.errors),
+                channel_id,
+                result.clusters_created,
+                result.clusters_updated,
+                result.facts_clustered,
+                len(result.errors),
             )
         except Exception as exc:
             logger.error("Consolidation task failed channel=%s: %s", channel_id, exc, exc_info=True)

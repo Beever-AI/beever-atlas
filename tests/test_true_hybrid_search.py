@@ -189,7 +189,10 @@ async def test_search_channel_facts_calls_true_hybrid_search():
     fake_vector = [0.1] * 2048
 
     with (
-        patch("beever_atlas.agents.tools.memory_tools._embed_query", AsyncMock(return_value=fake_vector)),
+        patch(
+            "beever_atlas.agents.tools.memory_tools._embed_query",
+            AsyncMock(return_value=fake_vector),
+        ),
         patch("beever_atlas.stores.get_stores", return_value=mock_stores),
         patch(
             "beever_atlas.agents.tools.memory_tools.resolve_channel_name",
@@ -197,7 +200,7 @@ async def test_search_channel_facts_calls_true_hybrid_search():
         ),
         patch(
             "beever_atlas.agents.tools.memory_tools.cite_tool_output",
-            lambda **_: (lambda f: f),
+            lambda **_: lambda f: f,
         ),
     ):
         results = await memory_tools.search_channel_facts(

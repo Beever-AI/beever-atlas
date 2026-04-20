@@ -1,4 +1,5 @@
 """Checkpoint skip guards for pipeline stage agents."""
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,8 @@ def make_checkpoint_skip_callback(agent_name: str):
         existing = callback_context.state.get(output_key)
         if existing is not None:
             logger.info(
-                "CheckpointSkip: skipping %s (restored from checkpoint)", agent_name,
+                "CheckpointSkip: skipping %s (restored from checkpoint)",
+                agent_name,
             )
             return types.Content(
                 role="model",
@@ -43,7 +45,8 @@ def should_skip_stage(ctx_state: dict[str, Any], output_key: str, agent_name: st
     existing = ctx_state.get(output_key)
     if existing is not None:
         logger.info(
-            "CheckpointSkip: skipping %s (restored from checkpoint)", agent_name,
+            "CheckpointSkip: skipping %s (restored from checkpoint)",
+            agent_name,
         )
         return True
     return False
