@@ -275,3 +275,48 @@ def _is_src_prefix(s: str) -> bool:
         if s == target[:n]:
             return True
     return False
+
+
+class LiteralSrcStripper:
+    """Lightweight stream filter that strips leftover `[src:...]` literals.
+
+    Used when the citation registry is OFF: the LLM can still hallucinate
+    tool-name citation markers like `[src:get_topic_overview_response]`
+    despite prompt guardrails. This stripper runs unconditionally so those
+    literals never reach the UI.
+
+    Chunk-safe: if a chunk ends with a truncated `[src:` opener, the opener
+    is buffered until the closing `]` arrives (or until `flush()`, which
+    drops any dangling opener).
+
+    Mirrors the `StreamRewriter` public surface (`feed` / `flush`) so the
+    SSE emitter in `api/ask.py` can drive either with the same idiom.
+    """
+
+    def __init__(self) -> None:
+        self._buf: str = ""
+
+    def feed(self, chunk: str) -> str:
+        """Accept a chunk; return whatever is safe to emit now."""
+        if not chunk:
+            return ""
+        self._buf += chunk
+        # Hold back from the start of a truncated `[src:` opener so a
+        # half-arrived tag never leaks before its closing `]` arrives.
+        match = _TRUNCATED_SRC_OPENER_RE.search(self._buf)
+        if match is not None:
+            emit_end = match.start()
+            emittable = self._buf[:emit_end]
+            self._buf = self._buf[emit_end:]
+        else:
+            emittable = self._buf
+            self._buf = ""
+        return _LEFTOVER_TAG_RE.sub("", emittable)
+
+    def flush(self) -> str:
+        """Emit residue. Drop any dangling truncated opener defensively."""
+        residue = self._buf
+        self._buf = ""
+        cleaned = _LEFTOVER_TAG_RE.sub("", residue)
+        cleaned = _TRUNCATED_SRC_OPENER_RE.sub("", cleaned)
+        return cleaned

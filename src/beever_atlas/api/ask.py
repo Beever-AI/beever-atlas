@@ -217,7 +217,11 @@ async def _run_agent_stream(
     _registry_token = None
     _follow_ups_collector = None
     _follow_ups_token = None
-    _rewriter = None
+    # Always strip leftover [src:...] literals that the LLM may hallucinate
+    # using tool names, regardless of the registry flag. When the registry
+    # is enabled below, this default is replaced with the full StreamRewriter.
+    from beever_atlas.agents.query.stream_rewriter import LiteralSrcStripper
+    _rewriter = LiteralSrcStripper()
     # Principal bind for orchestration tools (openspec atlas-mcp-server
     # Phase 6): the QA agent's orchestration_tools read the principal from
     # this contextvar. Set just before the runner runs and reset in the
