@@ -99,12 +99,35 @@ def test_unknown_tag_stripped():
     assert rw.unknown_tag_count == 1
 
 
-def test_malformed_tag_passes_through():
+def test_malformed_tag_stripped_at_stream_time():
+    """Malformed `[src:tool_name_response]`-style literals must be scrubbed
+    from `response_delta` output, not just at flush. Without this, the
+    client sees the raw literal render in the UI before the stream ends."""
     r, _ = _registry_with("A")
     rw = StreamRewriter(r)
-    # Invalid hex — regex doesn't match; text flows through literally.
+    # Invalid hex — doesn't match the strict [src:src_<10hex>] pattern,
+    # so it's treated as a leftover literal and stripped during streaming.
     out = _collect(rw, ["x [src:notvalid] y"])
-    assert out == "x [src:notvalid] y"
+    assert out == "x  y"
+    assert "[src:" not in out
+
+
+def test_bogus_tool_name_literal_stripped_midstream():
+    """Regression for the UX-visible `[src:get_wiki_page_response]` leak:
+    the stripper runs on every drain output, not only at flush, so the
+    literal never reaches `response_delta` events."""
+    r, _ = _registry_with("A")
+    rw = StreamRewriter(r)
+    # Feed a single chunk that already contains the full bogus literal —
+    # this is the path that previously leaked because `_find_open_tag`
+    # saw the closing `]` and didn't hold the buffer back.
+    emitted = rw.feed(
+        "There is no wiki content [src:get_wiki_page_response]. Sync it?"
+    )
+    assert "[src:" not in emitted
+    assert emitted == "There is no wiki content . Sync it?"
+    # Flush is a no-op now because the literal was already removed.
+    assert rw.flush() == ""
 
 
 def test_non_tag_brackets_pass_through():

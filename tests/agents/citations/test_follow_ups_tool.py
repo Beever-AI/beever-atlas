@@ -57,6 +57,30 @@ def test_non_string_entries_dropped():
     assert c.questions == ["ok?", "also ok?"]
 
 
+def test_scrubs_bogus_src_literal_from_question():
+    """The LLM sometimes copies a tool-result citation literal into a
+    follow-up question (`[src:get_wiki_page_response]`). The UI renders
+    these as raw bracket text, so the tool must scrub them before the
+    collector stores the question."""
+    c, tok = bind_collector()
+    try:
+        suggest_follow_ups([
+            "Why did that fail [src:get_wiki_page_response]?",
+            "What happened [External: meeting] here?",
+            "Plain question?",
+        ])
+    finally:
+        reset_collector(tok)
+    assert c.questions == [
+        "Why did that fail ?",
+        "What happened here?",
+        "Plain question?",
+    ]
+    for q in c.questions:
+        assert "[src:" not in q
+        assert "[External:" not in q
+
+
 def test_current_collector_isolation():
     assert current_collector() is None
     c, tok = bind_collector()

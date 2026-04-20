@@ -153,12 +153,19 @@ class StreamRewriter:
             out.append(self._buffer)
             self._buffer = ""
             break
-        # Malformed tags (inner id not matching strict 10-hex memory-id
-        # format, or `[External: ...]` literals) pass through the streaming
-        # pass untouched. The flush pass (`_strip_leftovers`) is the sole
-        # cleaner for these shapes so the `leftover_stripped_count`
-        # observability counter reflects reality.
-        return "".join(out)
+        # Scrub bogus `[src:tool_name_response]` / `[External:...]` literals
+        # from the safe-to-emit portion before returning. `_find_open_tag`
+        # already held back any partial opener, so a full bracket here is
+        # guaranteed complete and safe to strip. Doing this per-drain (not
+        # only at flush) prevents the client from seeing the literal in a
+        # `response_delta` event.
+        joined = "".join(out)
+        if joined:
+            cleaned, n = _LEFTOVER_TAG_RE.subn("", joined)
+            if n:
+                self._leftover_stripped += n
+            return cleaned
+        return joined
 
     def _find_next_src_bracket(self) -> re.Match[str] | None:
         """Return the next `[...]` in the buffer whose content carries a src tag."""
@@ -297,15 +304,24 @@ class LiteralSrcStripper:
         self._buf: str = ""
 
     def feed(self, chunk: str) -> str:
-        """Accept a chunk; return whatever is safe to emit now."""
+        """Accept a chunk; return whatever is safe to emit now.
+
+        Chunks from Gemini can land token-by-token (``[``, then ``src:``,
+        then ``tool_name_response]``). To avoid leaking a half-arrived
+        ``[src:...]`` span, buffer from the LAST unclosed ``[`` until its
+        matching ``]`` arrives. Matching the final `[` (not any earlier
+        one) is enough because a complete earlier pair already lives in
+        the emittable portion and will be stripped by the leftover regex
+        below. Non-src brackets like ``[1]`` still round-trip verbatim
+        because the regex only rewrites ``[src:...]`` / ``[External:...]``.
+        """
         if not chunk:
             return ""
         self._buf += chunk
-        # Hold back from the start of a truncated `[src:` opener so a
-        # half-arrived tag never leaks before its closing `]` arrives.
-        match = _TRUNCATED_SRC_OPENER_RE.search(self._buf)
-        if match is not None:
-            emit_end = match.start()
+        last_open = self._buf.rfind("[")
+        last_close = self._buf.rfind("]")
+        if last_open > last_close:
+            emit_end = last_open
             emittable = self._buf[:emit_end]
             self._buf = self._buf[emit_end:]
         else:

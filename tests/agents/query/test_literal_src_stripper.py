@@ -70,3 +70,45 @@ def test_idempotent_on_clean_text() -> None:
     tail = rw.flush()
     assert out1 + out2 == "Plain text with no citation markers at all."
     assert tail == ""
+
+
+def test_char_by_char_streaming_strips_src_literal() -> None:
+    """Regression: Gemini streams token-by-token (sometimes char-by-char).
+
+    Previously the stripper only buffered when the opener already contained
+    `[src:` — a lone `[` was emitted immediately, and by the time the
+    closing `]` arrived the regex could no longer see a complete
+    `[src:...]` span. Now the stripper holds back from the last unclosed
+    `[` so the bracket is only emitted (or stripped) once closed.
+    """
+    text = (
+        "The sync job (ID: b955d1f8 [src:src_get_job_status_tool_response]) "
+        "is running [src:src_get_job_status_tool_response]."
+    )
+    rw = LiteralSrcStripper()
+    out = "".join(rw.feed(ch) for ch in text) + rw.flush()
+    assert "[src:" not in out
+    assert out == "The sync job (ID: b955d1f8 ) is running ."
+
+
+def test_char_by_char_streaming_preserves_non_src_brackets() -> None:
+    """Non-src brackets (`[1]`, `[external note]`) must round-trip verbatim
+    under char-by-char streaming — they are just delayed until the closing
+    `]` arrives."""
+    text = "Look at [1] and [2] and [external note] here"
+    rw = LiteralSrcStripper()
+    out = "".join(rw.feed(ch) for ch in text) + rw.flush()
+    assert out == text
+
+
+def test_chunked_streaming_with_nested_src_and_text() -> None:
+    """2-3 char chunks — a realistic SSE buffering pattern."""
+    text = "alpha [src:foo] beta [src:bar] gamma"
+    rw = LiteralSrcStripper()
+    out = ""
+    # Feed in 3-char slices
+    for i in range(0, len(text), 3):
+        out += rw.feed(text[i:i + 3])
+    out += rw.flush()
+    assert "[src:" not in out
+    assert out == "alpha  beta  gamma"

@@ -75,6 +75,12 @@ def suggest_follow_ups(questions: list[str]) -> dict:
 
 _BULLET_PREFIX_RE = re.compile(r"^[-*\d.\s]+")
 
+# Same shape as stream_rewriter._LEFTOVER_TAG_RE. Duplicated here to avoid a
+# circular import with the citation registry module; kept in lock-step.
+_SRC_LITERAL_RE = re.compile(
+    r"\[\s*(?:src:[^\[\]]*?|External:[^\[\]]*?)\]", re.IGNORECASE
+)
+
 
 def _clean(questions: list[str]) -> list[str]:
     if not isinstance(questions, list):
@@ -83,7 +89,12 @@ def _clean(questions: list[str]) -> list[str]:
     for q in questions:
         if not isinstance(q, str):
             continue
-        stripped = _BULLET_PREFIX_RE.sub("", q.strip()).strip()
+        # Scrub `[src:...]` / `[External:...]` literals that the LLM may
+        # copy from tool-result citations into a follow-up question.
+        scrubbed = _SRC_LITERAL_RE.sub("", q)
+        stripped = _BULLET_PREFIX_RE.sub("", scrubbed.strip()).strip()
+        # Collapse runs of whitespace left behind by the scrub.
+        stripped = re.sub(r"\s{2,}", " ", stripped)
         if len(stripped) < _MIN_QUESTION_LEN:
             continue
         out.append(stripped)
