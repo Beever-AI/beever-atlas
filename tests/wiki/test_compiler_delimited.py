@@ -35,10 +35,7 @@ def test_parse_delimited_happy_path() -> None:
 def test_parse_delimited_missing_end_marker() -> None:
     """No ###END### — content is everything after ###CONTENT###."""
     raw = (
-        "###SUMMARY###\n"
-        "Summary line.\n"
-        "###CONTENT###\n"
-        "# Heading\n\nBody text without end marker.\n"
+        "###SUMMARY###\nSummary line.\n###CONTENT###\n# Heading\n\nBody text without end marker.\n"
     )
     result = _parse_delimited_response(raw)
     assert result.summary == "Summary line."
@@ -48,11 +45,7 @@ def test_parse_delimited_missing_end_marker() -> None:
 
 def test_parse_delimited_missing_summary() -> None:
     """No ###SUMMARY### — summary is derived from first sentence of content."""
-    raw = (
-        "###CONTENT###\n"
-        "First sentence of body. Second sentence follows.\n"
-        "###END###\n"
-    )
+    raw = "###CONTENT###\nFirst sentence of body. Second sentence follows.\n###END###\n"
     result = _parse_delimited_response(raw)
     assert result.summary.startswith("First sentence of body")
     assert "First sentence of body" in result.content
@@ -60,14 +53,7 @@ def test_parse_delimited_missing_summary() -> None:
 
 def test_parse_delimited_preamble_ignored() -> None:
     """LLM prefixes 'Sure, here:' — parser ignores it."""
-    raw = (
-        "Sure, here:\n"
-        "###SUMMARY###\n"
-        "The summary.\n"
-        "###CONTENT###\n"
-        "The real body.\n"
-        "###END###\n"
-    )
+    raw = "Sure, here:\n###SUMMARY###\nThe summary.\n###CONTENT###\nThe real body.\n###END###\n"
     result = _parse_delimited_response(raw)
     assert result.summary == "The summary."
     assert result.content.strip() == "The real body."
@@ -177,7 +163,7 @@ async def test_translation_always_json_mode() -> None:
     captured: dict = {}
 
     class _FakeResponse:
-        text = '{}'
+        text = "{}"
 
     class _FakeAioModels:
         async def generate_content(self, model, contents, config):  # noqa: ANN001
@@ -239,9 +225,7 @@ async def test_topic_delimited_when_flag_on() -> None:
         s.wiki_token_budget_v2 = False
         s.ollama_api_base = "http://localhost:11434"
         with patch("google.genai.Client", return_value=_FakeClient()):
-            await compiler._llm_generate_json(
-                "prompt body", temperature=0.2, page_kind="topic"
-            )
+            await compiler._llm_generate_json("prompt body", temperature=0.2, page_kind="topic")
 
     assert getattr(captured["config"], "response_mime_type", None) is None
     assert "###CONTENT###" in captured["contents"]
@@ -255,7 +239,7 @@ async def test_topic_json_mode_when_flag_off() -> None:
     captured: dict = {}
 
     class _FakeResponse:
-        text = '{}'
+        text = "{}"
 
     class _FakeAioModels:
         async def generate_content(self, model, contents, config):  # noqa: ANN001
@@ -277,9 +261,7 @@ async def test_topic_json_mode_when_flag_off() -> None:
         s.wiki_token_budget_v2 = False
         s.ollama_api_base = "http://localhost:11434"
         with patch("google.genai.Client", return_value=_FakeClient()):
-            await compiler._llm_generate_json(
-                "prompt body", temperature=0.2, page_kind="topic"
-            )
+            await compiler._llm_generate_json("prompt body", temperature=0.2, page_kind="topic")
 
     assert getattr(captured["config"], "response_mime_type", None) == "application/json"
     assert "###CONTENT###" not in captured["contents"]

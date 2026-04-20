@@ -75,16 +75,12 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
             "text": summary_text or content_text[:400],
         }
     except Exception:
-        logger.exception(
-            "get_wiki_page failed for channel=%s page_type=%s", channel_id, page_type
-        )
+        logger.exception("get_wiki_page failed for channel=%s page_type=%s", channel_id, page_type)
         return None
 
 
 @cite_tool_output(kind="wiki_page")
-async def get_topic_overview(
-    channel_id: str, topic_name: str | None = None
-) -> dict | None:
+async def get_topic_overview(channel_id: str, topic_name: str | None = None) -> dict | None:
     """Retrieve channel-level summary (Tier 0) or a topic cluster summary (Tier 1).
 
     Cost: $0 (cached). Target latency: <50ms.

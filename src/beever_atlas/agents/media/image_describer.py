@@ -1,4 +1,5 @@
 """Image description agent — generates text descriptions of images."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

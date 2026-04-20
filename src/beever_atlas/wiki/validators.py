@@ -33,6 +33,7 @@ def min_length(min_chars: int) -> Validator:
         if len(content.strip()) < min_chars:
             return False, f"Output was too short (<{min_chars} chars). Write a substantive section."
         return True, ""
+
     return _v
 
 
@@ -42,12 +43,16 @@ def mermaid_balanced(content: str) -> tuple[bool, str]:
     all_fences = len(re.findall(r"^```", content, flags=re.MULTILINE))
     # Each mermaid open needs a matching bare close: 2 fences per block.
     if opens * 2 > all_fences:
-        return False, "A ```mermaid block was not closed. End every mermaid block with a line containing only ```."
+        return (
+            False,
+            "A ```mermaid block was not closed. End every mermaid block with a line containing only ```.",
+        )
     return True, ""
 
 
 def required_headings(headings: tuple[str, ...]) -> Validator:
     """Each entry must appear as a `## <heading>` line (case-insensitive)."""
+
     def _v(content: str) -> tuple[bool, str]:
         lowered = content.lower()
         missing = [h for h in headings if f"## {h.lower()}" not in lowered]
@@ -58,6 +63,7 @@ def required_headings(headings: tuple[str, ...]) -> Validator:
                 + ". Each must appear exactly once as an H2."
             )
         return True, ""
+
     return _v
 
 
@@ -75,10 +81,12 @@ def banned_phrases(content: str) -> tuple[bool, str]:
 
 def combine(*validators: Validator) -> Validator:
     """Combine validators; first failure wins."""
+
     def _v(content: str) -> tuple[bool, str]:
         for v in validators:
             ok, reason = v(content)
             if not ok:
                 return False, reason
         return True, ""
+
     return _v

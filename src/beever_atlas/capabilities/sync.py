@@ -29,12 +29,14 @@ logger = logging.getLogger(__name__)
 def get_sync_runner():
     """Return the SyncRunner singleton from api.sync (lazy import, patchable)."""
     from beever_atlas.api.sync import get_sync_runner as _get_runner
+
     return _get_runner()
 
 
 async def resolve_effective_policy(channel_id: str):
     """Delegate to services.policy_resolver (lazy import, patchable)."""
     from beever_atlas.services.policy_resolver import resolve_effective_policy as _resolve
+
     return await _resolve(channel_id)
 
 
@@ -78,11 +80,7 @@ async def trigger_sync(
         cooldown = effective.sync.min_sync_interval_minutes or 0
         if cooldown > 0 and stores_mod is not None:
             last_job = await stores_mod.mongodb.get_sync_status(channel_id)
-            if (
-                last_job
-                and last_job.completed_at
-                and last_job.status != "failed"
-            ):
+            if last_job and last_job.completed_at and last_job.status != "failed":
                 completed = last_job.completed_at
                 if completed.tzinfo is None:
                     completed = completed.replace(tzinfo=UTC)
@@ -108,6 +106,7 @@ async def trigger_sync(
     scheduler = None
     try:
         from beever_atlas.services.scheduler import get_scheduler
+
         scheduler = get_scheduler()
         if scheduler:
             await scheduler.acquire_sync_semaphore()

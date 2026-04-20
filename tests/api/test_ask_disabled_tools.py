@@ -183,9 +183,7 @@ async def test_unknown_tool_name_ignored(client, mock_stores):
                 pass
 
     assert resp.status_code == 200
-    warn_calls = [
-        (args, kwargs) for args, kwargs in (c[0:2] for c in mock_warn.call_args_list)
-    ]
+    warn_calls = [(args, kwargs) for args, kwargs in (c[0:2] for c in mock_warn.call_args_list)]
     rendered = []
     for args, _kwargs in warn_calls:
         if not args:

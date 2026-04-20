@@ -81,6 +81,7 @@ async def _call_llm_mapper(
 
     try:
         from beever_atlas.llm import get_llm_provider
+
         model_name = model or get_llm_provider().get_model_string("csv_mapper")
     except Exception:
         model_name = model or "gemini-2.5-flash"

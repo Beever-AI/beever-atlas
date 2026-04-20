@@ -4,6 +4,7 @@ Covers:
 - truncated JSON that can be recovered → agent output_key populated, no failed_recoverable
 - completely unrecoverable input → failed_recoverable=True + truncation_report emitted
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -17,6 +18,7 @@ from beever_atlas.services.json_recovery import recover_truncated_json
 # ---------------------------------------------------------------------------
 # Minimal Pydantic model for testing
 # ---------------------------------------------------------------------------
+
 
 class _SimpleResult(BaseModel):
     items: list[str] = []
@@ -34,6 +36,7 @@ def _recovery_fn(text: str) -> dict | None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_agent(output_key: str = "my_output") -> MagicMock:
     agent = MagicMock()
     agent.output_key = output_key
@@ -50,6 +53,7 @@ def _make_callback_context(state: dict) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_wrap_installs_callback() -> None:
     agent = _make_agent()

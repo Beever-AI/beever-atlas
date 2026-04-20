@@ -1,4 +1,5 @@
 """Entity extraction agent — Stage 3 of the ingestion pipeline."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

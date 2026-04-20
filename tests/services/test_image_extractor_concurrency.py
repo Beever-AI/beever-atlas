@@ -15,6 +15,7 @@ from beever_atlas.services.media_extractors import (
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_fake_response(text: str) -> MagicMock:
     r = MagicMock()
     r.text = text
@@ -33,8 +34,10 @@ def _png_bytes() -> bytes:
 
 # ── config field ─────────────────────────────────────────────────────────────
 
+
 def test_image_extractor_concurrency_field_defaults():
     from beever_atlas.infra.config import Settings
+
     s = Settings(
         credential_master_key="a" * 64,
         neo4j_auth="neo4j/safe_password",
@@ -47,6 +50,7 @@ def test_image_extractor_concurrency_field_defaults():
 
 def test_image_extractor_concurrency_field_custom():
     from beever_atlas.infra.config import Settings
+
     s = Settings(
         image_extractor_concurrency=8,
         credential_master_key="a" * 64,
@@ -61,6 +65,7 @@ def test_image_extractor_concurrency_field_custom():
 def test_image_extractor_concurrency_bounds():
     from pydantic import ValidationError
     from beever_atlas.infra.config import Settings
+
     base = dict(
         credential_master_key="a" * 64,
         neo4j_auth="neo4j/safe_password",
@@ -76,6 +81,7 @@ def test_image_extractor_concurrency_bounds():
 
 # ── semaphore wired to settings ───────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_semaphore_respects_concurrency_setting():
     """_get_image_semaphore() must be bounded by image_extractor_concurrency."""
@@ -87,7 +93,9 @@ async def test_semaphore_respects_concurrency_setting():
     try:
         mock_settings = MagicMock()
         mock_settings.image_extractor_concurrency = 2
-        with patch("beever_atlas.services.media_extractors.get_settings", return_value=mock_settings):
+        with patch(
+            "beever_atlas.services.media_extractors.get_settings", return_value=mock_settings
+        ):
             sem = _get_image_semaphore()
         assert sem._value == 2
     finally:
@@ -95,6 +103,7 @@ async def test_semaphore_respects_concurrency_setting():
 
 
 # ── parallel execution ────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_multiple_images_run_in_parallel():
@@ -125,14 +134,21 @@ async def test_multiple_images_run_in_parallel():
 
     try:
         with (
-            patch("beever_atlas.services.media_extractors.get_settings", return_value=mock_settings),
-            patch("beever_atlas.services.media_extractors._get_gemini_client", AsyncMock(return_value=mock_client)),
-            patch("beever_atlas.services.media_extractors.GEMINI_LIMITER", AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())),
+            patch(
+                "beever_atlas.services.media_extractors.get_settings", return_value=mock_settings
+            ),
+            patch(
+                "beever_atlas.services.media_extractors._get_gemini_client",
+                AsyncMock(return_value=mock_client),
+            ),
+            patch(
+                "beever_atlas.services.media_extractors.GEMINI_LIMITER",
+                AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
+            ),
         ):
-            await asyncio.gather(*[
-                extractor._describe_image(_png_bytes(), "", f"img{i}.png")
-                for i in range(4)
-            ])
+            await asyncio.gather(
+                *[extractor._describe_image(_png_bytes(), "", f"img{i}.png") for i in range(4)]
+            )
     finally:
         me._IMAGE_SEMAPHORE = original_sem
 
@@ -173,14 +189,21 @@ async def test_semaphore_limits_concurrency():
 
     try:
         with (
-            patch("beever_atlas.services.media_extractors.get_settings", return_value=mock_settings),
-            patch("beever_atlas.services.media_extractors._get_gemini_client", AsyncMock(return_value=mock_client)),
-            patch("beever_atlas.services.media_extractors.GEMINI_LIMITER", AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())),
+            patch(
+                "beever_atlas.services.media_extractors.get_settings", return_value=mock_settings
+            ),
+            patch(
+                "beever_atlas.services.media_extractors._get_gemini_client",
+                AsyncMock(return_value=mock_client),
+            ),
+            patch(
+                "beever_atlas.services.media_extractors.GEMINI_LIMITER",
+                AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
+            ),
         ):
-            await asyncio.gather(*[
-                extractor._describe_image(_png_bytes(), "", f"img{i}.png")
-                for i in range(6)
-            ])
+            await asyncio.gather(
+                *[extractor._describe_image(_png_bytes(), "", f"img{i}.png") for i in range(6)]
+            )
     finally:
         me._IMAGE_SEMAPHORE = original_sem
 
@@ -216,14 +239,22 @@ async def test_exceptions_do_not_block_other_images():
 
     try:
         with (
-            patch("beever_atlas.services.media_extractors.get_settings", return_value=mock_settings),
-            patch("beever_atlas.services.media_extractors._get_gemini_client", AsyncMock(return_value=mock_client)),
-            patch("beever_atlas.services.media_extractors.GEMINI_LIMITER", AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())),
+            patch(
+                "beever_atlas.services.media_extractors.get_settings", return_value=mock_settings
+            ),
+            patch(
+                "beever_atlas.services.media_extractors._get_gemini_client",
+                AsyncMock(return_value=mock_client),
+            ),
+            patch(
+                "beever_atlas.services.media_extractors.GEMINI_LIMITER",
+                AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
+            ),
         ):
-            results = await asyncio.gather(*[
-                extractor._describe_image(_png_bytes(), "", f"img{i}.png")
-                for i in range(4)
-            ], return_exceptions=True)
+            results = await asyncio.gather(
+                *[extractor._describe_image(_png_bytes(), "", f"img{i}.png") for i in range(4)],
+                return_exceptions=True,
+            )
     finally:
         me._IMAGE_SEMAPHORE = original_sem
 

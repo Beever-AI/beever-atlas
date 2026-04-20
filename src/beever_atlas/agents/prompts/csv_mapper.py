@@ -1,4 +1,5 @@
 """Prompt for the CSV / JSONL column-mapping agent."""
+
 from __future__ import annotations
 
 import json

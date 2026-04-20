@@ -90,9 +90,7 @@ def _is_private(ip: str) -> bool:
     return any(addr in net for net in _PRIVATE_NETS)
 
 
-def resolve_and_validate(
-    url: str, allowlist: Iterable[str] | None = None
-) -> tuple[str, str]:
+def resolve_and_validate(url: str, allowlist: Iterable[str] | None = None) -> tuple[str, str]:
     """Resolve `url` and return (pinned_url, original_host).
 
     Raises ValueError for a malformed URL or missing DNS result, and
@@ -147,9 +145,7 @@ async def safe_get(
 ) -> httpx.Response:
     pinned, host = resolve_and_validate(url, allowlist)
     headers = _merge_host_header(kw.pop("headers", None), host)
-    async with httpx.AsyncClient(
-        verify=True, follow_redirects=False, timeout=timeout
-    ) as client:
+    async with httpx.AsyncClient(verify=True, follow_redirects=False, timeout=timeout) as client:
         return await client.get(pinned, headers=headers, **kw)
 
 
@@ -162,15 +158,11 @@ async def safe_post(
 ) -> httpx.Response:
     pinned, host = resolve_and_validate(url, allowlist)
     headers = _merge_host_header(kw.pop("headers", None), host)
-    async with httpx.AsyncClient(
-        verify=True, follow_redirects=False, timeout=timeout
-    ) as client:
+    async with httpx.AsyncClient(verify=True, follow_redirects=False, timeout=timeout) as client:
         return await client.post(pinned, headers=headers, **kw)
 
 
-def validate_proxy_url(
-    url: str, allowlist: Iterable[str] | None = None
-) -> str:
+def validate_proxy_url(url: str, allowlist: Iterable[str] | None = None) -> str:
     """Validate a user-supplied file URL before forwarding to the bridge.
 
     Confirms the host is on the platform allowlist AND does not resolve

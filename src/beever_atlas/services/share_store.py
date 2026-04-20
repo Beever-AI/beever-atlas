@@ -112,9 +112,7 @@ class ShareStore:
         )
         return updated
 
-    async def resnapshot(
-        self, doc_id: Any, *, title: str, messages: list[dict]
-    ) -> dict | None:
+    async def resnapshot(self, doc_id: Any, *, title: str, messages: list[dict]) -> dict | None:
         now = self._now()
         return await self._collection.find_one_and_update(
             {"_id": doc_id, "revoked_at": None},
@@ -145,9 +143,7 @@ class ShareStore:
         )
         return result.modified_count == 1
 
-    async def append_access_log(
-        self, doc_id: Any, entry: dict
-    ) -> None:
+    async def append_access_log(self, doc_id: Any, entry: dict) -> None:
         """FIFO append with cap ACCESS_LOG_CAP via `$slice`."""
         await self._collection.update_one(
             {"_id": doc_id},

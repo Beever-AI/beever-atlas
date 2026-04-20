@@ -135,13 +135,9 @@ class WikiCache:
         # doc is absent but the legacy (unsuffixed) doc exists, copy the
         # legacy doc to the new key so archival history is preserved.
         if self._is_default_lang(target_lang):
-            new_existing = await self._collection.find_one(
-                {"channel_id": key}, {"_id": 0}
-            )
+            new_existing = await self._collection.find_one({"channel_id": key}, {"_id": 0})
             if new_existing is None:
-                legacy = await self._collection.find_one(
-                    {"channel_id": channel_id}, {"_id": 0}
-                )
+                legacy = await self._collection.find_one({"channel_id": channel_id}, {"_id": 0})
                 if legacy is not None:
                     legacy["channel_id"] = key
                     try:
@@ -163,7 +159,9 @@ class WikiCache:
                 # so version history can label each entry correctly.
                 archived_lang = existing.get("target_lang") or target_lang
                 await self._version_store.archive(
-                    channel_id, existing, target_lang=archived_lang,
+                    channel_id,
+                    existing,
+                    target_lang=archived_lang,
                 )
                 await self._version_store.cleanup(channel_id)
         except Exception:
@@ -209,6 +207,7 @@ class WikiCache:
         """
         await self._ensure_db()
         import re
+
         pattern = f"^{re.escape(channel_id)}(:.+)?$"
         await self._collection.update_many(
             {"channel_id": {"$regex": pattern}},
@@ -259,9 +258,7 @@ class WikiCache:
         doc = await self._status_collection.find_one({"channel_id": key}, {"_id": 0})
         # Backward-compat: fall back to legacy key for default language
         if doc is None and self._is_default_lang(target_lang):
-            doc = await self._status_collection.find_one(
-                {"channel_id": channel_id}, {"_id": 0}
-            )
+            doc = await self._status_collection.find_one({"channel_id": channel_id}, {"_id": 0})
         return doc
 
     async def clear_generation_status(self, channel_id: str, target_lang: str = "en") -> None:

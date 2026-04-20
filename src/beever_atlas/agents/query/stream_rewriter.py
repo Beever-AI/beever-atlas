@@ -139,7 +139,7 @@ class StreamRewriter:
             if match is not None:
                 out.append(self._buffer[: match.start()])
                 out.append(self._process_bracket(match.group(1)))
-                self._buffer = self._buffer[match.end():]
+                self._buffer = self._buffer[match.end() :]
                 continue
 
             if not final:
@@ -242,7 +242,7 @@ class StreamRewriter:
         while lb != -1:
             rb = buf.find("]", lb)
             if rb == -1:
-                after = buf[lb + 1:]
+                after = buf[lb + 1 :]
                 if after.startswith("src:") or _is_src_prefix(after):
                     return lb
                 # Unclosed bracket that's definitely not a src tag; look earlier.
@@ -272,6 +272,7 @@ class StreamRewriter:
 
     def _strip_leftovers(self, text: str) -> str:
         """Defensive: remove any `[src:...]`-looking literal the main passes missed."""
+
         def _repl(_match: re.Match[str]) -> str:
             self._leftover_stripped += 1
             return ""

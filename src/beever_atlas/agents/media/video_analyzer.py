@@ -1,4 +1,5 @@
 """Video analysis agent — transcribes and describes video content."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

@@ -41,9 +41,7 @@ class CooldownActive(CapabilityError):
     """An operation is currently in cooldown and must retry after ``retry_after_seconds``."""
 
     def __init__(self, retry_after_seconds: int) -> None:
-        super().__init__(
-            f"Cooldown active; retry after {retry_after_seconds}s"
-        )
+        super().__init__(f"Cooldown active; retry after {retry_after_seconds}s")
         self.retry_after_seconds = int(retry_after_seconds)
 
 

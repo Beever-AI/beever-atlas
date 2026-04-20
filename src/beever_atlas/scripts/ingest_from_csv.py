@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 logger = logging.getLogger(__name__)
@@ -61,22 +62,24 @@ def _load_messages(channel_id: str, limit: int = 0):
         else:
             ts = datetime.now(timezone.utc)
 
-        messages.append(NormalizedMessage(
-            content=r.get("content", ""),
-            author=r.get("author", ""),
-            author_name=r.get("author_name", ""),
-            author_image=r.get("author_image", ""),
-            platform=r.get("platform", "discord"),
-            channel_id=r.get("channel_id", channel_id),
-            channel_name=r.get("channel_name", channel_id),
-            message_id=r.get("message_id", ""),
-            timestamp=ts,
-            thread_id=r.get("thread_id"),
-            attachments=r.get("attachments", []),
-            reactions=r.get("reactions", []),
-            reply_count=r.get("reply_count", 0),
-            raw_metadata=r.get("raw_metadata", {}),
-        ))
+        messages.append(
+            NormalizedMessage(
+                content=r.get("content", ""),
+                author=r.get("author", ""),
+                author_name=r.get("author_name", ""),
+                author_image=r.get("author_image", ""),
+                platform=r.get("platform", "discord"),
+                channel_id=r.get("channel_id", channel_id),
+                channel_name=r.get("channel_name", channel_id),
+                message_id=r.get("message_id", ""),
+                timestamp=ts,
+                thread_id=r.get("thread_id"),
+                attachments=r.get("attachments", []),
+                reactions=r.get("reactions", []),
+                reply_count=r.get("reply_count", 0),
+                raw_metadata=r.get("raw_metadata", {}),
+            )
+        )
 
     return messages
 
@@ -86,10 +89,22 @@ async def main() -> None:
 
     parser = argparse.ArgumentParser(description="Ingest Discord CSV cache into the full pipeline")
     parser.add_argument("channel_id", help="Channel ID (matches cache filename)")
-    parser.add_argument("--channel-name", default="", help="Human-readable channel name for the dashboard")
+    parser.add_argument(
+        "--channel-name", default="", help="Human-readable channel name for the dashboard"
+    )
     parser.add_argument("--limit", type=int, default=0, help="Max messages to ingest (0 = all)")
-    parser.add_argument("--batch-size", type=int, default=0, help="Messages per LLM batch (0 = use server default). Lower = less truncation risk.")
-    parser.add_argument("--max-tokens", type=int, default=0, help="Max prompt tokens per adaptive batch (0 = use server default, default=6000 → ~120 msgs). Use 1500 for ~30 msgs to avoid entity truncation.")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=0,
+        help="Messages per LLM batch (0 = use server default). Lower = less truncation risk.",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        help="Max prompt tokens per adaptive batch (0 = use server default, default=6000 → ~120 msgs). Use 1500 for ~30 msgs to avoid entity truncation.",
+    )
     parser.add_argument("--batch-api", action="store_true", help="Use Gemini Batch API path")
     args = parser.parse_args()
 
@@ -135,6 +150,7 @@ async def main() -> None:
 
     # Run the batch processor (same as SyncRunner._run_sync)
     from beever_atlas.models.sync_policy import IngestionConfig
+
     effective_policy = await resolve_effective_policy(channel_id)
     ingestion_config = effective_policy.ingestion
     if args.batch_size > 0:
@@ -176,8 +192,7 @@ async def main() -> None:
     sync_errors = None
     if result.errors:
         sync_errors = [
-            f"batch={err.get('batch_num')} error={err.get('error')}"
-            for err in result.errors
+            f"batch={err.get('batch_num')} error={err.get('error')}" for err in result.errors
         ]
     await stores.mongodb.complete_sync_job(
         job_id=job_id,
@@ -210,9 +225,9 @@ async def main() -> None:
         },
     )
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  INGESTION COMPLETE")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Status:        {sync_status}")
     print(f"  Messages:      {len(messages)}")
     print(f"  Facts:         {result.total_facts}")
@@ -231,6 +246,7 @@ async def main() -> None:
     # Trigger consolidation → this is what makes wiki generation possible
     print("Triggering consolidation (generates channel summary + clusters for wiki)...")
     from beever_atlas.services.pipeline_orchestrator import on_ingestion_complete
+
     await on_ingestion_complete(channel_id, result.total_facts)
     print("Consolidation triggered.")
     print()

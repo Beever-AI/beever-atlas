@@ -48,10 +48,7 @@ def test_legitimate_short_answer_kept():
 
 def test_long_answer_with_marker_kept():
     """An answer >= 400 chars that happens to contain a marker is classified 'answered'."""
-    long_answer = (
-        "I don't have complete certainty but here is what I found: "
-        + "A" * 400
-    )
+    long_answer = "I don't have complete certainty but here is what I found: " + "A" * 400
     assert len(long_answer) >= 400
     assert _classify_answer(long_answer) == "answered"
 

@@ -5,6 +5,7 @@ large-scale inference jobs without blocking the event loop.
 
 Supports both inline requests (<20 MB) and file-based uploads (>=20 MB).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +21,12 @@ logger = logging.getLogger(__name__)
 # 20 MB in bytes — SDK threshold for inline vs. file-based submission.
 _INLINE_SIZE_LIMIT = 20 * 1024 * 1024
 
-_TERMINAL_STATES = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
+_TERMINAL_STATES = {
+    "JOB_STATE_SUCCEEDED",
+    "JOB_STATE_FAILED",
+    "JOB_STATE_CANCELLED",
+    "JOB_STATE_EXPIRED",
+}
 _SUCCESS_STATE = "JOB_STATE_SUCCEEDED"
 _FAILED_STATES = {"JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
 
@@ -28,6 +34,7 @@ _FAILED_STATES = {"JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"
 # ---------------------------------------------------------------------------
 # Public data types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class BatchRequest:
@@ -51,6 +58,7 @@ class GeminiBatchError(Exception):
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
+
 
 class GeminiBatchClient:
     """Async client for the Gemini Batch API.
@@ -134,7 +142,9 @@ class GeminiBatchClient:
 
         logger.info(
             "GeminiBatchClient: submitting job '%s' — %d requests, ~%d bytes",
-            display_name, len(requests), payload_bytes,
+            display_name,
+            len(requests),
+            payload_bytes,
         )
 
         if payload_bytes < _INLINE_SIZE_LIMIT:
@@ -147,9 +157,7 @@ class GeminiBatchClient:
                     config={"display_name": display_name},
                 ),
             )
-            logger.info(
-                "GeminiBatchClient: inline job created — name=%s", batch_job.name
-            )
+            logger.info("GeminiBatchClient: inline job created — name=%s", batch_job.name)
         else:
             # File-based submission for payloads >= 20 MB
             logger.info(
@@ -170,18 +178,14 @@ class GeminiBatchClient:
         loop = asyncio.get_event_loop()
 
         # Write to a temporary JSONL file
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".jsonl", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
             for item in inline_payload:
                 tmp.write(json.dumps(item) + "\n")
             tmp_path = tmp.name
 
         def _upload_and_create() -> Any:
             uploaded = client.files.upload(file=tmp_path)
-            logger.info(
-                "GeminiBatchClient: uploaded file — name=%s", uploaded.name
-            )
+            logger.info("GeminiBatchClient: uploaded file — name=%s", uploaded.name)
             return client.batches.create(
                 model=self._model,
                 src=uploaded.name,
@@ -189,9 +193,7 @@ class GeminiBatchClient:
             )
 
         batch_job = await loop.run_in_executor(None, _upload_and_create)
-        logger.info(
-            "GeminiBatchClient: file-based job created — name=%s", batch_job.name
-        )
+        logger.info("GeminiBatchClient: file-based job created — name=%s", batch_job.name)
         return batch_job
 
     async def poll_job(
@@ -230,15 +232,17 @@ class GeminiBatchClient:
                     f"{self._max_wait}s (elapsed={elapsed:.1f}s)"
                 )
 
-            batch_job = await loop.run_in_executor(
-                None, lambda: client.batches.get(name=job_name)
+            batch_job = await loop.run_in_executor(None, lambda: client.batches.get(name=job_name))
+            state: str = (
+                batch_job.state.name if hasattr(batch_job.state, "name") else str(batch_job.state)
             )
-            state: str = batch_job.state.name if hasattr(batch_job.state, "name") else str(batch_job.state)
 
             if state != last_state:
                 logger.info(
                     "GeminiBatchClient: job '%s' state=%s elapsed=%.1fs",
-                    job_name, state, elapsed,
+                    job_name,
+                    state,
+                    elapsed,
                 )
                 if on_status_change is not None:
                     try:
@@ -254,7 +258,9 @@ class GeminiBatchClient:
                 if int(elapsed) % 30 < self._poll_interval:
                     logger.info(
                         "GeminiBatchClient: job '%s' still %s (%.0fs elapsed)",
-                        job_name, state, elapsed,
+                        job_name,
+                        state,
+                        elapsed,
                     )
 
             if state in _TERMINAL_STATES:
@@ -266,7 +272,8 @@ class GeminiBatchClient:
                 # Success
                 logger.info(
                     "GeminiBatchClient: job '%s' succeeded in %.1fs",
-                    job_name, elapsed,
+                    job_name,
+                    elapsed,
                 )
                 return batch_job
 
@@ -292,15 +299,11 @@ class GeminiBatchClient:
         try:
             responses = job.dest.inlined_responses
         except AttributeError:
-            logger.warning(
-                "GeminiBatchClient: job has no inlined_responses; returning empty dict"
-            )
+            logger.warning("GeminiBatchClient: job has no inlined_responses; returning empty dict")
             return results
 
         if responses is None:
-            logger.warning(
-                "GeminiBatchClient: inlined_responses is None; returning empty dict"
-            )
+            logger.warning("GeminiBatchClient: inlined_responses is None; returning empty dict")
             return results
 
         for idx, (key, response) in enumerate(zip(request_keys, responses)):
@@ -311,7 +314,8 @@ class GeminiBatchClient:
             logger.warning(
                 "GeminiBatchClient: %d keys provided but only %d responses received; "
                 "missing keys will be absent from results",
-                len(request_keys), len(responses),
+                len(request_keys),
+                len(responses),
             )
 
         return results
@@ -324,7 +328,7 @@ class GeminiBatchClient:
             # Remove opening fence (```json or ```)
             first_newline = stripped.find("\n")
             if first_newline != -1:
-                stripped = stripped[first_newline + 1:]
+                stripped = stripped[first_newline + 1 :]
             # Remove closing fence
             if stripped.rstrip().endswith("```"):
                 stripped = stripped.rstrip()[:-3].rstrip()

@@ -43,12 +43,17 @@ async def fetch_channel_history(
     """
     try:
         from beever_atlas.stores import get_stores
+
         stores = get_stores()
-        records = await stores.mongodb.db["raw_messages"].find(
-            {"channel_id": channel_id},
-            sort=[("message_ts", -1)],
-            limit=limit,
-        ).to_list(length=limit)
+        records = (
+            await stores.mongodb.db["raw_messages"]
+            .find(
+                {"channel_id": channel_id},
+                sort=[("message_ts", -1)],
+                limit=limit,
+            )
+            .to_list(length=limit)
+        )
         return [
             {
                 "author": r.get("author_name") or r.get("author") or "unknown",
@@ -94,9 +99,7 @@ async def resolve_coreferences(
     prompt_parts: list[str] = []
     if history_messages:
         for hm in history_messages:
-            prompt_parts.append(
-                f"[HISTORY] {hm.get('author', 'unknown')}: {hm.get('text', '')}"
-            )
+            prompt_parts.append(f"[HISTORY] {hm.get('author', 'unknown')}: {hm.get('text', '')}")
 
     for i, msg in enumerate(batch_messages):
         author = msg.get("username") or msg.get("user") or msg.get("author") or "unknown"
@@ -115,10 +118,14 @@ async def resolve_coreferences(
         state = await run_agent(agent, state={"messages": messages_text})
 
         resolved_data = state.get("resolved_messages") or {}
-        resolved = resolved_data.get("resolved_messages") or [] if isinstance(resolved_data, dict) else []
+        resolved = (
+            resolved_data.get("resolved_messages") or [] if isinstance(resolved_data, dict) else []
+        )
 
         # Apply resolved text back to batch messages
-        resolved_by_index = {r["index"]: r["text"] for r in resolved if "index" in r and "text" in r}
+        resolved_by_index = {
+            r["index"]: r["text"] for r in resolved if "index" in r and "text" in r
+        }
 
         for i, msg in enumerate(batch_messages):
             original_text = msg.get("text") or msg.get("content") or ""

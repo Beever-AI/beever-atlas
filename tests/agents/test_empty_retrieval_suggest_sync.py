@@ -29,6 +29,7 @@ import pytest
 # Prompt-assembly contract
 # ---------------------------------------------------------------------------
 
+
 def _make_settings(*, registry_on: bool = True, new_prompt: bool = True) -> MagicMock:
     s = MagicMock()
     s.citation_registry_enabled = registry_on
@@ -42,9 +43,8 @@ def test_deep_prompt_contains_empty_retrieval_recovery(new_prompt: bool):
     settings = _make_settings(new_prompt=new_prompt)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
-        prompt = build_qa_system_prompt(
-            max_tool_calls=8, include_follow_ups=True, mode="deep"
-        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True, mode="deep")
     assert "Empty-retrieval recovery" in prompt
 
 
@@ -54,9 +54,8 @@ def test_deep_prompt_mentions_sync_suggestion(new_prompt: bool):
     settings = _make_settings(new_prompt=new_prompt)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
-        prompt = build_qa_system_prompt(
-            max_tool_calls=8, include_follow_ups=True, mode="deep"
-        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True, mode="deep")
     lower = prompt.lower()
     assert "sync" in lower
     assert "un-synced" in lower or "hasn't been synced" in lower
@@ -68,9 +67,8 @@ def test_deep_prompt_forbids_auto_trigger(new_prompt: bool):
     settings = _make_settings(new_prompt=new_prompt)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
-        prompt = build_qa_system_prompt(
-            max_tool_calls=8, include_follow_ups=True, mode="deep"
-        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True, mode="deep")
     assert "trigger_sync_tool" in prompt
     assert "refresh_wiki_tool" in prompt
     # The guardrail: "Do NOT call ... automatically" (or equivalent)
@@ -84,9 +82,8 @@ def test_deep_prompt_asks_for_action_chip(new_prompt: bool):
     settings = _make_settings(new_prompt=new_prompt)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
-        prompt = build_qa_system_prompt(
-            max_tool_calls=8, include_follow_ups=True, mode="deep"
-        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True, mode="deep")
     # Example chips the prompt specifies verbatim
     assert "Sync this channel now" in prompt
     assert "Build a wiki for this channel" in prompt
@@ -97,15 +94,15 @@ def test_quick_mode_does_not_include_recovery_section():
     settings = _make_settings(new_prompt=True)
     with patch("beever_atlas.infra.config.get_settings", return_value=settings):
         from beever_atlas.agents.query.prompts import build_qa_system_prompt
-        prompt = build_qa_system_prompt(
-            max_tool_calls=8, include_follow_ups=True, mode="quick"
-        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True, mode="quick")
     assert "Empty-retrieval recovery" not in prompt
 
 
 # ---------------------------------------------------------------------------
 # Follow-ups tool pass-through contract
 # ---------------------------------------------------------------------------
+
 
 def test_follow_ups_tool_passes_sync_chip_through():
     """Model-authored 'Sync this channel now' must reach the collector verbatim."""
@@ -162,6 +159,7 @@ def test_follow_ups_tool_preserves_sync_substring_after_bullet_strip():
 # No-auto-trigger guardrail (defence in depth: capabilities layer)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_orchestration_tools_not_awaited_without_principal():
     """Sanity: the orchestration tools require a bound principal — calling them
@@ -178,10 +176,9 @@ async def test_orchestration_tools_not_awaited_without_principal():
     trigger_spy = AsyncMock()
     refresh_spy = AsyncMock()
 
-    with patch(
-        "beever_atlas.capabilities.sync.trigger_sync", new=trigger_spy
-    ), patch(
-        "beever_atlas.capabilities.wiki.refresh_wiki", new=refresh_spy
+    with (
+        patch("beever_atlas.capabilities.sync.trigger_sync", new=trigger_spy),
+        patch("beever_atlas.capabilities.wiki.refresh_wiki", new=refresh_spy),
     ):
         sync_result = await trigger_sync_tool(channel_id="C123")
         wiki_result = await refresh_wiki_tool(channel_id="C123")

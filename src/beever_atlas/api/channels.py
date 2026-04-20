@@ -35,6 +35,7 @@ def _detect_platform_from_channel_id(channel_id: str) -> str | None:
         return "discord"
     return None
 
+
 router = APIRouter()
 
 
@@ -46,6 +47,7 @@ def _get_adapter_for_connection(connection_id: str | None = None):
     integration tests drive the channels API without a real bridge.
     """
     import os
+
     if os.environ.get("ADAPTER_MOCK", "").lower() in ("true", "1", "yes"):
         return get_adapter()
     if connection_id:
@@ -56,9 +58,7 @@ def _get_adapter_for_connection(connection_id: str | None = None):
     return ChatBridgeAdapter()
 
 
-async def _resolve_adapter_for_channel(
-    channel_id: str, connection_id: str | None = None
-):
+async def _resolve_adapter_for_channel(channel_id: str, connection_id: str | None = None):
     """Resolve the correct adapter for a channel, with multi-workspace fallback.
 
     Tries the explicit connection_id first. If that fails (wrong workspace),
@@ -75,14 +75,17 @@ async def _resolve_adapter_for_channel(
             # Fall through to search
 
     from beever_atlas.stores import get_stores
+
     stores = get_stores()
     connections = await stores.platform.list_connections()
     connected = [c for c in connections if c.status == "connected"]
 
     likely_platform = _detect_platform_from_channel_id(channel_id)
     candidates = (
-        [c for c in connected if c.platform == likely_platform] or connected
-    ) if likely_platform else connected
+        ([c for c in connected if c.platform == likely_platform] or connected)
+        if likely_platform
+        else connected
+    )
 
     for conn in candidates:
         if conn.id == connection_id:
@@ -156,10 +159,12 @@ async def _enrich_with_language(resp: ChannelResponse) -> ChannelResponse:
         if state is not None:
             lang = state.primary_language
             conf = state.primary_language_confidence
-            resp = resp.model_copy(update={
-                "primary_language": lang if lang else None,
-                "primary_language_confidence": conf if conf is not None else None,
-            })
+            resp = resp.model_copy(
+                update={
+                    "primary_language": lang if lang else None,
+                    "primary_language_confidence": conf if conf is not None else None,
+                }
+            )
     except Exception:
         logger.debug(
             "Failed to enrich channel %s with language metadata",
@@ -169,18 +174,18 @@ async def _enrich_with_language(resp: ChannelResponse) -> ChannelResponse:
     return resp
 
 
-def _apply_language_state(
-    resp: ChannelResponse, state: Any | None
-) -> ChannelResponse:
+def _apply_language_state(resp: ChannelResponse, state: Any | None) -> ChannelResponse:
     """In-memory variant of _enrich_with_language using a pre-fetched state."""
     if state is None:
         return resp
     lang = getattr(state, "primary_language", None)
     conf = getattr(state, "primary_language_confidence", None)
-    return resp.model_copy(update={
-        "primary_language": lang if lang else None,
-        "primary_language_confidence": conf if conf is not None else None,
-    })
+    return resp.model_copy(
+        update={
+            "primary_language": lang if lang else None,
+            "primary_language_confidence": conf if conf is not None else None,
+        }
+    )
 
 
 async def _fetch_file_messages(
@@ -200,10 +205,7 @@ async def _fetch_file_messages(
             pass
     sort_dir = -1 if order == "desc" else 1
     cursor = (
-        stores.mongodb.db["imported_messages"]
-        .find(query)
-        .sort("timestamp", sort_dir)
-        .limit(limit)
+        stores.mongodb.db["imported_messages"].find(query).sort("timestamp", sort_dir).limit(limit)
     )
     messages: list[MessageResponse] = []
     async for doc in cursor:
@@ -230,9 +232,7 @@ async def _fetch_file_messages(
                 links=[],
             )
         )
-    total = await stores.mongodb.db["imported_messages"].count_documents(
-        {"channel_id": channel_id}
-    )
+    total = await stores.mongodb.db["imported_messages"].count_documents({"channel_id": channel_id})
     return MessagesListResponse(messages=messages, total_count=total)
 
 
@@ -265,7 +265,9 @@ async def list_channels() -> list[ChannelResponse]:
             if isinstance(result, BaseException):
                 logger.warning(
                     "Failed to fetch channels for connection %s (%s): %s",
-                    conn.id, conn.display_name, result,
+                    conn.id,
+                    conn.display_name,
+                    result,
                 )
                 continue
             all_channels.extend(result)
@@ -280,13 +282,15 @@ async def list_channels() -> list[ChannelResponse]:
         )
         for cid, name in zip(orphaned_ids, name_results):
             platform = _detect_platform_from_channel_id(cid) or "discord"
-            all_channels.append(ChannelInfo(
-                channel_id=cid,
-                name=name or cid,
-                platform=platform,
-                is_member=True,
-                connection_id=None,
-            ))
+            all_channels.append(
+                ChannelInfo(
+                    channel_id=cid,
+                    name=name or cid,
+                    platform=platform,
+                    is_member=True,
+                    connection_id=None,
+                )
+            )
 
     responses = [_channel_to_response(ch) for ch in all_channels]
     # Batch enrich: single $in query instead of N per-channel reads.
@@ -361,25 +365,29 @@ async def get_channel(
     file_conn = next((c for c in connected if c.platform == "file"), None)
     if file_conn is not None and channel_id in file_conn.selected_channels:
         name = await stores.mongodb.get_channel_display_name(channel_id)
-        return await _enrich_with_language(ChannelResponse(
-            channel_id=channel_id,
-            name=name or channel_id,
-            platform="file",
-            is_member=True,
-            connection_id=file_conn.id,
-        ))
+        return await _enrich_with_language(
+            ChannelResponse(
+                channel_id=channel_id,
+                name=name or channel_id,
+                platform="file",
+                is_member=True,
+                connection_id=file_conn.id,
+            )
+        )
 
     synced_ids = await stores.mongodb.list_synced_channel_ids()
     if channel_id in synced_ids:
         name = await stores.mongodb.get_channel_display_name(channel_id)
         platform = _detect_platform_from_channel_id(channel_id) or "discord"
-        return await _enrich_with_language(ChannelResponse(
-            channel_id=channel_id,
-            name=name or channel_id,
-            platform=platform,
-            is_member=True,
-            connection_id=None,
-        ))
+        return await _enrich_with_language(
+            ChannelResponse(
+                channel_id=channel_id,
+                name=name or channel_id,
+                platform=platform,
+                is_member=True,
+                connection_id=None,
+            )
+        )
 
     raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
@@ -389,8 +397,12 @@ async def get_channel_messages(
     channel_id: str,
     limit: int = Query(default=50, ge=1, le=500),
     since: str | None = Query(default=None, description="ISO 8601 datetime filter"),
-    before: str | None = Query(default=None, description="Message ID cursor - fetch messages before this ID"),
-    order: str = Query(default="desc", description="Sort order: desc (newest first) or asc (oldest first)"),
+    before: str | None = Query(
+        default=None, description="Message ID cursor - fetch messages before this ID"
+    ),
+    order: str = Query(
+        default="desc", description="Sort order: desc (newest first) or asc (oldest first)"
+    ),
     connection_id: str | None = Query(default=None),
     principal: Principal = Depends(require_user),
 ) -> MessagesListResponse:
@@ -405,9 +417,7 @@ async def get_channel_messages(
         (c for c in connections if c.platform == "file" and c.status == "connected"),
         None,
     )
-    is_file_channel = (
-        file_conn is not None and channel_id in file_conn.selected_channels
-    ) or (
+    is_file_channel = (file_conn is not None and channel_id in file_conn.selected_channels) or (
         connection_id is not None and file_conn is not None and connection_id == file_conn.id
     )
     if is_file_channel:
@@ -430,7 +440,9 @@ async def get_channel_messages(
         since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
 
     try:
-        messages = await adapter.fetch_history(channel_id, since=since_dt, limit=limit, before=before, order=order)
+        messages = await adapter.fetch_history(
+            channel_id, since=since_dt, limit=limit, before=before, order=order
+        )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found") from e
     except BridgeError as e:
@@ -489,13 +501,9 @@ async def get_thread_messages(
     try:
         messages = await adapter.fetch_thread(channel_id, thread_id)
     except KeyError as e:
-        raise HTTPException(
-            status_code=404, detail=f"Thread {thread_id} not found"
-        ) from e
+        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found") from e
     except BridgeError as e:
-        raise HTTPException(
-            status_code=e.status_code or 502, detail=str(e)
-        ) from e
+        raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
 
     return [
         MessageResponse(
@@ -558,10 +566,12 @@ async def clear_channel_data(
 @router.get("/api/files/proxy")
 async def proxy_file(
     url: str = Query(..., description="File URL to proxy"),
-    connection_id: str | None = Query(None, description="Connection ID for multi-workspace routing"),
+    connection_id: str | None = Query(
+        None, description="Connection ID for multi-workspace routing"
+    ),
 ):
     adapter = get_adapter()
-    if not hasattr(adapter, '_client'):
+    if not hasattr(adapter, "_client"):
         raise HTTPException(status_code=501, detail="File proxy not available in mock mode")
 
     from beever_atlas.infra.config import get_settings
@@ -574,9 +584,7 @@ async def proxy_file(
         # Surface a generic message; never echo the attacker-controlled URL.
         # Log the host only so operators can see legitimate misses.
         host = urlparse(url).hostname if url else None
-        logger.warning(
-            "file_proxy rejected url: host=%s reason=%s", host, type(exc).__name__
-        )
+        logger.warning("file_proxy rejected url: host=%s reason=%s", host, type(exc).__name__)
         raise HTTPException(status_code=400, detail="Invalid file URL") from None
 
     _settings = get_settings()

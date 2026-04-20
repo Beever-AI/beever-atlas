@@ -52,7 +52,9 @@ async def reset_all_data() -> dict:
         except Exception:
             pass
 
-        results["weaviate"] = f"deleted {total_deleted} objects across {len(channels_with_state)} channels"
+        results["weaviate"] = (
+            f"deleted {total_deleted} objects across {len(channels_with_state)} channels"
+        )
     except Exception as exc:
         results["weaviate_error"] = str(exc)
 
@@ -62,7 +64,9 @@ async def reset_all_data() -> dict:
         driver = getattr(stores.graph, "_driver", None)
         if driver:
             async with driver.session() as neo_session:
-                result = await neo_session.run("MATCH (n) DETACH DELETE n RETURN count(n) AS deleted")
+                result = await neo_session.run(
+                    "MATCH (n) DETACH DELETE n RETURN count(n) AS deleted"
+                )
                 record = await result.single()
                 deleted = int(record["deleted"]) if record else 0
                 results["graph"] = f"deleted {deleted} nodes (full wipe)"
@@ -92,25 +96,36 @@ async def reset_all_data() -> dict:
         # Trigger re-seed on next startup() call; for now insert from Settings
         from beever_atlas.infra.config import get_settings
         from beever_atlas.models.sync_policy import (
-            ConsolidationConfig, ConsolidationStrategy,
-            GlobalPolicyDefaults, IngestionConfig, SyncConfig, SyncTriggerMode,
+            ConsolidationConfig,
+            ConsolidationStrategy,
+            GlobalPolicyDefaults,
+            IngestionConfig,
+            SyncConfig,
+            SyncTriggerMode,
         )
+
         s = get_settings()
         defaults = GlobalPolicyDefaults(
             sync=SyncConfig(
-                trigger_mode=SyncTriggerMode.MANUAL, sync_type="auto",
-                max_messages=s.sync_max_messages, min_sync_interval_minutes=1,
+                trigger_mode=SyncTriggerMode.MANUAL,
+                sync_type="auto",
+                max_messages=s.sync_max_messages,
+                min_sync_interval_minutes=1,
             ),
             ingestion=IngestionConfig(
-                batch_size=s.sync_batch_size, quality_threshold=s.quality_threshold,
+                batch_size=s.sync_batch_size,
+                quality_threshold=s.quality_threshold,
                 max_facts_per_message=s.max_facts_per_message,
-                skip_entity_extraction=False, skip_graph_writes=False,
+                skip_entity_extraction=False,
+                skip_graph_writes=False,
             ),
             consolidation=ConsolidationConfig(
-                strategy=ConsolidationStrategy.AFTER_EVERY_SYNC, after_n_syncs=3,
+                strategy=ConsolidationStrategy.AFTER_EVERY_SYNC,
+                after_n_syncs=3,
                 similarity_threshold=s.cluster_similarity_threshold,
                 merge_threshold=s.cluster_merge_threshold,
-                min_facts_for_clustering=3, staleness_refresh_days=7,
+                min_facts_for_clustering=3,
+                staleness_refresh_days=7,
             ),
         )
         await db["global_policy_defaults"].insert_one(defaults.model_dump(mode="json"))
@@ -122,6 +137,7 @@ async def reset_all_data() -> dict:
     # 4. Invalidate caches
     try:
         from beever_atlas.services.policy_resolver import invalidate_defaults_cache
+
         invalidate_defaults_cache()
     except Exception:
         pass

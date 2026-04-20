@@ -65,25 +65,31 @@ async def _search_relationships_impl(
                 if node.name not in seen_nodes:
                     seen_nodes.add(node.name)
                     _n: Any = node
-                    all_nodes.append({
-                        "name": _n.name,
-                        "type": getattr(_n, "entity_type", None) or getattr(_n, "type", None),
-                    })
+                    all_nodes.append(
+                        {
+                            "name": _n.name,
+                            "type": getattr(_n, "entity_type", None) or getattr(_n, "type", None),
+                        }
+                    )
 
             for edge in subgraph.edges:
                 edge_key = f"{edge.source}-{edge.type}-{edge.target}"
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
-                    all_edges.append({
-                        "source": edge.source,
-                        "target": edge.target,
-                        "type": edge.type,
-                        "confidence": edge.confidence,
-                        "context": getattr(edge, "context", "") or "",
-                    })
+                    all_edges.append(
+                        {
+                            "source": edge.source,
+                            "target": edge.target,
+                            "type": edge.type,
+                            "confidence": edge.confidence,
+                            "context": getattr(edge, "context", "") or "",
+                        }
+                    )
 
         if not all_nodes and not all_edges:
-            return [{"_empty": True, "entity": entities[0] if entities else "", "reason": "no_edges"}]
+            return [
+                {"_empty": True, "entity": entities[0] if entities else "", "reason": "no_edges"}
+            ]
 
         if len(all_edges) > _MAX_EDGES:
             all_edges.sort(key=lambda e: e.get("confidence", 0.0), reverse=True)
@@ -91,9 +97,10 @@ async def _search_relationships_impl(
         if len(all_nodes) > _MAX_NODES:
             all_nodes = all_nodes[:_MAX_NODES]
 
-        edge_summary = "; ".join(
-            f"{e['source']} -{e['type']}-> {e['target']}" for e in all_edges[:5]
-        ) or f"No relationships found for {', '.join(entities)}"
+        edge_summary = (
+            "; ".join(f"{e['source']} -{e['type']}-> {e['target']}" for e in all_edges[:5])
+            or f"No relationships found for {', '.join(entities)}"
+        )
 
         return {
             "entities_searched": entities,
@@ -150,19 +157,21 @@ async def _trace_decision_history_impl(channel_id: str, topic: str) -> list:
 
         for position, edge in enumerate(supersedes_edges):
             ctx_text = getattr(edge, "context", "") or f"{edge.target} superseded by {edge.source}"
-            timeline.append({
-                "entity": edge.target,
-                "superseded_by": edge.source,
-                "superseded_by_id": name_to_id.get(edge.source),
-                "relationship": "SUPERSEDES",
-                "confidence": edge.confidence,
-                "context": ctx_text,
-                "position": position,
-                "text": ctx_text,
-                "decision_id": f"{channel_id}:{edge.target}:{edge.source}",
-                "channel_id": channel_id,
-                "topic": topic,
-            })
+            timeline.append(
+                {
+                    "entity": edge.target,
+                    "superseded_by": edge.source,
+                    "superseded_by_id": name_to_id.get(edge.source),
+                    "relationship": "SUPERSEDES",
+                    "confidence": edge.confidence,
+                    "context": ctx_text,
+                    "position": position,
+                    "text": ctx_text,
+                    "decision_id": f"{channel_id}:{edge.target}:{edge.source}",
+                    "channel_id": channel_id,
+                    "topic": topic,
+                }
+            )
 
         if not timeline:
             return [{"_empty": True, "entity": topic, "reason": "no_edges"}]
@@ -226,18 +235,20 @@ async def _find_experts_impl(
         out: list[dict] = []
         for item in results:
             topics_list = sorted(item.pop("_topics", set()))[:5]
-            out.append({
-                "handle": item["handle"],
-                "expertise_score": float(item["expertise_score"]),
-                "fact_count": int(item["fact_count"]),
-                "top_topics": topics_list,
-                "recent_activity_days": 0,
-                "text": f"{item['handle']} has {item['fact_count']} facts about {topic}",
-                "subject_id": item["handle"],
-                "predicate": "EXPERT_IN",
-                "object_id": topic,
-                "channel_id": channel_id,
-            })
+            out.append(
+                {
+                    "handle": item["handle"],
+                    "expertise_score": float(item["expertise_score"]),
+                    "fact_count": int(item["fact_count"]),
+                    "top_topics": topics_list,
+                    "recent_activity_days": 0,
+                    "text": f"{item['handle']} has {item['fact_count']} facts about {topic}",
+                    "subject_id": item["handle"],
+                    "predicate": "EXPERT_IN",
+                    "object_id": topic,
+                    "channel_id": channel_id,
+                }
+            )
         return out
     except Exception:
         logger.exception("find_experts failed for topic=%s", topic)

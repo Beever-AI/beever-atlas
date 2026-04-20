@@ -6,6 +6,7 @@ faithfully rendered as "**** (N members) — ...". These tests exercise the
 module-level `_apply_title_fallbacks` helper directly so we don't need to
 stand up a full `compile()` pipeline.
 """
+
 from __future__ import annotations
 
 from beever_atlas.models.domain import TopicCluster

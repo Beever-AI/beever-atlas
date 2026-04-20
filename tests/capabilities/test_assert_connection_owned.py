@@ -43,8 +43,10 @@ async def test_raises_when_connection_not_found():
     stores = MagicMock()
     stores.platform.get_connection = AsyncMock(return_value=None)
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=stores), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=stores),
+        patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()),
+    ):
         with pytest.raises(ConnectionAccessDenied):
             await assert_connection_owned("user-A", "conn-missing")
 
@@ -54,8 +56,10 @@ async def test_allows_explicit_owner_match():
     """assert_connection_owned allows when owner matches principal."""
     conn = _make_conn(owner="user-A")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()),
+    ):
         await assert_connection_owned("user-A", "conn-1")  # should not raise
 
 
@@ -64,8 +68,13 @@ async def test_allows_legacy_shared_for_user_in_single_tenant():
     """In single-tenant mode, user principals can access legacy:shared rows."""
     conn = _make_conn(owner="legacy:shared")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=True)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=True),
+        ),
+    ):
         # A bare string principal is treated as kind='user' per _principal_kind
         await assert_connection_owned("user-B", "conn-1")  # should not raise
 
@@ -75,8 +84,10 @@ async def test_denies_owner_mismatch_in_single_tenant():
     """assert_connection_owned denies when owner is a different user (non-legacy)."""
     conn = _make_conn(owner="user-B")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings()),
+    ):
         with pytest.raises(ConnectionAccessDenied):
             await assert_connection_owned("user-A", "conn-1")
 
@@ -86,8 +97,13 @@ async def test_denies_legacy_shared_in_multitenant():
     """In multi-tenant mode, legacy:shared rows are not accessible to non-owners."""
     conn = _make_conn(owner="legacy:shared")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=False)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=False),
+        ),
+    ):
         with pytest.raises(ConnectionAccessDenied):
             await assert_connection_owned("user-A", "conn-1")
 
@@ -106,8 +122,13 @@ async def test_allows_legacy_shared_for_mcp_in_single_tenant():
     conn = _make_conn(owner="legacy:shared")
     mcp_principal = Principal("mcp:abc123", kind="mcp")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=True)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=True),
+        ),
+    ):
         await assert_connection_owned(mcp_principal, "conn-1")  # should not raise
 
 
@@ -117,8 +138,13 @@ async def test_allows_unowned_for_mcp_in_single_tenant():
     conn = _make_conn(owner=None)
     mcp_principal = Principal("mcp:abc123", kind="mcp")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=True)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=True),
+        ),
+    ):
         await assert_connection_owned(mcp_principal, "conn-1")  # should not raise
 
 
@@ -129,8 +155,13 @@ async def test_denies_legacy_shared_for_mcp_in_multitenant():
     conn = _make_conn(owner="legacy:shared")
     mcp_principal = Principal("mcp:abc123", kind="mcp")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=False)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=False),
+        ),
+    ):
         with pytest.raises(ConnectionAccessDenied):
             await assert_connection_owned(mcp_principal, "conn-1")
 
@@ -146,7 +177,12 @@ async def test_bridge_principal_unchanged_no_legacy_fallback():
     conn = _make_conn(owner="legacy:shared")
     bridge_principal = Principal("bridge", kind="bridge")
 
-    with patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)), \
-         patch("beever_atlas.infra.channel_access.get_settings", return_value=_mock_settings(single_tenant=True)):
+    with (
+        patch("beever_atlas.infra.channel_access.get_stores", return_value=_mock_stores(conn)),
+        patch(
+            "beever_atlas.infra.channel_access.get_settings",
+            return_value=_mock_settings(single_tenant=True),
+        ),
+    ):
         with pytest.raises(ConnectionAccessDenied):
             await assert_connection_owned(bridge_principal, "conn-1")

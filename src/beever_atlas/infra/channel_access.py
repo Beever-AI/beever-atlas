@@ -85,9 +85,7 @@ def _principal_id(principal: Principal | str) -> str:
     return str(principal)
 
 
-async def assert_channel_access(
-    principal: Principal | str, channel_id: str
-) -> None:
+async def assert_channel_access(principal: Principal | str, channel_id: str) -> None:
     """Raise ``HTTPException(403)`` if ``principal`` cannot access ``channel_id``.
 
     See module docstring for the full decision table.
@@ -156,9 +154,7 @@ async def assert_channel_access(
     )
 
 
-async def assert_connection_owned(
-    principal: Principal | str, connection_id: str
-) -> None:
+async def assert_connection_owned(principal: Principal | str, connection_id: str) -> None:
     """Raise ``ConnectionAccessDenied`` if ``principal`` doesn't own ``connection_id``.
 
     Mirrors :func:`assert_channel_access` semantics for connection-scoped
@@ -220,11 +216,7 @@ async def assert_connection_owned(
     # explicit match. The MCP inclusion keeps `list_channels` consistent
     # with `list_connections` (capabilities/connections.py) so the same
     # principal sees the same connection set on both endpoints.
-    if (
-        single_tenant
-        and kind in ("user", "mcp")
-        and owner in (None, _LEGACY_SHARED_OWNER)
-    ):
+    if single_tenant and kind in ("user", "mcp") and owner in (None, _LEGACY_SHARED_OWNER):
         return
 
     logger.info(

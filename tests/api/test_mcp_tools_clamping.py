@@ -52,14 +52,13 @@ async def test_search_channel_facts_limit_clamped(input_limit, expected_limit):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_search = AsyncMock(return_value=[])
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.memory.search_channel_facts", new=fake_search
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.memory.search_channel_facts", new=fake_search),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_channel_facts")
-        await fn(
-            channel_id="ch-a", query="hi", ctx=_ctx(), limit=input_limit
-        )
+        await fn(channel_id="ch-a", query="hi", ctx=_ctx(), limit=input_limit)
 
     assert fake_search.await_args.kwargs["limit"] == expected_limit
 
@@ -78,8 +77,9 @@ async def test_get_recent_activity_days_clamped(input_days, expected_days):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake = AsyncMock(return_value=[])
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.memory.get_recent_activity", new=fake
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.memory.get_recent_activity", new=fake),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_recent_activity")
@@ -97,8 +97,9 @@ async def test_get_recent_activity_limit_clamped(input_limit, expected_limit):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake = AsyncMock(return_value=[])
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.memory.get_recent_activity", new=fake
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.memory.get_recent_activity", new=fake),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "get_recent_activity")
@@ -121,8 +122,9 @@ async def test_search_media_references_limit_clamped(input_limit, expected_limit
     from beever_atlas.api.mcp_server import build_mcp
 
     fake = AsyncMock(return_value=[])
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.memory.search_media_references", new=fake
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.memory.search_media_references", new=fake),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_media_references")
@@ -145,14 +147,13 @@ async def test_find_experts_limit_clamped(input_limit, expected_limit):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake = AsyncMock(return_value=[])
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.graph.find_experts", new=fake
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.graph.find_experts", new=fake),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "find_experts")
-        await fn(
-            channel_id="ch-a", topic="billing", ctx=_ctx(), limit=input_limit
-        )
+        await fn(channel_id="ch-a", topic="billing", ctx=_ctx(), limit=input_limit)
 
     assert fake.await_args.kwargs["limit"] == expected_limit
 
@@ -171,8 +172,9 @@ async def test_search_relationships_hops_clamped(input_hops, expected_hops):
     from beever_atlas.api.mcp_server import build_mcp
 
     fake = AsyncMock(return_value={"nodes": [], "edges": []})
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), patch(
-        "beever_atlas.capabilities.graph.search_relationships", new=fake
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch("beever_atlas.capabilities.graph.search_relationships", new=fake),
     ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_relationships")

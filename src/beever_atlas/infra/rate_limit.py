@@ -32,6 +32,7 @@ def _get_gemini_limiter():
     global _gemini_limiter
     if _gemini_limiter is None:
         from aiolimiter import AsyncLimiter
+
         _gemini_limiter = AsyncLimiter(max_rate=get_settings().gemini_rpm, time_period=60)
     return _gemini_limiter
 
@@ -40,6 +41,7 @@ def _get_jina_limiter():
     global _jina_limiter
     if _jina_limiter is None:
         from aiolimiter import AsyncLimiter
+
         _jina_limiter = AsyncLimiter(max_rate=get_settings().jina_rpm, time_period=60)
     return _jina_limiter
 

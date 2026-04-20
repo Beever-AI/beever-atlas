@@ -39,8 +39,6 @@ def test_submodule_directory_exists(submodule: str):
 
 def test_all_expected_submodules_present():
     src_root = Path(__file__).parent.parent / "src" / "beever_atlas"
-    actual = {
-        d.name for d in src_root.iterdir() if d.is_dir() and not d.name.startswith("_")
-    }
+    actual = {d.name for d in src_root.iterdir() if d.is_dir() and not d.name.startswith("_")}
     expected = set(SUBMODULES)
     assert expected.issubset(actual), f"Missing submodules: {expected - actual}"

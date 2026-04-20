@@ -114,6 +114,7 @@ async def seeded_session():
 # Scrubber unit tests
 # ---------------------------------------------------------------------------
 
+
 class TestScrubber:
     def test_allowlist_only(self):
         messages = [
@@ -172,6 +173,7 @@ class TestScrubber:
 # Endpoint tests
 # ---------------------------------------------------------------------------
 
+
 class TestShareCreate:
     @pytest.mark.anyio
     async def test_owner_creates_default_owner_visibility(
@@ -185,9 +187,7 @@ class TestShareCreate:
         assert body["url"].startswith("/ask/shared/")
 
     @pytest.mark.anyio
-    async def test_stranger_forbidden(
-        self, client: AsyncClient, as_stranger, seeded_session: str
-    ):
+    async def test_stranger_forbidden(self, client: AsyncClient, as_stranger, seeded_session: str):
         resp = await client.post(f"/api/ask/sessions/{seeded_session}/share")
         assert resp.status_code == 403, resp.text
 
@@ -206,9 +206,7 @@ class TestShareCreate:
     ):
         r1 = await client.post(f"/api/ask/sessions/{seeded_session}/share")
         old = r1.json()["share_token"]
-        r2 = await client.post(
-            f"/api/ask/sessions/{seeded_session}/share?rotate=true"
-        )
+        r2 = await client.post(f"/api/ask/sessions/{seeded_session}/share?rotate=true")
         new = r2.json()["share_token"]
         assert old != new
         # Old token is gone.
@@ -232,9 +230,7 @@ class TestShareLifecycle:
         assert r2.json()["updated_at"] != updated1
 
     @pytest.mark.anyio
-    async def test_patch_visibility(
-        self, client: AsyncClient, as_owner, seeded_session: str
-    ):
+    async def test_patch_visibility(self, client: AsyncClient, as_owner, seeded_session: str):
         await client.post(f"/api/ask/sessions/{seeded_session}/share")
         r = await client.patch(
             f"/api/ask/sessions/{seeded_session}/share/visibility",
@@ -244,9 +240,7 @@ class TestShareLifecycle:
         assert r.json()["visibility"] == "auth"
 
     @pytest.mark.anyio
-    async def test_delete_then_get_404(
-        self, client: AsyncClient, as_owner, seeded_session: str
-    ):
+    async def test_delete_then_get_404(self, client: AsyncClient, as_owner, seeded_session: str):
         r1 = await client.post(f"/api/ask/sessions/{seeded_session}/share")
         token = r1.json()["share_token"]
         d = await client.delete(f"/api/ask/sessions/{seeded_session}/share")
@@ -340,9 +334,7 @@ class TestConcurrentRotation:
         assert r0.status_code == 200
 
         async def one() -> str | None:
-            resp = await client.post(
-                f"/api/ask/sessions/{seeded_session}/share?rotate=true"
-            )
+            resp = await client.post(f"/api/ask/sessions/{seeded_session}/share?rotate=true")
             if resp.status_code == 200:
                 return resp.json()["share_token"]
             return None

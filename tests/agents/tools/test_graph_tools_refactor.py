@@ -110,7 +110,7 @@ async def test_search_relationships_caps_nodes_and_edges():
     graph.find_entity_by_name.return_value = _node("Alice")
     # 30 unique nodes, 80 unique edges of varying confidence.
     nodes = [_node(f"N{i}") for i in range(30)]
-    edges = [_edge(f"N{i}", f"N{i+1}", "REL", confidence=i / 100.0) for i in range(80)]
+    edges = [_edge(f"N{i}", f"N{i + 1}", "REL", confidence=i / 100.0) for i in range(80)]
     graph.get_neighbors.return_value = _subgraph(nodes, edges)
 
     with _patch_stores(graph):

@@ -20,9 +20,7 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="ask_channel", timeout=90.0)
     async def ask_channel(
-        channel_id: Annotated[
-            str, "The channel id to query (from list_channels)"
-        ],
+        channel_id: Annotated[str, "The channel id to query (from list_channels)"],
         question: Annotated[str, "The natural-language question to answer"],
         ctx: Context,
         mode: Annotated[
@@ -132,19 +130,11 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="search_channel_facts")
     async def search_channel_facts(
-        channel_id: Annotated[
-            str, "The channel id to search (from list_channels)"
-        ],
-        query: Annotated[
-            str, "Search query — BM25+vector hybrid over atomic facts"
-        ],
+        channel_id: Annotated[str, "The channel id to search (from list_channels)"],
+        query: Annotated[str, "Search query — BM25+vector hybrid over atomic facts"],
         ctx: Context,
-        time_scope: Annotated[
-            str, "'any' (all time) or 'recent' (last 30 days)"
-        ] = "any",
-        limit: Annotated[
-            int, "Maximum number of facts to return (1–50)"
-        ] = 10,
+        time_scope: Annotated[str, "'any' (all time) or 'recent' (last 30 days)"] = "any",
+        limit: Annotated[int, "Maximum number of facts to return (1–50)"] = 10,
     ) -> dict:
         """Search atomic facts stored from a channel using BM25+vector hybrid retrieval.
 
@@ -261,9 +251,7 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
             str | None,
             "Optional topic filter — narrows search to facts related to this topic",
         ] = None,
-        limit: Annotated[
-            int, "Maximum number of activity items to return (1–50)"
-        ] = 20,
+        limit: Annotated[int, "Maximum number of activity items to return (1–50)"] = 20,
     ) -> dict:
         """Return the most recent activity from a channel, optionally filtered by topic.
 
@@ -310,17 +298,13 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
     @mcp.tool(name="search_media_references")
     async def search_media_references(
         channel_id: Annotated[str, "The channel id (from list_channels)"],
-        query: Annotated[
-            str, "Search query for finding media-containing messages"
-        ],
+        query: Annotated[str, "Search query for finding media-containing messages"],
         ctx: Context,
         media_type: Annotated[
             str | None,
             "Filter by media type: 'image', 'pdf', 'link', or null for all",
         ] = None,
-        limit: Annotated[
-            int, "Maximum number of results to return (1–20)"
-        ] = 5,
+        limit: Annotated[int, "Maximum number of results to return (1–20)"] = 5,
     ) -> dict:
         """Search for messages containing images, PDFs, or links shared in a channel.
 

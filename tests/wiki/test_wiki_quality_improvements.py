@@ -21,6 +21,7 @@ from beever_atlas.models.domain import AtomicFact, WikiCitation
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+
 def _fact(
     *,
     fact_id: str = "f1",
@@ -53,6 +54,7 @@ def _fact(
 
 # ── size_tier ────────────────────────────────────────────────────────────
 
+
 def test_size_tier_small_below_5():
     assert _compute_size_tier(0) == "small"
     assert _compute_size_tier(1) == "small"
@@ -71,6 +73,7 @@ def test_size_tier_large_above_12():
 
 
 # ── URL normalization ───────────────────────────────────────────────────
+
 
 def test_normalize_url_lowercases_host_and_strips_www():
     assert _normalize_url("https://WWW.Example.COM/Path") == "https://example.com/Path"
@@ -92,6 +95,7 @@ def test_normalize_url_empty_input_returns_empty():
 
 
 # ── Global dedup via _build_media_data ──────────────────────────────────
+
 
 def test_build_media_data_deduplicates_twitter_x_variants():
     facts = [
@@ -120,9 +124,16 @@ def test_build_media_data_dedupes_across_fact_boundaries():
 
 # ── Social-domain cap ───────────────────────────────────────────────────
 
+
 def test_filter_media_social_cap_is_5_per_platform():
     items = [
-        {"url": f"https://x.com/foo/status/{i}", "type": "link", "name": f"t{i}", "author": "a", "context": ""}
+        {
+            "url": f"https://x.com/foo/status/{i}",
+            "type": "link",
+            "name": f"t{i}",
+            "author": "a",
+            "context": "",
+        }
         for i in range(20)
     ]
     filtered = WikiCompiler._filter_media_for_resources(items)
@@ -133,9 +144,25 @@ def test_filter_media_social_cap_is_5_per_platform():
 def test_filter_media_twitter_and_x_share_a_cap():
     items = []
     for i in range(5):
-        items.append({"url": f"https://x.com/a/status/{i}", "type": "link", "name": f"x{i}", "author": "a", "context": ""})
+        items.append(
+            {
+                "url": f"https://x.com/a/status/{i}",
+                "type": "link",
+                "name": f"x{i}",
+                "author": "a",
+                "context": "",
+            }
+        )
     for i in range(5):
-        items.append({"url": f"https://twitter.com/a/status/{100+i}", "type": "link", "name": f"tw{i}", "author": "a", "context": ""})
+        items.append(
+            {
+                "url": f"https://twitter.com/a/status/{100 + i}",
+                "type": "link",
+                "name": f"tw{i}",
+                "author": "a",
+                "context": "",
+            }
+        )
     filtered = WikiCompiler._filter_media_for_resources(items)
     # Both canonicalize to x.com, so 10 candidates collapse to the cap.
     social = [m for m in filtered if ("x.com" in m["url"] or "twitter.com" in m["url"])]
@@ -143,6 +170,7 @@ def test_filter_media_twitter_and_x_share_a_cap():
 
 
 # ── Mermaid auto-close ─────────────────────────────────────────────────
+
 
 def test_mermaid_auto_close_adds_missing_fence():
     content = "## X\n\n```mermaid\ngraph TD\n    A-->B\n\n## Next section\n"
@@ -178,6 +206,7 @@ def test_mermaid_auto_close_handles_eof_without_closer():
 
 # ── Orphan citation strip ──────────────────────────────────────────────
 
+
 def test_strip_orphan_citations_removes_unused_source_entries():
     content = (
         "Some body text [1] and [2] references.\n"
@@ -193,10 +222,7 @@ def test_strip_orphan_citations_removes_unused_source_entries():
 
 
 def test_strip_orphan_citations_keeps_all_when_all_used():
-    content = (
-        "Cites [1] and [2] and [3].\n\n"
-        "- [1] a\n- [2] b\n- [3] c\n"
-    )
+    content = "Cites [1] and [2] and [3].\n\n- [1] a\n- [2] b\n- [3] c\n"
     assert WikiCompiler._strip_orphan_citations(content) == content
 
 
@@ -207,11 +233,14 @@ def test_strip_orphan_citations_noop_when_no_brackets():
 
 # ── Decision-count union (exercises the logic inline) ──────────────────
 
+
 def test_decision_union_dedups_by_name_decider_date():
     # Replicate the union+dedup logic used in _compile_overview.
     top = [{"name": "Pick Supabase", "decided_by": "Thomas", "date": "2026-01-25"}]
     clusters_decisions = [
-        [{"name": "pick supabase", "decided_by": "thomas", "date": "2026-01-25"}],  # dup, different casing
+        [
+            {"name": "pick supabase", "decided_by": "thomas", "date": "2026-01-25"}
+        ],  # dup, different casing
         [{"name": "Adopt MCP", "decided_by": "Alvin", "date": "2026-01-24"}],
     ]
     seen: set[tuple] = set()
@@ -231,6 +260,7 @@ def test_decision_union_dedups_by_name_decider_date():
 
 
 # ── WikiPage.citations orphan filter ───────────────────────────────────
+
 
 def test_filter_citations_to_body_drops_unreferenced():
     content = "Body references [1] and [3] only."
@@ -263,6 +293,7 @@ def test_filter_citations_to_body_keeps_non_bracket_ids():
 
 
 # ── Post-process integration (ensures new passes don't break existing behaviour) ──
+
 
 def test_postprocess_combines_mermaid_close_and_orphan_strip():
     raw = (

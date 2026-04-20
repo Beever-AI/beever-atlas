@@ -207,16 +207,12 @@ def test_bridge_key_rejected_on_user_routes_with_default_config(monkeypatch):
     client = TestClient(_build_app())
     # User key → accepted.
     assert (
-        client.get(
-            "/user", headers={"Authorization": "Bearer user-key-aaaaaaaa"}
-        ).status_code
+        client.get("/user", headers={"Authorization": "Bearer user-key-aaaaaaaa"}).status_code
         == 200
     )
     # Bridge key → rejected at the dependency layer.
     assert (
-        client.get(
-            "/user", headers={"Authorization": "Bearer bridge-secret-xxxxxxxx"}
-        ).status_code
+        client.get("/user", headers={"Authorization": "Bearer bridge-secret-xxxxxxxx"}).status_code
         == 401
     )
 
@@ -225,9 +221,7 @@ def test_emergency_override_still_works(monkeypatch):
     """The override path must remain functional for operators who need it."""
     _patch_settings(monkeypatch, allow_bridge_as_user=True)
     client = TestClient(_build_app())
-    r = client.get(
-        "/user", headers={"Authorization": "Bearer bridge-secret-xxxxxxxx"}
-    )
+    r = client.get("/user", headers={"Authorization": "Bearer bridge-secret-xxxxxxxx"})
     assert r.status_code == 200
 
 

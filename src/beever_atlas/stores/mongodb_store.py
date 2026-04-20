@@ -42,7 +42,9 @@ class MongoDBStore:
         """Ping MongoDB to verify the connection is alive."""
         await self._client.admin.command("ping")
         await self._sync_jobs.create_index([("channel_id", 1), ("started_at", -1)])
-        await self._write_intents.create_index([("created_at", 1), ("weaviate_done", 1), ("neo4j_done", 1)])
+        await self._write_intents.create_index(
+            [("created_at", 1), ("weaviate_done", 1), ("neo4j_done", 1)]
+        )
         await self._channel_sync_state.create_index("channel_id", unique=True)
         await self._activity_events.create_index([("timestamp", -1)])
         await self._channel_policies.create_index("channel_id", unique=True)
@@ -58,6 +60,7 @@ class MongoDBStore:
                 SyncConfig,
                 SyncTriggerMode,
             )
+
             s = get_settings()
             defaults = GlobalPolicyDefaults(
                 sync=SyncConfig(
@@ -239,9 +242,7 @@ class MongoDBStore:
         doc.pop("_id", None)
         return SyncJob(**doc)
 
-    async def get_last_job_by_kind(
-        self, channel_id: str, kind: str
-    ) -> SyncJob | None:
+    async def get_last_job_by_kind(self, channel_id: str, kind: str) -> SyncJob | None:
         """Return the most recent SyncJob of ``kind`` for *channel_id*, or None.
 
         Used by the wiki cooldown check so a ``sync`` job does not count
@@ -317,10 +318,12 @@ class MongoDBStore:
         for batch_result in job.get("batch_results", []):
             for fact in batch_result.get("fact_statuses", []):
                 if fact.get("status") == "failed" and fact.get("retry_count", 0) < max_retries:
-                    failed.append({
-                        "batch_num": batch_result.get("batch_num"),
-                        **fact,
-                    })
+                    failed.append(
+                        {
+                            "batch_num": batch_result.get("batch_num"),
+                            **fact,
+                        }
+                    )
         return failed
 
     async def get_channel_sync_state(self, channel_id: str) -> ChannelSyncState | None:
@@ -338,9 +341,7 @@ class MongoDBStore:
         if not channel_ids:
             return {}
         result: dict[str, ChannelSyncState] = {}
-        cursor = self._channel_sync_state.find(
-            {"channel_id": {"$in": list(channel_ids)}}
-        )
+        cursor = self._channel_sync_state.find({"channel_id": {"$in": list(channel_ids)}})
         async for doc in cursor:
             cid = doc.get("channel_id")
             doc.pop("_id", None)
@@ -398,9 +399,7 @@ class MongoDBStore:
 
     async def get_last_sync_timestamp(self) -> str | None:
         """Return the most recent last_sync_ts across all channels, or None."""
-        doc = await self._channel_sync_state.find_one(
-            {}, sort=[("last_sync_ts", -1)]
-        )
+        doc = await self._channel_sync_state.find_one({}, sort=[("last_sync_ts", -1)])
         if doc is None:
             return None
         return doc.get("last_sync_ts")
@@ -422,15 +421,11 @@ class MongoDBStore:
 
     async def mark_intent_weaviate_done(self, intent_id: str) -> None:
         """Mark the Weaviate write as completed for the given intent."""
-        await self._write_intents.update_one(
-            {"id": intent_id}, {"$set": {"weaviate_done": True}}
-        )
+        await self._write_intents.update_one({"id": intent_id}, {"$set": {"weaviate_done": True}})
 
     async def mark_intent_neo4j_done(self, intent_id: str) -> None:
         """Mark the Neo4j write as completed for the given intent."""
-        await self._write_intents.update_one(
-            {"id": intent_id}, {"$set": {"neo4j_done": True}}
-        )
+        await self._write_intents.update_one({"id": intent_id}, {"$set": {"neo4j_done": True}})
 
     async def mark_intent_complete(self, intent_id: str) -> None:
         """Mark both Weaviate and Neo4j writes as completed for the given intent."""
@@ -474,9 +469,7 @@ class MongoDBStore:
 
     async def get_recent_activity(self, limit: int = 20) -> list[ActivityEvent]:
         """Return the most recent activity events, newest first."""
-        cursor = self._activity_events.find(
-            {}, sort=[("timestamp", -1)], limit=limit
-        )
+        cursor = self._activity_events.find({}, sort=[("timestamp", -1)], limit=limit)
         events: list[ActivityEvent] = []
         async for doc in cursor:
             doc.pop("_id", None)
@@ -495,7 +488,9 @@ class MongoDBStore:
         if channel_id is not None:
             query["channel_id"] = channel_id
         cursor = self._activity_events.find(
-            query, sort=[("timestamp", -1)], limit=limit,
+            query,
+            sort=[("timestamp", -1)],
+            limit=limit,
         )
         events: list[ActivityEvent] = []
         async for doc in cursor:
@@ -547,7 +542,8 @@ class MongoDBStore:
         return GlobalPolicyDefaults(**doc)
 
     async def update_global_defaults(
-        self, defaults: GlobalPolicyDefaults,
+        self,
+        defaults: GlobalPolicyDefaults,
     ) -> GlobalPolicyDefaults:
         """Update the global policy defaults."""
         defaults.updated_at = datetime.now(tz=UTC)
@@ -588,26 +584,38 @@ class MongoDBStore:
     # ------------------------------------------------------------------
 
     async def save_pipeline_checkpoint(
-        self, sync_job_id: str, batch_num: int, channel_id: str,
-        completed_stage: str, completed_stage_index: int,
-        state_snapshot: dict[str, Any], stage_timings: dict[str, float],
+        self,
+        sync_job_id: str,
+        batch_num: int,
+        channel_id: str,
+        completed_stage: str,
+        completed_stage_index: int,
+        state_snapshot: dict[str, Any],
+        stage_timings: dict[str, float],
     ) -> None:
         batch_key = f"{sync_job_id}:{batch_num}"
         await self._pipeline_checkpoints.update_one(
             {"batch_key": batch_key},
-            {"$set": {
-                "batch_key": batch_key, "sync_job_id": sync_job_id,
-                "batch_num": batch_num, "channel_id": channel_id,
-                "completed_stage": completed_stage,
-                "completed_stage_index": completed_stage_index,
-                "state_snapshot": state_snapshot,
-                "stage_timings": stage_timings,
-                "updated_at": datetime.now(tz=UTC),
-            }, "$setOnInsert": {"created_at": datetime.now(tz=UTC)}},
+            {
+                "$set": {
+                    "batch_key": batch_key,
+                    "sync_job_id": sync_job_id,
+                    "batch_num": batch_num,
+                    "channel_id": channel_id,
+                    "completed_stage": completed_stage,
+                    "completed_stage_index": completed_stage_index,
+                    "state_snapshot": state_snapshot,
+                    "stage_timings": stage_timings,
+                    "updated_at": datetime.now(tz=UTC),
+                },
+                "$setOnInsert": {"created_at": datetime.now(tz=UTC)},
+            },
             upsert=True,
         )
 
-    async def load_pipeline_checkpoint(self, sync_job_id: str, batch_num: int) -> dict[str, Any] | None:
+    async def load_pipeline_checkpoint(
+        self, sync_job_id: str, batch_num: int
+    ) -> dict[str, Any] | None:
         batch_key = f"{sync_job_id}:{batch_num}"
         doc = await self._pipeline_checkpoints.find_one({"batch_key": batch_key})
         if doc is None:
@@ -633,6 +641,7 @@ class MongoDBStore:
     async def save_agent_model_config(self, models: dict[str, str]) -> None:
         """Persist per-agent model assignments to MongoDB."""
         from datetime import UTC, datetime
+
         await self.db["agent_model_config"].update_one(
             {"_id": "agent_model_config"},
             {"$set": {"models": models, "updated_at": datetime.now(tz=UTC).isoformat()}},

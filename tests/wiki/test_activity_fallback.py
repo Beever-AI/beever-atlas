@@ -12,7 +12,10 @@ from beever_atlas.wiki.compiler import _activity_fallback
 
 def _fact(text, author, ts, fact_type="observation"):
     return SimpleNamespace(
-        memory_text=text, author_name=author, message_ts=ts, fact_type=fact_type,
+        memory_text=text,
+        author_name=author,
+        message_ts=ts,
+        fact_type=fact_type,
     )
 
 

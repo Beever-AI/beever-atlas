@@ -12,6 +12,7 @@ from beever_atlas.infra import http_safe
 def _fake_getaddrinfo(ip: str):
     def _inner(host, port, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, port))]
+
     return _inner
 
 
@@ -56,12 +57,8 @@ def test_resolve_and_validate_accepts_public_ip(monkeypatch):
 def test_resolve_and_validate_allowlist_enforced(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("8.8.8.8"))
     with pytest.raises(PermissionError):
-        http_safe.resolve_and_validate(
-            "https://dns.google/", allowlist={"other.example"}
-        )
-    pinned, host = http_safe.resolve_and_validate(
-        "https://dns.google/", allowlist={"dns.google"}
-    )
+        http_safe.resolve_and_validate("https://dns.google/", allowlist={"other.example"})
+    pinned, host = http_safe.resolve_and_validate("https://dns.google/", allowlist={"dns.google"})
     assert host == "dns.google"
 
 

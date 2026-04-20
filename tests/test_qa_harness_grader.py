@@ -8,6 +8,7 @@ Covers:
   - Keyword seed URL token filter
   - Soft length target warns but does not fail verdict
 """
+
 from __future__ import annotations
 
 import json
@@ -85,10 +86,12 @@ def _grade(tc: TestCase, answer: str, n_refs: int) -> tuple[dict, dict]:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_soft_citation_floor_passes_with_minus_one():
     """N-1 refs when expected=N should pass citations_count_ok with warn=True."""
-    tc = TestCase(id="X", persona="existing", category="test", question="q",
-                  expected_citations_min=3)
+    tc = TestCase(
+        id="X", persona="existing", category="test", question="q", expected_citations_min=3
+    )
     grade, advisory = _grade(tc, answer="some answer", n_refs=2)
 
     assert grade["citations_count_ok"] is True
@@ -97,8 +100,9 @@ def test_soft_citation_floor_passes_with_minus_one():
 
 def test_hard_zero_citation_still_fails():
     """0 refs when expected > 0 must fail citations_count_ok (no soft pass)."""
-    tc = TestCase(id="X", persona="existing", category="test", question="q",
-                  expected_citations_min=1)
+    tc = TestCase(
+        id="X", persona="existing", category="test", question="q", expected_citations_min=1
+    )
     grade, advisory = _grade(tc, answer="some answer", n_refs=0)
 
     assert grade["citations_count_ok"] is False
@@ -107,10 +111,14 @@ def test_hard_zero_citation_still_fails():
 
 def test_refusal_pattern_clears_must_not_mention():
     """Answer with refusal pattern + must_not_mention should pass must_not_mention_ok."""
-    tc = TestCase(id="E-I1-hallucination-canary", persona="existing", category="negative",
-                  question="What did Elon Musk say?",
-                  expected_citations_min=0,
-                  must_not_mention=["Elon"])
+    tc = TestCase(
+        id="E-I1-hallucination-canary",
+        persona="existing",
+        category="negative",
+        question="What did Elon Musk say?",
+        expected_citations_min=0,
+        must_not_mention=["Elon"],
+    )
     answer = "There is no record of Elon in this channel."
     grade, _ = _grade(tc, answer=answer, n_refs=0)
 
@@ -119,10 +127,14 @@ def test_refusal_pattern_clears_must_not_mention():
 
 def test_refusal_pattern_clears_must_mention_expert():
     """Clear refusal answer should pass must_mention on expert-lookup case."""
-    tc = TestCase(id="E-C1-expert", persona="existing", category="people",
-                  question="Who should I ping for ingestion bugs?",
-                  expected_citations_min=0,
-                  must_mention=["JackyChan"])
+    tc = TestCase(
+        id="E-C1-expert",
+        persona="existing",
+        category="people",
+        question="Who should I ping for ingestion bugs?",
+        expected_citations_min=0,
+        must_mention=["JackyChan"],
+    )
     answer = "I couldn't find an expert for ingestion pipeline issues in this channel."
     grade, _ = _grade(tc, answer=answer, n_refs=0)
 
@@ -154,9 +166,15 @@ def test_keyword_seed_drops_urls(tmp_path):
 
 def test_length_target_warns_but_does_not_fail():
     """1700-char answer with soft_max=1200 and max=2000 → PASS, length_target_ok=False."""
-    tc = TestCase(id="O-3", persona="onboarding", category="people", question="q",
-                  max_chars=2000, soft_max_chars=1200,
-                  expected_citations_min=0)
+    tc = TestCase(
+        id="O-3",
+        persona="onboarding",
+        category="people",
+        question="q",
+        max_chars=2000,
+        soft_max_chars=1200,
+        expected_citations_min=0,
+    )
     answer = "x" * 1700
     grade, advisory = _grade(tc, answer=answer, n_refs=0)
 

@@ -80,7 +80,7 @@ async def list_connections(principal_id: str) -> list[dict]:
         if owned or (single_tenant and legacy):
             visible.append(conn)
             if conn.platform != "file":
-                for cid in (conn.selected_channels or []):
+                for cid in conn.selected_channels or []:
                     all_selected_ids.add(cid)
 
     states_map = await _batch_sync_states(stores, list(all_selected_ids))
@@ -91,21 +91,19 @@ async def list_connections(principal_id: str) -> list[dict]:
         if conn.platform == "file" or not selected:
             last_synced_at = None
         else:
-            timestamps = [
-                states_map[cid].last_sync_ts
-                for cid in selected
-                if cid in states_map
-            ]
+            timestamps = [states_map[cid].last_sync_ts for cid in selected if cid in states_map]
             last_synced_at = max(timestamps) if timestamps else None
-        results.append({
-            "connection_id": conn.id,
-            "platform": conn.platform,
-            "display_name": conn.display_name,
-            "status": conn.status,
-            "last_synced_at": last_synced_at,
-            "selected_channel_count": len(selected),
-            "source": conn.source,
-        })
+        results.append(
+            {
+                "connection_id": conn.id,
+                "platform": conn.platform,
+                "display_name": conn.display_name,
+                "status": conn.status,
+                "last_synced_at": last_synced_at,
+                "selected_channel_count": len(selected),
+                "source": conn.source,
+            }
+        )
     return results
 
 
@@ -165,9 +163,7 @@ async def list_channels(principal_id: str, connection_id: str) -> list[dict]:
 
     is_file_conn = conn.platform == "file"
     channel_ids = [ch.channel_id for ch in channels]
-    states_map = (
-        {} if is_file_conn else await _batch_sync_states(stores, channel_ids)
-    )
+    states_map = {} if is_file_conn else await _batch_sync_states(stores, channel_ids)
 
     results: list[dict] = []
     for ch in channels:
@@ -179,17 +175,17 @@ async def list_channels(principal_id: str, connection_id: str) -> list[dict]:
         else:
             sync_status = "synced" if state else "never_synced"
             last_sync_ts = getattr(state, "last_sync_ts", None) if state else None
-            message_count = (
-                getattr(state, "total_synced_messages", None) if state else None
-            )
-        results.append({
-            "channel_id": ch.channel_id,
-            "name": ch.name or ch.channel_id,
-            "platform": ch.platform or conn.platform,
-            "last_sync_ts": last_sync_ts,
-            "sync_status": sync_status,
-            "message_count_estimate": message_count,
-        })
+            message_count = getattr(state, "total_synced_messages", None) if state else None
+        results.append(
+            {
+                "channel_id": ch.channel_id,
+                "name": ch.name or ch.channel_id,
+                "platform": ch.platform or conn.platform,
+                "last_sync_ts": last_sync_ts,
+                "sync_status": sync_status,
+                "message_count_estimate": message_count,
+            }
+        )
     return results
 
 

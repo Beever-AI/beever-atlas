@@ -98,21 +98,31 @@ class SyncRunner:
         stores = get_stores()
         settings = get_settings()
         if sync_type not in {"auto", "full", "incremental"}:
-            raise ValueError(f"Invalid sync_type '{sync_type}'. Use one of: auto, full, incremental.")
+            raise ValueError(
+                f"Invalid sync_type '{sync_type}'. Use one of: auto, full, incremental."
+            )
 
         # Stale job recovery: mark jobs stuck "running" for > threshold as "failed"
         stale_threshold = datetime.now(tz=UTC) - timedelta(hours=settings.stale_job_threshold_hours)
-        stale_jobs = await stores.mongodb.db["sync_jobs"].find({
-            "channel_id": channel_id,
-            "status": "running",
-            "started_at": {"$lt": stale_threshold},
-        }).to_list(length=10)
+        stale_jobs = (
+            await stores.mongodb.db["sync_jobs"]
+            .find(
+                {
+                    "channel_id": channel_id,
+                    "status": "running",
+                    "started_at": {"$lt": stale_threshold},
+                }
+            )
+            .to_list(length=10)
+        )
         for stale in stale_jobs:
             stale_id = stale.get("id", "?")
             if not self._is_task_active(channel_id):
                 logger.warning(
                     "SyncRunner: recovering stale job channel=%s job_id=%s started_at=%s",
-                    channel_id, stale_id, stale.get("started_at"),
+                    channel_id,
+                    stale_id,
+                    stale.get("started_at"),
                 )
                 await stores.mongodb.complete_sync_job(
                     job_id=stale_id,
@@ -126,8 +136,7 @@ class SyncRunner:
         if existing is not None and existing.status == "running":
             if self._is_task_active(channel_id):
                 raise ValueError(
-                    f"Sync already running for channel {channel_id} "
-                    f"(job_id={existing.id})."
+                    f"Sync already running for channel {channel_id} (job_id={existing.id})."
                 )
             # Process restarted (or prior task crashed) and left a stale running
             # row behind; close it so the channel can be synced again.
@@ -144,10 +153,7 @@ class SyncRunner:
             await stores.mongodb.complete_sync_job(
                 job_id=existing.id,
                 status="failed",
-                errors=[
-                    "Recovered stale running job after process restart; "
-                    "safe to retry sync."
-                ],
+                errors=["Recovered stale running job after process restart; safe to retry sync."],
             )
 
         # 2. Determine sync mode.
@@ -164,6 +170,7 @@ class SyncRunner:
 
         # 2b. Resolve effective policy for max_messages limit.
         from beever_atlas.services.policy_resolver import resolve_effective_policy
+
         effective_policy = await resolve_effective_policy(channel_id)
         _max_messages = effective_policy.sync.max_messages
 
@@ -184,7 +191,11 @@ class SyncRunner:
                     owner_principal_id=owner_principal_id,
                 )
 
-        adapter = ChatBridgeAdapter(connection_id=resolved_connection_id) if resolved_connection_id else get_adapter()
+        adapter = (
+            ChatBridgeAdapter(connection_id=resolved_connection_id)
+            if resolved_connection_id
+            else get_adapter()
+        )
         try:
             logger.info(
                 "SyncRunner: fetch start channel=%s connection_id=%s resolved_type=%s since=%s max_messages=%s",
@@ -194,7 +205,9 @@ class SyncRunner:
                 since,
                 _max_messages,
             )
-            messages = await self._fetch_all_messages(channel_id, adapter=adapter, since=since, max_messages=_max_messages)
+            messages = await self._fetch_all_messages(
+                channel_id, adapter=adapter, since=since, max_messages=_max_messages
+            )
 
             # If incremental sync found nothing, auto-fallback to full sync
             if not messages and resolved_type == "incremental":
@@ -204,7 +217,9 @@ class SyncRunner:
                 )
                 resolved_type = "full"
                 since = None
-                messages = await self._fetch_all_messages(channel_id, adapter=adapter, since=None, max_messages=_max_messages)
+                messages = await self._fetch_all_messages(
+                    channel_id, adapter=adapter, since=None, max_messages=_max_messages
+                )
 
             if not messages:
                 logger.info(
@@ -251,8 +266,7 @@ class SyncRunner:
         self._active_tasks[channel_id] = task
 
         logger.info(
-            "SyncRunner: started %s sync for channel %s — job_id=%s, "
-            "%d messages to process.",
+            "SyncRunner: started %s sync for channel %s — job_id=%s, %d messages to process.",
             resolved_type,
             channel_id,
             job_id,
@@ -291,7 +305,10 @@ class SyncRunner:
             # Use order=asc so that `since` (Slack's `oldest`) cursor moves
             # forward chronologically, avoiding duplicate re-fetches.
             batch = await adapter.fetch_history(
-                channel_id, since=cursor, limit=500, order="asc",
+                channel_id,
+                since=cursor,
+                limit=500,
+                order="asc",
             )
             if not batch:
                 logger.info(
@@ -304,11 +321,7 @@ class SyncRunner:
             # Some adapters treat `since` as inclusive, so filter strictly newer
             # messages to avoid duplicates and cursor stalls.
             if cursor is not None:
-                batch = [
-                    m
-                    for m in batch
-                    if getattr(m, "timestamp", None) and m.timestamp > cursor
-                ]
+                batch = [m for m in batch if getattr(m, "timestamp", None) and m.timestamp > cursor]
             if not batch:
                 logger.info(
                     "SyncRunner: fetch page=%d channel=%s had no newer rows; stopping.",
@@ -371,10 +384,7 @@ class SyncRunner:
         sem = asyncio.Semaphore(3)
 
         # Identify thread parents
-        thread_parents = [
-            m for m in messages
-            if getattr(m, "reply_count", 0) > 0
-        ]
+        thread_parents = [m for m in messages if getattr(m, "reply_count", 0) > 0]
 
         if not thread_parents:
             return messages
@@ -392,10 +402,7 @@ class SyncRunner:
                 try:
                     replies = await adapter.fetch_thread(channel_id, thread_id)
                     # Exclude the parent message (Slack includes it as first reply)
-                    replies = [
-                        r for r in replies
-                        if getattr(r, "message_id", "") != thread_id
-                    ]
+                    replies = [r for r in replies if getattr(r, "message_id", "") != thread_id]
                     return (thread_id, replies)
                 except Exception as e:
                     logger.warning(
@@ -455,7 +462,8 @@ class SyncRunner:
         stores = get_stores()
         connections = await stores.platform.list_connections()
         candidates = [
-            c for c in connections
+            c
+            for c in connections
             if c.status == "connected" and channel_id in (c.selected_channels or [])
         ]
         if not candidates:
@@ -511,34 +519,40 @@ class SyncRunner:
             ts = doc.get("timestamp")
             if not isinstance(ts, datetime):
                 try:
-                    ts = datetime.fromisoformat(str(doc.get("timestamp_iso", "")).replace("Z", "+00:00"))
+                    ts = datetime.fromisoformat(
+                        str(doc.get("timestamp_iso", "")).replace("Z", "+00:00")
+                    )
                 except ValueError:
                     continue
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=UTC)
-            messages.append(NormalizedMessage(
-                content=doc.get("content", ""),
-                author=doc.get("author", ""),
-                platform="file",
-                channel_id=channel_id,
-                channel_name=doc.get("channel_name", channel_id),
-                message_id=doc.get("message_id", ""),
-                timestamp=ts,
-                thread_id=doc.get("thread_id"),
-                attachments=doc.get("attachments", []),
-                reactions=doc.get("reactions", []),
-                reply_count=doc.get("reply_count", 0),
-                raw_metadata={"source": "file_import"},
-                author_name=doc.get("author_name", ""),
-                author_image=doc.get("author_image", "") or "",
-            ))
+            messages.append(
+                NormalizedMessage(
+                    content=doc.get("content", ""),
+                    author=doc.get("author", ""),
+                    platform="file",
+                    channel_id=channel_id,
+                    channel_name=doc.get("channel_name", channel_id),
+                    message_id=doc.get("message_id", ""),
+                    timestamp=ts,
+                    thread_id=doc.get("thread_id"),
+                    attachments=doc.get("attachments", []),
+                    reactions=doc.get("reactions", []),
+                    reply_count=doc.get("reply_count", 0),
+                    raw_metadata={"source": "file_import"},
+                    author_name=doc.get("author_name", ""),
+                    author_image=doc.get("author_image", "") or "",
+                )
+            )
             if doc.get("channel_name"):
                 channel_name = doc["channel_name"]
 
         parent_count = len(messages)
         logger.info(
             "SyncRunner: file sync channel=%s type=%s messages=%d",
-            channel_id, resolved_type, parent_count,
+            channel_id,
+            resolved_type,
+            parent_count,
         )
 
         job = await stores.mongodb.create_sync_job(
@@ -592,6 +606,7 @@ class SyncRunner:
         try:
             # Resolve per-channel ingestion config from policy
             from beever_atlas.services.policy_resolver import resolve_effective_policy
+
             effective_policy = await resolve_effective_policy(channel_id)
 
             result = await self._batch_processor.process_messages(
@@ -608,18 +623,22 @@ class SyncRunner:
             last_ts: str | None = None
             if messages:
                 top_level = [
-                    m for m in messages
+                    m
+                    for m in messages
                     if not getattr(m, "thread_id", None)
                     or getattr(m, "thread_id", None) == getattr(m, "message_id", "")
                 ]
                 if top_level:
                     timestamps = [
-                        getattr(m, "timestamp", None) for m in top_level
+                        getattr(m, "timestamp", None)
+                        for m in top_level
                         if getattr(m, "timestamp", None) is not None
                     ]
                     if timestamps:
                         max_ts = max(timestamps)
-                        last_ts = max_ts.isoformat() if hasattr(max_ts, "isoformat") else str(max_ts)
+                        last_ts = (
+                            max_ts.isoformat() if hasattr(max_ts, "isoformat") else str(max_ts)
+                        )
 
             # Mark job complete.
             sync_status = "failed" if result.errors else "completed"
@@ -681,6 +700,7 @@ class SyncRunner:
             # Trigger consolidation via pipeline orchestrator (policy-aware)
             if not result.errors:
                 from beever_atlas.services.pipeline_orchestrator import on_ingestion_complete
+
                 await on_ingestion_complete(channel_id, result.total_facts)
 
             logger.info(

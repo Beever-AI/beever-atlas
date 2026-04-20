@@ -23,12 +23,14 @@ _VALID_KEY_HEX = secrets.token_hex(32)
 
 def _patch_key(monkeypatch) -> None:
     from beever_atlas.infra import config
+
     monkeypatch.setenv("CREDENTIAL_MASTER_KEY", _VALID_KEY_HEX)
     config.get_settings.cache_clear()
 
 
 def _make_store(monkeypatch):
     from beever_atlas.stores.platform_store import PlatformStore
+
     mock_col = MagicMock()
     return PlatformStore(mock_col)
 
@@ -185,8 +187,10 @@ class TestAPIHelpers:
         class MockClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 pass
+
             async def post(self, path, json=None):
                 captured_json.update(json or {})
                 return MockResponse()
@@ -214,8 +218,10 @@ class TestAPIHelpers:
         class MockClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 pass
+
             async def delete(self, path):
                 captured_path.append(path)
                 return MockResponse()
@@ -238,14 +244,17 @@ class TestAPIHelpers:
 
         class MockResponse:
             status_code = 200
+
             def json(self):
                 return {"channels": [{"channel_id": "C001", "name": "general"}]}
 
         class MockClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 pass
+
             async def get(self, path):
                 captured_path.append(path)
                 return MockResponse()
@@ -269,14 +278,17 @@ class TestAPIHelpers:
 
         class MockResponse:
             status_code = 200
+
             def json(self):
                 return {"channels": []}
 
         class MockClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 pass
+
             async def get(self, path):
                 captured_path.append(path)
                 return MockResponse()

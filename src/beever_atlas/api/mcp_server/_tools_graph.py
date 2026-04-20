@@ -21,13 +21,9 @@ def register_graph_tools(mcp: FastMCP) -> None:
     @mcp.tool(name="find_experts")
     async def find_experts(
         channel_id: Annotated[str, "The channel id (from list_channels)"],
-        topic: Annotated[
-            str, "Topic or keyword to find subject-matter experts for"
-        ],
+        topic: Annotated[str, "Topic or keyword to find subject-matter experts for"],
         ctx: Context,
-        limit: Annotated[
-            int, "Maximum number of experts to return (1–20)"
-        ] = 5,
+        limit: Annotated[int, "Maximum number of experts to return (1–20)"] = 5,
     ) -> dict:
         """Identify the most knowledgeable people about a topic in a channel.
 
@@ -56,9 +52,7 @@ def register_graph_tools(mcp: FastMCP) -> None:
             from beever_atlas.capabilities import graph as graph_cap
             from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-            experts = await graph_cap.find_experts(
-                principal_id, channel_id, topic, limit=limit
-            )
+            experts = await graph_cap.find_experts(principal_id, channel_id, topic, limit=limit)
             return {"experts": experts}
         except ChannelAccessDenied:
             return {"error": "channel_access_denied", "channel_id": channel_id}
@@ -79,9 +73,7 @@ def register_graph_tools(mcp: FastMCP) -> None:
             "List of entity names to find relationships for",
         ],
         ctx: Context,
-        hops: Annotated[
-            int, "Number of graph hops to traverse (1–4)"
-        ] = 2,
+        hops: Annotated[int, "Number of graph hops to traverse (1–4)"] = 2,
     ) -> dict:
         """Traverse the knowledge graph to find relationships between entities.
 
@@ -160,9 +152,7 @@ def register_graph_tools(mcp: FastMCP) -> None:
             from beever_atlas.capabilities import graph as graph_cap
             from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-            decisions = await graph_cap.trace_decision_history(
-                principal_id, channel_id, topic
-            )
+            decisions = await graph_cap.trace_decision_history(principal_id, channel_id, topic)
             if isinstance(decisions, list):
                 return {"decisions": decisions}
             return decisions  # type: ignore[return-value]

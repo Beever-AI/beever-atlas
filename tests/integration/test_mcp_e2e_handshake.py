@@ -209,12 +209,15 @@ async def test_whoami_returns_injected_principal_id(mcp_instance):
     stores_mock = MagicMock()
     stores_mock.platform.list_connections = AsyncMock(return_value=[])
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=fake_request,
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=stores_mock,
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=fake_request,
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=stores_mock,
+        ),
     ):
         # Call the tool function directly via the internal registry to avoid
         # the FastMCPTransport's in-memory stream path, which doesn't propagate
@@ -251,12 +254,15 @@ async def test_get_wiki_page_unowned_channel_returns_access_denied(mcp_instance)
     stores_mock = MagicMock()
     stores_mock.platform.list_connections = AsyncMock(return_value=[])
 
-    with patch(
-        "fastmcp.server.dependencies.get_http_request",
-        return_value=fake_request,
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=stores_mock,
+    with (
+        patch(
+            "fastmcp.server.dependencies.get_http_request",
+            return_value=fake_request,
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=stores_mock,
+        ),
     ):
         fn = _get_tool_fn(mcp_instance, "get_wiki_page")
         assert fn is not None, "get_wiki_page tool not found in registry"
@@ -280,7 +286,7 @@ def _get_tool_fn(mcp, tool_name: str):
     for key, component in mcp._local_provider._components.items():
         if not key.startswith("tool:"):
             continue
-        raw = key[len("tool:"):]
+        raw = key[len("tool:") :]
         name = raw.split("@")[0]
         if name == tool_name and hasattr(component, "fn"):
             return component.fn

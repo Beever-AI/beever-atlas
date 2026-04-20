@@ -131,14 +131,18 @@ class SyncScheduler:
             )
             logger.info(
                 "SyncScheduler: registered interval sync channel=%s every=%dmin",
-                channel_id, effective.sync.interval_minutes,
+                channel_id,
+                effective.sync.interval_minutes,
             )
         elif trigger_mode == SyncTriggerMode.CRON and effective.sync.cron_expression:
             parts = effective.sync.cron_expression.split()
             if len(parts) == 5:
                 trigger = CronTrigger(
-                    minute=parts[0], hour=parts[1], day=parts[2],
-                    month=parts[3], day_of_week=parts[4],
+                    minute=parts[0],
+                    hour=parts[1],
+                    day=parts[2],
+                    month=parts[3],
+                    day_of_week=parts[4],
                 )
                 await self._scheduler.add_schedule(
                     self._execute_sync,
@@ -150,7 +154,8 @@ class SyncScheduler:
                 )
                 logger.info(
                     "SyncScheduler: registered cron sync channel=%s cron=%s",
-                    channel_id, effective.sync.cron_expression,
+                    channel_id,
+                    effective.sync.cron_expression,
                 )
 
     async def _register_consolidation_job(self, channel_id: str, policy) -> None:
@@ -169,8 +174,11 @@ class SyncScheduler:
             parts = effective.consolidation.cron_expression.split()
             if len(parts) == 5:
                 trigger = CronTrigger(
-                    minute=parts[0], hour=parts[1], day=parts[2],
-                    month=parts[3], day_of_week=parts[4],
+                    minute=parts[0],
+                    hour=parts[1],
+                    day=parts[2],
+                    month=parts[3],
+                    day_of_week=parts[4],
                 )
                 await self._scheduler.add_schedule(
                     self._execute_consolidation,
@@ -182,7 +190,8 @@ class SyncScheduler:
                 )
                 logger.info(
                     "SyncScheduler: registered cron consolidation channel=%s cron=%s",
-                    channel_id, effective.consolidation.cron_expression,
+                    channel_id,
+                    effective.consolidation.cron_expression,
                 )
 
     async def _remove_jobs(self, channel_id: str) -> None:
@@ -218,7 +227,9 @@ class SyncScheduler:
                     if elapsed < timedelta(minutes=cooldown):
                         logger.info(
                             "SyncScheduler: skipping sync channel=%s (cooldown: %s < %dmin)",
-                            channel_id, elapsed, cooldown,
+                            channel_id,
+                            elapsed,
+                            cooldown,
                         )
                         return
 
@@ -236,17 +247,20 @@ class SyncScheduler:
 
             try:
                 from beever_atlas.api.sync import get_sync_runner
+
                 runner = get_sync_runner()
                 sync_type = effective.sync.sync_type or "auto"
                 job_id = await runner.start_sync(channel_id, sync_type=sync_type)
                 logger.info(
                     "SyncScheduler: triggered sync channel=%s job_id=%s",
-                    channel_id, job_id,
+                    channel_id,
+                    job_id,
                 )
             except ValueError as exc:
                 logger.info(
                     "SyncScheduler: sync skipped channel=%s: %s",
-                    channel_id, exc,
+                    channel_id,
+                    exc,
                 )
             finally:
                 if acquired:
@@ -254,22 +268,28 @@ class SyncScheduler:
 
         except asyncio.TimeoutError:
             logger.warning(
-                "SyncScheduler: sync semaphore timeout channel=%s", channel_id,
+                "SyncScheduler: sync semaphore timeout channel=%s",
+                channel_id,
             )
         except Exception as exc:
             logger.error(
                 "SyncScheduler: sync failed channel=%s: %s",
-                channel_id, exc, exc_info=True,
+                channel_id,
+                exc,
+                exc_info=True,
             )
 
     async def _execute_consolidation(self, channel_id: str) -> None:
         """Execute a scheduled consolidation for a channel."""
         try:
             from beever_atlas.services.pipeline_orchestrator import trigger_consolidation
+
             await trigger_consolidation(channel_id)
             logger.info("SyncScheduler: triggered consolidation channel=%s", channel_id)
         except Exception as exc:
             logger.error(
                 "SyncScheduler: consolidation failed channel=%s: %s",
-                channel_id, exc, exc_info=True,
+                channel_id,
+                exc,
+                exc_info=True,
             )

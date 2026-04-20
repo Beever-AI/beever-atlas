@@ -3,6 +3,7 @@
 Verifies that check_and_supersede runs fact checks concurrently bounded by
 settings.contradiction_concurrency, with per-fact error isolation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +16,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fact(fact_id: str, entity: str = "Alice") -> MagicMock:
     fact = MagicMock()
@@ -80,7 +82,10 @@ async def test_all_facts_checked_in_parallel():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         await check_and_supersede(new_facts, channel_id="C1")
 
@@ -108,7 +113,10 @@ async def test_per_fact_error_isolation():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         # Should not raise
         await check_and_supersede(new_facts, channel_id="C1")
@@ -144,7 +152,10 @@ async def test_semaphore_bounds_concurrency():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         await check_and_supersede(new_facts, channel_id="C1")
 
@@ -169,7 +180,10 @@ async def test_supersede_called_on_high_confidence():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         await check_and_supersede([new_fact], channel_id="C1")
 
@@ -194,7 +208,10 @@ async def test_flag_called_on_mid_confidence():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         await check_and_supersede([new_fact], channel_id="C1")
 
@@ -222,7 +239,10 @@ async def test_facts_without_tags_skipped():
     with (
         patch("beever_atlas.services.contradiction_detector.get_settings", return_value=settings),
         patch("beever_atlas.stores.get_stores", return_value=stores),
-        patch("beever_atlas.services.contradiction_detector.detect_contradictions", side_effect=_fake_detect),
+        patch(
+            "beever_atlas.services.contradiction_detector.detect_contradictions",
+            side_effect=_fake_detect,
+        ),
     ):
         await check_and_supersede([no_tags_fact], channel_id="C1")
 

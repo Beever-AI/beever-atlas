@@ -1,4 +1,5 @@
 """Pydantic schema for LLM-inferred CSV/JSONL column mappings."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

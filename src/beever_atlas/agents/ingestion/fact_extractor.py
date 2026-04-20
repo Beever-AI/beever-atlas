@@ -1,4 +1,5 @@
 """Fact extraction agent — Stage 2 of the ingestion pipeline."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

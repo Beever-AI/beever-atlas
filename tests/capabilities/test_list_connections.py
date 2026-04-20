@@ -42,8 +42,10 @@ async def test_owned_connection_returned():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert len(result) == 1
@@ -58,8 +60,10 @@ async def test_unowned_connection_hidden_in_multitenant():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=False):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=False),
+    ):
         result = await list_connections("user-A")
 
     assert result == []
@@ -73,8 +77,10 @@ async def test_legacy_shared_sentinel_visible_in_single_tenant():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert len(result) == 1
@@ -89,8 +95,10 @@ async def test_none_owner_visible_in_single_tenant():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert len(result) == 1
@@ -104,8 +112,10 @@ async def test_legacy_shared_hidden_in_multitenant():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=False):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=False),
+    ):
         result = await list_connections("user-A")
 
     assert result == []
@@ -119,8 +129,10 @@ async def test_selected_channel_count_in_response():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[conn])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert result[0]["selected_channel_count"] == 3
@@ -130,7 +142,9 @@ async def test_selected_channel_count_in_response():
 async def test_last_synced_at_is_max_of_channel_sync_timestamps():
     """For non-file connections, last_synced_at is the max last_sync_ts of selected channels."""
     conn = _make_conn(
-        "conn-1", owner="user-A", selected_channels=["C1", "C2"],
+        "conn-1",
+        owner="user-A",
+        selected_channels=["C1", "C2"],
     )
 
     s1 = MagicMock()
@@ -144,8 +158,10 @@ async def test_last_synced_at_is_max_of_channel_sync_timestamps():
         return_value={"C1": s1, "C2": s2},
     )
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert result[0]["last_synced_at"] == "2026-04-18T12:00:00Z"
@@ -166,8 +182,10 @@ async def test_file_connection_last_synced_at_is_none():
     # No sync-state batch call expected for file-only connections — leave
     # the mock un-stubbed so any call would surface as a failure.
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     assert result[0]["last_synced_at"] is None
@@ -184,8 +202,10 @@ async def test_mixed_ownership_filtered_correctly():
     mock_stores = MagicMock()
     mock_stores.platform.list_connections = AsyncMock(return_value=[owned, legacy, foreign])
 
-    with patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores), \
-         patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True):
+    with (
+        patch("beever_atlas.capabilities.connections.get_stores", return_value=mock_stores),
+        patch("beever_atlas.capabilities.connections._is_single_tenant", return_value=True),
+    ):
         result = await list_connections("user-A")
 
     ids = {r["connection_id"] for r in result}

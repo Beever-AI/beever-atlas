@@ -176,7 +176,9 @@ class PlatformStore:
         return self._from_doc(doc)
 
     async def get_connections_by_platform_and_source(
-        self, platform: str, source: str,
+        self,
+        platform: str,
+        source: str,
     ) -> list[PlatformConnection]:
         """Return connections filtered by both platform and source."""
         connections: list[PlatformConnection] = []

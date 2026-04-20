@@ -6,10 +6,20 @@ from beever_atlas.wiki.compiler import _splice_key_facts_table
 
 
 _FACTS = [
-    {"memory_text": "alpha", "author_name": "a", "fact_type": "claim",
-     "importance": 0.9, "quality_score": 0.9},
-    {"memory_text": "beta", "author_name": "b", "fact_type": "claim",
-     "importance": 0.8, "quality_score": 0.8},
+    {
+        "memory_text": "alpha",
+        "author_name": "a",
+        "fact_type": "claim",
+        "importance": 0.9,
+        "quality_score": 0.9,
+    },
+    {
+        "memory_text": "beta",
+        "author_name": "b",
+        "fact_type": "claim",
+        "importance": 0.8,
+        "quality_score": 0.8,
+    },
 ]
 
 

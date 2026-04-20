@@ -60,6 +60,7 @@ def _filter_tools_for_untrusted(tools: list) -> list:
         kept.append(t)
     return kept
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +83,7 @@ def _maybe_wrap_with_skills(tools_list: list) -> list:
     """
     try:
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
     except Exception:
         logger.exception("qa_agent: failed to load settings when wrapping skills")
@@ -91,9 +93,7 @@ def _maybe_wrap_with_skills(tools_list: list) -> list:
         return tools_list
 
     if not getattr(settings, "qa_new_prompt", False):
-        raise ConfigurationError(
-            "qa_skills_enabled requires qa_new_prompt=True"
-        )
+        raise ConfigurationError("qa_skills_enabled requires qa_new_prompt=True")
 
     from google.adk.tools.skill_toolset import SkillToolset
 
@@ -121,9 +121,15 @@ def _maybe_wrap_with_skills(tools_list: list) -> list:
     # on SkillToolset does not expose tools to the agent in current ADK.
     return [toolset, *tools_list]
 
+
 # Tool subsets for each answer mode
 _WIKI_TOOLS_NAMES = {"get_wiki_page", "get_topic_overview"}
-_SUMMARIZE_TOOLS_NAMES = {"get_wiki_page", "get_topic_overview", "search_channel_facts", "search_qa_history"}
+_SUMMARIZE_TOOLS_NAMES = {
+    "get_wiki_page",
+    "get_topic_overview",
+    "search_channel_facts",
+    "search_qa_history",
+}
 
 # Cached agent instances keyed on (mode, citation_registry_enabled, qa_new_prompt) so
 # flipping either flag at runtime produces a freshly-built agent.
@@ -133,6 +139,7 @@ _agents: dict[tuple[str, bool, bool, bool], LlmAgent] = {}
 def _current_registry_flag() -> bool:
     try:
         from beever_atlas.infra.config import get_settings
+
         return bool(get_settings().citation_registry_enabled)
     except Exception:
         logger.exception("qa_agent: failed to read citation_registry_enabled")
@@ -142,6 +149,7 @@ def _current_registry_flag() -> bool:
 def _current_new_prompt_flag() -> bool:
     try:
         from beever_atlas.infra.config import get_settings
+
         return bool(get_settings().qa_new_prompt)
     except Exception:
         logger.exception("qa_agent: failed to read qa_new_prompt")
@@ -151,6 +159,7 @@ def _current_new_prompt_flag() -> bool:
 def _current_skills_flag() -> bool:
     try:
         from beever_atlas.infra.config import get_settings
+
         return bool(get_settings().qa_skills_enabled)
     except Exception:
         logger.exception("qa_agent: failed to read qa_skills_enabled")
@@ -159,8 +168,12 @@ def _current_skills_flag() -> bool:
 
 def _get_tools_by_names(names: set[str]) -> list:
     """Filter QA_TOOLS to only those matching the given function names."""
-    return [t for t in QA_TOOLS if getattr(t, '__name__', getattr(t, 'name', '')) in names or
-            (hasattr(t, 'func') and getattr(t.func, '__name__', '') in names)]
+    return [
+        t
+        for t in QA_TOOLS
+        if getattr(t, "__name__", getattr(t, "name", "")) in names
+        or (hasattr(t, "func") and getattr(t.func, "__name__", "") in names)
+    ]
 
 
 def _maybe_add_follow_ups_tool(tools_list: list, include_follow_ups: bool) -> list:
@@ -172,12 +185,14 @@ def _maybe_add_follow_ups_tool(tools_list: list, include_follow_ups: bool) -> li
         return tools_list
     try:
         from beever_atlas.infra.config import get_settings
+
         if not get_settings().citation_registry_enabled:
             return tools_list
     except Exception:
         logger.exception("qa_agent: failed to load settings for follow-ups tool")
         return tools_list
     from beever_atlas.agents.query.follow_ups_tool import suggest_follow_ups
+
     return [*tools_list, suggest_follow_ups]
 
 
@@ -217,8 +232,11 @@ def create_qa_agent(
 
     if mode == "quick":
         # Quick: 2 tools, no thinking, concise prompt
-        tools_list = [t for t in base_tools if getattr(t, '__name__', '') in _WIKI_TOOLS_NAMES]
-        prompt = build_qa_system_prompt(max_tool_calls=2, include_follow_ups=False, mode="quick") + QA_QUICK_SUFFIX
+        tools_list = [t for t in base_tools if getattr(t, "__name__", "") in _WIKI_TOOLS_NAMES]
+        prompt = (
+            build_qa_system_prompt(max_tool_calls=2, include_follow_ups=False, mode="quick")
+            + QA_QUICK_SUFFIX
+        )
         prompt = prompt + extra_instruction
         agent_tools = _maybe_wrap_with_skills(tools_list)
         agent = LlmAgent(
@@ -229,10 +247,13 @@ def create_qa_agent(
         )
     elif mode == "summarize":
         # Summarize: 4 tools, thinking, structured output
-        tools_list = [t for t in base_tools if getattr(t, '__name__', '') in _SUMMARIZE_TOOLS_NAMES]
+        tools_list = [t for t in base_tools if getattr(t, "__name__", "") in _SUMMARIZE_TOOLS_NAMES]
         tools_list = [*tools_list, *registry.tools]
         tools_list = _maybe_add_follow_ups_tool(tools_list, include_follow_ups=True)
-        prompt = build_qa_system_prompt(max_tool_calls=4, include_follow_ups=True, mode="summarize") + QA_SUMMARIZE_SUFFIX
+        prompt = (
+            build_qa_system_prompt(max_tool_calls=4, include_follow_ups=True, mode="summarize")
+            + QA_SUMMARIZE_SUFFIX
+        )
         prompt = prompt + extra_instruction
         planner = _create_thinking_planner()
         agent_tools = _maybe_wrap_with_skills(tools_list)
@@ -270,7 +291,7 @@ def create_qa_agent(
         "QA agent created: mode=%s model=%s tools=%d",
         mode,
         model if isinstance(model, str) else type(model).__name__,
-        len(agent.tools) if hasattr(agent, 'tools') and agent.tools else 0,
+        len(agent.tools) if hasattr(agent, "tools") and agent.tools else 0,
     )
     return agent
 
@@ -283,6 +304,7 @@ def _create_thinking_planner():
     try:
         from google.adk.planners import BuiltInPlanner
         from google.genai import types
+
         return BuiltInPlanner(
             thinking_config=types.ThinkingConfig(
                 include_thoughts=True,

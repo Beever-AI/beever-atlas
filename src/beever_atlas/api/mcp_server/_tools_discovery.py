@@ -44,9 +44,7 @@ def register_discovery_tools(mcp: FastMCP) -> None:
             conns = await conn_cap.list_connections(principal_id)
             connection_ids = [c["connection_id"] for c in conns]
         except Exception:
-            logger.exception(
-                "whoami: list_connections failed for principal=%s", principal_id
-            )
+            logger.exception("whoami: list_connections failed for principal=%s", principal_id)
             connection_ids = []
 
         return {
@@ -89,9 +87,7 @@ def register_discovery_tools(mcp: FastMCP) -> None:
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
-            logger.warning(
-                "event=mcp_tool_missing_principal tool=list_connections"
-            )
+            logger.warning("event=mcp_tool_missing_principal tool=list_connections")
             return {"error": "authentication_missing"}
 
         try:
@@ -100,9 +96,7 @@ def register_discovery_tools(mcp: FastMCP) -> None:
             conns = await conn_cap.list_connections(principal_id)
             return {"connections": conns}
         except Exception:
-            logger.exception(
-                "list_connections: capability failed for principal=%s", principal_id
-            )
+            logger.exception("list_connections: capability failed for principal=%s", principal_id)
             return {"connections": []}
 
     @mcp.tool(name="list_channels")
@@ -141,9 +135,7 @@ def register_discovery_tools(mcp: FastMCP) -> None:
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
-            logger.warning(
-                "event=mcp_tool_missing_principal tool=list_channels"
-            )
+            logger.warning("event=mcp_tool_missing_principal tool=list_channels")
             return {"error": "authentication_missing"}
 
         err = _validate_id(connection_id, "connection_id")

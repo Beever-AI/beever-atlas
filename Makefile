@@ -13,7 +13,7 @@ test:
 lint:
 	uv run ruff check src/ tests/
 	cd web && npm run lint && npm run typecheck
-	cd bot && npm run build --noEmit
+	cd bot && npm run lint
 
 dev:
 	uv run uvicorn beever_atlas.server.app:app --reload &

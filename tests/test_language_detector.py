@@ -13,6 +13,7 @@ from beever_atlas.services.lang_text import alias_keyset, nfc_key
 # detect_language
 # ---------------------------------------------------------------------------
 
+
 class TestDetectLanguage:
     def test_empty_input_is_en_zero_confidence(self) -> None:
         tag, conf = detect_language("")
@@ -32,7 +33,9 @@ class TestDetectLanguage:
         assert conf < 0.8
 
     def test_cantonese_markers_yield_zh_hk(self) -> None:
-        tag, conf = detect_language("阿明今日話佢搞掂咗個 deployment，但 staging 個 DB migration 仲未 run")
+        tag, conf = detect_language(
+            "阿明今日話佢搞掂咗個 deployment，但 staging 個 DB migration 仲未 run"
+        )
         assert tag == "zh-HK"
         assert conf > 0.5
 
@@ -58,29 +61,24 @@ class TestDetectLanguage:
 
     def test_code_switch_cjk_heavy_wins(self) -> None:
         # Cantonese + a couple of English tech terms — native script should win.
-        tag, _ = detect_language(
-            "阿明啱啱喺 Slack 話佢搞掂咗個 deployment，DB migration 仲未 run"
-        )
+        tag, _ = detect_language("阿明啱啱喺 Slack 話佢搞掂咗個 deployment，DB migration 仲未 run")
         assert tag == "zh-HK"
 
     def test_latin_dominant_with_tiny_cjk_loan_stays_en(self) -> None:
-        tag, _ = detect_language(
-            "The project codename 阿明 was chosen by the team last Friday."
-        )
+        tag, _ = detect_language("The project codename 阿明 was chosen by the team last Friday.")
         # Only a handful of CJK chars in a long Latin sentence → English wins.
         assert tag == "en"
 
     def test_urls_and_mentions_do_not_skew_detection(self) -> None:
         # Heavy URL + @mention noise shouldn't turn a Cantonese line English.
-        tag, _ = detect_language(
-            "阿明 @channel 請睇下 https://example.com/very/long/url 搞掂咗未"
-        )
+        tag, _ = detect_language("阿明 @channel 請睇下 https://example.com/very/long/url 搞掂咗未")
         assert tag == "zh-HK"
 
 
 # ---------------------------------------------------------------------------
 # detect_channel_primary_language
 # ---------------------------------------------------------------------------
+
 
 class TestDetectChannelPrimaryLanguage:
     def test_empty_channel_returns_default(self) -> None:
@@ -122,15 +120,14 @@ class TestDetectChannelPrimaryLanguage:
     def test_low_confidence_falls_back_to_default(self) -> None:
         # All messages are too short / ambiguous to cross the threshold.
         msgs = ["ok", "lol", ":)", "k", "thx"]
-        tag, _ = detect_channel_primary_language(
-            msgs, confidence_threshold=0.6, default="en"
-        )
+        tag, _ = detect_channel_primary_language(msgs, confidence_threshold=0.6, default="en")
         assert tag == "en"
 
 
 # ---------------------------------------------------------------------------
 # nfc_key / alias_keyset — entity dedup helpers
 # ---------------------------------------------------------------------------
+
 
 class TestMultiLanguageDetection:
     """Validate Latin-script and non-Latin-non-CJK language detection via
@@ -210,9 +207,7 @@ class TestMultiLanguageDetection:
         assert tag == "th"
 
     def test_hebrew_is_detected(self) -> None:
-        tag, _ = detect_language(
-            "הצוות החליט להשתמש ב-Redis לאחסון מטמון לאחר הערכת האלטרנטיבות"
-        )
+        tag, _ = detect_language("הצוות החליט להשתמש ב-Redis לאחסון מטמון לאחר הערכת האלטרנטיבות")
         assert tag == "he"
 
     def test_greek_is_detected(self) -> None:
@@ -260,7 +255,7 @@ class TestNfcKey:
 
     def test_cjk_is_not_lowercased_but_normalized(self) -> None:
         # NFC-normalize a decomposed form to the composed form.
-        decomposed = "\u963F\u660E"  # 阿明 already composed
+        decomposed = "\u963f\u660e"  # 阿明 already composed
         assert nfc_key(decomposed) == "阿明"
 
     def test_whitespace_is_stripped(self) -> None:

@@ -28,6 +28,7 @@ from beever_atlas.agents.tools.orchestration_tools import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _tool_name(tool) -> str:
     """Mirror the name-extraction logic in qa_agent._tool_name."""
     return (
@@ -60,8 +61,7 @@ def test_deep_mode_includes_all_orchestration_tools():
     simulated_deep_tools = [*QA_TOOLS, *ORCHESTRATION_TOOLS]
     names = {_tool_name(t) for t in simulated_deep_tools}
     assert ALL_ORCHESTRATION_NAMES.issubset(names), (
-        f"Missing orchestration tools in deep mode: "
-        f"{ALL_ORCHESTRATION_NAMES - names}"
+        f"Missing orchestration tools in deep mode: {ALL_ORCHESTRATION_NAMES - names}"
     )
 
 
@@ -94,9 +94,7 @@ def test_deep_mode_untrusted_context_preserves_read_only_tools():
     filtered_names = {_tool_name(t) for t in filtered}
 
     for name in READ_ONLY_NAMES:
-        assert name in filtered_names, (
-            f"{name} must be preserved under untrusted context"
-        )
+        assert name in filtered_names, f"{name} must be preserved under untrusted context"
 
 
 # ---------------------------------------------------------------------------
@@ -107,17 +105,13 @@ def test_deep_mode_untrusted_context_preserves_read_only_tools():
 def test_untrusted_filter_removes_trigger_sync():
     """trigger_sync_tool is removed when only orchestration tools are present."""
     result = _filter_tools_for_untrusted([trigger_sync_tool])
-    assert result == [], (
-        "trigger_sync_tool must be filtered out under untrusted context"
-    )
+    assert result == [], "trigger_sync_tool must be filtered out under untrusted context"
 
 
 def test_untrusted_filter_removes_refresh_wiki():
     """refresh_wiki_tool is removed when only orchestration tools are present."""
     result = _filter_tools_for_untrusted([refresh_wiki_tool])
-    assert result == [], (
-        "refresh_wiki_tool must be filtered out under untrusted context"
-    )
+    assert result == [], "refresh_wiki_tool must be filtered out under untrusted context"
 
 
 def test_untrusted_filter_preserves_list_connections():
@@ -189,22 +183,19 @@ def test_untrusted_filter_combined_qa_plus_orchestration():
 # Tool identity checks
 # ---------------------------------------------------------------------------
 
+
 def test_orchestration_tools_are_coroutines():
     """All 5 orchestration tools must be async (coroutine functions)."""
     import asyncio
 
     for tool in ORCHESTRATION_TOOLS:
-        assert asyncio.iscoroutinefunction(tool), (
-            f"{_tool_name(tool)} is not an async function"
-        )
+        assert asyncio.iscoroutinefunction(tool), f"{_tool_name(tool)} is not an async function"
 
 
 def test_orchestration_tools_have_docstrings():
     """All 5 orchestration tools must have non-empty docstrings."""
     for tool in ORCHESTRATION_TOOLS:
-        assert tool.__doc__ and tool.__doc__.strip(), (
-            f"{_tool_name(tool)} has no docstring"
-        )
+        assert tool.__doc__ and tool.__doc__.strip(), f"{_tool_name(tool)} has no docstring"
 
 
 def test_quick_mode_excludes_orchestration_tools():
@@ -213,8 +204,7 @@ def test_quick_mode_excludes_orchestration_tools():
 
     # Verify orchestration tool names are not in the quick-mode set.
     assert ALL_ORCHESTRATION_NAMES.isdisjoint(_WIKI_TOOLS_NAMES), (
-        f"Orchestration tools leaked into quick mode: "
-        f"{ALL_ORCHESTRATION_NAMES & _WIKI_TOOLS_NAMES}"
+        f"Orchestration tools leaked into quick mode: {ALL_ORCHESTRATION_NAMES & _WIKI_TOOLS_NAMES}"
     )
 
 

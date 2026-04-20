@@ -52,9 +52,7 @@ class WriteReconciler:
             try:
                 await self._reconcile_intent(intent.id, intent, stores)
             except Exception:
-                logger.exception(
-                    "WriteReconciler: failed to reconcile intent %s.", intent.id
-                )
+                logger.exception("WriteReconciler: failed to reconcile intent %s.", intent.id)
 
     async def _reconcile_intent(self, intent_id: str, intent: object, stores: object) -> None:  # type: ignore[override]
         """Retry the Weaviate and/or Neo4j writes for a single intent."""
@@ -72,8 +70,7 @@ class WriteReconciler:
             facts.append(fact)
 
         entities: list[GraphEntity] = [
-            GraphEntity(**{k: v for k, v in ed.items() if k != "id"})
-            for ed in wi.entities
+            GraphEntity(**{k: v for k, v in ed.items() if k != "id"}) for ed in wi.entities
         ]
         relationships: list[GraphRelationship] = [
             GraphRelationship(**{k: v for k, v in rd.items() if k != "id"})
@@ -114,14 +111,10 @@ class WriteReconciler:
         settings = get_settings()
         interval = settings.reconciler_interval_minutes * 60
 
-        logger.info(
-            "WriteReconciler: starting loop (interval=%ds).", interval
-        )
+        logger.info("WriteReconciler: starting loop (interval=%ds).", interval)
         while True:
             try:
                 await self.run_once()
             except Exception:
-                logger.exception(
-                    "WriteReconciler: unexpected error in reconciliation loop."
-                )
+                logger.exception("WriteReconciler: unexpected error in reconciliation loop.")
             await asyncio.sleep(interval)

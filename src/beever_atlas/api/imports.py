@@ -76,7 +76,7 @@ def _sanitize_filename(raw: str | None) -> tuple[str, str]:
         raise HTTPException(
             status_code=415,
             detail=f"Unsupported file extension {ext!r}. Allowed: "
-                   f"{sorted(ALLOWED_IMPORT_EXTENSIONS)}",
+            f"{sorted(ALLOWED_IMPORT_EXTENSIONS)}",
         )
     safe = _SAFE_FILENAME_RE.sub("_", name) or f"upload{ext}"
     return safe, ext
@@ -235,7 +235,8 @@ def _row_count_estimate(path: Path, encoding: str, fmt: str) -> int:
 
 
 async def _ensure_file_connection(
-    display_name: str, owner_principal_id: str | None = None,
+    display_name: str,
+    owner_principal_id: str | None = None,
 ) -> str:
     """Return the single shared ``platform="file"`` connection id, creating it if needed.
 
@@ -341,7 +342,9 @@ async def preview_import(
         max_rows=5,
     )
     try:
-        samples = parse_file(original_with_ext, mapping_result.mapping, sample_opts, encoding=encoding)
+        samples = parse_file(
+            original_with_ext, mapping_result.mapping, sample_opts, encoding=encoding
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("imports: sample parse failed (mapping may need review): %s", exc)
         samples = []
@@ -420,7 +423,9 @@ async def commit_import(
     if uploader_pid and uploader_pid != caller_pid:
         logger.info(
             "imports.commit deny: file_id=%s uploader=%s caller=%s reason=principal_mismatch",
-            body.file_id, uploader_pid, caller_pid,
+            body.file_id,
+            uploader_pid,
+            caller_pid,
         )
         raise HTTPException(
             status_code=403,
@@ -435,6 +440,7 @@ async def commit_import(
 
     # Validate mapping against actual headers now, before we start ingestion.
     from beever_atlas.services.file_importer import read_headers_and_samples
+
     headers, _samples, _fmt = read_headers_and_samples(original_path, encoding=encoding)
     mapping = _mapping_from_dto(body.mapping)
     errors = validate_mapping(mapping, headers)
@@ -470,7 +476,8 @@ async def commit_import(
 
     stores = get_stores()
     connection_id = await _ensure_file_connection(
-        "File Imports", owner_principal_id=caller_pid,
+        "File Imports",
+        owner_principal_id=caller_pid,
     )
 
     # RES-177 H1 + M6 (review fix): check access BEFORE mutating the file
@@ -543,7 +550,9 @@ async def commit_import(
     )
     logger.info(
         "imports: commit file_id=%s channel=%s messages=%d (awaiting manual sync)",
-        body.file_id, channel_id, len(messages),
+        body.file_id,
+        channel_id,
+        len(messages),
     )
 
     # Cleanup the staged file — we've copied the rows into imported_messages.

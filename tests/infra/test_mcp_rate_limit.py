@@ -22,6 +22,7 @@ def reset_rate_limiter():
     mcp_rate_limit.reset_state()
     # Restore real clock after each test.
     import time
+
     mcp_rate_limit._set_clock(time.monotonic)
     yield
     mcp_rate_limit.reset_state()
@@ -32,13 +33,14 @@ def reset_rate_limiter():
 # ask_channel: 30/min
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_ask_channel_allows_30_calls():
     """First 30 calls from principal A on ask_channel are allowed."""
     pid = "mcp:aaaa"
     for i in range(30):
         allowed, retry = await mcp_rate_limit.check_and_record(pid, "ask_channel")
-        assert allowed is True, f"Call {i+1} should be allowed"
+        assert allowed is True, f"Call {i + 1} should be allowed"
         assert retry is None
 
 
@@ -70,7 +72,7 @@ async def test_principal_isolation_ask_channel():
     # Principal B should still be allowed
     for i in range(30):
         allowed_b, retry_b = await mcp_rate_limit.check_and_record(pid_b, "ask_channel")
-        assert allowed_b is True, f"Principal B call {i+1} should be allowed"
+        assert allowed_b is True, f"Principal B call {i + 1} should be allowed"
         assert retry_b is None
 
 
@@ -104,13 +106,14 @@ async def test_counter_resets_after_60s():
 # trigger_sync: 5/min
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_trigger_sync_allows_5_calls():
     """First 5 calls on trigger_sync are allowed."""
     pid = "mcp:cccc"
     for i in range(5):
         allowed, retry = await mcp_rate_limit.check_and_record(pid, "trigger_sync")
-        assert allowed is True, f"Call {i+1} should be allowed"
+        assert allowed is True, f"Call {i + 1} should be allowed"
         assert retry is None
 
 
@@ -145,13 +148,14 @@ async def test_trigger_sync_counter_isolated_from_ask_channel():
 # Default limit: 60/min
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_default_limit_60_per_min():
     """Tools not in the override map get 60/min."""
     pid = "mcp:eeee"
     for i in range(60):
         allowed, _ = await mcp_rate_limit.check_and_record(pid, "whoami")
-        assert allowed is True, f"Call {i+1} should be allowed"
+        assert allowed is True, f"Call {i + 1} should be allowed"
     allowed_61, retry = await mcp_rate_limit.check_and_record(pid, "whoami")
     assert allowed_61 is False
     assert retry is not None
@@ -160,6 +164,7 @@ async def test_default_limit_60_per_min():
 # ---------------------------------------------------------------------------
 # refresh_wiki: same 5/min as trigger_sync
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_refresh_wiki_has_5rpm_limit():
@@ -208,4 +213,3 @@ async def test_denied_calls_do_not_grow_window_list():
         f"window list grew to {len(mcp_rate_limit._windows[key])} entries "
         "after 100 rapid-fire denied calls — Fix #9 regression"
     )
-

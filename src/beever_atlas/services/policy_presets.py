@@ -148,13 +148,15 @@ def list_presets() -> list[dict]:
     """Return all presets with name, description, and config."""
     result = []
     for key, preset in PRESETS.items():
-        result.append({
-            "id": key,
-            "name": preset["name"],
-            "description": preset["description"],
-            "sync": preset["sync"].model_dump(mode="json"),
-            "ingestion": preset["ingestion"].model_dump(mode="json"),
-            "consolidation": preset["consolidation"].model_dump(mode="json"),
-            "wiki": preset["wiki"].model_dump(mode="json"),
-        })
+        result.append(
+            {
+                "id": key,
+                "name": preset["name"],
+                "description": preset["description"],
+                "sync": preset["sync"].model_dump(mode="json"),
+                "ingestion": preset["ingestion"].model_dump(mode="json"),
+                "consolidation": preset["consolidation"].model_dump(mode="json"),
+                "wiki": preset["wiki"].model_dump(mode="json"),
+            }
+        )
     return result

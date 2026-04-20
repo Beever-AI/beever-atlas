@@ -116,8 +116,7 @@ class QAHistoryStore:
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=Configure.VectorIndex.hnsw(),
                 properties=[
-                    Property(name=name, data_type=dtype)
-                    for name, dtype in _QA_HISTORY_PROPERTIES
+                    Property(name=name, data_type=dtype) for name, dtype in _QA_HISTORY_PROPERTIES
                 ],
             )
             logger.info("QAHistoryStore: created QAHistory collection")
@@ -133,8 +132,7 @@ class QAHistoryStore:
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=Configure.VectorIndex.hnsw(),
                 properties=[
-                    Property(name=name, data_type=dtype)
-                    for name, dtype in _QA_HISTORY_PROPERTIES
+                    Property(name=name, data_type=dtype) for name, dtype in _QA_HISTORY_PROPERTIES
                 ],
             )
         return self._client.collections.get(QA_HISTORY_COLLECTION)
@@ -191,16 +189,18 @@ class QAHistoryStore:
             # Envelope-aware: collapse `{items,sources,refs}` → items,
             # passthrough bare lists (legacy rows).
             citations = as_legacy_items(raw)
-            entries.append({
-                "question": props.get("question", ""),
-                "answer": props.get("answer", ""),
-                "citations": citations,
-                "timestamp": props.get("timestamp", ""),
-                "session_id": props.get("session_id", ""),
-                "id": str(obj.uuid),
-                # NULL on historical rows treated as "answered" (backfill-safe)
-                "answer_kind": props.get("answer_kind") or "answered",
-            })
+            entries.append(
+                {
+                    "question": props.get("question", ""),
+                    "answer": props.get("answer", ""),
+                    "citations": citations,
+                    "timestamp": props.get("timestamp", ""),
+                    "session_id": props.get("session_id", ""),
+                    "id": str(obj.uuid),
+                    # NULL on historical rows treated as "answered" (backfill-safe)
+                    "answer_kind": props.get("answer_kind") or "answered",
+                }
+            )
         return entries
 
     async def true_hybrid_search(
@@ -315,9 +315,7 @@ class QAHistoryStore:
     #: their query (or introduce pagination in a future phase).
     FIND_QA_SCAN_CAP: int = 1000
 
-    async def find_qa_entries_citing_source(
-        self, source_id: str, limit: int = 20
-    ) -> dict:
+    async def find_qa_entries_citing_source(self, source_id: str, limit: int = 20) -> dict:
         """Return past QA entries whose stored envelope cites `source_id`.
 
         Weaviate can't query nested JSON natively, so we scan entries and

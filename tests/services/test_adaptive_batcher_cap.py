@@ -3,6 +3,7 @@
 Verifies that no batch exceeds the message-count ceiling regardless of
 token budget headroom.
 """
+
 from __future__ import annotations
 
 from beever_atlas.services.adaptive_batcher import (
@@ -14,10 +15,7 @@ from beever_atlas.services.adaptive_batcher import (
 
 def _make_messages(n: int) -> list[dict]:
     """Synthesize n minimal messages with distinct timestamps."""
-    return [
-        {"ts": str(i), "text": f"message {i}", "channel": "C0"}
-        for i in range(n)
-    ]
+    return [{"ts": str(i), "text": f"message {i}", "channel": "C0"} for i in range(n)]
 
 
 def test_all_batches_respect_max_messages_cap() -> None:
@@ -26,9 +24,7 @@ def test_all_batches_respect_max_messages_cap() -> None:
     batches = token_aware_batches(messages, max_tokens=12000, max_messages=30)
     assert batches, "Expected at least one batch"
     for i, batch in enumerate(batches):
-        assert len(batch) <= 30, (
-            f"Batch {i} has {len(batch)} messages, exceeds cap of 30"
-        )
+        assert len(batch) <= 30, f"Batch {i} has {len(batch)} messages, exceeds cap of 30"
 
 
 def test_all_messages_preserved() -> None:

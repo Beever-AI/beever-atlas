@@ -20,14 +20,12 @@ def _get_master_key() -> bytes:
     if not raw:
         raise RuntimeError(
             "CREDENTIAL_MASTER_KEY is not set. "
-            "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
         )
     try:
         key = bytes.fromhex(raw)
     except ValueError as e:
-        raise RuntimeError(
-            f"CREDENTIAL_MASTER_KEY must be a 64-character hex string: {e}"
-        ) from e
+        raise RuntimeError(f"CREDENTIAL_MASTER_KEY must be a 64-character hex string: {e}") from e
     if len(key) != 32:
         raise RuntimeError(
             f"CREDENTIAL_MASTER_KEY must be 32 bytes (64 hex chars), got {len(key)} bytes."

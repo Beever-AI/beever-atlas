@@ -40,11 +40,13 @@ def _stub_llm_provider(monkeypatch):
     """WikiCompiler.__init__ calls get_llm_provider() to resolve the model name.
     These tests never hit an LLM — stub it out so tests run without app startup.
     """
+
     class _Provider:
         def get_model_string(self, _key: str) -> str:
             return "stub/test-model"
 
     import beever_atlas.llm.provider as _provider_mod
+
     monkeypatch.setattr(_provider_mod, "_provider", _Provider(), raising=False)
     yield
 

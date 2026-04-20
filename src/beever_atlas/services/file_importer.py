@@ -106,6 +106,7 @@ def detect_encoding(path: Path, sample_bytes: int = 65536) -> str:
 
     try:
         import chardet  # lazy — keeps import cheap for utf-8 path
+
         guess = chardet.detect(raw)
         enc = (guess.get("encoding") or "").lower()
         conf = guess.get("confidence") or 0.0
@@ -272,30 +273,70 @@ def detect_preset(headers: Iterable[str]) -> Preset | None:
 
 _ALIAS_TABLE: dict[str, list[str]] = {
     "content": [
-        "content", "message", "msg", "text", "body", "內容", "内容", "訊息", "消息",
+        "content",
+        "message",
+        "msg",
+        "text",
+        "body",
+        "內容",
+        "内容",
+        "訊息",
+        "消息",
     ],
     "author": [
-        "authorid", "userid", "user_id", "sender_id", "from_id",
+        "authorid",
+        "userid",
+        "user_id",
+        "sender_id",
+        "from_id",
     ],
     "author_name": [
-        "author", "user", "username", "name", "sender", "from",
-        "發送者", "发送者", "用戶", "用户", "作者",
+        "author",
+        "user",
+        "username",
+        "name",
+        "sender",
+        "from",
+        "發送者",
+        "发送者",
+        "用戶",
+        "用户",
+        "作者",
     ],
     "timestamp": [
-        "timestamp", "date", "time", "datetime", "created_at", "created", "sent_at",
-        "時間", "时间", "日期",
+        "timestamp",
+        "date",
+        "time",
+        "datetime",
+        "created_at",
+        "created",
+        "sent_at",
+        "時間",
+        "时间",
+        "日期",
     ],
     "message_id": [
-        "message_id", "msg_id", "id", "messageid",
+        "message_id",
+        "msg_id",
+        "id",
+        "messageid",
     ],
     "thread_id": [
-        "thread_id", "thread_ts", "parent_id", "reply_to",
+        "thread_id",
+        "thread_ts",
+        "parent_id",
+        "reply_to",
     ],
     "attachments": [
-        "attachments", "media", "files", "attachment",
+        "attachments",
+        "media",
+        "files",
+        "attachment",
     ],
     "reactions": [
-        "reactions", "emoji", "likes",
+        "reactions",
+        "emoji",
+        "likes",
     ],
 }
 
@@ -382,8 +423,14 @@ def validate_mapping(mapping: ColumnMapping, headers: Iterable[str]) -> list[str
         errors.append(f"content column {mapping.content!r} not in headers")
 
     for fname in (
-        "author", "author_name", "timestamp", "message_id", "thread_id",
-        "attachments", "reactions", "timestamp_time",
+        "author",
+        "author_name",
+        "timestamp",
+        "message_id",
+        "thread_id",
+        "attachments",
+        "reactions",
+        "timestamp_time",
     ):
         val = getattr(mapping, fname)
         if val and val not in hset:
@@ -424,6 +471,7 @@ def _parse_timestamp(raw: str, dayfirst: bool = False) -> datetime:
     # dateutil fallback for humanized formats
     try:
         from dateutil import parser as _dtparser  # lazy
+
         dt = _dtparser.parse(s, dayfirst=dayfirst)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
@@ -457,7 +505,8 @@ def _should_skip(content: str, options: ParseOptions) -> bool:
     if options.skip_system and content in SYSTEM_STRINGS:
         return True
     if options.skip_deleted and content.lower() in {
-        "this message was deleted.", "this message has been deleted.",
+        "this message was deleted.",
+        "this message has been deleted.",
         "<message deleted>",
     }:
         return True
@@ -540,29 +589,33 @@ def parse_file(
             t = (row.get(mapping.thread_id, "") or "").strip()
             thread_id = t or None
 
-        attachments = _parse_attachments(row.get(mapping.attachments, "") if mapping.attachments else "")
+        attachments = _parse_attachments(
+            row.get(mapping.attachments, "") if mapping.attachments else ""
+        )
         reactions = _parse_reactions(row.get(mapping.reactions, "") if mapping.reactions else "")
 
-        messages.append(NormalizedMessage(
-            content=content,
-            author=author_id,
-            platform=opts.default_platform,
-            channel_id=channel_id,
-            channel_name=channel_name,
-            message_id=msg_id,
-            timestamp=timestamp,
-            thread_id=thread_id,
-            attachments=attachments,
-            reactions=reactions,
-            reply_count=0,
-            raw_metadata={
-                "source": "file_import",
-                "row_index": idx,
-                "raw": row,
-            },
-            author_name=author_name,
-            author_image="",
-        ))
+        messages.append(
+            NormalizedMessage(
+                content=content,
+                author=author_id,
+                platform=opts.default_platform,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                message_id=msg_id,
+                timestamp=timestamp,
+                thread_id=thread_id,
+                attachments=attachments,
+                reactions=reactions,
+                reply_count=0,
+                raw_metadata={
+                    "source": "file_import",
+                    "row_index": idx,
+                    "raw": row,
+                },
+                author_name=author_name,
+                author_image="",
+            )
+        )
 
     return messages
 

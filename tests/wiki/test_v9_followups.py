@@ -38,12 +38,16 @@ def test_scrub_preserves_other_parentheses():
 def test_activity_clusters_path_has_summary():
     clusters = [
         SimpleNamespace(
-            title="Alpha", member_count=12,
-            date_range_end="2026-04-10", date_range_start="2026-03-01",
+            title="Alpha",
+            member_count=12,
+            date_range_end="2026-04-10",
+            date_range_start="2026-03-01",
         ),
         SimpleNamespace(
-            title="Beta", member_count=5,
-            date_range_end="2026-03-20", date_range_start="2026-02-15",
+            title="Beta",
+            member_count=5,
+            date_range_end="2026-03-20",
+            date_range_start="2026-02-15",
         ),
     ]
     content, _ = _activity_fallback([], {}, clusters)

@@ -1,4 +1,5 @@
 """Wire all stages into the ingestion SequentialAgent."""
+
 from __future__ import annotations
 
 from google.adk.agents import SequentialAgent, ParallelAgent

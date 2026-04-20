@@ -36,9 +36,7 @@ def test_filter_tools_for_untrusted_drops_writes_and_egress():
     def create_document(): ...
     def send_message(): ...
 
-    kept = _filter_tools_for_untrusted(
-        [safe_read, tavily_search, create_document, send_message]
-    )
+    kept = _filter_tools_for_untrusted([safe_read, tavily_search, create_document, send_message])
     kept_names = {getattr(t, "__name__", "") for t in kept}
     assert "safe_read" in kept_names
     assert "tavily_search" not in kept_names

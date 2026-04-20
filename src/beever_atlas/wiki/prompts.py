@@ -507,7 +507,12 @@ Media: {media_json}
 """
 
 # Phase 4 v2 variant of SUBTOPIC_PROMPT.
-SUBTOPIC_PROMPT_V2 = SUBTOPIC_PROMPT.replace(
-    "3. **Key Facts** — GFM table with columns: Fact, Source, Type, Importance — the most important facts with [N] citations",
-    _KEY_FACTS_MARKER_INSTRUCTION,
-) + "\n\n" + _NO_MARKER_ECHO_INSTRUCTION + "\n"
+SUBTOPIC_PROMPT_V2 = (
+    SUBTOPIC_PROMPT.replace(
+        "3. **Key Facts** — GFM table with columns: Fact, Source, Type, Importance — the most important facts with [N] citations",
+        _KEY_FACTS_MARKER_INSTRUCTION,
+    )
+    + "\n\n"
+    + _NO_MARKER_ECHO_INSTRUCTION
+    + "\n"
+)

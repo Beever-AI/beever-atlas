@@ -1,4 +1,5 @@
 """Document digester agent — digests long documents into a concise Markdown summary."""
+
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent

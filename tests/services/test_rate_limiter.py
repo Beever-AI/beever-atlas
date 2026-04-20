@@ -14,6 +14,7 @@ from beever_atlas.services.batch_processor import _get_limiter
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _reset_limiters() -> None:
     """Clear cached limiters between tests so RPM is re-read from patched settings."""
     bp_module._provider_limiters.clear()
@@ -104,6 +105,7 @@ def _make_runner_mock_with_stages(stages: list[str]) -> MagicMock:
 # Test 1: _get_limiter creates limiter with correct RPM from settings
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_limiter_gemini_rpm():
     """_get_limiter('gemini') creates AsyncLimiter with gemini_rpm from settings."""
@@ -147,6 +149,7 @@ async def test_get_limiter_returns_same_instance():
 # Test 2: Gemini limiter acquired for LLM stages, not for preprocessor/persister
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_gemini_limiter_acquired_for_llm_stages():
     """Gemini limiter.acquire() is called once per LLM stage (not for preprocessor/persister)."""
@@ -170,13 +173,20 @@ async def test_gemini_limiter_acquired_for_llm_stages():
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
         patch("beever_atlas.services.batch_processor._get_limiter", side_effect=_fake_get_limiter),
     ):
         from beever_atlas.services.batch_processor import BatchProcessor
+
         processor = BatchProcessor()
         await processor.process_messages(
             messages=[{"text": "hello", "id": "msg-1"}],
@@ -198,6 +208,7 @@ async def test_gemini_limiter_acquired_for_llm_stages():
 # ---------------------------------------------------------------------------
 # Test 3: Jina limiter acquired for embedder stage
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_jina_limiter_acquired_for_embedder():
@@ -221,13 +232,20 @@ async def test_jina_limiter_acquired_for_embedder():
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
         patch("beever_atlas.services.batch_processor._get_limiter", side_effect=_fake_get_limiter),
     ):
         from beever_atlas.services.batch_processor import BatchProcessor
+
         processor = BatchProcessor()
         await processor.process_messages(
             messages=[{"text": "hello", "id": "msg-1"}],
@@ -246,6 +264,7 @@ async def test_jina_limiter_acquired_for_embedder():
 # Test 4: D2 — batch_wall_clock_s present in returned stage_timings
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_d2_batch_wall_clock_in_timings():
     """batch_wall_clock_s is present and > 0 in stage_timings returned from a batch."""
@@ -260,12 +279,19 @@ async def test_d2_batch_wall_clock_in_timings():
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
         from beever_atlas.services.batch_processor import BatchProcessor
+
         processor = BatchProcessor()
         await processor.process_messages(
             messages=[{"text": "hello", "id": "msg-1"}],
@@ -277,7 +303,8 @@ async def test_d2_batch_wall_clock_in_timings():
     # Verify the timing was passed to update_sync_progress
     # Find calls that include stage_timings
     timing_calls = [
-        call for call in stores.mongodb.update_sync_progress.call_args_list
+        call
+        for call in stores.mongodb.update_sync_progress.call_args_list
         if call.kwargs.get("stage_timings")
     ]
     assert timing_calls, "Expected at least one update_sync_progress call with stage_timings"
@@ -292,6 +319,7 @@ async def test_d2_batch_wall_clock_in_timings():
 # ---------------------------------------------------------------------------
 # Test 5: D2 — limiter_wait_s_gemini absent when no Gemini stage fires
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_d2_no_limiter_wait_when_no_llm_stages():
@@ -308,12 +336,19 @@ async def test_d2_no_limiter_wait_when_no_llm_stages():
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
         from beever_atlas.services.batch_processor import BatchProcessor
+
         processor = BatchProcessor()
         await processor.process_messages(
             messages=[{"text": "hello", "id": "msg-1"}],
@@ -323,7 +358,8 @@ async def test_d2_no_limiter_wait_when_no_llm_stages():
         )
 
     timing_calls = [
-        call for call in stores.mongodb.update_sync_progress.call_args_list
+        call
+        for call in stores.mongodb.update_sync_progress.call_args_list
         if call.kwargs.get("stage_timings")
     ]
     if timing_calls:
@@ -336,6 +372,7 @@ async def test_d2_no_limiter_wait_when_no_llm_stages():
 # ---------------------------------------------------------------------------
 # Test 6: D2 — limiter_wait_s_gemini present when a Gemini LLM stage fires
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_d2_limiter_wait_gemini_present_after_llm_stage():
@@ -355,12 +392,19 @@ async def test_d2_limiter_wait_gemini_present_after_llm_stage():
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
         from beever_atlas.services.batch_processor import BatchProcessor
+
         processor = BatchProcessor()
         await processor.process_messages(
             messages=[{"text": "hello", "id": "msg-1"}],
@@ -370,7 +414,8 @@ async def test_d2_limiter_wait_gemini_present_after_llm_stage():
         )
 
     timing_calls = [
-        call for call in stores.mongodb.update_sync_progress.call_args_list
+        call
+        for call in stores.mongodb.update_sync_progress.call_args_list
         if call.kwargs.get("stage_timings")
     ]
     assert timing_calls, "Expected stage_timings in update_sync_progress"

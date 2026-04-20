@@ -84,9 +84,7 @@ async def _get_wiki_page_impl(
             "text": summary_text or content_text[:400],
         }
     except Exception:
-        logger.exception(
-            "get_wiki_page failed for channel=%s page_type=%s", channel_id, page_type
-        )
+        logger.exception("get_wiki_page failed for channel=%s page_type=%s", channel_id, page_type)
         return None
 
 
@@ -222,11 +220,7 @@ async def refresh_wiki(
         recent = await stores.mongodb.get_last_job_by_kind(channel_id, "wiki_refresh")
     except Exception:
         recent = None
-    if (
-        recent
-        and recent.status in {"completed", "failed"}
-        and recent.completed_at is not None
-    ):
+    if recent and recent.status in {"completed", "failed"} and recent.completed_at is not None:
         completed = recent.completed_at
         if completed.tzinfo is None:
             completed = completed.replace(tzinfo=UTC)
@@ -261,12 +255,15 @@ async def refresh_wiki(
 
     if job_id is None:
         import uuid as _uuid
+
         job_id = str(_uuid.uuid4())
 
     # Set status to "running" immediately so the frontend sees it on first poll.
     try:
         await cache.set_generation_status(
-            channel_id, status="running", stage="starting",
+            channel_id,
+            status="running",
+            stage="starting",
             stage_detail="Initiating wiki generation…",
         )
     except Exception:
@@ -290,9 +287,7 @@ async def refresh_wiki(
                         job_id,
                     )
         except Exception as exc:
-            logger.error(
-                "refresh_wiki: generation failed channel=%s: %s", channel_id, exc
-            )
+            logger.error("refresh_wiki: generation failed channel=%s: %s", channel_id, exc)
             if is_persisted_job:
                 try:
                     await stores.mongodb.complete_sync_job(

@@ -44,14 +44,22 @@ async def test_find_experts_returns_dict_from_capability():
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_experts = [
-        {"handle": "alice", "expertise_score": 10.0, "fact_count": 10,
-         "top_topics": ["billing"], "text": "alice has 10 facts about billing",
-         "channel_id": "ch-a"},
+        {
+            "handle": "alice",
+            "expertise_score": 10.0,
+            "fact_count": 10,
+            "top_topics": ["billing"],
+            "text": "alice has 10 facts about billing",
+            "channel_id": "ch-a",
+        },
     ]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.find_experts",
-               new=AsyncMock(return_value=fake_experts)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.find_experts", new=AsyncMock(return_value=fake_experts)
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "find_experts")
         result = await fn(channel_id="ch-a", topic="billing", ctx=_ctx())
@@ -64,9 +72,13 @@ async def test_find_experts_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.find_experts",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.find_experts",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "find_experts")
         result = await fn(channel_id="ch-x", topic="billing", ctx=_ctx())
@@ -100,15 +112,26 @@ async def test_search_relationships_returns_dict_from_capability():
     fake_result = {
         "entities_searched": ["BillingService"],
         "nodes": [{"name": "BillingService", "type": "service"}],
-        "edges": [{"source": "BillingService", "target": "PaymentAPI",
-                   "type": "CALLS", "confidence": 0.9, "context": ""}],
+        "edges": [
+            {
+                "source": "BillingService",
+                "target": "PaymentAPI",
+                "type": "CALLS",
+                "confidence": 0.9,
+                "context": "",
+            }
+        ],
         "text": "BillingService -CALLS-> PaymentAPI",
         "channel_id": "ch-a",
     }
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.search_relationships",
-               new=AsyncMock(return_value=fake_result)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.search_relationships",
+            new=AsyncMock(return_value=fake_result),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_relationships")
         result = await fn(channel_id="ch-a", entities=["BillingService"], ctx=_ctx())
@@ -122,9 +145,13 @@ async def test_search_relationships_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.search_relationships",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.search_relationships",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_relationships")
         result = await fn(channel_id="ch-x", entities=["X"], ctx=_ctx())
@@ -140,9 +167,13 @@ async def test_search_relationships_list_result_wrapped():
 
     empty_list_result = [{"_empty": True, "entity": "X", "reason": "no_edges"}]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.search_relationships",
-               new=AsyncMock(return_value=empty_list_result)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.search_relationships",
+            new=AsyncMock(return_value=empty_list_result),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "search_relationships")
         result = await fn(channel_id="ch-a", entities=["X"], ctx=_ctx())
@@ -161,14 +192,26 @@ async def test_trace_decision_history_returns_decisions():
     from beever_atlas.api.mcp_server import build_mcp
 
     fake_decisions = [
-        {"entity": "old-api-v1", "superseded_by": "api-v2", "relationship": "SUPERSEDES",
-         "confidence": 0.8, "context": "v2 replaces v1", "position": 0,
-         "text": "v2 replaces v1", "channel_id": "ch-a", "topic": "API versioning"},
+        {
+            "entity": "old-api-v1",
+            "superseded_by": "api-v2",
+            "relationship": "SUPERSEDES",
+            "confidence": 0.8,
+            "context": "v2 replaces v1",
+            "position": 0,
+            "text": "v2 replaces v1",
+            "channel_id": "ch-a",
+            "topic": "API versioning",
+        },
     ]
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.trace_decision_history",
-               new=AsyncMock(return_value=fake_decisions)):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.trace_decision_history",
+            new=AsyncMock(return_value=fake_decisions),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "trace_decision_history")
         result = await fn(channel_id="ch-a", topic="API versioning", ctx=_ctx())
@@ -181,9 +224,13 @@ async def test_trace_decision_history_access_denied():
     from beever_atlas.api.mcp_server import build_mcp
     from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()), \
-         patch("beever_atlas.capabilities.graph.trace_decision_history",
-               new=AsyncMock(side_effect=ChannelAccessDenied("ch-x"))):
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.graph.trace_decision_history",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
         mcp = build_mcp()
         fn = _get_tool_fn(mcp, "trace_decision_history")
         result = await fn(channel_id="ch-x", topic="something", ctx=_ctx())

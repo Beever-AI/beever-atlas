@@ -77,9 +77,7 @@ _BULLET_PREFIX_RE = re.compile(r"^[-*\d.\s]+")
 
 # Same shape as stream_rewriter._LEFTOVER_TAG_RE. Duplicated here to avoid a
 # circular import with the citation registry module; kept in lock-step.
-_SRC_LITERAL_RE = re.compile(
-    r"\[\s*(?:src:[^\[\]]*?|External:[^\[\]]*?)\]", re.IGNORECASE
-)
+_SRC_LITERAL_RE = re.compile(r"\[\s*(?:src:[^\[\]]*?|External:[^\[\]]*?)\]", re.IGNORECASE)
 
 
 def _clean(questions: list[str]) -> list[str]:

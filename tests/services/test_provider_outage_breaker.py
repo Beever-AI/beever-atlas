@@ -17,6 +17,7 @@ from beever_atlas.services.batch_processor import ProviderOutageError
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_server_error(status: int = 503) -> ServerError:
     """Create a ServerError that looks like a Gemini 503."""
     err = ServerError.__new__(ServerError)
@@ -35,6 +36,7 @@ def _reset_breaker() -> None:
 # Shared mock factory for process_messages dependencies
 # ---------------------------------------------------------------------------
 
+
 def _make_settings(threshold: int = 3) -> MagicMock:
     s = MagicMock()
     s.sync_batch_size = 10
@@ -47,6 +49,7 @@ def _make_settings(threshold: int = 3) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Test 1 (AC #5): Breaker trips on 3 consecutive terminal 503s
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_breaker_trips_after_threshold():
@@ -77,7 +80,9 @@ async def test_breaker_trips_after_threshold():
         patch("beever_atlas.services.batch_processor.get_stores") as mock_get_stores,
         patch("beever_atlas.services.batch_processor.create_runner"),
         patch("beever_atlas.services.batch_processor.create_ingestion_pipeline"),
-        patch("beever_atlas.services.batch_processor._thread_aware_batches", return_value=fake_batches),
+        patch(
+            "beever_atlas.services.batch_processor._thread_aware_batches", return_value=fake_batches
+        ),
     ):
         mock_stores = AsyncMock()
         mock_stores.entity_registry.get_all_canonical = AsyncMock(return_value=[])
@@ -126,6 +131,7 @@ async def test_breaker_trips_after_threshold():
 # Test 2 (AC #6): Breaker resets after a success — does NOT trip
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_breaker_resets_after_success():
     """2× 503-terminal → 1 success → 1× 503-terminal: counter ends at 1, breaker NOT tripped."""
@@ -166,6 +172,7 @@ async def test_breaker_resets_after_success():
 # Test 3 (AC #10): Breaker increments once per terminal batch failure, not per retry
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_breaker_increments_once_per_terminal_batch():
     """A batch that retries 5× against 503 then terminally fails → counter increments by 1 only."""
@@ -202,6 +209,7 @@ async def test_breaker_increments_once_per_terminal_batch():
 # ---------------------------------------------------------------------------
 # Test 4 (AC #11): Breaker trip emits structured logger.error
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_breaker_trip_emits_structured_log():
@@ -243,6 +251,6 @@ async def test_breaker_trip_emits_structured_log():
 
     assert raised, "Expected breaker to fire"
     messages = [r.getMessage() for r in captured]
-    assert any(
-        "provider outage breaker tripped" in m for m in messages
-    ), f"Expected 'provider outage breaker tripped' in logs, got: {messages}"
+    assert any("provider outage breaker tripped" in m for m in messages), (
+        f"Expected 'provider outage breaker tripped' in logs, got: {messages}"
+    )

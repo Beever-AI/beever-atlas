@@ -50,6 +50,7 @@ def _reset_and_pin_clock():
     yield
     # Restore real clock and clean up
     import time
+
     mcp_rate_limit._set_clock(time.monotonic)
     mcp_rate_limit.reset_state()
 
@@ -134,8 +135,7 @@ async def test_cross_principal_counter_isolation():
     # Principal B is unaffected — first call must succeed
     allowed_b, retry_b = await mcp_rate_limit.check_and_record(principal_b, _TOOL_NAME)
     assert allowed_b, (
-        f"Principal B's first call must be allowed; "
-        f"got allowed={allowed_b} retry={retry_b}"
+        f"Principal B's first call must be allowed; got allowed={allowed_b} retry={retry_b}"
     )
 
 

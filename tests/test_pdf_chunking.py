@@ -19,6 +19,7 @@ class TestExtractPages:
         writer = PdfWriter()
         for i in range(num_pages):
             from pypdf._page import PageObject
+
             page = PageObject.create_blank_page(width=612, height=792)
             # pypdf blank pages have no text; we'll test the page counting logic
             writer.add_page(page)
@@ -71,22 +72,34 @@ class TestGroupPagesIntoChunks:
     """Tests for PdfExtractor._group_pages_into_chunks()."""
 
     def test_single_page_single_chunk(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
     def test_exact_multiple(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
     def test_remainder_chunk(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
     def test_empty_pages_filtered(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
     def test_all_empty_returns_fallback(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
     def test_chunk_pages_one(self):
-        pytest.skip("_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests")
+        pytest.skip(
+            "_group_pages_into_chunks inlined into PdfExtractor.extract() — covered by integration tests"
+        )
 
 
 class TestPdfExtractorIntegration:
@@ -111,6 +124,7 @@ class TestPdfExtractorIntegration:
     async def test_small_pdf_single_chunk(self):
         """A 3-page PDF with chunk_pages=4 should produce 1 chunk."""
         from unittest.mock import patch, MagicMock
+
         settings = MagicMock(pdf_chunk_pages=4, pdf_max_pages=100)
         with patch("beever_atlas.services.media_extractors.get_settings", return_value=settings):
             data = self._make_pdf_with_text(["Page 1", "Page 2", "Page 3"])
@@ -126,6 +140,7 @@ class TestPdfExtractorIntegration:
     async def test_multi_page_pdf_multiple_chunks(self):
         """A 10-page PDF with chunk_pages=4 should produce 3 chunks."""
         from unittest.mock import patch, MagicMock
+
         settings = MagicMock(pdf_chunk_pages=4, pdf_max_pages=100)
         with patch("beever_atlas.services.media_extractors.get_settings", return_value=settings):
             data = self._make_pdf_with_text([f"Page {i} content here" for i in range(10)])
@@ -144,9 +159,11 @@ class TestPdfExtractorIntegration:
         """PDF with no extractable text."""
         from unittest.mock import patch, MagicMock
         from pypdf import PdfWriter
+
         settings = MagicMock(pdf_chunk_pages=4, pdf_max_pages=100)
         writer = PdfWriter()
         from pypdf._page import PageObject
+
         writer.add_page(PageObject.create_blank_page(width=612, height=792))
         buf = io.BytesIO()
         writer.write(buf)

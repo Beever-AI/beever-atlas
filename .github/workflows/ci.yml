@@ -49,14 +49,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --extra test --extra nebula
 
+      - name: Ruff format
+        run: uv run ruff format --check src/ tests/
+
       - name: Ruff
         run: uv run ruff check src/ tests/
 
-      - name: Pytest
+      - name: Pyright
+        run: uv run pyright
+
+      - name: Pytest + coverage
         env:
           MONGODB_URI: mongodb://localhost:27017/beever_atlas
           REDIS_URL: redis://localhost:6379
-        run: uv run pytest -q
+        run: uv run pytest --cov=src/beever_atlas --cov-report=term-missing -q
 
   web:
     name: Web (Node 20)
@@ -107,6 +113,9 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Build
         run: npm run build

@@ -16,6 +16,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_fake_cache() -> MagicMock:
     """In-memory fake cache that records save_wiki calls by compound key."""
     store: dict[str, dict] = {}
@@ -87,6 +88,7 @@ def _make_fake_gatherer_data() -> dict:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_save_wiki_uses_target_lang_key() -> None:
     """save_wiki must be called with target_lang='zh-HK', not 'en'."""
@@ -117,9 +119,7 @@ async def test_save_wiki_uses_target_lang_key() -> None:
         f"Expected key 'C1:zh-HK' in cache, got keys: {list(fake_cache._store)}"
     )
     # The "en" slot must NOT have been created
-    assert "C1:en" not in fake_cache._store, (
-        "Key 'C1:en' should not exist when target_lang='zh-HK'"
-    )
+    assert "C1:en" not in fake_cache._store, "Key 'C1:en' should not exist when target_lang='zh-HK'"
 
 
 @pytest.mark.asyncio
@@ -169,9 +169,7 @@ async def test_concurrent_generations_serialize_per_channel() -> None:
     with patch("beever_atlas.wiki.builder.get_llm_provider") as mock_llm:
         mock_llm.return_value.get_model_string.return_value = "test-model"
         await asyncio.gather(
-            builder_a.generate_wiki(
-                channel_id="C_concurrent", target_lang="en", source_lang="en"
-            ),
+            builder_a.generate_wiki(channel_id="C_concurrent", target_lang="en", source_lang="en"),
             builder_b.generate_wiki(
                 channel_id="C_concurrent", target_lang="zh-HK", source_lang="en"
             ),
@@ -210,9 +208,9 @@ async def test_zh_hk_doc_untouched_after_en_generation() -> None:
         )
 
     # zh-HK slot is untouched
-    assert fake_cache._store.get("C1:zh-HK") == {
-        "pages": {"overview": {"id": "zh-overview"}}
-    }, "zh-HK document must not be modified by an 'en' generation"
+    assert fake_cache._store.get("C1:zh-HK") == {"pages": {"overview": {"id": "zh-overview"}}}, (
+        "zh-HK document must not be modified by an 'en' generation"
+    )
 
     # en slot was written
     assert "C1:en" in fake_cache._store

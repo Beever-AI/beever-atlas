@@ -132,8 +132,10 @@ class TestModelConfigAPI:
         mock_store = MagicMock()
         mock_store.mongodb.get_agent_model_config = AsyncMock(return_value=None)
 
-        with patch("beever_atlas.api.models.get_stores", return_value=mock_store), \
-             patch("beever_atlas.api.models.get_llm_provider") as mock_provider:
+        with (
+            patch("beever_atlas.api.models.get_stores", return_value=mock_store),
+            patch("beever_atlas.api.models.get_llm_provider") as mock_provider,
+        ):
             provider = self._mock_provider()
             mock_provider.return_value = provider
 

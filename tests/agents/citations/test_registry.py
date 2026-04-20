@@ -95,11 +95,7 @@ def test_register_dedup_same_identity():
 
 def test_register_dedup_merges_attachments():
     r = SourceRegistry()
-    r.register(
-        **_base_kwargs(
-            attachments=[MediaAttachment(kind="image", url="https://a/1.png")]
-        )
-    )
+    r.register(**_base_kwargs(attachments=[MediaAttachment(kind="image", url="https://a/1.png")]))
     r.register(
         **_base_kwargs(
             attachments=[
@@ -145,9 +141,7 @@ def test_mark_referenced_inline_downgraded_without_attachments():
 def test_mark_referenced_inline_preserved_with_attachments():
     r = SourceRegistry()
     sid = r.register(
-        **_base_kwargs(
-            attachments=[MediaAttachment(kind="image", url="https://a/1.png")]
-        )
+        **_base_kwargs(attachments=[MediaAttachment(kind="image", url="https://a/1.png")])
     )
     r.mark_referenced(sid, 1, inline=True)
     env = r.finalize()
@@ -157,9 +151,7 @@ def test_mark_referenced_inline_preserved_with_attachments():
 def test_mark_referenced_inline_sticks():
     r = SourceRegistry()
     sid = r.register(
-        **_base_kwargs(
-            attachments=[MediaAttachment(kind="image", url="https://a/1.png")]
-        )
+        **_base_kwargs(attachments=[MediaAttachment(kind="image", url="https://a/1.png")])
     )
     r.mark_referenced(sid, 1, inline=False)
     r.mark_referenced(sid, 1, inline=True)

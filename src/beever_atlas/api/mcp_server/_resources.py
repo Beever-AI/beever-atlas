@@ -159,9 +159,7 @@ def register_resources(mcp: FastMCP) -> None:
             from beever_atlas.capabilities import wiki as wiki_cap
             from beever_atlas.capabilities.errors import ChannelAccessDenied
 
-            page = await wiki_cap.get_wiki_page(
-                principal_id, channel_id, page_type=page_id
-            )
+            page = await wiki_cap.get_wiki_page(principal_id, channel_id, page_type=page_id)
             if page is None:
                 return {
                     "channel_id": channel_id,

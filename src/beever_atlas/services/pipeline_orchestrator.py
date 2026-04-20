@@ -31,7 +31,8 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
         case ConsolidationStrategy.AFTER_EVERY_SYNC:
             logger.info(
                 "Orchestrator: triggering consolidation (after_every_sync) channel=%s facts=%d",
-                channel_id, facts_created,
+                channel_id,
+                facts_created,
             )
             _spawn_consolidation(channel_id)
 
@@ -41,7 +42,9 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
             threshold = policy.consolidation.after_n_syncs or 3
             logger.info(
                 "Orchestrator: after_n_syncs channel=%s count=%d/%d",
-                channel_id, count, threshold,
+                channel_id,
+                count,
+                threshold,
             )
             if count >= threshold:
                 _spawn_consolidation(channel_id)
@@ -62,7 +65,8 @@ async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
         case _:
             logger.warning(
                 "Orchestrator: unknown strategy %s for channel=%s, skipping",
-                strategy, channel_id,
+                strategy,
+                channel_id,
             )
 
 
@@ -96,7 +100,9 @@ async def _run_consolidation(channel_id: str) -> None:
         settings = get_settings()
         effective = await resolve_effective_policy(channel_id)
         service = ConsolidationService(
-            stores.weaviate, settings, graph=stores.graph,
+            stores.weaviate,
+            settings,
+            graph=stores.graph,
             consolidation_config=effective.consolidation,
         )
         # Resolve display name so ChannelSummary is written with a human-
@@ -109,7 +115,10 @@ async def _run_consolidation(channel_id: str) -> None:
 
         logger.info(
             "Orchestrator: consolidation complete channel=%s created=%d updated=%d facts=%d",
-            channel_id, result.clusters_created, result.clusters_updated, result.facts_clustered,
+            channel_id,
+            result.clusters_created,
+            result.clusters_updated,
+            result.facts_clustered,
         )
 
         # Persist consolidation result as activity event
@@ -129,7 +138,9 @@ async def _run_consolidation(channel_id: str) -> None:
     except Exception as exc:
         logger.error(
             "Orchestrator: consolidation failed channel=%s: %s",
-            channel_id, exc, exc_info=True,
+            channel_id,
+            exc,
+            exc_info=True,
         )
         # Persist failure as activity event (best effort)
         try:

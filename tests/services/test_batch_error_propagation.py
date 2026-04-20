@@ -4,6 +4,7 @@ Verifies that when _run_single_batch raises for some batches, those exceptions
 are captured in result.errors and result.batch_breakdowns, while successful
 batches still contribute their data.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -42,7 +43,9 @@ def _make_runner_mock() -> MagicMock:
         event = MagicMock()
         event.author = "persister"
         actions = MagicMock()
-        actions.state_delta = {"persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}}
+        actions.state_delta = {
+            "persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}
+        }
         actions.stateDelta = None
         event.actions = actions
         yield event
@@ -92,7 +95,9 @@ async def test_batch_exceptions_populate_result_errors() -> None:
         event = MagicMock()
         event.author = "persister"
         actions = MagicMock()
-        actions.state_delta = {"persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}}
+        actions.state_delta = {
+            "persist_result": {"weaviate_ids": ["id1"], "entity_count": 1, "relationship_count": 0}
+        }
         actions.stateDelta = None
         event.actions = actions
 
@@ -110,9 +115,14 @@ async def test_batch_exceptions_populate_result_errors() -> None:
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", side_effect=_fake_create_session),
+        patch(
+            "beever_atlas.services.batch_processor.create_session", side_effect=_fake_create_session
+        ),
         patch("beever_atlas.agents.runner.get_session_service", return_value=session_svc),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):
@@ -127,7 +137,9 @@ async def test_batch_exceptions_populate_result_errors() -> None:
     assert len(result.errors) == 2, f"Expected 2 errors, got {len(result.errors)}: {result.errors}"
     failed_batch_nums = {e["batch_num"] for e in result.errors}
     assert failed_batch_nums == {2, 4}, f"Expected batches 2 and 4 to fail, got {failed_batch_nums}"
-    assert len(result.batch_breakdowns) == 4, "All 4 breakdowns must be present (2 successful + 2 failure placeholders)"
+    assert len(result.batch_breakdowns) == 4, (
+        "All 4 breakdowns must be present (2 successful + 2 failure placeholders)"
+    )
 
 
 @pytest.mark.asyncio
@@ -146,9 +158,15 @@ async def test_all_batch_errors_empty_when_no_failures() -> None:
     with (
         patch("beever_atlas.services.batch_processor.get_stores", return_value=stores),
         patch("beever_atlas.services.batch_processor.get_settings", return_value=settings),
-        patch("beever_atlas.services.batch_processor.create_ingestion_pipeline", return_value=MagicMock()),
+        patch(
+            "beever_atlas.services.batch_processor.create_ingestion_pipeline",
+            return_value=MagicMock(),
+        ),
         patch("beever_atlas.services.batch_processor.create_runner", return_value=runner),
-        patch("beever_atlas.services.batch_processor.create_session", new=AsyncMock(return_value=fake_session)),
+        patch(
+            "beever_atlas.services.batch_processor.create_session",
+            new=AsyncMock(return_value=fake_session),
+        ),
         patch("beever_atlas.agents.runner.get_session_service", return_value=session_svc),
         patch("beever_atlas.services.batch_processor.get_llm_provider", return_value=MagicMock()),
     ):

@@ -43,9 +43,7 @@ async def test_search_relationships_has_cite_annotation():
 
     mock_graph = MagicMock()
     mock_graph.fuzzy_match_entities = AsyncMock(return_value=[("Node1", 0.95)])
-    mock_graph.find_entity_by_name = AsyncMock(
-        return_value=MagicMock(id="ent-1", name="Node1")
-    )
+    mock_graph.find_entity_by_name = AsyncMock(return_value=MagicMock(id="ent-1", name="Node1"))
     mock_graph.get_neighbors = AsyncMock(return_value=mock_subgraph)
 
     mock_stores = MagicMock()
@@ -57,9 +55,7 @@ async def test_search_relationships_has_cite_annotation():
             "beever_atlas.stores.get_stores",
             return_value=mock_stores,
         ):
-            result = await search_relationships(
-                channel_id="C1", entities=["Node1"]
-            )
+            result = await search_relationships(channel_id="C1", entities=["Node1"])
     finally:
         reset(tok)
 
@@ -90,9 +86,7 @@ async def test_find_experts_has_cite_annotation():
             "beever_atlas.stores.get_stores",
             return_value=mock_stores,
         ):
-            results = await find_experts(
-                channel_id="C1", topic="authentication", limit=5
-            )
+            results = await find_experts(channel_id="C1", topic="authentication", limit=5)
     finally:
         reset(tok)
 
@@ -120,8 +114,7 @@ def test_mmr_rerank_returns_diverse_mix():
 
     # Near-duplicates: all about "python deployment ci pipeline" (identical token sets)
     near_dupes = [
-        {"text": "python deployment ci pipeline automated", "fact_id": f"dup-{i}"}
-        for i in range(5)
+        {"text": "python deployment ci pipeline automated", "fact_id": f"dup-{i}"} for i in range(5)
     ]
     # Diverse docs: share at least one query token so they have non-zero relevance
     diverse = [

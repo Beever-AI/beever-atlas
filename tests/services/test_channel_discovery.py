@@ -80,7 +80,9 @@ async def test_is_member_only_false_returns_all_channels():
         return_value=adapter,
     ):
         result = await fetch_connection_channels(
-            "conn-1", [], platform="slack",
+            "conn-1",
+            [],
+            platform="slack",
         )
 
     assert {ch.channel_id for ch in result} == {"C1", "C2", "C3"}
@@ -103,7 +105,10 @@ async def test_is_member_only_true_filters_non_member_channels_when_selected_emp
         return_value=adapter,
     ):
         result = await fetch_connection_channels(
-            "conn-1", [], platform="slack", is_member_only=True,
+            "conn-1",
+            [],
+            platform="slack",
+            is_member_only=True,
         )
 
     assert {ch.channel_id for ch in result} == {"C1", "C3"}
@@ -152,12 +157,15 @@ async def test_file_platform_ignores_is_member_only():
         side_effect=lambda cid: f"{cid}.pdf",
     )
 
-    with patch(
-        "beever_atlas.services.channel_discovery.get_stores",
-        return_value=stores,
-    ), patch(
-        "beever_atlas.services.channel_discovery.make_bridge_adapter",
-    ) as adapter_mock:
+    with (
+        patch(
+            "beever_atlas.services.channel_discovery.get_stores",
+            return_value=stores,
+        ),
+        patch(
+            "beever_atlas.services.channel_discovery.make_bridge_adapter",
+        ) as adapter_mock,
+    ):
         result = await fetch_connection_channels(
             "conn-file",
             ["file-abc", "file-xyz"],
@@ -186,7 +194,10 @@ async def test_safe_wrapper_forwards_is_member_only():
         return_value=adapter,
     ):
         result = await fetch_connection_channels_safe(
-            "conn-1", [], platform="slack", is_member_only=True,
+            "conn-1",
+            [],
+            platform="slack",
+            is_member_only=True,
         )
 
     assert {ch.channel_id for ch in result} == {"C1"}

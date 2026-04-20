@@ -12,7 +12,14 @@ from typing import Any
 from beever_atlas.agents.prompt_safety import wrap_untrusted
 from beever_atlas.llm import get_llm_provider
 from beever_atlas.llm.model_resolver import is_ollama_model
-from beever_atlas.models.domain import AtomicFact, WikiCitation, WikiPage, WikiPageNode, WikiPageRef, WikiStructure
+from beever_atlas.models.domain import (
+    AtomicFact,
+    WikiCitation,
+    WikiPage,
+    WikiPageNode,
+    WikiPageRef,
+    WikiStructure,
+)
 from beever_atlas.wiki import render
 from beever_atlas.wiki.prompts import (
     ACTIVITY_PROMPT,
@@ -77,6 +84,7 @@ def _splice_key_facts_table(content: str, key_facts: list[dict]) -> str:
         return content.rstrip() + "\n\n" + table + "\n"
     new_lines = lines[:insert_at] + [table, ""] + lines[insert_at:]
     return "\n".join(new_lines)
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +191,7 @@ def _normalize_url(url: str) -> str:
         return ""
     try:
         from urllib.parse import urlparse, urlunparse
+
         parsed = urlparse(url)
         scheme = (parsed.scheme or "").lower()
         host = (parsed.hostname or "").lower()
@@ -200,6 +209,7 @@ def _normalize_url(url: str) -> str:
 
 def _build_media_data(facts: list[AtomicFact]) -> list[dict]:
     """Extract media references from facts for the LLM prompt."""
+
     def _truncate_context(text: str, limit: int = 180) -> str:
         clean = " ".join((text or "").split())
         if len(clean) <= limit:
@@ -221,27 +231,35 @@ def _build_media_data(facts: list[AtomicFact]) -> list[dict]:
             if not key or key in seen_urls:
                 continue
             seen_urls.add(key)
-            name = fact.source_media_names[i] if i < len(fact.source_media_names) else url.split("/")[-1]
-            media.append({
-                "url": url,
-                "type": fact.source_media_type or "file",
-                "name": name,
-                "author": fact.author_name,
-                "context": _truncate_context(fact.memory_text),
-            })
+            name = (
+                fact.source_media_names[i]
+                if i < len(fact.source_media_names)
+                else url.split("/")[-1]
+            )
+            media.append(
+                {
+                    "url": url,
+                    "type": fact.source_media_type or "file",
+                    "name": name,
+                    "author": fact.author_name,
+                    "context": _truncate_context(fact.memory_text),
+                }
+            )
         for j, url in enumerate(fact.source_link_urls):
             key = _normalize_url(url)
             if not key or key in seen_urls:
                 continue
             seen_urls.add(key)
             title = fact.source_link_titles[j] if j < len(fact.source_link_titles) else url
-            media.append({
-                "url": url,
-                "type": "link",
-                "name": title,
-                "author": fact.author_name,
-                "context": _truncate_context(fact.memory_text),
-            })
+            media.append(
+                {
+                    "url": url,
+                    "type": "link",
+                    "name": title,
+                    "author": fact.author_name,
+                    "context": _truncate_context(fact.memory_text),
+                }
+            )
     return media
 
 
@@ -427,11 +445,13 @@ def _format_relationship_edges(persons: list[dict]) -> list[dict]:
         person_name = entity.name if hasattr(entity, "name") else str(entity)
         for edge_type in ["decided", "works_on", "uses"]:
             for target in person_data.get(edge_type, []):
-                edges.append({
-                    "source": person_name,
-                    "relationship": edge_type.upper().replace("_", " "),
-                    "target": target,
-                })
+                edges.append(
+                    {
+                        "source": person_name,
+                        "relationship": edge_type.upper().replace("_", " "),
+                        "target": target,
+                    }
+                )
     return edges
 
 
@@ -440,50 +460,132 @@ def _format_relationship_edges(persons: list[dict]) -> list[dict]:
 # Missing tags fall back to English. Keep ids in sync with the WikiPage(id=...)
 # values used throughout _compile_* methods.
 WIKI_PAGE_TITLES: dict[str, dict[str, str]] = {
-    "en":    {"overview": "Overview", "people": "People & Experts",
-              "decisions": "Decisions", "faq": "FAQ", "glossary": "Glossary",
-              "activity": "Recent Activity", "resources": "Resources & Media"},
-    "zh-HK": {"overview": "概覽", "people": "人物與專家",
-              "decisions": "決策", "faq": "常見問題", "glossary": "詞彙表",
-              "activity": "近期活動", "resources": "資源與媒體"},
-    "zh-TW": {"overview": "概覽", "people": "人物與專家",
-              "decisions": "決策", "faq": "常見問題", "glossary": "詞彙表",
-              "activity": "近期活動", "resources": "資源與媒體"},
-    "zh-CN": {"overview": "概览", "people": "人物与专家",
-              "decisions": "决策", "faq": "常见问题", "glossary": "词汇表",
-              "activity": "近期活动", "resources": "资源与媒体"},
-    "ja":    {"overview": "概要", "people": "メンバーと専門家",
-              "decisions": "意思決定", "faq": "よくある質問", "glossary": "用語集",
-              "activity": "最近のアクティビティ", "resources": "リソースとメディア"},
-    "ko":    {"overview": "개요", "people": "인물 및 전문가",
-              "decisions": "의사결정", "faq": "자주 묻는 질문", "glossary": "용어집",
-              "activity": "최근 활동", "resources": "리소스 및 미디어"},
-    "es":    {"overview": "Resumen", "people": "Personas y expertos",
-              "decisions": "Decisiones", "faq": "Preguntas frecuentes", "glossary": "Glosario",
-              "activity": "Actividad reciente", "resources": "Recursos y medios"},
-    "fr":    {"overview": "Vue d'ensemble", "people": "Personnes et experts",
-              "decisions": "Décisions", "faq": "FAQ", "glossary": "Glossaire",
-              "activity": "Activité récente", "resources": "Ressources et médias"},
-    "de":    {"overview": "Übersicht", "people": "Personen & Experten",
-              "decisions": "Entscheidungen", "faq": "FAQ", "glossary": "Glossar",
-              "activity": "Letzte Aktivität", "resources": "Ressourcen & Medien"},
+    "en": {
+        "overview": "Overview",
+        "people": "People & Experts",
+        "decisions": "Decisions",
+        "faq": "FAQ",
+        "glossary": "Glossary",
+        "activity": "Recent Activity",
+        "resources": "Resources & Media",
+    },
+    "zh-HK": {
+        "overview": "概覽",
+        "people": "人物與專家",
+        "decisions": "決策",
+        "faq": "常見問題",
+        "glossary": "詞彙表",
+        "activity": "近期活動",
+        "resources": "資源與媒體",
+    },
+    "zh-TW": {
+        "overview": "概覽",
+        "people": "人物與專家",
+        "decisions": "決策",
+        "faq": "常見問題",
+        "glossary": "詞彙表",
+        "activity": "近期活動",
+        "resources": "資源與媒體",
+    },
+    "zh-CN": {
+        "overview": "概览",
+        "people": "人物与专家",
+        "decisions": "决策",
+        "faq": "常见问题",
+        "glossary": "词汇表",
+        "activity": "近期活动",
+        "resources": "资源与媒体",
+    },
+    "ja": {
+        "overview": "概要",
+        "people": "メンバーと専門家",
+        "decisions": "意思決定",
+        "faq": "よくある質問",
+        "glossary": "用語集",
+        "activity": "最近のアクティビティ",
+        "resources": "リソースとメディア",
+    },
+    "ko": {
+        "overview": "개요",
+        "people": "인물 및 전문가",
+        "decisions": "의사결정",
+        "faq": "자주 묻는 질문",
+        "glossary": "용어집",
+        "activity": "최근 활동",
+        "resources": "리소스 및 미디어",
+    },
+    "es": {
+        "overview": "Resumen",
+        "people": "Personas y expertos",
+        "decisions": "Decisiones",
+        "faq": "Preguntas frecuentes",
+        "glossary": "Glosario",
+        "activity": "Actividad reciente",
+        "resources": "Recursos y medios",
+    },
+    "fr": {
+        "overview": "Vue d'ensemble",
+        "people": "Personnes et experts",
+        "decisions": "Décisions",
+        "faq": "FAQ",
+        "glossary": "Glossaire",
+        "activity": "Activité récente",
+        "resources": "Ressources et médias",
+    },
+    "de": {
+        "overview": "Übersicht",
+        "people": "Personen & Experten",
+        "decisions": "Entscheidungen",
+        "faq": "FAQ",
+        "glossary": "Glossar",
+        "activity": "Letzte Aktivität",
+        "resources": "Ressourcen & Medien",
+    },
 }
 
 
 GENERIC_GLOSSARY_TERMS: set[str] = {
     # Operating systems
-    "windows", "macos", "linux", "ubuntu", "android", "ios",
+    "windows",
+    "macos",
+    "linux",
+    "ubuntu",
+    "android",
+    "ios",
     # Messaging / social
-    "whatsapp", "imessage", "slack", "telegram", "discord", "x", "twitter",
+    "whatsapp",
+    "imessage",
+    "slack",
+    "telegram",
+    "discord",
+    "x",
+    "twitter",
     # Hardware
-    "mac mini", "mac", "iphone", "ipad",
+    "mac mini",
+    "mac",
+    "iphone",
+    "ipad",
     # Generic dev tools
-    "vs code", "visual studio code", "github", "git", "chrome", "firefox",
+    "vs code",
+    "visual studio code",
+    "github",
+    "git",
+    "chrome",
+    "firefox",
     # Big tech companies
-    "google", "microsoft", "apple", "amazon",
+    "google",
+    "microsoft",
+    "apple",
+    "amazon",
     # Well-known infra / databases (generic, not channel-specific)
-    "aws", "sql", "redis", "mongodb", "sqlite",
-    "digital ocean", "digital ocean vps", "hetzner",
+    "aws",
+    "sql",
+    "redis",
+    "mongodb",
+    "sqlite",
+    "digital ocean",
+    "digital ocean vps",
+    "hetzner",
     # Common concepts that don't need defining
     "copilot",
 }
@@ -571,9 +673,7 @@ def _render_subtopic_key_facts_block(sub_key_facts: list[dict]) -> str:
     return "## Key Facts\n\n" + table
 
 
-def _render_subtopic_overview_block(
-    sub_title: str, sub_facts: list, parent_title: str
-) -> str:
+def _render_subtopic_overview_block(sub_title: str, sub_facts: list, parent_title: str) -> str:
     authors: list[str] = []
     for f in sub_facts or []:
         a = (getattr(f, "author_name", "") or "").strip()
@@ -641,9 +741,7 @@ _GLOSSARY_SECTION_ALIASES: dict[str, re.Pattern] = {
 }
 
 
-def _collect_glossary_entries(
-    glossary_terms: list, clusters: list
-) -> list[dict]:
+def _collect_glossary_entries(glossary_terms: list, clusters: list) -> list[dict]:
     """Aggregate {term, definition, first_mentioned_by, related_topics} rows."""
     rows: dict[str, dict] = {}
     for t in glossary_terms or []:
@@ -661,8 +759,10 @@ def _collect_glossary_entries(
             name = str(t).strip()
             if name and name not in rows:
                 rows[name] = {
-                    "term": name, "definition": "",
-                    "first_mentioned_by": "", "related_topics": [],
+                    "term": name,
+                    "definition": "",
+                    "first_mentioned_by": "",
+                    "related_topics": [],
                 }
     # Enrich from cluster key_entities.
     for c in clusters or []:
@@ -673,14 +773,17 @@ def _collect_glossary_entries(
             name = (ent.get("name") or "").strip()
             if not name:
                 continue
-            row = rows.setdefault(name, {
-                "term": name, "definition": "",
-                "first_mentioned_by": "", "related_topics": [],
-            })
+            row = rows.setdefault(
+                name,
+                {
+                    "term": name,
+                    "definition": "",
+                    "first_mentioned_by": "",
+                    "related_topics": [],
+                },
+            )
             if not row["definition"]:
-                row["definition"] = (
-                    ent.get("description") or ent.get("role") or ""
-                ).strip()
+                row["definition"] = (ent.get("description") or ent.get("role") or "").strip()
             if cluster_title and cluster_title not in row["related_topics"]:
                 row["related_topics"].append(cluster_title)
     return sorted(rows.values(), key=lambda r: r["term"].lower())
@@ -705,9 +808,7 @@ def _render_glossary_terms_table(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _splice_glossary_sections(
-    content: str, glossary_terms: list, clusters: list
-) -> str:
+def _splice_glossary_sections(content: str, glossary_terms: list, clusters: list) -> str:
     """Append deterministic Introduction + Terms table when the LLM drops them.
 
     The Glossary prompt sometimes emits only the relationship mermaid diagram
@@ -716,10 +817,7 @@ def _splice_glossary_sections(
     """
     if not content:
         return content
-    present = {
-        key: bool(pat.search(content))
-        for key, pat in _GLOSSARY_SECTION_ALIASES.items()
-    }
+    present = {key: bool(pat.search(content)) for key, pat in _GLOSSARY_SECTION_ALIASES.items()}
     additions: list[str] = []
     if not present["intro"]:
         additions.append(
@@ -828,7 +926,9 @@ _OVERVIEW_SECTION_ALIASES: dict[str, re.Pattern] = {
     "key_highlights": re.compile(r"^##\s+(key\s+)?highlights\b", re.IGNORECASE | re.MULTILINE),
     "topics": re.compile(r"^##\s+topics(\s+at\s+a\s+glance)?\b", re.IGNORECASE | re.MULTILINE),
     "contributors": re.compile(r"^##\s+(key\s+)?contributors\b", re.IGNORECASE | re.MULTILINE),
-    "tools": re.compile(r"^##\s+tools(\s*&\s*resources|\s+and\s+resources)?\b", re.IGNORECASE | re.MULTILINE),
+    "tools": re.compile(
+        r"^##\s+tools(\s*&\s*resources|\s+and\s+resources)?\b", re.IGNORECASE | re.MULTILINE
+    ),
     "momentum": re.compile(r"^##\s+(recent\s+)?momentum\b", re.IGNORECASE | re.MULTILINE),
 }
 
@@ -905,8 +1005,17 @@ def _render_overview_contributors(top_people: list) -> str:
 
 
 _GENERIC_TOOLS = {
-    "slack", "whatsapp", "imessage", "x", "twitter", "macos", "linux", "windows",
-    "vs code", "vscode", "github",
+    "slack",
+    "whatsapp",
+    "imessage",
+    "x",
+    "twitter",
+    "macos",
+    "linux",
+    "windows",
+    "vs code",
+    "vscode",
+    "github",
 }
 
 
@@ -981,7 +1090,9 @@ def _splice_overview_sections(
     if not content:
         return content
     present = {key: bool(pat.search(content)) for key, pat in _OVERVIEW_SECTION_ALIASES.items()}
-    skipped_titles = {(st.get("title") or "").strip() for st in skipped_topics or [] if isinstance(st, dict)}
+    skipped_titles = {
+        (st.get("title") or "").strip() for st in skipped_topics or [] if isinstance(st, dict)
+    }
 
     additions: list[str] = []
     if not present["key_highlights"]:
@@ -1060,7 +1171,9 @@ def _overview_fallback(channel_summary: Any, clusters: list) -> tuple[str, str]:
                 if kf:
                     first = kf[0]
                     if isinstance(first, dict):
-                        blurb2 = (first.get("fact") or first.get("memory_text") or first.get("text") or "").strip()
+                        blurb2 = (
+                            first.get("fact") or first.get("memory_text") or first.get("text") or ""
+                        ).strip()
                     else:
                         blurb2 = str(first).strip()
             blurb2 = blurb2[:120]
@@ -1101,7 +1214,9 @@ def _people_fallback(persons: list, top_people: list) -> tuple[str, str]:
         entity = person_data.get("entity")
         name = ""
         if entity is not None:
-            name = getattr(entity, "name", None) or (entity.get("name") if isinstance(entity, dict) else str(entity))
+            name = getattr(entity, "name", None) or (
+                entity.get("name") if isinstance(entity, dict) else str(entity)
+            )
         name = (name or "").strip()
         if not name:
             continue
@@ -1191,15 +1306,18 @@ def _activity_fallback(
         if not text:
             continue
         date = _fmt_date(getattr(f, "message_ts", ""))
-        rows.append({
-            "date": date,
-            "author": (getattr(f, "author_name", "") or "").strip(),
-            "text": text,
-            "fact_type": (getattr(f, "fact_type", "") or "").strip().lower(),
-        })
+        rows.append(
+            {
+                "date": date,
+                "author": (getattr(f, "author_name", "") or "").strip(),
+                "text": text,
+                "fact_type": (getattr(f, "fact_type", "") or "").strip().lower(),
+            }
+        )
 
     # Aggregate counts.
     from collections import Counter, defaultdict
+
     per_day: dict[str, int] = defaultdict(int)
     decisions_per_day: dict[str, int] = defaultdict(int)
     authors_counter: Counter = Counter()
@@ -1234,6 +1352,7 @@ def _activity_fallback(
     # 2. Facts-per-day chart (only if we have ≥3 days of data).
     if len(per_day) >= 3:
         import json as _json
+
         chart_data = [
             {"date": d, "facts": per_day[d], "decisions": decisions_per_day.get(d, 0)}
             for d in sorted(per_day.keys())
@@ -1294,13 +1413,9 @@ def _activity_fallback(
     # 5. Topics with recent activity (from clusters when recent-facts path missing).
     if not rows and clusters:
         cluster_memories = sum(getattr(c, "member_count", 0) or 0 for c in clusters)
-        cluster_dates = [
-            _fmt_date(getattr(c, "date_range_end", "")) for c in clusters
-        ]
+        cluster_dates = [_fmt_date(getattr(c, "date_range_end", "")) for c in clusters]
         cluster_dates_valid = [d for d in cluster_dates if d]
-        starts = [
-            _fmt_date(getattr(c, "date_range_start", "")) for c in clusters
-        ]
+        starts = [_fmt_date(getattr(c, "date_range_start", "")) for c in clusters]
         starts_valid = [d for d in starts if d]
         c_min = min(starts_valid + cluster_dates_valid, default="")
         c_max = max(cluster_dates_valid, default="")
@@ -1396,7 +1511,8 @@ def _resources_fallback(media_data: list[dict]) -> tuple[str, str]:
     content = "\n".join(lines).rstrip() + "\n"
     summary = (
         f"Catalog of {len(media_data)} shared resource(s)."
-        if media_data else "No shared resources found."
+        if media_data
+        else "No shared resources found."
     )
     return content, summary
 
@@ -1452,7 +1568,8 @@ Produce this wiki page's content in **{target_language}** (BCP-47).
 
 
 _CODE_FENCE_RE = re.compile(
-    r"^\s*```(?:json|JSON)?\s*(.*?)\s*```\s*$", re.DOTALL,
+    r"^\s*```(?:json|JSON)?\s*(.*?)\s*```\s*$",
+    re.DOTALL,
 )
 
 # Patterns that indicate a safety-blocked or refused LLM response.
@@ -1914,6 +2031,7 @@ def _parse_llm_json(raw: str | None) -> dict | list | None:
         # and retry. Gated on wiki_parse_hardening flag.
         try:
             from beever_atlas.infra.config import get_settings
+
             if get_settings().wiki_parse_hardening:
                 sanitized = _escape_control_chars_inside_strings(candidate)
                 try:
@@ -1926,6 +2044,7 @@ def _parse_llm_json(raw: str | None) -> dict | list | None:
         # inside the "content" string literal). Gated on wiki_parse_hardening.
         try:
             from beever_atlas.infra.config import get_settings
+
             if get_settings().wiki_parse_hardening:
                 recovered = _recover_content_field(candidate)
                 if recovered is not None:
@@ -1935,6 +2054,7 @@ def _parse_llm_json(raw: str | None) -> dict | list | None:
         # Last resort: reuse the ingestion-side truncation recovery.
         try:
             from beever_atlas.services.json_recovery import recover_truncated_json
+
             return recover_truncated_json(candidate)
         except Exception:  # noqa: BLE001
             return None
@@ -1993,7 +2113,9 @@ class WikiCompiler:
         return lang_map.get(page_id) or WIKI_PAGE_TITLES["en"].get(page_id, page_id.title())
 
     @staticmethod
-    def _is_topic_relevant(cluster, channel_themes: list[str], cluster_facts: dict) -> tuple[bool, str]:
+    def _is_topic_relevant(
+        cluster, channel_themes: list[str], cluster_facts: dict
+    ) -> tuple[bool, str]:
         """Check if a topic cluster should get its own page.
 
         Returns (should_include, skip_reason) tuple.
@@ -2002,7 +2124,10 @@ class WikiCompiler:
 
         # Check minimum memory threshold
         if member_count < TOPIC_MIN_MEMORY_THRESHOLD:
-            return False, f"{member_count} facts, below minimum threshold of {TOPIC_MIN_MEMORY_THRESHOLD}"
+            return (
+                False,
+                f"{member_count} facts, below minimum threshold of {TOPIC_MIN_MEMORY_THRESHOLD}",
+            )
 
         # Check relevance: topic_tags must overlap with channel themes, unless popular (5+ facts)
         if member_count >= 5:
@@ -2011,7 +2136,7 @@ class WikiCompiler:
         # Normalize for comparison
         cluster_tags = {t.lower().strip() for t in (cluster.topic_tags or [])}
         theme_words = set()
-        for theme in (channel_themes or []):
+        for theme in channel_themes or []:
             for word in theme.lower().replace("-", " ").replace("_", " ").split():
                 if len(word) > 2:
                     theme_words.add(word)
@@ -2073,7 +2198,7 @@ class WikiCompiler:
                 parts.append(content[i:] + "\n```\n")
                 i = length
                 break
-            parts.append(content[i:opener_end + 1])
+            parts.append(content[i : opener_end + 1])
             i = opener_end + 1
             # Search for the next ``` that closes this block, stopping if we
             # hit another ```mermaid first (which means the first was unclosed).
@@ -2091,7 +2216,7 @@ class WikiCompiler:
                 i = next_mermaid_idx
                 continue
             # Well-formed block — emit body + closer + trailing newline.
-            parts.append(content[i:close_idx + 3])
+            parts.append(content[i : close_idx + 3])
             i = close_idx + 3
         return "".join(parts)
 
@@ -2137,9 +2262,7 @@ class WikiCompiler:
         return kept
 
     @classmethod
-    def _strip_out_of_range_inline_citations(
-        cls, content: str, max_index: int
-    ) -> str:
+    def _strip_out_of_range_inline_citations(cls, content: str, max_index: int) -> str:
         """Drop `[N]` markers where N exceeds max_index (the count of citation facts).
 
         The LLM occasionally emits citation numbers beyond the provided
@@ -2310,6 +2433,7 @@ class WikiCompiler:
         # wiki_parse_hardening so legacy behaviour is preserved when disabled.
         try:
             from beever_atlas.infra.config import get_settings
+
             if get_settings().wiki_parse_hardening:
                 content = WikiCompiler._MERMAID_BLOCK_RE.sub(
                     WikiCompiler._prune_undefined_mermaid_edges, content
@@ -2331,9 +2455,7 @@ class WikiCompiler:
 
     # Matches any node definition with a bracketed label:
     # ID[Label], ID(Label), ID{Label}, ID((Label)). Captures the ID.
-    _NODE_DEF_RE = re.compile(
-        r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\[|\[|\(\(|\(|\{)"
-    )
+    _NODE_DEF_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[\[|\[|\(\(|\(|\{)")
     # Matches edge lines with optional pipe-style label:
     #   SRC --> DST, SRC -->|label| DST, SRC --- DST, SRC ---|label| DST
     # Also tolerates bracketed labels on SRC/DST (e.g. SRC[Foo] -->|x| DST[Bar]).
@@ -2398,6 +2520,7 @@ class WikiCompiler:
             # Skip shorteners
             try:
                 from urllib.parse import urlparse
+
                 host = urlparse(url).hostname or ""
                 if any(host.endswith(s) for s in shortener_hosts):
                     continue
@@ -2414,9 +2537,14 @@ class WikiCompiler:
         # variants share a cap (preventing 5 x.com + 5 twitter.com = 10
         # near-duplicates of the same platform).
         from collections import Counter
+
         _SOCIAL_DOMAINS = {
-            "x.com", "twitter.com", "threads.com", "facebook.com",
-            "instagram.com", "linkedin.com",
+            "x.com",
+            "twitter.com",
+            "threads.com",
+            "facebook.com",
+            "instagram.com",
+            "linkedin.com",
         }
         domain_counts: Counter[str] = Counter()
         # Second-pass normalized-URL dedup so the filter collapses items that
@@ -2432,6 +2560,7 @@ class WikiCompiler:
                 seen_normalized.add(norm)
             try:
                 from urllib.parse import urlparse
+
                 host = (urlparse(url).hostname or "").lower()
                 if host.startswith("www."):
                     host = host[4:]
@@ -2462,17 +2591,17 @@ class WikiCompiler:
     # pages; smaller fixed pages are capped conservatively.
     # When wiki_token_budget_v2=OFF, the uniform legacy 32k applies.
     _PAGE_KIND_MAX_TOKENS: dict[str, int] = {
-        "resources":   32768,
-        "topic":       12288,
-        "subtopic":    12288,
-        "overview":    10240,
-        "people":       8192,
-        "decisions":    8192,
-        "activity":     8192,
-        "glossary":    12288,
-        "faq":         12288,
-        "analysis":     4096,
-        "translation":  4096,
+        "resources": 32768,
+        "topic": 12288,
+        "subtopic": 12288,
+        "overview": 10240,
+        "people": 8192,
+        "decisions": 8192,
+        "activity": 8192,
+        "glossary": 12288,
+        "faq": 12288,
+        "analysis": 4096,
+        "translation": 4096,
     }
     _PAGE_KIND_MAX_TOKENS_DEFAULT = 16384
 
@@ -2484,9 +2613,12 @@ class WikiCompiler:
     ) -> str:
         """Call the configured LLM and return raw text. Supports Gemini and Ollama."""
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
         if settings.wiki_token_budget_v2:
-            max_tokens = self._PAGE_KIND_MAX_TOKENS.get(page_kind, self._PAGE_KIND_MAX_TOKENS_DEFAULT)
+            max_tokens = self._PAGE_KIND_MAX_TOKENS.get(
+                page_kind, self._PAGE_KIND_MAX_TOKENS_DEFAULT
+            )
         else:
             max_tokens = 32768
 
@@ -2494,14 +2626,12 @@ class WikiCompiler:
         # delimited format when wiki_compiler_v2=ON. Analysis and translation
         # always use JSON mode (invariant) because their responses are consumed
         # programmatically as lists/dicts with non-string values.
-        use_delimited = (
-            settings.wiki_compiler_v2
-            and page_kind not in {"analysis", "translation"}
-        )
+        use_delimited = settings.wiki_compiler_v2 and page_kind not in {"analysis", "translation"}
 
         if is_ollama_model(self._model_name):
             import litellm
             import os
+
             os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
             if use_delimited:
                 resp = await litellm.acompletion(
@@ -2512,7 +2642,9 @@ class WikiCompiler:
             else:
                 resp = await litellm.acompletion(
                     model=self._model_name,
-                    messages=[{"role": "user", "content": prompt + "\n\nRespond with valid JSON only."}],
+                    messages=[
+                        {"role": "user", "content": prompt + "\n\nRespond with valid JSON only."}
+                    ],
                     temperature=temperature,
                     format="json",
                 )
@@ -2520,6 +2652,7 @@ class WikiCompiler:
         else:
             from google import genai
             from google.genai import types
+
             client = genai.Client()
             if use_delimited:
                 config = types.GenerateContentConfig(
@@ -2555,27 +2688,31 @@ class WikiCompiler:
         validator: "Callable[[str], tuple[bool, str]] | None" = None,
     ) -> CompiledPageContent:
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
         hardening = settings.wiki_parse_hardening
         # Phase 5: same branch as _llm_generate_json — delimited mode only for
         # markdown-content pages when wiki_compiler_v2=ON.
-        use_delimited = (
-            settings.wiki_compiler_v2
-            and page_kind not in {"analysis", "translation"}
-        )
+        use_delimited = settings.wiki_compiler_v2 and page_kind not in {"analysis", "translation"}
 
         data: dict = {}
         for attempt in range(1 + max_retries):
-            raw = await self._llm_generate_json(prompt, temperature=0.2 + (attempt * 0.1), page_kind=page_kind)
+            raw = await self._llm_generate_json(
+                prompt, temperature=0.2 + (attempt * 0.1), page_kind=page_kind
+            )
 
             # 2g. Retry gating: skip retry for short or safety-blocked responses.
             if hardening and attempt == 0:
                 raw_stripped = (raw or "").strip()
                 if len(raw_stripped) < 100:
-                    logger.warning("WikiCompiler: raw_too_short_no_retry, raw_len=%d", len(raw_stripped))
+                    logger.warning(
+                        "WikiCompiler: raw_too_short_no_retry, raw_len=%d", len(raw_stripped)
+                    )
                     return CompiledPageContent(content="", summary="")
                 if _is_safety_block(raw_stripped):
-                    logger.warning("WikiCompiler: safety_block_no_retry, raw_head=%r", raw_stripped[:200])
+                    logger.warning(
+                        "WikiCompiler: safety_block_no_retry, raw_head=%r", raw_stripped[:200]
+                    )
                     return CompiledPageContent(content="", summary="")
 
             if use_delimited:
@@ -2590,31 +2727,42 @@ class WikiCompiler:
                     if is_degen and attempt < max_retries:
                         logger.warning(
                             "WikiCompiler: degenerate content (%s, attempt %d), retrying with temperature=0.4",
-                            reason, attempt + 1,
+                            reason,
+                            attempt + 1,
                         )
                         raw2 = await self._llm_generate_json(
-                            prompt + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
+                            prompt
+                            + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
                             temperature=0.4,
                             page_kind=page_kind,
                         )
                         parsed2 = _parse_delimited_response(raw2 or "")
                         content2 = parsed2.content.strip()
                         summary2 = parsed2.summary.strip()
-                        is_degen2, reason2 = _is_degenerate_content(content2) if content2 else (True, "empty")
+                        is_degen2, reason2 = (
+                            _is_degenerate_content(content2) if content2 else (True, "empty")
+                        )
                         if not is_degen2:
                             return CompiledPageContent(content=content2, summary=summary2)
-                        logger.warning("WikiCompiler: degenerate content shipped for retry (%s)", reason2)
-                        return CompiledPageContent(content=content2 or content, summary=summary2 or summary)
+                        logger.warning(
+                            "WikiCompiler: degenerate content shipped for retry (%s)", reason2
+                        )
+                        return CompiledPageContent(
+                            content=content2 or content, summary=summary2 or summary
+                        )
 
                 if content and validator is not None:
                     ok, reason = validator(content)
                     if not ok and attempt < max_retries:
                         logger.warning(
                             "WikiCompiler: validator_failed event=degraded_regeneration page_kind=%s attempt=%d reason=%s",
-                            page_kind, attempt + 1, reason,
+                            page_kind,
+                            attempt + 1,
+                            reason,
                         )
                         raw2 = await self._llm_generate_json(
-                            prompt + f"\n\nNOTE: The previous attempt failed validation — {reason} Fix this on retry.",
+                            prompt
+                            + f"\n\nNOTE: The previous attempt failed validation — {reason} Fix this on retry.",
                             temperature=0.4,
                             page_kind=page_kind,
                         )
@@ -2626,13 +2774,18 @@ class WikiCompiler:
                             return CompiledPageContent(content=content2, summary=summary2)
                         logger.warning(
                             "WikiCompiler: validator_failed_twice event=deterministic_fallback page_kind=%s reason=%s",
-                            page_kind, reason2,
+                            page_kind,
+                            reason2,
                         )
-                        return CompiledPageContent(content=content2 or content, summary=summary2 or summary)
+                        return CompiledPageContent(
+                            content=content2 or content, summary=summary2 or summary
+                        )
                 if content:
                     return CompiledPageContent(content=content, summary=summary)
                 if attempt < max_retries:
-                    logger.info("WikiCompiler: empty content (attempt %d), retrying...", attempt + 1)
+                    logger.info(
+                        "WikiCompiler: empty content (attempt %d), retrying...", attempt + 1
+                    )
                 continue
 
             parsed = _parse_llm_json(raw)
@@ -2649,7 +2802,9 @@ class WikiCompiler:
                 )
                 data = {}
                 if attempt < max_retries:
-                    logger.info("WikiCompiler: parse failure (attempt %d), retrying...", attempt + 1)
+                    logger.info(
+                        "WikiCompiler: parse failure (attempt %d), retrying...", attempt + 1
+                    )
                 continue
             data = parsed if isinstance(parsed, dict) else {}
             content = data.get("content", "").strip()
@@ -2661,11 +2816,13 @@ class WikiCompiler:
                 if is_degen and attempt < max_retries:
                     logger.warning(
                         "WikiCompiler: degenerate content (%s, attempt %d), retrying with temperature=0.4",
-                        reason, attempt + 1,
+                        reason,
+                        attempt + 1,
                     )
                     # Force a retry with explicit degenerate note appended to prompt.
                     raw2 = await self._llm_generate_json(
-                        prompt + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
+                        prompt
+                        + "\n\nNOTE: The previous attempt produced degenerate output. Return real prose and real table rows.",
                         temperature=0.4,
                         page_kind=page_kind,
                     )
@@ -2673,11 +2830,17 @@ class WikiCompiler:
                     if parsed2 and isinstance(parsed2, dict):
                         content2 = parsed2.get("content", "").strip()
                         summary2 = parsed2.get("summary", "").strip()
-                        is_degen2, reason2 = _is_degenerate_content(content2) if content2 else (True, "empty")
+                        is_degen2, reason2 = (
+                            _is_degenerate_content(content2) if content2 else (True, "empty")
+                        )
                         if not is_degen2:
                             return CompiledPageContent(content=content2, summary=summary2)
-                        logger.warning("WikiCompiler: degenerate content shipped for retry (%s)", reason2)
-                        return CompiledPageContent(content=content2 or content, summary=summary2 or summary)
+                        logger.warning(
+                            "WikiCompiler: degenerate content shipped for retry (%s)", reason2
+                        )
+                        return CompiledPageContent(
+                            content=content2 or content, summary=summary2 or summary
+                        )
 
             # Return immediately on any non-empty content
             if content:
@@ -2696,14 +2859,29 @@ class WikiCompiler:
         # Use `memory_count` (not `member_count`) as the JSON key so the LLM
         # emits "N memories" instead of "N members" in Topics-at-a-Glance.
         clusters_data = [
-            {"id": c.id, "title": c.title, "memory_count": c.member_count, "topic_tags": c.topic_tags}
+            {
+                "id": c.id,
+                "title": c.title,
+                "memory_count": c.member_count,
+                "topic_tags": c.topic_tags,
+            }
             for c in clusters
         ]
         # Build media data from media_facts
         media_data = _build_media_data(gathered["media_facts"])
         # Build graph entity data
-        tech_data = [{"name": t["entity"].name, "used_by": t.get("used_by", [])} for t in gathered.get("technologies", [])]
-        project_data = [{"name": p["entity"].name, "deps": p.get("dependencies", []), "owners": p.get("owners", [])} for p in gathered.get("projects", [])]
+        tech_data = [
+            {"name": t["entity"].name, "used_by": t.get("used_by", [])}
+            for t in gathered.get("technologies", [])
+        ]
+        project_data = [
+            {
+                "name": p["entity"].name,
+                "deps": p.get("dependencies", []),
+                "owners": p.get("owners", []),
+            }
+            for p in gathered.get("projects", [])
+        ]
 
         # Aggregate key entities and relationships from all clusters
         all_key_entities: list[dict] = []
@@ -2749,8 +2927,7 @@ class WikiCompiler:
         # hiding cluster decisions whenever ANY top-level decision existed).
         _top_level_decisions = gathered.get("decisions", []) or []
         _cluster_decisions = [
-            d for c in gathered["clusters"]
-            for d in getattr(c, "decisions", []) or []
+            d for c in gathered["clusters"] for d in getattr(c, "decisions", []) or []
         ]
         # Fallback: upstream consolidation may not populate `c.decisions` at
         # all, in which case the count silently stays 0 even though facts
@@ -2781,13 +2958,18 @@ class WikiCompiler:
                     (d.get("date") or "").strip()[:10],
                 )
             else:
-                key = (str(getattr(d, "name", "") or getattr(d, "title", "")).strip().lower()[:60], "", "")
+                key = (
+                    str(getattr(d, "name", "") or getattr(d, "title", "")).strip().lower()[:60],
+                    "",
+                    "",
+                )
             if key in _seen_keys:
                 continue
             _seen_keys.add(key)
             gathered_decisions.append(d)
 
-        prompt = self._fmt_prompt(OVERVIEW_PROMPT,
+        prompt = self._fmt_prompt(
+            OVERVIEW_PROMPT,
             channel_name=summary.channel_name,
             description=summary.description,
             text=summary.text,
@@ -2826,7 +3008,9 @@ class WikiCompiler:
             content, summary_text = "", ""
         stripped = (content or "").strip()
         if not stripped or _is_degenerate_content(content)[0]:
-            logger.info("WikiCompiler: overview content empty/degenerate, using deterministic fallback")
+            logger.info(
+                "WikiCompiler: overview content empty/degenerate, using deterministic fallback"
+            )
             content, summary_text = _overview_fallback(summary, clusters)
         post_content = self._postprocess_content(content)
         post_content = self._strip_out_of_range_inline_citations(
@@ -2861,10 +3045,16 @@ class WikiCompiler:
         Returns the parsed analysis dict or None if analysis fails or isn't needed.
         """
         indexed_facts = [
-            {"index": i, "memory_text": wrap_untrusted(f.memory_text), "author_name": f.author_name, "fact_type": f.fact_type}
+            {
+                "index": i,
+                "memory_text": wrap_untrusted(f.memory_text),
+                "author_name": f.author_name,
+                "fact_type": f.fact_type,
+            }
             for i, f in enumerate(sorted_facts[:30])
         ]
-        prompt = self._fmt_prompt(TOPIC_ANALYSIS_PROMPT,
+        prompt = self._fmt_prompt(
+            TOPIC_ANALYSIS_PROMPT,
             title=cluster.title,
             summary=cluster.summary,
             fact_count=len(sorted_facts),
@@ -2874,7 +3064,9 @@ class WikiCompiler:
             raw = await self._llm_generate_json(prompt, page_kind="analysis")
             data = json.loads(raw)
             if not isinstance(data, dict) or "needs_subpages" not in data:
-                logger.warning("WikiCompiler: topic analysis returned invalid structure for %s", cluster.title)
+                logger.warning(
+                    "WikiCompiler: topic analysis returned invalid structure for %s", cluster.title
+                )
                 return None
             return data
         except (json.JSONDecodeError, Exception) as exc:
@@ -2908,9 +3100,11 @@ class WikiCompiler:
 
         fact_count = len(sub_facts)
         from beever_atlas.infra.config import get_settings
+
         v2 = get_settings().wiki_compiler_v2
         prompt_template = SUBTOPIC_PROMPT_V2 if v2 else SUBTOPIC_PROMPT
-        prompt = self._fmt_prompt(prompt_template,
+        prompt = self._fmt_prompt(
+            prompt_template,
             parent_title=parent_title,
             title=sub_title,
             summary=sub_info.get("summary", ""),
@@ -2959,7 +3153,9 @@ class WikiCompiler:
         )
         stripped = (content or "").strip()
         if not stripped or len(stripped) < 50 or _is_degenerate_content(content)[0]:
-            logger.info("WikiCompiler: subtopic content empty/degenerate, using deterministic fallback")
+            logger.info(
+                "WikiCompiler: subtopic content empty/degenerate, using deterministic fallback"
+            )
             fb_content, fb_summary = _subtopic_fallback(sub_title, sub_facts, parent_title)
             content = fb_content
             if not result_summary:
@@ -2975,9 +3171,7 @@ class WikiCompiler:
             summary=result_summary,
             memory_count=fact_count,
             size_tier=_compute_size_tier(fact_count),
-            citations=self._filter_citations_to_body(
-                content, _build_citations(sub_facts[:10])
-            ),
+            citations=self._filter_citations_to_body(content, _build_citations(sub_facts[:10])),
         )
 
     async def _compile_thin_topic(self, cluster, gathered: dict) -> WikiPage:
@@ -2996,7 +3190,8 @@ class WikiCompiler:
             for f in sorted_facts
         ]
         slug = _slugify(cluster.title) or cluster.id
-        prompt = self._fmt_prompt(THIN_TOPIC_PROMPT,
+        prompt = self._fmt_prompt(
+            THIN_TOPIC_PROMPT,
             title=cluster.title,
             summary=cluster.summary,
             fact_count=len(member_facts),
@@ -3022,9 +3217,7 @@ class WikiCompiler:
             summary=result.summary,
             memory_count=cluster.member_count,
             size_tier=_compute_size_tier(cluster.member_count),
-            citations=self._filter_citations_to_body(
-                content, _build_citations(sorted_facts[:20])
-            ),
+            citations=self._filter_citations_to_body(content, _build_citations(sorted_facts[:20])),
         )
 
     async def _compile_topic_page(self, cluster, gathered: dict) -> WikiPage | list[WikiPage]:
@@ -3032,6 +3225,7 @@ class WikiCompiler:
         member_facts: list[AtomicFact] = gathered["cluster_facts"].get(cluster.id, [])
         # Phase 4: thin-topic routing (only when wiki_compiler_v2=ON).
         from beever_atlas.infra.config import get_settings
+
         v2 = get_settings().wiki_compiler_v2
         if v2 and len(member_facts) < _THIN_TOPIC_THRESHOLD:
             return await self._compile_thin_topic(cluster, gathered)
@@ -3057,7 +3251,9 @@ class WikiCompiler:
         for rid in getattr(cluster, "related_cluster_ids", []):
             for rc in all_clusters:
                 if rc.id == rid:
-                    related_topics.append({"id": f"topic-{_slugify(rc.title) or rc.id}", "title": rc.title})
+                    related_topics.append(
+                        {"id": f"topic-{_slugify(rc.title) or rc.id}", "title": rc.title}
+                    )
                     break
         related_topics_json = json.dumps(related_topics, default=str)
 
@@ -3090,7 +3286,9 @@ class WikiCompiler:
                     sub_pages: list[WikiPage] = []
                     for res in sub_results:
                         if isinstance(res, BaseException):
-                            logger.warning("WikiCompiler: sub-page failed for topic %s: %s", cluster.title, res)
+                            logger.warning(
+                                "WikiCompiler: sub-page failed for topic %s: %s", cluster.title, res
+                            )
                         else:
                             sub_pages.append(res)
 
@@ -3100,7 +3298,11 @@ class WikiCompiler:
                         if len(sp.content.strip()) >= 50:
                             valid_sub_pages.append(sp)
                         else:
-                            logger.info("WikiCompiler: discarding empty sub-page '%s' for topic '%s'", sp.title, cluster.title)
+                            logger.info(
+                                "WikiCompiler: discarding empty sub-page '%s' for topic '%s'",
+                                sp.title,
+                                cluster.title,
+                            )
                     sub_pages = valid_sub_pages
 
                     if sub_pages:
@@ -3123,7 +3325,9 @@ class WikiCompiler:
                             technologies_json=json.dumps(cluster.technologies, default=str),
                             projects_json=json.dumps(cluster.projects, default=str),
                             key_entities_json=json.dumps(cluster.key_entities, default=str),
-                            key_relationships_json=json.dumps(cluster.key_relationships, default=str),
+                            key_relationships_json=json.dumps(
+                                cluster.key_relationships, default=str
+                            ),
                             member_facts_json=json.dumps(facts_data, default=str),
                             media_json=json.dumps(media_data, default=str),
                             related_topics_json=related_topics_json,
@@ -3132,11 +3336,16 @@ class WikiCompiler:
                         parent_content = parent_result.content
                         if v2:
                             parent_content = self._postprocess_content(parent_content)
-                            parent_content = _splice_key_facts_table(parent_content, cluster.key_facts)
+                            parent_content = _splice_key_facts_table(
+                                parent_content, cluster.key_facts
+                            )
                         children_refs = [
                             WikiPageRef(
-                                id=sp.id, title=sp.title, slug=sp.slug,
-                                section_number="", memory_count=sp.memory_count,
+                                id=sp.id,
+                                title=sp.title,
+                                slug=sp.slug,
+                                section_number="",
+                                memory_count=sp.memory_count,
                             )
                             for sp in sub_pages
                         ]
@@ -3159,7 +3368,8 @@ class WikiCompiler:
                 except Exception as exc:
                     logger.warning(
                         "WikiCompiler: sub-page generation failed for %s, falling back to flat page: %s",
-                        cluster.title, exc,
+                        cluster.title,
+                        exc,
                     )
 
         # Flat topic page (default path, or fallback from failed sub-page generation)
@@ -3205,9 +3415,7 @@ class WikiCompiler:
             summary=result.summary,
             memory_count=cluster.member_count,
             size_tier=_compute_size_tier(cluster.member_count),
-            citations=self._filter_citations_to_body(
-                content, _build_citations(sorted_facts[:20])
-            ),
+            citations=self._filter_citations_to_body(content, _build_citations(sorted_facts[:20])),
         )
 
     async def _compile_people(self, gathered: dict) -> WikiPage:
@@ -3215,7 +3423,8 @@ class WikiCompiler:
         persons = gathered["persons"]
         try:
             relationship_edges = _format_relationship_edges(persons)
-            prompt = self._fmt_prompt(PEOPLE_PROMPT,
+            prompt = self._fmt_prompt(
+                PEOPLE_PROMPT,
                 persons_json=json.dumps(persons, default=str),
                 top_people_json=json.dumps(channel_summary.top_people, default=str),
                 relationship_edges_json=json.dumps(relationship_edges, default=str),
@@ -3228,7 +3437,9 @@ class WikiCompiler:
             content, summary_text = "", ""
         stripped = (content or "").strip()
         if not stripped or _is_degenerate_content(content)[0]:
-            logger.info("WikiCompiler: people content empty/degenerate, using deterministic fallback")
+            logger.info(
+                "WikiCompiler: people content empty/degenerate, using deterministic fallback"
+            )
             content, summary_text = _people_fallback(persons, channel_summary.top_people or [])
         return WikiPage(
             id="people",
@@ -3242,7 +3453,8 @@ class WikiCompiler:
 
     async def _compile_decisions(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
-        prompt = self._fmt_prompt(DECISIONS_PROMPT,
+        prompt = self._fmt_prompt(
+            DECISIONS_PROMPT,
             decisions_json=json.dumps(gathered["decisions"], default=str),
             top_decisions_json=json.dumps(channel_summary.top_decisions, default=str),
         )
@@ -3265,13 +3477,16 @@ class WikiCompiler:
         topic_names: list[str] = []
         for cluster in clusters:
             if cluster.faq_candidates:
-                faq_by_topic.append({
-                    "topic": cluster.title,
-                    "questions": cluster.faq_candidates,
-                })
+                faq_by_topic.append(
+                    {
+                        "topic": cluster.title,
+                        "questions": cluster.faq_candidates,
+                    }
+                )
                 topic_names.append(cluster.title)
 
-        prompt = self._fmt_prompt(FAQ_PROMPT,
+        prompt = self._fmt_prompt(
+            FAQ_PROMPT,
             faq_candidates_json=json.dumps(faq_by_topic, default=str),
             topic_names_json=json.dumps(topic_names, default=str),
         )
@@ -3317,6 +3532,7 @@ class WikiCompiler:
 
         # Add high-frequency entities (appearing in 3+ clusters)
         from collections import Counter
+
         entity_freq: Counter[str] = Counter()
         for cluster in gathered.get("clusters", []):
             for ent in cluster.key_entities:
@@ -3330,14 +3546,16 @@ class WikiCompiler:
 
         # Filter out generic well-known terms
         glossary_terms = [
-            t for t in glossary_terms
+            t
+            for t in glossary_terms
             if (t.lower() if isinstance(t, str) else str(t).lower()) not in GENERIC_GLOSSARY_TERMS
         ]
 
         # Cap at 30 terms
         glossary_terms = glossary_terms[:30]
 
-        prompt = self._fmt_prompt(GLOSSARY_PROMPT,
+        prompt = self._fmt_prompt(
+            GLOSSARY_PROMPT,
             glossary_terms_json=json.dumps(glossary_terms, default=str),
             channel_description=channel_summary.description or channel_summary.channel_name,
         )
@@ -3388,7 +3606,8 @@ class WikiCompiler:
             summary = (
                 f"Catalog of {len(media_data)} shared resource(s) across "
                 f"{len({item['type'] for item in media_data})} type(s)."
-                if media_data else "No shared resources found."
+                if media_data
+                else "No shared resources found."
             )
         except Exception as exc:
             logger.warning("WikiCompiler: resources page failed hard (%s); using fallback", exc)
@@ -3406,9 +3625,7 @@ class WikiCompiler:
             content=content,
             summary=summary,
             memory_count=len(media_data),
-            citations=self._filter_citations_to_body(
-                content, _build_citations(media_facts[:20])
-            ),
+            citations=self._filter_citations_to_body(content, _build_citations(media_facts[:20])),
         )
 
     async def _compile_activity(self, gathered: dict) -> WikiPage:
@@ -3427,9 +3644,12 @@ class WikiCompiler:
         recent_media = _build_media_data(gathered["recent_facts"])
 
         try:
-            prompt = self._fmt_prompt(ACTIVITY_PROMPT,
+            prompt = self._fmt_prompt(
+                ACTIVITY_PROMPT,
                 recent_facts_json=json.dumps(recent_data, default=str),
-                recent_activity_json=json.dumps(channel_summary.recent_activity_summary, default=str),
+                recent_activity_json=json.dumps(
+                    channel_summary.recent_activity_summary, default=str
+                ),
                 recent_media_json=json.dumps(recent_media, default=str),
             )
             result = await self._call_llm(prompt, page_kind="activity")
@@ -3440,7 +3660,9 @@ class WikiCompiler:
             content, summary_text = "", ""
         stripped = (content or "").strip()
         if not stripped or _is_degenerate_content(content)[0]:
-            logger.info("WikiCompiler: activity content empty/degenerate, using deterministic fallback")
+            logger.info(
+                "WikiCompiler: activity content empty/degenerate, using deterministic fallback"
+            )
             content, summary_text = _activity_fallback(
                 gathered["recent_facts"],
                 channel_summary.recent_activity_summary or {},
@@ -3456,9 +3678,7 @@ class WikiCompiler:
             memory_count=len(gathered["recent_facts"]),
         )
 
-    async def _translate_cluster_titles(
-        self, clusters: list
-    ) -> dict[str, str]:
+    async def _translate_cluster_titles(self, clusters: list) -> dict[str, str]:
         """Translate topic-cluster titles from source_lang into target_lang.
 
         Topic cluster titles are baked at consolidation time in the source
@@ -3495,7 +3715,7 @@ class WikiCompiler:
             "- Keep titles concise — do not expand or editorialize.\n"
             "- Return JSON only, no prose, no markdown fences.\n\n"
             f"Input (list of {{id, title}}):\n{pairs_json}\n\n"
-            'Output JSON shape:\n'
+            "Output JSON shape:\n"
             '{"titles": [{"id": "<cluster_id>", "title": "<translated>"}]}'
         )
         try:
@@ -3520,12 +3740,14 @@ class WikiCompiler:
                     continue
                 if cid not in originals:
                     logger.warning(
-                        "WikiCompiler: unknown cluster id %s in translation response", cid,
+                        "WikiCompiler: unknown cluster id %s in translation response",
+                        cid,
                     )
                     continue
                 if cid in out:
                     logger.warning(
-                        "WikiCompiler: duplicate cluster id %s in translation response", cid,
+                        "WikiCompiler: duplicate cluster id %s in translation response",
+                        cid,
                     )
                     continue
                 stripped = title.strip()
@@ -3533,20 +3755,26 @@ class WikiCompiler:
                 if _looks_like_handle(original) and stripped != original:
                     logger.warning(
                         "WikiCompiler: rejecting suspicious title translation for handle-like id %s (%r -> %r)",
-                        cid, original, stripped,
+                        cid,
+                        original,
+                        stripped,
                     )
                     continue
                 # Length sanity: reject pathological expansions (>3x char length).
                 if len(stripped) > max(40, 3 * len(original)):
                     logger.warning(
                         "WikiCompiler: rejecting over-long title translation for %s (%d -> %d chars)",
-                        cid, len(original), len(stripped),
+                        cid,
+                        len(original),
+                        len(stripped),
                     )
                     continue
                 out[cid] = stripped
             logger.info(
                 "WikiCompiler: translated %d/%d topic titles to %s",
-                len(out), len(pairs), self._target_lang,
+                len(out),
+                len(pairs),
+                self._target_lang,
             )
             return out
         except Exception as exc:  # noqa: BLE001
@@ -3569,6 +3797,7 @@ class WikiCompiler:
                 called each time a page finishes compilation.
         """
         from beever_atlas.infra.config import get_settings
+
         parallel_dispatch = get_settings().wiki_parallel_dispatch
 
         clusters = gathered["clusters"]
@@ -3633,7 +3862,9 @@ class WikiCompiler:
 
         # Conditional: decisions — skip if 0 decisions
         if len(gathered.get("decisions", [])) > 0:
-            fixed_tasks.append(("decisions", _tracked(self._compile_decisions(gathered), "decisions")))
+            fixed_tasks.append(
+                ("decisions", _tracked(self._compile_decisions(gathered), "decisions"))
+            )
         else:
             logger.info("WikiCompiler: skipping Decisions page (0 decisions)")
 
@@ -3641,8 +3872,10 @@ class WikiCompiler:
         total_faq = sum(len(c.faq_candidates) for c in clusters)
         if total_faq > 0:
             if parallel_dispatch:
+
                 async def _faq_with_titles():
                     return await self._compile_faq(await _apply_titles_to_gathered())
+
                 fixed_tasks.append(("faq", _tracked(_faq_with_titles(), "faq")))
             else:
                 fixed_tasks.append(("faq", _tracked(self._compile_faq(gathered), "faq")))
@@ -3652,11 +3885,15 @@ class WikiCompiler:
         # Conditional: glossary — skip if 0 glossary_terms
         if len(channel_summary.glossary_terms or []) > 0:
             if parallel_dispatch:
+
                 async def _glossary_with_titles():
                     return await self._compile_glossary(await _apply_titles_to_gathered())
+
                 fixed_tasks.append(("glossary", _tracked(_glossary_with_titles(), "glossary")))
             else:
-                fixed_tasks.append(("glossary", _tracked(self._compile_glossary(gathered), "glossary")))
+                fixed_tasks.append(
+                    ("glossary", _tracked(self._compile_glossary(gathered), "glossary"))
+                )
         else:
             logger.info("WikiCompiler: skipping Glossary page (0 glossary terms)")
 
@@ -3666,7 +3903,9 @@ class WikiCompiler:
         # Conditional: resources — skip if 0 media (no cluster title references)
         media_data = _build_media_data(gathered.get("media_facts", []))
         if len(media_data) > 0:
-            fixed_tasks.append(("resources", _tracked(self._compile_resources(gathered), "resources")))
+            fixed_tasks.append(
+                ("resources", _tracked(self._compile_resources(gathered), "resources"))
+            )
         else:
             logger.info("WikiCompiler: skipping Resources page (0 media)")
 
@@ -3678,29 +3917,42 @@ class WikiCompiler:
         filtered_clusters: list = []
         skipped_topics: list[dict] = []
         for c in clusters:
-            should_include, skip_reason = self._is_topic_relevant(c, channel_themes, gathered["cluster_facts"])
+            should_include, skip_reason = self._is_topic_relevant(
+                c, channel_themes, gathered["cluster_facts"]
+            )
             if should_include:
                 filtered_clusters.append(c)
             else:
                 logger.info("WikiCompiler: skipping topic '%s' (%s)", c.title, skip_reason)
-                skipped_topics.append({"title": c.title, "reason": skip_reason, "member_count": c.member_count})
+                skipped_topics.append(
+                    {"title": c.title, "reason": skip_reason, "member_count": c.member_count}
+                )
 
         # Store skipped topics so overview can reference them
         gathered["_skipped_topics"] = skipped_topics
 
         if parallel_dispatch:
+
             async def _compile_topic_with_titles(cluster):
                 updated_gathered = await _apply_titles_to_gathered()
                 updated_gathered["_skipped_topics"] = skipped_topics
                 return await self._compile_topic_page(cluster, updated_gathered)
 
             topic_tasks = [
-                (f"topic-{_slugify(c.title) or c.id}", _tracked(_compile_topic_with_titles(c), f"topic-{_slugify(c.title) or c.id}"))
+                (
+                    f"topic-{_slugify(c.title) or c.id}",
+                    _tracked(_compile_topic_with_titles(c), f"topic-{_slugify(c.title) or c.id}"),
+                )
                 for c in filtered_clusters
             ]
         else:
             topic_tasks = [
-                (f"topic-{_slugify(c.title) or c.id}", _tracked(self._compile_topic_page(c, gathered), f"topic-{_slugify(c.title) or c.id}"))
+                (
+                    f"topic-{_slugify(c.title) or c.id}",
+                    _tracked(
+                        self._compile_topic_page(c, gathered), f"topic-{_slugify(c.title) or c.id}"
+                    ),
+                )
                 for c in filtered_clusters
             ]
 
@@ -3759,8 +4011,11 @@ class WikiCompiler:
                 p.section_number = sec
                 nodes.append(
                     WikiPageNode(
-                        id=page_id, title=self._page_title(page_id), slug=slug,
-                        section_number=sec, page_type="fixed",
+                        id=page_id,
+                        title=self._page_title(page_id),
+                        slug=slug,
+                        section_number=sec,
+                        page_type="fixed",
                         memory_count=p.memory_count,
                     )
                 )
@@ -3775,21 +4030,29 @@ class WikiCompiler:
             for i, tp in enumerate(topic_pages, 1):
                 tp.section_number = f"{topic_section}.{i}"
                 topic_node = WikiPageNode(
-                    id=tp.id, title=tp.title, slug=tp.slug,
+                    id=tp.id,
+                    title=tp.title,
+                    slug=tp.slug,
                     section_number=f"{topic_section}.{i}",
                     page_type="topic",
                     memory_count=tp.memory_count,
                 )
                 # Nest sub-pages as children
                 sub_pages = sorted(
-                    [p for p in pages.values() if p.page_type == "sub-topic" and p.parent_id == tp.id],
+                    [
+                        p
+                        for p in pages.values()
+                        if p.page_type == "sub-topic" and p.parent_id == tp.id
+                    ],
                     key=lambda p: p.title,
                 )
                 for j, sp in enumerate(sub_pages, 1):
                     sp.section_number = f"{topic_section}.{i}.{j}"
                     topic_node.children.append(
                         WikiPageNode(
-                            id=sp.id, title=sp.title, slug=sp.slug,
+                            id=sp.id,
+                            title=sp.title,
+                            slug=sp.slug,
                             section_number=f"{topic_section}.{i}.{j}",
                             page_type="sub-topic",
                             memory_count=sp.memory_count,
@@ -3805,8 +4068,11 @@ class WikiCompiler:
                 p.section_number = sec
                 nodes.append(
                     WikiPageNode(
-                        id=page_id, title=self._page_title(page_id), slug=slug,
-                        section_number=sec, page_type="fixed",
+                        id=page_id,
+                        title=self._page_title(page_id),
+                        slug=slug,
+                        section_number=sec,
+                        page_type="fixed",
                         memory_count=p.memory_count,
                     )
                 )

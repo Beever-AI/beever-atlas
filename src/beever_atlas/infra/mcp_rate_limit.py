@@ -72,9 +72,7 @@ def _set_clock(fn: Callable[[], float]) -> None:
 _windows: dict[tuple[str, str], list[float]] = defaultdict(list)
 
 
-async def _check_and_record_memory(
-    principal_id: str, tool_name: str
-) -> tuple[bool, int | None]:
+async def _check_and_record_memory(principal_id: str, tool_name: str) -> tuple[bool, int | None]:
     limit = _TOOL_LIMITS.get(tool_name, _DEFAULT_LIMIT)
     now = _clock()
     window_start = now - _WINDOW_SECONDS
@@ -147,9 +145,7 @@ async def _get_redis():
     import redis.asyncio as aioredis
 
     settings = get_settings()
-    _redis_client = aioredis.from_url(
-        settings.redis_url, decode_responses=True
-    )
+    _redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
     try:
         _redis_script_sha = await _redis_client.script_load(_SLIDING_WINDOW_LUA)
     except Exception:
@@ -158,9 +154,7 @@ async def _get_redis():
     return _redis_client
 
 
-async def _check_and_record_redis(
-    principal_id: str, tool_name: str
-) -> tuple[bool, int | None]:
+async def _check_and_record_redis(principal_id: str, tool_name: str) -> tuple[bool, int | None]:
     import uuid
 
     global _redis_script_sha
@@ -232,9 +226,7 @@ async def _check_and_record_redis(
 # ---------------------------------------------------------------------------
 
 
-async def check_and_record(
-    principal_id: str, tool_name: str
-) -> tuple[bool, int | None]:
+async def check_and_record(principal_id: str, tool_name: str) -> tuple[bool, int | None]:
     """Check whether ``principal_id`` may invoke ``tool_name`` right now.
 
     Returns ``(True, None)`` if allowed or ``(False, retry_after_seconds)``

@@ -57,6 +57,7 @@ class TestRootAgentExport:
 
         # Reset cached agent so it picks up the freshly initialized provider
         import beever_atlas.agents as agents_module
+
         agents_module._root_agent = None
 
         from beever_atlas.agents import get_root_agent

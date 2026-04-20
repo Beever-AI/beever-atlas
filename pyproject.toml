@@ -46,6 +46,7 @@ dev = [
     "ruff>=0.8.0",
     "hypothesis>=6.100.0",
     "markdown-it-py>=3.0.0",
+    "pyright>=1.1.395",
 ]
 test = [
     "tiktoken>=0.7",
@@ -70,6 +71,46 @@ constraint-dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", ".venv", "dist", "build"]
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportPrivateImportUsage = "none"
+reportOptionalMemberAccess = "none"
+reportGeneralTypeIssues = "warning"
+reportArgumentType = "warning"
+reportCallIssue = "warning"
+reportOptionalSubscript = "warning"
+reportAttributeAccessIssue = "warning"
+reportReturnType = "warning"
+reportAssignmentType = "warning"
+reportOperatorIssue = "warning"
+reportIndexIssue = "warning"
+reportAbstractUsage = "warning"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.coverage.run]
+source = ["src/beever_atlas"]
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+]
+branch = false
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@overload",
+]
+fail_under = 52
+show_missing = false
 
 [tool.ruff]
 target-version = "py312"

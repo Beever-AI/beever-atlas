@@ -32,7 +32,7 @@ from beever_atlas.services.file_importer import (
 
 
 DISCORD_CSV = (
-    'AuthorID,Author,Date,Content,Attachments,Reactions\n'
+    "AuthorID,Author,Date,Content,Attachments,Reactions\n"
     '"111","alice","2024-01-01T10:00:00+00:00","hello world","",""\n'
     '"111","alice","2024-01-01T10:00:05+00:00","Pinned a message.","",""\n'
     '"222","bob","2024-01-01T11:30:00+00:00","酒干倘賣無","",""\n'
@@ -93,9 +93,7 @@ def test_detect_format_jsonl(tmp_path: Path) -> None:
 
 
 def test_preset_discord_exporter_exact_match() -> None:
-    preset = detect_preset(
-        ["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"]
-    )
+    preset = detect_preset(["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"])
     assert preset is not None
     assert preset.name == "discord_chat_exporter"
     assert preset.mapping.content == "Content"
@@ -147,9 +145,7 @@ def test_validate_mapping_requires_content() -> None:
 
 def test_parse_discord_csv(tmp_path: Path) -> None:
     p = _write(tmp_path, "discord.csv", DISCORD_CSV)
-    preset = detect_preset(
-        ["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"]
-    )
+    preset = detect_preset(["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"])
     assert preset is not None
     messages = parse_file(p, preset.mapping, ParseOptions())
     # The Pinned-a-message row is dropped by default skip rules.
@@ -165,9 +161,7 @@ def test_parse_discord_csv(tmp_path: Path) -> None:
 
 def test_parse_skip_options_disabled(tmp_path: Path) -> None:
     p = _write(tmp_path, "discord.csv", DISCORD_CSV)
-    preset = detect_preset(
-        ["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"]
-    )
+    preset = detect_preset(["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"])
     assert preset is not None
     opts = ParseOptions(skip_system=False, skip_empty=False, skip_deleted=False)
     messages = parse_file(p, preset.mapping, opts)
@@ -176,10 +170,7 @@ def test_parse_skip_options_disabled(tmp_path: Path) -> None:
 
 
 def test_parse_timestamp_fallback_on_garbage(tmp_path: Path) -> None:
-    csv_text = (
-        "user,time,message\n"
-        "alice,not-a-date,hi\n"
-    )
+    csv_text = "user,time,message\nalice,not-a-date,hi\n"
     p = _write(tmp_path, "a.csv", csv_text)
     mapping, _ = fuzzy_match(["user", "time", "message"])
     messages = parse_file(p, mapping, ParseOptions())
@@ -209,13 +200,9 @@ def test_parse_tsv(tmp_path: Path) -> None:
 
 def test_max_rows(tmp_path: Path) -> None:
     rows = "\n".join(f'"x","x","2024-01-01T00:00:00Z","m{i}","",""' for i in range(10))
-    csv_text = (
-        "AuthorID,Author,Date,Content,Attachments,Reactions\n" + rows + "\n"
-    )
+    csv_text = "AuthorID,Author,Date,Content,Attachments,Reactions\n" + rows + "\n"
     p = _write(tmp_path, "a.csv", csv_text)
-    preset = detect_preset(
-        ["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"]
-    )
+    preset = detect_preset(["AuthorID", "Author", "Date", "Content", "Attachments", "Reactions"])
     assert preset is not None
     messages = parse_file(p, preset.mapping, ParseOptions(max_rows=3))
     assert len(messages) == 3
@@ -249,10 +236,7 @@ def test_infer_mapping_deterministic_preset(tmp_path: Path) -> None:
 
 
 def test_infer_mapping_deterministic_fuzzy_success(tmp_path: Path) -> None:
-    csv_text = (
-        "user,time,message\n"
-        "alice,2024-01-01T00:00:00Z,hi\n"
-    )
+    csv_text = "user,time,message\nalice,2024-01-01T00:00:00Z,hi\n"
     p = _write(tmp_path, "a.csv", csv_text)
     result = infer_mapping_deterministic(p)
     assert result.source == "fuzzy"

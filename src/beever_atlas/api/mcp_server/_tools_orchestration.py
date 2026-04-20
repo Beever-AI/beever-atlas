@@ -41,9 +41,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         ),
     )
     async def trigger_sync(
-        channel_id: Annotated[
-            str, "The channel id to sync (from list_channels)"
-        ],
+        channel_id: Annotated[str, "The channel id to sync (from list_channels)"],
         ctx: Context,
         sync_type: Annotated[
             str, "Sync mode: 'incremental' (default), 'full', or 'auto'"
@@ -65,9 +63,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                 ServiceUnavailable,
             )
 
-            result = await sync_cap.trigger_sync(
-                principal_id, channel_id, sync_type=sync_type
-            )
+            result = await sync_cap.trigger_sync(principal_id, channel_id, sync_type=sync_type)
             return result
         except ChannelAccessDenied:
             return {"error": "channel_access_denied", "channel_id": channel_id}
@@ -128,9 +124,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                 ServiceUnavailable,
             )
 
-            result = await wiki_cap.refresh_wiki(
-                principal_id, channel_id, page_types=page_types
-            )
+            result = await wiki_cap.refresh_wiki(principal_id, channel_id, page_types=page_types)
             return result
         except ChannelAccessDenied:
             return {"error": "channel_access_denied", "channel_id": channel_id}
@@ -166,9 +160,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         ),
     )
     async def get_job_status(
-        job_id: Annotated[
-            str, "The job id returned by trigger_sync or refresh_wiki"
-        ],
+        job_id: Annotated[str, "The job id returned by trigger_sync or refresh_wiki"],
         ctx: Context,
     ) -> dict:
         principal_id = _get_principal_id(ctx)

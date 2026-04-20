@@ -83,21 +83,28 @@ async def test_returns_member_channels_when_selected_empty():
         _ch("C3", "announcements", is_member=True),
     ]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
-    ) as fetch_mock:
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ) as fetch_mock,
+    ):
         result = await list_channels("user-A", "conn-1")
 
     # Capability forwards is_member_only=True to the discovery service.
     fetch_mock.assert_awaited_once_with(
-        "conn-1", [], "slack", is_member_only=True,
+        "conn-1",
+        [],
+        "slack",
+        is_member_only=True,
     )
     assert {r["channel_id"] for r in result} == {"C1", "C3"}
     assert {r["name"] for r in result} == {"general", "announcements"}
@@ -128,20 +135,27 @@ async def test_selected_channels_trumps_is_member_filter():
         _ch("C3", "announcements", is_member=False),
     ]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
-    ) as fetch_mock:
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ) as fetch_mock,
+    ):
         result = await list_channels("user-A", "conn-1")
 
     fetch_mock.assert_awaited_once_with(
-        "conn-1", ["C1", "C2", "C3"], "slack", is_member_only=True,
+        "conn-1",
+        ["C1", "C2", "C3"],
+        "slack",
+        is_member_only=True,
     )
     # All three returned — the explicit pick-list wins over is_member.
     assert {r["channel_id"] for r in result} == {"C1", "C2", "C3"}
@@ -166,20 +180,27 @@ async def test_list_channels_passes_selected_filter_to_service():
     # Service returns whatever it wants; capability trusts it.
     discovery_result = [_ch("CH1", "alpha", "discord")]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
-    ) as fetch_mock:
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ) as fetch_mock,
+    ):
         result = await list_channels("user-A", "conn-1")
 
     fetch_mock.assert_awaited_once_with(
-        "conn-1", ["CH1", "CH2"], "discord", is_member_only=True,
+        "conn-1",
+        ["CH1", "CH2"],
+        "discord",
+        is_member_only=True,
     )
     assert len(result) == 1
     assert result[0]["channel_id"] == "CH1"
@@ -203,15 +224,19 @@ async def test_list_channels_file_connection_sync_na():
         _ch("file-xyz", "minutes.docx", "file"),
     ]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ),
     ):
         result = await list_channels("user-A", "conn-file")
 
@@ -244,15 +269,19 @@ async def test_list_channels_populates_sync_state_when_available():
 
     discovery_result = [_ch("C1", "general"), _ch("C2", "random")]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ),
     ):
         result = await list_channels("user-A", "conn-1")
 
@@ -275,15 +304,19 @@ async def test_list_channels_empty_when_service_returns_empty():
     mock_stores = MagicMock()
     mock_stores.platform.get_connection = AsyncMock(return_value=conn)
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=[]),
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=[]),
+        ),
     ):
         result = await list_channels("user-A", "conn-1")
 
@@ -306,15 +339,19 @@ async def test_list_channels_degrades_when_sync_state_fails():
 
     discovery_result = [_ch("C1", "general")]
 
-    with patch(
-        "beever_atlas.capabilities.connections.assert_connection_owned",
-        return_value=None,
-    ), patch(
-        "beever_atlas.capabilities.connections.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
-        AsyncMock(return_value=discovery_result),
+    with (
+        patch(
+            "beever_atlas.capabilities.connections.assert_connection_owned",
+            return_value=None,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.fetch_connection_channels_safe",
+            AsyncMock(return_value=discovery_result),
+        ),
     ):
         result = await list_channels("user-A", "conn-1")
 

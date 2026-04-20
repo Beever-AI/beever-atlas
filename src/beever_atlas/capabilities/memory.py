@@ -134,9 +134,7 @@ _mmr_logged = False
 # ---------------------------------------------------------------------------
 
 
-async def _search_qa_history_impl(
-    channel_id: str, query: str, limit: int = 5
-) -> list[dict]:
+async def _search_qa_history_impl(channel_id: str, query: str, limit: int = 5) -> list[dict]:
     """Core implementation of QA-history search (no access check)."""
     try:
         from beever_atlas.infra.config import get_settings
@@ -161,9 +159,7 @@ async def _search_qa_history_impl(
             results = [r for r in results if r.get("answer_kind", "answered") != "refused"]
         return results
     except Exception:
-        logger.exception(
-            "search_qa_history failed for channel=%s query=%s", channel_id, query
-        )
+        logger.exception("search_qa_history failed for channel=%s query=%s", channel_id, query)
         return []
 
 
@@ -231,25 +227,29 @@ async def _search_channel_facts_impl(
                         continue
                 except (ValueError, TypeError):
                     pass
-            candidates.append({
-                "text": fact.memory_text,
-                "author": fact.author_name,
-                "author_id": fact.author_id,
-                "channel_id": fact.channel_id,
-                "channel_name": await resolve_channel_name(fact.channel_id),
-                "platform": fact.platform,
-                "message_ts": fact.message_ts,
-                "timestamp": _format_timestamp(fact.message_ts),
-                "permalink": fact.source_message_id,
-                "importance": fact.importance,
-                "confidence": round(fact.quality_score / 10.0, 2) if fact.quality_score else 0.5,
-                "fact_id": fact.id,
-                "topic_tags": fact.topic_tags,
-                "media_urls": fact.source_media_urls or [],
-                "media_type": fact.source_media_type or "",
-                "link_urls": fact.source_link_urls or [],
-                "link_titles": fact.source_link_titles or [],
-            })
+            candidates.append(
+                {
+                    "text": fact.memory_text,
+                    "author": fact.author_name,
+                    "author_id": fact.author_id,
+                    "channel_id": fact.channel_id,
+                    "channel_name": await resolve_channel_name(fact.channel_id),
+                    "platform": fact.platform,
+                    "message_ts": fact.message_ts,
+                    "timestamp": _format_timestamp(fact.message_ts),
+                    "permalink": fact.source_message_id,
+                    "importance": fact.importance,
+                    "confidence": round(fact.quality_score / 10.0, 2)
+                    if fact.quality_score
+                    else 0.5,
+                    "fact_id": fact.id,
+                    "topic_tags": fact.topic_tags,
+                    "media_urls": fact.source_media_urls or [],
+                    "media_type": fact.source_media_type or "",
+                    "link_urls": fact.source_link_urls or [],
+                    "link_titles": fact.source_link_titles or [],
+                }
+            )
 
         if not _mmr_logged and len(candidates) > limit:
             logger.info(
@@ -262,9 +262,7 @@ async def _search_channel_facts_impl(
         query_tokens = set(query.lower().split())
         return _mmr_rerank(candidates, query_tokens, k=limit)
     except Exception:
-        logger.exception(
-            "search_channel_facts failed for channel=%s query=%s", channel_id, query
-        )
+        logger.exception("search_channel_facts failed for channel=%s query=%s", channel_id, query)
         return []
 
 
@@ -280,9 +278,7 @@ async def search_channel_facts(
         await assert_channel_access(principal_id, channel_id)
     except Exception as exc:
         raise ChannelAccessDenied(channel_id) from exc
-    return await _search_channel_facts_impl(
-        channel_id, query, time_scope=time_scope, limit=limit
-    )
+    return await _search_channel_facts_impl(channel_id, query, time_scope=time_scope, limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -336,20 +332,24 @@ async def _search_media_references_impl(
             if media_type is None and not (has_images or has_links):
                 continue
 
-            output.append({
-                "text": fact.memory_text,
-                "media_urls": fact.source_media_urls or [],
-                "link_urls": fact.source_link_urls or [],
-                "link_titles": fact.source_link_titles or [],
-                "author": fact.author_name,
-                "channel_id": fact.channel_id,
-                "channel_name": await resolve_channel_name(fact.channel_id) if fact.channel_id else "",
-                "platform": fact.platform,
-                "message_ts": fact.message_ts,
-                "timestamp": _format_timestamp(fact.message_ts),
-                "media_type": fact.source_media_type or "unknown",
-                "fact_id": fact.id,
-            })
+            output.append(
+                {
+                    "text": fact.memory_text,
+                    "media_urls": fact.source_media_urls or [],
+                    "link_urls": fact.source_link_urls or [],
+                    "link_titles": fact.source_link_titles or [],
+                    "author": fact.author_name,
+                    "channel_id": fact.channel_id,
+                    "channel_name": await resolve_channel_name(fact.channel_id)
+                    if fact.channel_id
+                    else "",
+                    "platform": fact.platform,
+                    "message_ts": fact.message_ts,
+                    "timestamp": _format_timestamp(fact.message_ts),
+                    "media_type": fact.source_media_type or "unknown",
+                    "fact_id": fact.id,
+                }
+            )
             if len(output) >= limit:
                 break
         return output
@@ -420,19 +420,23 @@ async def _get_recent_activity_impl(
                     ts = float(fact.message_ts)
                     fact_dt = datetime.fromtimestamp(ts, tz=UTC)
                     if fact_dt >= cutoff:
-                        output.append({
-                            "text": fact.memory_text,
-                            "author": fact.author_name,
-                            "author_id": fact.author_id,
-                            "channel_id": fact.channel_id,
-                            "channel_name": await resolve_channel_name(fact.channel_id) if hasattr(fact, "channel_id") and fact.channel_id else "",
-                            "platform": getattr(fact, "platform", "slack"),
-                            "message_ts": fact.message_ts,
-                            "timestamp": _format_timestamp(fact.message_ts),
-                            "importance": fact.importance,
-                            "topic_tags": fact.topic_tags,
-                            "fact_id": fact.id,
-                        })
+                        output.append(
+                            {
+                                "text": fact.memory_text,
+                                "author": fact.author_name,
+                                "author_id": fact.author_id,
+                                "channel_id": fact.channel_id,
+                                "channel_name": await resolve_channel_name(fact.channel_id)
+                                if hasattr(fact, "channel_id") and fact.channel_id
+                                else "",
+                                "platform": getattr(fact, "platform", "slack"),
+                                "message_ts": fact.message_ts,
+                                "timestamp": _format_timestamp(fact.message_ts),
+                                "importance": fact.importance,
+                                "topic_tags": fact.topic_tags,
+                                "fact_id": fact.id,
+                            }
+                        )
                 except (ValueError, TypeError):
                     pass
 
@@ -455,9 +459,7 @@ async def get_recent_activity(
         await assert_channel_access(principal_id, channel_id)
     except Exception as exc:
         raise ChannelAccessDenied(channel_id) from exc
-    return await _get_recent_activity_impl(
-        channel_id, days=days, topic=topic, limit=limit
-    )
+    return await _get_recent_activity_impl(channel_id, days=days, topic=topic, limit=limit)
 
 
 __all__ = [

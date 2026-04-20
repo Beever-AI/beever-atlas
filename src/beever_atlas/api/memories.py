@@ -53,6 +53,8 @@ async def get_memory(
         raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
     enriched = fact.model_dump()
     if fact.graph_entity_ids:
-        entities = await asyncio.gather(*[stores.graph.get_entity(eid) for eid in fact.graph_entity_ids])
+        entities = await asyncio.gather(
+            *[stores.graph.get_entity(eid) for eid in fact.graph_entity_ids]
+        )
         enriched["linked_entities"] = [e.model_dump() for e in entities if e is not None]
     return enriched

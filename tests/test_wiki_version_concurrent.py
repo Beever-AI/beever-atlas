@@ -65,9 +65,7 @@ async def test_concurrent_archive_assigns_distinct_monotonic_versions():
     store._counters = counters
 
     wiki = {"pages": {}, "metadata": {}}
-    results = await asyncio.gather(
-        *[store.archive("C1", wiki) for _ in range(20)]
-    )
+    results = await asyncio.gather(*[store.archive("C1", wiki) for _ in range(20)])
 
     assert len(results) == 20
     assert len(set(results)) == 20, "version numbers must be distinct"

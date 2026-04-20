@@ -48,8 +48,9 @@ async def test_full_reconsolidate_streams_all_fact_ids_and_batches_updates():
     assert result.errors == []
 
     # Every fact_id with a non-sentinel cluster_id must have been reset.
-    flat = [pair for call in store.batch_update_fact_clusters.await_args_list
-            for pair in call.args[0]]
+    flat = [
+        pair for call in store.batch_update_fact_clusters.await_args_list for pair in call.args[0]
+    ]
     assert len(flat) == 1250
     assert all(cid == "__none__" for _, cid in flat)
 
@@ -76,6 +77,7 @@ async def test_full_reconsolidate_skips_already_unclustered_facts():
 
     await _make_service(store).full_reconsolidate("C_TEST")
 
-    updated_ids = [fid for call in store.batch_update_fact_clusters.await_args_list
-                   for fid, _ in call.args[0]]
+    updated_ids = [
+        fid for call in store.batch_update_fact_clusters.await_args_list for fid, _ in call.args[0]
+    ]
     assert set(updated_ids) == {"a", "c"}

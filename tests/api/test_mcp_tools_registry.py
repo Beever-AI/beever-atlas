@@ -22,30 +22,32 @@ from beever_atlas.api.mcp_server import build_mcp
 #   search_channel_knowledge                           (shim           ×1)
 #   trigger_sync, refresh_wiki, get_job_status         (orchestration  ×3)
 
-EXPECTED_TOOLS = frozenset({
-    # discovery
-    "whoami",
-    "list_connections",
-    "list_channels",
-    # retrieval
-    "ask_channel",
-    "search_channel_facts",
-    "get_wiki_page",
-    "get_recent_activity",
-    "search_media_references",
-    # graph
-    "find_experts",
-    "search_relationships",
-    "trace_decision_history",
-    # session
-    "start_new_session",
-    # shim
-    "search_channel_knowledge",
-    # orchestration (Phase 5b)
-    "trigger_sync",
-    "refresh_wiki",
-    "get_job_status",
-})
+EXPECTED_TOOLS = frozenset(
+    {
+        # discovery
+        "whoami",
+        "list_connections",
+        "list_channels",
+        # retrieval
+        "ask_channel",
+        "search_channel_facts",
+        "get_wiki_page",
+        "get_recent_activity",
+        "search_media_references",
+        # graph
+        "find_experts",
+        "search_relationships",
+        "trace_decision_history",
+        # session
+        "start_new_session",
+        # shim
+        "search_channel_knowledge",
+        # orchestration (Phase 5b)
+        "trigger_sync",
+        "refresh_wiki",
+        "get_job_status",
+    }
+)
 
 # No orchestration tools are deferred any longer — all shipped in Phase 5b.
 DEFERRED_TOOLS: frozenset[str] = frozenset()
@@ -62,7 +64,7 @@ def _tool_names(mcp) -> frozenset[str]:
     for k in mcp._local_provider._components:
         if k.startswith("tool:"):
             # Key is "tool:<name>@<version>" or "tool:<name>@" — strip prefix and version
-            name_version = k[len("tool:"):]
+            name_version = k[len("tool:") :]
             name = name_version.split("@")[0]
             result.add(name)
     return frozenset(result)
@@ -92,9 +94,7 @@ def test_orchestration_tools_are_registered():
     mcp = build_mcp()
     names = _tool_names(mcp)
     missing = orchestration - names
-    assert not missing, (
-        f"Phase 5b orchestration tools must be registered: {missing}"
-    )
+    assert not missing, f"Phase 5b orchestration tools must be registered: {missing}"
 
 
 def test_all_tools_have_non_empty_description():
@@ -102,7 +102,7 @@ def test_all_tools_have_non_empty_description():
     for component_key, tool in mcp._local_provider._components.items():
         if not component_key.startswith("tool:"):
             continue
-        name = component_key[len("tool:"):].split("@")[0]
+        name = component_key[len("tool:") :].split("@")[0]
         desc = getattr(tool, "description", None) or ""
         assert desc.strip(), (
             f"Tool '{name}' has an empty or missing description. "

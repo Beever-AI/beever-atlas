@@ -23,6 +23,7 @@ from beever_atlas.api.ask import _run_agent_stream
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_text_event(text: str, *, partial: bool, turn_complete: bool = False) -> MagicMock:
     """Create a mock ADK event carrying regular text content."""
     part = MagicMock()
@@ -108,6 +109,7 @@ def _parse_sse_events(chunks: list[str]) -> list[tuple[str, dict]]:
 # Shared test fixture machinery
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_request() -> MagicMock:
     req = MagicMock()
     req.is_disconnected = AsyncMock(return_value=False)
@@ -132,6 +134,7 @@ async def _collect_stream(gen: AsyncGenerator[str, None]) -> list[str]:
 # Flag ON: partial text streaming tests
 # ---------------------------------------------------------------------------
 
+
 class TestFlagOnTextStreaming:
     """Flag ON (sse_streaming=True): partial events drive emission, final skipped."""
 
@@ -153,11 +156,23 @@ class TestFlagOnTextStreaming:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -187,6 +202,7 @@ class TestFlagOnTextStreaming:
     @pytest.mark.asyncio
     async def test_no_text_emission_on_final_aggregate(self):
         """Flag ON: final aggregate (partial=False) must not emit a response_delta."""
+
         async def fake_run_async(**kwargs):
             yield _make_text_event("chunk1", partial=True)
             yield _make_text_event("chunk1", partial=False)  # final — must be suppressed
@@ -197,11 +213,23 @@ class TestFlagOnTextStreaming:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -211,10 +239,15 @@ class TestFlagOnTextStreaming:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            chunks = await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            chunks = await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         events = _parse_sse_events(chunks)
         deltas = [d for t, d in events if t == "response_delta"]
@@ -239,11 +272,23 @@ class TestFlagOnTextStreaming:
         persist_mock = AsyncMock()
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", persist_mock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -253,10 +298,15 @@ class TestFlagOnTextStreaming:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         persist_mock.assert_called_once()
         call_kwargs = persist_mock.call_args.kwargs
@@ -267,6 +317,7 @@ class TestFlagOnTextStreaming:
     @pytest.mark.asyncio
     async def test_thinking_streamed_on_partials_only(self):
         """Flag ON: thinking events fire on partial=True thoughts only."""
+
         async def fake_run_async(**kwargs):
             yield _make_thinking_event("thought chunk 1", partial=True)
             yield _make_thinking_event("thought chunk 2", partial=True)
@@ -278,11 +329,23 @@ class TestFlagOnTextStreaming:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -292,10 +355,15 @@ class TestFlagOnTextStreaming:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            chunks = await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            chunks = await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         events = _parse_sse_events(chunks)
         thinking_events = [(t, d) for t, d in events if t == "thinking"]
@@ -310,17 +378,21 @@ class TestFlagOnTextStreaming:
 # Flag ON: tool_call_start only on non-partial events
 # ---------------------------------------------------------------------------
 
+
 class TestFlagOnToolCallGate:
     """Flag ON: tool_call_start fires exactly once (on the complete-args event)."""
 
     @pytest.mark.asyncio
     async def test_tool_call_start_fires_once_on_complete_args(self):
         """Partial function-call event is suppressed; final fires tool_call_start."""
+
         async def fake_run_async(**kwargs):
             # Partial: incomplete args — must be suppressed
             yield _make_function_call_event("search_facts", {"query": "inc"}, partial=True)
             # Final: complete args — must fire tool_call_start
-            yield _make_function_call_event("search_facts", {"query": "incomplete query"}, partial=False)
+            yield _make_function_call_event(
+                "search_facts", {"query": "incomplete query"}, partial=False
+            )
             yield _make_turn_complete_event()
 
         session = _make_mock_session()
@@ -328,11 +400,23 @@ class TestFlagOnToolCallGate:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -342,10 +426,15 @@ class TestFlagOnToolCallGate:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            chunks = await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            chunks = await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         events = _parse_sse_events(chunks)
         starts = [(t, d) for t, d in events if t == "tool_call_start"]
@@ -358,12 +447,14 @@ class TestFlagOnToolCallGate:
 # Flag OFF: baseline byte-identical behavior
 # ---------------------------------------------------------------------------
 
+
 class TestFlagOff:
     """Flag OFF (qa_adk_streaming_sse=False): behavior identical to pre-change."""
 
     @pytest.mark.asyncio
     async def test_single_response_delta_on_final(self):
         """Flag OFF: final event (partial=False) emits a response_delta normally."""
+
         async def fake_run_async(**kwargs):
             # With flag off, ADK emits a single non-partial text event
             yield _make_text_event("Full answer here", partial=False)
@@ -374,11 +465,23 @@ class TestFlagOff:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -388,19 +491,27 @@ class TestFlagOff:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            chunks = await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            chunks = await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         events = _parse_sse_events(chunks)
         deltas = [(t, d) for t, d in events if t == "response_delta"]
-        assert len(deltas) == 1, f"Expected exactly 1 response_delta in flag-off mode, got {len(deltas)}"
+        assert len(deltas) == 1, (
+            f"Expected exactly 1 response_delta in flag-off mode, got {len(deltas)}"
+        )
         assert deltas[0][1]["delta"] == "Full answer here"
 
     @pytest.mark.asyncio
     async def test_tool_call_start_fires_on_non_partial(self):
         """Flag OFF: tool_call_start fires on the non-partial function call event."""
+
         async def fake_run_async(**kwargs):
             yield _make_function_call_event("search_facts", {"query": "test"}, partial=False)
             yield _make_turn_complete_event()
@@ -410,11 +521,23 @@ class TestFlagOff:
         runner.run_async = fake_run_async
 
         with (
-            patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
             patch("beever_atlas.api.ask.create_runner", return_value=runner),
-            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-            patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-            patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session
+            ),
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt",
+                new_callable=AsyncMock,
+                return_value=("q", None),
+            ),
+            patch(
+                "beever_atlas.api.ask._load_chat_history_parts",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
             patch("beever_atlas.infra.config.get_settings") as mock_settings,
         ):
@@ -424,10 +547,15 @@ class TestFlagOff:
             settings.qa_onboarding_length_monitor = False
             mock_settings.return_value = settings
 
-            chunks = await _collect_stream(_run_agent_stream(
-                question="q", channel_id="C1", session_id="S1", user_id="U1",
-                request=_make_mock_request(),
-            ))
+            chunks = await _collect_stream(
+                _run_agent_stream(
+                    question="q",
+                    channel_id="C1",
+                    session_id="S1",
+                    user_id="U1",
+                    request=_make_mock_request(),
+                )
+            )
 
         events = _parse_sse_events(chunks)
         starts = [(t, d) for t, d in events if t == "tool_call_start"]
@@ -438,6 +566,7 @@ class TestFlagOff:
     async def test_turn_complete_fires_in_both_modes(self):
         """Regardless of flag, turn_complete→done event must always be emitted."""
         for flag in [True, False]:
+
             async def fake_run_async(**kwargs):
                 yield _make_text_event("answer", partial=not flag)
                 yield _make_turn_complete_event()
@@ -447,11 +576,26 @@ class TestFlagOff:
             runner.run_async = fake_run_async
 
             with (
-                patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
+                patch(
+                    "beever_atlas.agents.query.qa_agent.get_agent_for_mode",
+                    return_value=MagicMock(),
+                ),
                 patch("beever_atlas.api.ask.create_runner", return_value=runner),
-                patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock, return_value=session),
-                patch("beever_atlas.api.ask._build_decomposed_prompt", new_callable=AsyncMock, return_value=("q", None)),
-                patch("beever_atlas.api.ask._load_chat_history_parts", new_callable=AsyncMock, return_value=[]),
+                patch(
+                    "beever_atlas.api.ask.create_session",
+                    new_callable=AsyncMock,
+                    return_value=session,
+                ),
+                patch(
+                    "beever_atlas.api.ask._build_decomposed_prompt",
+                    new_callable=AsyncMock,
+                    return_value=("q", None),
+                ),
+                patch(
+                    "beever_atlas.api.ask._load_chat_history_parts",
+                    new_callable=AsyncMock,
+                    return_value=[],
+                ),
                 patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
                 patch("beever_atlas.infra.config.get_settings") as mock_settings,
             ):
@@ -461,13 +605,16 @@ class TestFlagOff:
                 settings.qa_onboarding_length_monitor = False
                 mock_settings.return_value = settings
 
-                chunks = await _collect_stream(_run_agent_stream(
-                    question="q", channel_id="C1", session_id="S1", user_id="U1",
-                    request=_make_mock_request(),
-                ))
+                chunks = await _collect_stream(
+                    _run_agent_stream(
+                        question="q",
+                        channel_id="C1",
+                        session_id="S1",
+                        user_id="U1",
+                        request=_make_mock_request(),
+                    )
+                )
 
             events = _parse_sse_events(chunks)
             event_types = [t for t, _ in events]
-            assert "done" in event_types, (
-                f"done event missing with qa_adk_streaming_sse={flag}"
-            )
+            assert "done" in event_types, f"done event missing with qa_adk_streaming_sse={flag}"

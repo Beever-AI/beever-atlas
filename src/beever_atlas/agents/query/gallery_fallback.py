@@ -48,7 +48,8 @@ def maybe_build_gallery(registry: "SourceRegistry", answer_text: str) -> str:
 
     # Compute the next marker above any already-assigned one.
     existing_markers = {
-        mr.marker for mr in registry._markers.values()  # noqa: SLF001
+        mr.marker
+        for mr in registry._markers.values()  # noqa: SLF001
     }
     next_marker = max(existing_markers, default=0) + 1
 

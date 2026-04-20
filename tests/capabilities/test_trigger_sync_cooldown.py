@@ -36,12 +36,14 @@ async def test_raises_cooldown_active_within_window():
     mock_stores = MagicMock()
     mock_stores.mongodb.get_sync_status = AsyncMock(return_value=last_job)
 
-    with patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None), \
-         patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores), \
-         patch(
-             "beever_atlas.capabilities.sync.resolve_effective_policy",
-             AsyncMock(return_value=mock_policy),
-         ):
+    with (
+        patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None),
+        patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores),
+        patch(
+            "beever_atlas.capabilities.sync.resolve_effective_policy",
+            AsyncMock(return_value=mock_policy),
+        ),
+    ):
         with pytest.raises(CooldownActive) as exc_info:
             await trigger_sync("user-A", "C1")
 
@@ -65,13 +67,15 @@ async def test_no_cooldown_when_window_expired():
     mock_runner = MagicMock()
     mock_runner.start_sync = AsyncMock(return_value="job-123")
 
-    with patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None), \
-         patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores), \
-         patch(
-             "beever_atlas.capabilities.sync.resolve_effective_policy",
-             AsyncMock(return_value=mock_policy),
-         ), \
-         patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner):
+    with (
+        patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None),
+        patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores),
+        patch(
+            "beever_atlas.capabilities.sync.resolve_effective_policy",
+            AsyncMock(return_value=mock_policy),
+        ),
+        patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner),
+    ):
         result = await trigger_sync("user-A", "C1")
 
     assert result["job_id"] == "job-123"
@@ -94,13 +98,15 @@ async def test_no_cooldown_when_last_job_failed():
     mock_runner = MagicMock()
     mock_runner.start_sync = AsyncMock(return_value="job-456")
 
-    with patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None), \
-         patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores), \
-         patch(
-             "beever_atlas.capabilities.sync.resolve_effective_policy",
-             AsyncMock(return_value=mock_policy),
-         ), \
-         patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner):
+    with (
+        patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None),
+        patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores),
+        patch(
+            "beever_atlas.capabilities.sync.resolve_effective_policy",
+            AsyncMock(return_value=mock_policy),
+        ),
+        patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner),
+    ):
         result = await trigger_sync("user-A", "C1")
 
     assert result["job_id"] == "job-456"
@@ -132,13 +138,15 @@ async def test_no_cooldown_when_zero_cooldown_policy():
     mock_runner = MagicMock()
     mock_runner.start_sync = AsyncMock(return_value="job-789")
 
-    with patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None), \
-         patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores), \
-         patch(
-             "beever_atlas.capabilities.sync.resolve_effective_policy",
-             AsyncMock(return_value=mock_policy),
-         ), \
-         patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner):
+    with (
+        patch("beever_atlas.capabilities.sync.assert_channel_access", return_value=None),
+        patch("beever_atlas.capabilities.sync.get_stores", return_value=mock_stores),
+        patch(
+            "beever_atlas.capabilities.sync.resolve_effective_policy",
+            AsyncMock(return_value=mock_policy),
+        ),
+        patch("beever_atlas.capabilities.sync.get_sync_runner", return_value=mock_runner),
+    ):
         result = await trigger_sync("user-A", "C1")
 
     assert result["job_id"] == "job-789"

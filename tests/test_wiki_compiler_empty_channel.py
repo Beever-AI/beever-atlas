@@ -43,13 +43,9 @@ async def test_compile_overview_empty_channel_no_index_error():
 
     with (
         patch.object(WikiCompiler, "_fmt_prompt", return_value="prompt"),
-        patch.object(
-            WikiCompiler, "_call_llm", new_callable=AsyncMock, return_value=empty_content
-        ),
+        patch.object(WikiCompiler, "_call_llm", new_callable=AsyncMock, return_value=empty_content),
         patch.object(WikiCompiler, "_page_title", return_value="Overview"),
-        patch.object(
-            WikiCompiler, "_postprocess_content", staticmethod(lambda s: s)
-        ),
+        patch.object(WikiCompiler, "_postprocess_content", staticmethod(lambda s: s)),
     ):
         page = await compiler._compile_overview(_empty_gathered())
 

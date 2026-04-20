@@ -11,6 +11,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_settings(monitor_on: bool = True):
     s = MagicMock()
     s.qa_onboarding_length_monitor = monitor_on
@@ -56,13 +57,17 @@ async def _async_events(*events):
 # Base patch context manager factory
 # ---------------------------------------------------------------------------
 
+
 def _base_patches(settings, fake_runner, fake_session):
     """Return a list of patch objects that stub out all heavy dependencies."""
     return [
         patch("beever_atlas.api.ask.create_runner", return_value=fake_runner),
         patch("beever_atlas.api.ask.create_session", new=AsyncMock(return_value=fake_session)),
         patch("beever_atlas.api.ask._load_chat_history_parts", new=AsyncMock(return_value=[])),
-        patch("beever_atlas.api.ask._build_decomposed_prompt", new=AsyncMock(return_value=("test question", None))),
+        patch(
+            "beever_atlas.api.ask._build_decomposed_prompt",
+            new=AsyncMock(return_value=("test question", None)),
+        ),
         patch("beever_atlas.api.ask._persist_qa_history", new=AsyncMock()),
         patch("beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()),
         patch("beever_atlas.infra.config.get_settings", return_value=settings),
@@ -72,6 +77,7 @@ def _base_patches(settings, fake_runner, fake_session):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_over_cap_logs_warning():
@@ -96,14 +102,16 @@ async def test_over_cap_logs_warning():
     patches = _base_patches(settings, fake_runner, fake_session)
     with patch.object(ask_mod.logger, "warning") as mock_warn:
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
-            await _drain(_run_agent_stream(
-                question="what is this channel about?",
-                channel_id="C123",
-                session_id="sess-test",
-                user_id="u1",
-                request=fake_request,
-                mode="quick",
-            ))
+            await _drain(
+                _run_agent_stream(
+                    question="what is this channel about?",
+                    channel_id="C123",
+                    session_id="sess-test",
+                    user_id="u1",
+                    request=fake_request,
+                    mode="quick",
+                )
+            )
 
     calls_text = [str(c) for c in mock_warn.call_args_list]
     assert any("exceeded 1500" in t for t in calls_text), (
@@ -134,14 +142,16 @@ async def test_under_cap_silent():
     patches = _base_patches(settings, fake_runner, fake_session)
     with patch.object(ask_mod.logger, "warning") as mock_warn:
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
-            await _drain(_run_agent_stream(
-                question="hi there",
-                channel_id="C123",
-                session_id="sess-test",
-                user_id="u1",
-                request=fake_request,
-                mode="quick",
-            ))
+            await _drain(
+                _run_agent_stream(
+                    question="hi there",
+                    channel_id="C123",
+                    session_id="sess-test",
+                    user_id="u1",
+                    request=fake_request,
+                    mode="quick",
+                )
+            )
 
     length_calls = [c for c in mock_warn.call_args_list if "exceeded 1500" in str(c)]
     assert length_calls == [], f"Unexpected length warning: {length_calls}"
@@ -170,14 +180,16 @@ async def test_deep_mode_no_warn():
     patches = _base_patches(settings, fake_runner, fake_session)
     with patch.object(ask_mod.logger, "warning") as mock_warn:
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
-            await _drain(_run_agent_stream(
-                question="explain everything in detail",
-                channel_id="C123",
-                session_id="sess-test",
-                user_id="u1",
-                request=fake_request,
-                mode="deep",
-            ))
+            await _drain(
+                _run_agent_stream(
+                    question="explain everything in detail",
+                    channel_id="C123",
+                    session_id="sess-test",
+                    user_id="u1",
+                    request=fake_request,
+                    mode="deep",
+                )
+            )
 
     length_calls = [c for c in mock_warn.call_args_list if "exceeded 1500" in str(c)]
     assert length_calls == [], f"Unexpected length warning in deep mode: {length_calls}"

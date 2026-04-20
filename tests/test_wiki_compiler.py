@@ -26,7 +26,9 @@ class TestPostprocessContent:
         assert "## Overview" in result
 
     def test_cleans_mermaid_edge_labels(self):
-        content = "```mermaid\ngraph TD\n    A[Foo] -- explores --> B[Bar]\n    C[Baz] --> D[Qux]\n```"
+        content = (
+            "```mermaid\ngraph TD\n    A[Foo] -- explores --> B[Bar]\n    C[Baz] --> D[Qux]\n```"
+        )
         result = WikiCompiler._postprocess_content(content)
         assert "-- explores -->" not in result
         assert "A[Foo] -->|explores| B[Bar]" in result
@@ -50,7 +52,9 @@ class TestPostprocessContent:
         assert "Section 2" in result
 
     def test_passthrough_clean_content(self):
-        content = "## Overview\n\nClean content with no issues.\n\n## Details\n\nMore clean content."
+        content = (
+            "## Overview\n\nClean content with no issues.\n\n## Details\n\nMore clean content."
+        )
         result = WikiCompiler._postprocess_content(content)
         assert "## Overview" in result
         assert "## Details" in result
@@ -65,9 +69,27 @@ class TestFilterMediaForResources:
 
     def test_filters_shortener_urls(self):
         media = [
-            {"url": "https://t.co/abc123", "name": "Shortened Link", "type": "link", "author": "A", "context": "x"},
-            {"url": "https://bit.ly/xyz", "name": "Short", "type": "link", "author": "A", "context": "x"},
-            {"url": "https://github.com/foo/bar", "name": "Repo", "type": "link", "author": "A", "context": "x"},
+            {
+                "url": "https://t.co/abc123",
+                "name": "Shortened Link",
+                "type": "link",
+                "author": "A",
+                "context": "x",
+            },
+            {
+                "url": "https://bit.ly/xyz",
+                "name": "Short",
+                "type": "link",
+                "author": "A",
+                "context": "x",
+            },
+            {
+                "url": "https://github.com/foo/bar",
+                "name": "Repo",
+                "type": "link",
+                "author": "A",
+                "context": "x",
+            },
         ]
         result = WikiCompiler._filter_media_for_resources(media)
         urls = [m["url"] for m in result]
@@ -77,9 +99,27 @@ class TestFilterMediaForResources:
 
     def test_filters_generic_names(self):
         media = [
-            {"url": "https://files.slack.com/image1", "name": "image.png", "type": "image", "author": "A", "context": "x"},
-            {"url": "https://files.slack.com/image2", "name": "download", "type": "file", "author": "A", "context": "x"},
-            {"url": "https://files.slack.com/image3", "name": "Architecture Diagram", "type": "image", "author": "A", "context": "x"},
+            {
+                "url": "https://files.slack.com/image1",
+                "name": "image.png",
+                "type": "image",
+                "author": "A",
+                "context": "x",
+            },
+            {
+                "url": "https://files.slack.com/image2",
+                "name": "download",
+                "type": "file",
+                "author": "A",
+                "context": "x",
+            },
+            {
+                "url": "https://files.slack.com/image3",
+                "name": "Architecture Diagram",
+                "type": "image",
+                "author": "A",
+                "context": "x",
+            },
         ]
         result = WikiCompiler._filter_media_for_resources(media)
         names = [m["name"] for m in result]
@@ -89,7 +129,13 @@ class TestFilterMediaForResources:
 
     def test_domain_cap(self):
         media = [
-            {"url": f"https://linkedin.com/post/{i}", "name": f"Post {i}", "type": "link", "author": "A", "context": "x"}
+            {
+                "url": f"https://linkedin.com/post/{i}",
+                "name": f"Post {i}",
+                "type": "link",
+                "author": "A",
+                "context": "x",
+            }
             for i in range(12)
         ]
         result = WikiCompiler._filter_media_for_resources(media)
@@ -97,7 +143,13 @@ class TestFilterMediaForResources:
 
     def test_github_higher_cap(self):
         media = [
-            {"url": f"https://github.com/repo/{i}", "name": f"Repo {i}", "type": "link", "author": "A", "context": "x"}
+            {
+                "url": f"https://github.com/repo/{i}",
+                "name": f"Repo {i}",
+                "type": "link",
+                "author": "A",
+                "context": "x",
+            }
             for i in range(12)
         ]
         result = WikiCompiler._filter_media_for_resources(media)
@@ -107,11 +159,15 @@ class TestFilterMediaForResources:
         media = []
         for domain_i in range(10):
             for item_i in range(4):
-                media.append({
-                    "url": f"https://domain{domain_i}.com/{item_i}",
-                    "name": f"Item {domain_i}-{item_i}",
-                    "type": "link", "author": "A", "context": "x",
-                })
+                media.append(
+                    {
+                        "url": f"https://domain{domain_i}.com/{item_i}",
+                        "name": f"Item {domain_i}-{item_i}",
+                        "type": "link",
+                        "author": "A",
+                        "context": "x",
+                    }
+                )
         result = WikiCompiler._filter_media_for_resources(media)
         assert len(result) <= 30
 
@@ -170,5 +226,6 @@ class TestCleanMermaid:
         result = WikiCompiler._postprocess_content(content)
         mermaid_body = result.split("```mermaid")[1].split("```")[0]
         import re
+
         # No node should have empty brackets after sanitization
         assert not re.search(r"\w+\[\s*\]", mermaid_body)

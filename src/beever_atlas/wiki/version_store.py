@@ -40,6 +40,7 @@ class WikiVersionStore:
             return
         # Reuse the same singleton registry as WikiCache to avoid a second pool.
         from beever_atlas.wiki.cache import _get_motor_client
+
         client = await _get_motor_client(self._mongodb_uri)
         self._db = client[self._db_name]
         self._collection = self._db["wiki_versions"]
@@ -55,7 +56,10 @@ class WikiVersionStore:
         await self._collection.create_index("channel_id")
 
     async def archive(
-        self, channel_id: str, wiki_doc: dict, target_lang: str = "en",
+        self,
+        channel_id: str,
+        wiki_doc: dict,
+        target_lang: str = "en",
     ) -> int:
         """Archive a wiki document as a new version. Returns the assigned version number."""
         await self._ensure_db()

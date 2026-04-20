@@ -110,7 +110,9 @@ def _bridge_client() -> httpx.AsyncClient:
 
 
 async def _register_adapter(
-    platform: str, credentials: dict, connection_id: str | None = None,
+    platform: str,
+    credentials: dict,
+    connection_id: str | None = None,
 ) -> None:
     """Call POST /bridge/adapters to register the adapter in the bot service.
 
@@ -156,11 +158,14 @@ async def _unregister_adapter(connection_id: str) -> None:
                     connection_id,
                 )
         except httpx.ConnectError:
-            logger.warning("Bridge unreachable during adapter rollback for connection %s", connection_id)
+            logger.warning(
+                "Bridge unreachable during adapter rollback for connection %s", connection_id
+            )
 
 
 async def _list_bridge_channels(
-    platform: str, connection_id: str | None = None,
+    platform: str,
+    connection_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """List channels via the bridge.
 
@@ -231,12 +236,14 @@ async def list_connections_with_credentials() -> list[_InternalConnectionItem]:
             continue
         try:
             creds = stores.platform.decrypt_connection_credentials(conn)
-            result.append(_InternalConnectionItem(
-                connection_id=conn.id,
-                platform=conn.platform,
-                credentials=creds,
-                status=conn.status,
-            ))
+            result.append(
+                _InternalConnectionItem(
+                    connection_id=conn.id,
+                    platform=conn.platform,
+                    credentials=creds,
+                    status=conn.status,
+                )
+            )
         except Exception as e:
             logger.warning("Failed to decrypt credentials for connection %s: %s", conn.id, e)
     return result
@@ -455,7 +462,9 @@ async def update_selected_channels(
     return _to_response(updated)
 
 
-async def _trigger_sync_for_channels(channel_ids: list[str], connection_id: str | None = None) -> None:
+async def _trigger_sync_for_channels(
+    channel_ids: list[str], connection_id: str | None = None
+) -> None:
     """Fire-and-forget sync for newly selected channels."""
     from beever_atlas.api.sync import get_sync_runner
 

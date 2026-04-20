@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api", tags=["search"])
 
 class SearchRequest(BaseModel):
     """Search request body."""
+
     query: str
     channel_id: str | None = None
     limit: int = Field(default=20, ge=1, le=100)
@@ -25,6 +26,7 @@ class SearchRequest(BaseModel):
 
 class SearchResultItem(BaseModel):
     """A single search result."""
+
     id: str = ""
     memory_text: str = ""
     quality_score: float = 0.0
@@ -39,6 +41,7 @@ class SearchResultItem(BaseModel):
 
 class SearchResponse(BaseModel):
     """Search response."""
+
     results: list[SearchResultItem] = Field(default_factory=list)
     total: int = 0
     query: str = ""
@@ -79,18 +82,20 @@ async def search_facts(
     items: list[SearchResultItem] = []
     for r in raw_results:
         fact = r["fact"]
-        items.append(SearchResultItem(
-            id=fact.id,
-            memory_text=fact.memory_text,
-            quality_score=fact.quality_score,
-            topic_tags=fact.topic_tags,
-            entity_tags=fact.entity_tags,
-            importance=fact.importance,
-            author_name=fact.author_name,
-            message_ts=fact.message_ts,
-            channel_id=fact.channel_id,
-            similarity_score=r.get("similarity_score", 0.0),
-        ))
+        items.append(
+            SearchResultItem(
+                id=fact.id,
+                memory_text=fact.memory_text,
+                quality_score=fact.quality_score,
+                topic_tags=fact.topic_tags,
+                entity_tags=fact.entity_tags,
+                importance=fact.importance,
+                author_name=fact.author_name,
+                message_ts=fact.message_ts,
+                channel_id=fact.channel_id,
+                similarity_score=r.get("similarity_score", 0.0),
+            )
+        )
 
     return SearchResponse(
         results=items,

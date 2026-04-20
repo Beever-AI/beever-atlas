@@ -22,7 +22,9 @@ def fact_quality_gate_callback(callback_context: CallbackContext) -> None:
     # Per-channel quality_threshold from policy (via session state), else global default
     settings = get_settings()
     state_threshold = callback_context.state.get("quality_threshold")
-    threshold: float = state_threshold if state_threshold is not None else settings.quality_threshold
+    threshold: float = (
+        state_threshold if state_threshold is not None else settings.quality_threshold
+    )
 
     raw: Any = callback_context.state.get("extracted_facts")
     if raw is None:
@@ -82,9 +84,7 @@ def entity_quality_gate_callback(callback_context: CallbackContext) -> None:
 
     raw: Any = callback_context.state.get("extracted_entities")
     if raw is None:
-        logger.warning(
-            "entity_quality_gate_callback: 'extracted_entities' not found in state."
-        )
+        logger.warning("entity_quality_gate_callback: 'extracted_entities' not found in state.")
         return
 
     if isinstance(raw, dict):
@@ -103,9 +103,7 @@ def entity_quality_gate_callback(callback_context: CallbackContext) -> None:
         return
 
     rels_before = len(rels_dicts)
-    filtered_rels = [
-        r for r in rels_dicts if r.get("confidence", 0.0) >= threshold
-    ]
+    filtered_rels = [r for r in rels_dicts if r.get("confidence", 0.0) >= threshold]
     rels_after = len(filtered_rels)
 
     if rels_before != rels_after:
@@ -160,6 +158,7 @@ def fact_extraction_with_recovery(callback_context: CallbackContext) -> None:
         from beever_atlas.services.json_recovery import (
             recover_truncated_json_with_report,
         )
+
         result, report = recover_truncated_json_with_report(raw)
         recovered = None
         if isinstance(result, dict) and "facts" in result:
@@ -198,7 +197,11 @@ def entity_extraction_with_recovery(callback_context: CallbackContext) -> None:
         from beever_atlas.services.json_recovery import recover_truncated_json_with_report
 
         result, report = recover_truncated_json_with_report(raw)
-        recovered = result if isinstance(result, dict) and ("entities" in result or "relationships" in result) else None
+        recovered = (
+            result
+            if isinstance(result, dict) and ("entities" in result or "relationships" in result)
+            else None
+        )
         logger.warning(
             "truncation_report agent=entity_extractor recovered=%d lost_estimate=%d "
             "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",

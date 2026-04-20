@@ -236,9 +236,7 @@ class BatchPipelineRunner:
             if ingestion_config and ingestion_config.quality_threshold is not None
             else settings.quality_threshold
         )
-        skip_entity_extraction = bool(
-            ingestion_config and ingestion_config.skip_entity_extraction
-        )
+        skip_entity_extraction = bool(ingestion_config and ingestion_config.skip_entity_extraction)
 
         activity_log: list[dict[str, Any]] = []
         stage_timings: dict[str, float] = {}
@@ -259,12 +257,14 @@ class BatchPipelineRunner:
 
         # ── Stage 1: Preprocess ────────────────────────────────────────────
         stage1_label = _STAGE_LABELS["preprocessor"]
-        activity_log.append({
-            "type": "stage_start",
-            "agent": "preprocessor",
-            "stage": stage1_label,
-            "model": None,
-        })
+        activity_log.append(
+            {
+                "type": "stage_start",
+                "agent": "preprocessor",
+                "stage": stage1_label,
+                "model": None,
+            }
+        )
         await _update_progress(stage1_label)
 
         t0 = time.monotonic()
@@ -282,20 +282,17 @@ class BatchPipelineRunner:
                 "max_facts_per_message": _max_facts,
                 "known_entities": known_entities,
                 "skip_entity_extraction": skip_entity_extraction,
-                "skip_graph_writes": bool(
-                    ingestion_config and ingestion_config.skip_graph_writes
-                ),
+                "skip_graph_writes": bool(ingestion_config and ingestion_config.skip_graph_writes),
                 "quality_threshold": quality_threshold,
             },
         )
         stage_timings["preprocessor"] = round(time.monotonic() - t0, 2)
 
-        preprocessed_messages: list[dict] = (
-            preprocess_state.get("preprocessed_messages") or []
-        )
+        preprocessed_messages: list[dict] = preprocess_state.get("preprocessed_messages") or []
 
         # Build detailed preprocessor samples including media agent activity
         import re as _re
+
         preprocess_samples: list[dict[str, Any]] = []
         media_count = 0
         for m in preprocessed_messages[:15]:
@@ -311,95 +308,138 @@ class BatchPipelineRunner:
                 media_count += 1
 
             # Extract media agent observations from enriched text
-            doc_match = _re.search(r'\[Document (?:Digest|text)\]:?\s*(.+)', full_text, _re.DOTALL)
+            doc_match = _re.search(r"\[Document (?:Digest|text)\]:?\s*(.+)", full_text, _re.DOTALL)
             if doc_match:
                 snippet = doc_match.group(1).strip()[:2000]
-                preprocess_samples.append({
-                    "item_type": "media", "agent": "document_digester",
-                    "content": f"{snippet}…",
-                    "model": provider.get_model_string("document_digester"),
-                })
-            img_match = _re.search(r'\[Image description\]:?\s*(.+)', full_text, _re.DOTALL)
+                preprocess_samples.append(
+                    {
+                        "item_type": "media",
+                        "agent": "document_digester",
+                        "content": f"{snippet}…",
+                        "model": provider.get_model_string("document_digester"),
+                    }
+                )
+            img_match = _re.search(r"\[Image description\]:?\s*(.+)", full_text, _re.DOTALL)
             if img_match:
                 snippet = img_match.group(1).strip().split("\n")[0][:500]
-                preprocess_samples.append({
-                    "item_type": "media", "agent": "image_describer",
-                    "content": f"{snippet}…",
-                    "model": provider.get_model_string("image_describer"),
-                })
+                preprocess_samples.append(
+                    {
+                        "item_type": "media",
+                        "agent": "image_describer",
+                        "content": f"{snippet}…",
+                        "model": provider.get_model_string("image_describer"),
+                    }
+                )
             img_meta = None
             if not img_match:
-                img_meta = _re.search(r'\[Attachment:.*?\(image', full_text)
+                img_meta = _re.search(r"\[Attachment:.*?\(image", full_text)
                 if img_meta:
-                    preprocess_samples.append({
-                        "item_type": "media", "agent": "image_describer",
-                        "content": "Vision skipped (message text sufficient)",
-                        "model": provider.get_model_string("image_describer"),
-                        "status": "skipped",
-                    })
-            vid_match = _re.search(r'\[Video (?:summary|transcript|analysis)\]:?\s*(.+)', full_text, _re.DOTALL)
+                    preprocess_samples.append(
+                        {
+                            "item_type": "media",
+                            "agent": "image_describer",
+                            "content": "Vision skipped (message text sufficient)",
+                            "model": provider.get_model_string("image_describer"),
+                            "status": "skipped",
+                        }
+                    )
+            vid_match = _re.search(
+                r"\[Video (?:summary|transcript|analysis)\]:?\s*(.+)", full_text, _re.DOTALL
+            )
             if vid_match:
                 snippet = vid_match.group(1).strip()[:2000]
-                preprocess_samples.append({
-                    "item_type": "media", "agent": "video_analyzer",
-                    "content": f"{snippet}…",
-                    "model": provider.get_model_string("video_analyzer"),
-                })
-            vid_vis = _re.search(r'\[Video visual description\]:?\s*(.+)', full_text, _re.DOTALL)
+                preprocess_samples.append(
+                    {
+                        "item_type": "media",
+                        "agent": "video_analyzer",
+                        "content": f"{snippet}…",
+                        "model": provider.get_model_string("video_analyzer"),
+                    }
+                )
+            vid_vis = _re.search(r"\[Video visual description\]:?\s*(.+)", full_text, _re.DOTALL)
             if vid_vis:
                 snippet = vid_vis.group(1).strip()[:2000]
-                preprocess_samples.append({
-                    "item_type": "media", "agent": "video_analyzer",
-                    "content": f"{snippet}…",
-                    "model": provider.get_model_string("video_analyzer"),
-                })
-            aud_match = _re.search(r'\[Audio (?:summary|transcript)\]:?\s*(.+)', full_text, _re.DOTALL)
+                preprocess_samples.append(
+                    {
+                        "item_type": "media",
+                        "agent": "video_analyzer",
+                        "content": f"{snippet}…",
+                        "model": provider.get_model_string("video_analyzer"),
+                    }
+                )
+            aud_match = _re.search(
+                r"\[Audio (?:summary|transcript)\]:?\s*(.+)", full_text, _re.DOTALL
+            )
             if aud_match:
                 snippet = aud_match.group(1).strip()[:2000]
-                preprocess_samples.append({
-                    "item_type": "media", "agent": "audio_transcriber",
-                    "content": f"{snippet}…",
-                    "model": provider.get_model_string("audio_transcriber"),
-                })
+                preprocess_samples.append(
+                    {
+                        "item_type": "media",
+                        "agent": "audio_transcriber",
+                        "content": f"{snippet}…",
+                        "model": provider.get_model_string("audio_transcriber"),
+                    }
+                )
 
             # Detect failed media agents (timeout or other errors)
             if m.get("modality") == "mixed":
                 # img_meta covers [Attachment: ...] fallbacks when download failed but metadata was preserved
-                has_media_output = bool(doc_match or img_match or img_meta or vid_match or vid_vis or aud_match)
+                has_media_output = bool(
+                    doc_match or img_match or img_meta or vid_match or vid_vis or aud_match
+                )
                 if not has_media_output:
                     media_type = m.get("source_media_type", "")
-                    agent_map = {"pdf": "document_digester", "image": "image_describer", "video": "video_analyzer", "audio": "audio_transcriber"}
-                    model_map = {"pdf": "document_digester", "image": "image_describer", "video": "video_analyzer", "audio": "audio_transcriber"}
+                    agent_map = {
+                        "pdf": "document_digester",
+                        "image": "image_describer",
+                        "video": "video_analyzer",
+                        "audio": "audio_transcriber",
+                    }
+                    model_map = {
+                        "pdf": "document_digester",
+                        "image": "image_describer",
+                        "video": "video_analyzer",
+                        "audio": "audio_transcriber",
+                    }
                     agent = agent_map.get(media_type, "media_processor")
                     model_key = model_map.get(media_type, "document_digester")
                     media_names = m.get("source_media_names", [])
                     file_name = media_names[0] if media_names else "unknown"
                     is_timeout = "processing timed out" in full_text.lower()
-                    preprocess_samples.append({
-                        "item_type": "media",
-                        "agent": agent,
-                        "content": f"Processing timed out for {file_name}" if is_timeout else f"Processing failed for {file_name}",
-                        "model": provider.get_model_string(model_key),
-                        "status": "timeout" if is_timeout else "error",
-                    })
-            preprocess_samples.append({
-                "item_type": "message", "author": author,
-                "content": f"{first_line}{'…' if len(full_text.split(chr(10))[0]) > 200 else ''}",
-                "tags": badges,
-            })
+                    preprocess_samples.append(
+                        {
+                            "item_type": "media",
+                            "agent": agent,
+                            "content": f"Processing timed out for {file_name}"
+                            if is_timeout
+                            else f"Processing failed for {file_name}",
+                            "model": provider.get_model_string(model_key),
+                            "status": "timeout" if is_timeout else "error",
+                        }
+                    )
+            preprocess_samples.append(
+                {
+                    "item_type": "message",
+                    "author": author,
+                    "content": f"{first_line}{'…' if len(full_text.split(chr(10))[0]) > 200 else ''}",
+                    "tags": badges,
+                }
+            )
 
         summary_parts = [f"Retained {len(preprocessed_messages)} messages"]
         if media_count:
             summary_parts.append(f"{media_count} media")
 
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "preprocessor",
-            "message": " · ".join(summary_parts),
-            "metrics": {"messages": len(preprocessed_messages), "media": media_count},
-            "samples": preprocess_samples[:20],
-            "elapsed": stage_timings["preprocessor"],
-        })
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "preprocessor",
+                "message": " · ".join(summary_parts),
+                "metrics": {"messages": len(preprocessed_messages), "media": media_count},
+                "samples": preprocess_samples[:20],
+                "elapsed": stage_timings["preprocessor"],
+            }
+        )
 
         if not preprocessed_messages:
             logger.info(
@@ -421,18 +461,22 @@ class BatchPipelineRunner:
         stage2_label = "Step 2/6 — Extracting facts (Batch API: processing)"
         stage3_label = "Step 3/6 — Extracting entities (Batch API: processing)"
 
-        activity_log.append({
-            "type": "stage_start",
-            "agent": "fact_extractor",
-            "stage": stage2_label,
-            "model": fact_model,
-        })
-        activity_log.append({
-            "type": "stage_start",
-            "agent": "entity_extractor",
-            "stage": stage3_label,
-            "model": entity_model,
-        })
+        activity_log.append(
+            {
+                "type": "stage_start",
+                "agent": "fact_extractor",
+                "stage": stage2_label,
+                "model": fact_model,
+            }
+        )
+        activity_log.append(
+            {
+                "type": "stage_start",
+                "agent": "entity_extractor",
+                "stage": stage3_label,
+                "model": entity_model,
+            }
+        )
         await _update_progress(stage2_label)
 
         fact_prompt = _build_fact_prompt(
@@ -523,14 +567,10 @@ class BatchPipelineRunner:
 
         # Log extraction outputs
         facts_list: list[dict] = (
-            extracted_facts.get("facts", [])
-            if isinstance(extracted_facts, dict)
-            else []
+            extracted_facts.get("facts", []) if isinstance(extracted_facts, dict) else []
         )
         entities_list: list[dict] = (
-            extracted_entities.get("entities", [])
-            if isinstance(extracted_entities, dict)
-            else []
+            extracted_entities.get("entities", []) if isinstance(extracted_entities, dict) else []
         )
         rels_list: list[dict] = (
             extracted_entities.get("relationships", [])
@@ -543,49 +583,58 @@ class BatchPipelineRunner:
             if facts_list
             else 0.0
         )
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "fact_extractor",
-            "message": f"Extracted {len(facts_list)} facts (avg quality {avg_quality:.2f})",
-            "model": fact_model,
-            "metrics": {
-                "count": len(facts_list),
-                "avg_quality": float(f"{avg_quality:.2f}"),
-            },
-            "samples": [
-                {
-                    "item_type": "fact",
-                    "content": (f.get("memory_text") or "")[:300],
-                    "score": f.get("quality_score", 0),
-                    "tags": [f.get("importance", "?")],
-                }
-                for f in facts_list[:5]
-            ],
-            "elapsed": extract_elapsed,
-        })
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "entity_extractor",
-            "message": f"Found {len(entities_list)} entities, {len(rels_list)} relationships",
-            "model": entity_model,
-            "metrics": {
-                "entities": len(entities_list),
-                "relationships": len(rels_list),
-            },
-            "samples": [
-                {"item_type": "entity", "content": e.get("name", "?"), "tags": [e.get("type", "?")]}
-                for e in entities_list[:8]
-            ] + [
-                {
-                    "item_type": "relationship",
-                    "source": r.get("source", "?"),
-                    "rel_type": r.get("type", "?"),
-                    "target": r.get("target", "?"),
-                }
-                for r in rels_list[:5]
-            ],
-            "elapsed": extract_elapsed,
-        })
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "fact_extractor",
+                "message": f"Extracted {len(facts_list)} facts (avg quality {avg_quality:.2f})",
+                "model": fact_model,
+                "metrics": {
+                    "count": len(facts_list),
+                    "avg_quality": float(f"{avg_quality:.2f}"),
+                },
+                "samples": [
+                    {
+                        "item_type": "fact",
+                        "content": (f.get("memory_text") or "")[:300],
+                        "score": f.get("quality_score", 0),
+                        "tags": [f.get("importance", "?")],
+                    }
+                    for f in facts_list[:5]
+                ],
+                "elapsed": extract_elapsed,
+            }
+        )
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "entity_extractor",
+                "message": f"Found {len(entities_list)} entities, {len(rels_list)} relationships",
+                "model": entity_model,
+                "metrics": {
+                    "entities": len(entities_list),
+                    "relationships": len(rels_list),
+                },
+                "samples": [
+                    {
+                        "item_type": "entity",
+                        "content": e.get("name", "?"),
+                        "tags": [e.get("type", "?")],
+                    }
+                    for e in entities_list[:8]
+                ]
+                + [
+                    {
+                        "item_type": "relationship",
+                        "source": r.get("source", "?"),
+                        "rel_type": r.get("type", "?"),
+                        "target": r.get("target", "?"),
+                    }
+                    for r in rels_list[:5]
+                ],
+                "elapsed": extract_elapsed,
+            }
+        )
 
         # ── Stage 3: Quality Gates ─────────────────────────────────────────
         extracted_facts = _apply_fact_quality_gate(extracted_facts, quality_threshold)
@@ -598,12 +647,14 @@ class BatchPipelineRunner:
 
         # ── Stage 4: Enrich ────────────────────────────────────────────────
         stage4_label = _STAGE_LABELS["embedder"]
-        activity_log.append({
-            "type": "stage_start",
-            "agent": "embedder",
-            "stage": stage4_label,
-            "model": provider.embedding_model,
-        })
+        activity_log.append(
+            {
+                "type": "stage_start",
+                "agent": "embedder",
+                "stage": stage4_label,
+                "model": provider.embedding_model,
+            }
+        )
         await _update_progress(stage4_label)
 
         t_enrich = time.monotonic()
@@ -624,9 +675,7 @@ class BatchPipelineRunner:
                 "sync_job_id": sync_job_id,
                 "known_entities": known_entities,
                 "skip_entity_extraction": skip_entity_extraction,
-                "skip_graph_writes": bool(
-                    ingestion_config and ingestion_config.skip_graph_writes
-                ),
+                "skip_graph_writes": bool(ingestion_config and ingestion_config.skip_graph_writes),
             },
         )
         enrich_elapsed = round(time.monotonic() - t_enrich, 2)
@@ -636,59 +685,62 @@ class BatchPipelineRunner:
         embedded_facts: list[dict] = enrich_state.get("embedded_facts") or []
         validated_entities: dict[str, Any] = enrich_state.get("validated_entities") or {}
 
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "embedder",
-            "message": f"Embedded {len(embedded_facts)} facts",
-            "model": provider.embedding_model,
-            "metrics": {"embedded": len(embedded_facts)},
-            "elapsed": enrich_elapsed,
-        })
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "embedder",
+                "message": f"Embedded {len(embedded_facts)} facts",
+                "model": provider.embedding_model,
+                "metrics": {"embedded": len(embedded_facts)},
+                "elapsed": enrich_elapsed,
+            }
+        )
 
         validated_ents: list[dict] = (
-            validated_entities.get("entities", [])
-            if isinstance(validated_entities, dict)
-            else []
+            validated_entities.get("entities", []) if isinstance(validated_entities, dict) else []
         )
         validated_merges: list[dict] = (
-            validated_entities.get("merges", [])
-            if isinstance(validated_entities, dict)
-            else []
+            validated_entities.get("merges", []) if isinstance(validated_entities, dict) else []
         )
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "cross_batch_validator_agent",
-            "message": (
-                f"Validated {len(validated_ents)} entities"
-                + (f", {len(validated_merges)} merges" if validated_merges else "")
-            ),
-            "model": provider.get_model_string("cross_batch_validator_agent"),
-            "metrics": {
-                "entities": len(validated_ents),
-                "merges": len(validated_merges),
-            },
-            "samples": [
-                {
-                    "item_type": "validation",
-                    "content": (
-                        f"{', '.join(mg['merged_from']) if isinstance(mg.get('merged_from'), list) else mg.get('merged_from', '?')}"
-                        f" → {mg.get('canonical', '?')}"
-                    ),
-                }
-                for mg in validated_merges[:5]
-            ] or None,
-            "elapsed": enrich_elapsed,
-        })
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "cross_batch_validator_agent",
+                "message": (
+                    f"Validated {len(validated_ents)} entities"
+                    + (f", {len(validated_merges)} merges" if validated_merges else "")
+                ),
+                "model": provider.get_model_string("cross_batch_validator_agent"),
+                "metrics": {
+                    "entities": len(validated_ents),
+                    "merges": len(validated_merges),
+                },
+                "samples": [
+                    {
+                        "item_type": "validation",
+                        "content": (
+                            f"{', '.join(mg['merged_from']) if isinstance(mg.get('merged_from'), list) else mg.get('merged_from', '?')}"
+                            f" → {mg.get('canonical', '?')}"
+                        ),
+                    }
+                    for mg in validated_merges[:5]
+                ]
+                or None,
+                "elapsed": enrich_elapsed,
+            }
+        )
         await _update_progress(_STAGE_LABELS["cross_batch_validator_agent"])
 
         # ── Stage 5: Persist ───────────────────────────────────────────────
         stage6_label = _STAGE_LABELS["persister"]
-        activity_log.append({
-            "type": "stage_start",
-            "agent": "persister",
-            "stage": stage6_label,
-            "model": None,
-        })
+        activity_log.append(
+            {
+                "type": "stage_start",
+                "agent": "persister",
+                "stage": stage6_label,
+                "model": None,
+            }
+        )
         await _update_progress(stage6_label)
 
         t_persist = time.monotonic()
@@ -704,9 +756,7 @@ class BatchPipelineRunner:
                 "channel_name": channel_name,
                 "batch_num": batch_num,
                 "sync_job_id": sync_job_id,
-                "skip_graph_writes": bool(
-                    ingestion_config and ingestion_config.skip_graph_writes
-                ),
+                "skip_graph_writes": bool(ingestion_config and ingestion_config.skip_graph_writes),
             },
         )
         stage_timings["persister"] = round(time.monotonic() - t_persist, 2)
@@ -716,20 +766,22 @@ class BatchPipelineRunner:
         neo_count = persist_result.get("entity_count") or 0
         rel_count = persist_result.get("relationship_count") or 0
 
-        activity_log.append({
-            "type": "stage_output",
-            "agent": "persister",
-            "message": (
-                f"Saved {wv_count} facts → Weaviate, "
-                f"{neo_count} entities + {rel_count} rels → Neo4j"
-            ),
-            "metrics": {
-                "weaviate_facts": wv_count,
-                "neo4j_entities": neo_count,
-                "neo4j_rels": rel_count,
-            },
-            "elapsed": stage_timings["persister"],
-        })
+        activity_log.append(
+            {
+                "type": "stage_output",
+                "agent": "persister",
+                "message": (
+                    f"Saved {wv_count} facts → Weaviate, "
+                    f"{neo_count} entities + {rel_count} rels → Neo4j"
+                ),
+                "metrics": {
+                    "weaviate_facts": wv_count,
+                    "neo4j_entities": neo_count,
+                    "neo4j_rels": rel_count,
+                },
+                "elapsed": stage_timings["persister"],
+            }
+        )
 
         # ── Final progress flush ───────────────────────────────────────────
         await stores.mongodb.update_sync_progress(
@@ -744,25 +796,17 @@ class BatchPipelineRunner:
 
         # ── Populate breakdown ─────────────────────────────────────────────
         filtered_facts_list: list[dict] = (
-            extracted_facts.get("facts", [])
-            if isinstance(extracted_facts, dict)
-            else []
+            extracted_facts.get("facts", []) if isinstance(extracted_facts, dict) else []
         )
         breakdown.facts_count = wv_count
         breakdown.entities_count = neo_count
         breakdown.relationships_count = rel_count
         breakdown.facts_stored = wv_count
-        breakdown.sample_facts = [
-            f.get("memory_text", "")[:120]
-            for f in filtered_facts_list[:3]
-        ]
+        breakdown.sample_facts = [f.get("memory_text", "")[:120] for f in filtered_facts_list[:3]]
         breakdown.sample_entities = [
-            {"name": e.get("name", ""), "type": e.get("type", "")}
-            for e in validated_ents[:3]
+            {"name": e.get("name", ""), "type": e.get("type", "")} for e in validated_ents[:3]
         ]
-        breakdown.duration_seconds = round(
-            sum(stage_timings.values()), 2
-        )
+        breakdown.duration_seconds = round(sum(stage_timings.values()), 2)
 
         logger.info(
             "batch_pipeline: batch %d/%d complete job_id=%s facts=%d entities=%d rels=%d",
@@ -910,9 +954,8 @@ class BatchPipelineRunner:
                 merged.sample_entities = (
                     breakdown_a.sample_entities + breakdown_b.sample_entities
                 )[:3]
-                merged.duration_seconds = (
-                    (breakdown_a.duration_seconds or 0.0)
-                    + (breakdown_b.duration_seconds or 0.0)
+                merged.duration_seconds = (breakdown_a.duration_seconds or 0.0) + (
+                    breakdown_b.duration_seconds or 0.0
                 )
                 return merged
 

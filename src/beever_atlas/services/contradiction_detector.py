@@ -46,10 +46,13 @@ async def detect_contradictions(
         from beever_atlas.agents.runner import run_agent
 
         agent = create_contradiction_detector()
-        state = await run_agent(agent, state={
-            "new_fact": new_fact_text,
-            "existing_facts": "\n".join(existing_lines),
-        })
+        state = await run_agent(
+            agent,
+            state={
+                "new_fact": new_fact_text,
+                "existing_facts": "\n".join(existing_lines),
+            },
+        )
 
         report = state.get("contradiction_report") or {}
         return report.get("contradictions") or [] if isinstance(report, dict) else []

@@ -48,10 +48,7 @@ class WikiDataGatherer:
         cluster_facts: dict = {}
         if clusters:
             member_lists = await asyncio.gather(
-                *[
-                    self._weaviate.fetch_all_cluster_members(channel_id, c.id)
-                    for c in clusters
-                ]
+                *[self._weaviate.fetch_all_cluster_members(channel_id, c.id) for c in clusters]
             )
             cluster_facts = {c.id: members for c, members in zip(clusters, member_lists)}
 

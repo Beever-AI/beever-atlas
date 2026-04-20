@@ -262,9 +262,7 @@ async def test_nebula_mapping_conflict():
     store._space = "s"  # type: ignore[attr-defined]
 
     async def boom(*_a: Any, **_kw: Any) -> None:
-        raise RuntimeError(
-            "nGQL error: Vertex existed | query: INSERT VERTEX ..."
-        )
+        raise RuntimeError("nGQL error: Vertex existed | query: INSERT VERTEX ...")
 
     with patch.object(NebulaStore, "_execute_with_space", side_effect=boom):
         with pytest.raises(GraphConflict):

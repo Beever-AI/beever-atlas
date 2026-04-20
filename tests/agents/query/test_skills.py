@@ -53,9 +53,7 @@ def test_description_length() -> None:
     for s in build_qa_skill_pack():
         desc = s.frontmatter.description
         assert desc, f"skill {s.frontmatter.name} has empty description"
-        assert len(desc) <= 1024, (
-            f"{s.frontmatter.name} description is {len(desc)} chars (>1024)"
-        )
+        assert len(desc) <= 1024, f"{s.frontmatter.name} description is {len(desc)} chars (>1024)"
 
 
 def test_allowed_tools_exist_in_registry() -> None:

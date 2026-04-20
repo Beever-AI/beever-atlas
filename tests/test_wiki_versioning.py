@@ -21,6 +21,7 @@ def _install_mock_stores(mock_stores):
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+
 class AsyncCursorMock:
     """Mock for Motor async cursors that supports async iteration and chaining."""
 
@@ -53,7 +54,12 @@ def _make_wiki_doc(channel_id: str = "C001", channel_name: str = "general") -> d
         "structure": {"channel_id": channel_id, "pages": []},
         "overview": {"id": "overview", "slug": "overview", "title": "Overview", "content": "Hello"},
         "pages": {
-            "overview": {"id": "overview", "slug": "overview", "title": "Overview", "content": "Hello"},
+            "overview": {
+                "id": "overview",
+                "slug": "overview",
+                "title": "Overview",
+                "content": "Hello",
+            },
             "people": {"id": "people", "slug": "people", "title": "People", "content": "Team"},
         },
         "metadata": {"page_count": 2, "model": "gemini-2.5-flash"},
@@ -61,6 +67,7 @@ def _make_wiki_doc(channel_id: str = "C001", channel_name: str = "general") -> d
 
 
 # ── WikiVersionStore unit tests ──────────────────────────────────────────
+
 
 class TestWikiVersionStoreArchive:
     """Tests for WikiVersionStore.archive()."""
@@ -146,9 +153,9 @@ class TestWikiVersionStoreCleanup:
         s, col = store
         col.count_documents = AsyncMock(return_value=12)
 
-        col.find = MagicMock(return_value=AsyncCursorMock(
-            [{"version_number": 1}, {"version_number": 2}]
-        ))
+        col.find = MagicMock(
+            return_value=AsyncCursorMock([{"version_number": 1}, {"version_number": 2}])
+        )
 
         mock_delete_result = MagicMock()
         mock_delete_result.deleted_count = 2
@@ -177,8 +184,22 @@ class TestWikiVersionStoreQueries:
     async def test_list_versions(self, store):
         s, col = store
         versions = [
-            {"version_number": 2, "channel_id": "C001", "generated_at": "2026-01-02", "archived_at": "2026-01-03", "page_count": 5, "model": "flash"},
-            {"version_number": 1, "channel_id": "C001", "generated_at": "2026-01-01", "archived_at": "2026-01-02", "page_count": 3, "model": "flash"},
+            {
+                "version_number": 2,
+                "channel_id": "C001",
+                "generated_at": "2026-01-02",
+                "archived_at": "2026-01-03",
+                "page_count": 5,
+                "model": "flash",
+            },
+            {
+                "version_number": 1,
+                "channel_id": "C001",
+                "generated_at": "2026-01-01",
+                "archived_at": "2026-01-02",
+                "page_count": 3,
+                "model": "flash",
+            },
         ]
         col.find = MagicMock(return_value=AsyncCursorMock(list(versions)))
 
@@ -206,7 +227,9 @@ class TestWikiVersionStoreQueries:
     @pytest.mark.anyio
     async def test_get_version_page_found(self, store):
         s, col = store
-        col.find_one = AsyncMock(return_value={"pages": {"overview": {"id": "overview", "title": "Overview"}}})
+        col.find_one = AsyncMock(
+            return_value={"pages": {"overview": {"id": "overview", "title": "Overview"}}}
+        )
 
         result = await s.get_version_page("C001", 1, "overview")
         assert result is not None
@@ -231,14 +254,17 @@ class TestWikiVersionStoreQueries:
 
 # ── WikiCache archive-on-save integration ────────────────────────────────
 
+
 class TestWikiCacheArchiveOnSave:
     """Tests for the archive step in WikiCache.save_wiki()."""
 
     @pytest.mark.anyio
     async def test_save_archives_existing_wiki(self):
         """When an existing wiki is present, save_wiki should archive it first."""
-        with patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client, \
-             patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls:
+        with (
+            patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client,
+            patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls,
+        ):
             mock_db = MagicMock()
             mock_collection = AsyncMock()
             mock_status_collection = AsyncMock()
@@ -257,6 +283,7 @@ class TestWikiCacheArchiveOnSave:
             mock_vs_cls.return_value = mock_vs
 
             from beever_atlas.wiki.cache import WikiCache
+
             cache = WikiCache("mongodb://localhost:27017/test")
 
             existing_wiki = _make_wiki_doc()
@@ -267,7 +294,9 @@ class TestWikiCacheArchiveOnSave:
             await cache.save_wiki("C001", new_wiki)
 
             mock_vs.archive.assert_called_once_with(
-                "C001", existing_wiki, target_lang="en",
+                "C001",
+                existing_wiki,
+                target_lang="en",
             )
             mock_vs.cleanup.assert_called_once_with("C001")
             mock_collection.update_one.assert_called_once()
@@ -275,8 +304,10 @@ class TestWikiCacheArchiveOnSave:
     @pytest.mark.anyio
     async def test_save_skips_archive_when_no_existing(self):
         """When no existing wiki, save_wiki should not call archive."""
-        with patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client, \
-             patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls:
+        with (
+            patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client,
+            patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls,
+        ):
             mock_db = MagicMock()
             mock_collection = AsyncMock()
             mock_status_collection = AsyncMock()
@@ -293,6 +324,7 @@ class TestWikiCacheArchiveOnSave:
             mock_vs_cls.return_value = mock_vs
 
             from beever_atlas.wiki.cache import WikiCache
+
             cache = WikiCache("mongodb://localhost:27017/test")
 
             mock_collection.find_one = AsyncMock(return_value=None)
@@ -307,8 +339,10 @@ class TestWikiCacheArchiveOnSave:
     @pytest.mark.anyio
     async def test_save_continues_on_archive_failure(self):
         """If archive throws, save_wiki should still save the new wiki."""
-        with patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client, \
-             patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls:
+        with (
+            patch("beever_atlas.wiki.cache.AsyncIOMotorClient") as mock_client,
+            patch("beever_atlas.wiki.cache.WikiVersionStore") as mock_vs_cls,
+        ):
             mock_db = MagicMock()
             mock_collection = AsyncMock()
             mock_status_collection = AsyncMock()
@@ -326,6 +360,7 @@ class TestWikiCacheArchiveOnSave:
             mock_vs_cls.return_value = mock_vs
 
             from beever_atlas.wiki.cache import WikiCache
+
             cache = WikiCache("mongodb://localhost:27017/test")
 
             existing_wiki = _make_wiki_doc()
@@ -341,6 +376,7 @@ class TestWikiCacheArchiveOnSave:
 
 # ── API endpoint tests ───────────────────────────────────────────────────
 
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -349,6 +385,7 @@ def anyio_backend():
 @pytest.fixture
 async def client():
     from beever_atlas.server.app import app
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -372,8 +409,22 @@ class TestWikiVersionEndpoints:
     @pytest.mark.anyio
     async def test_list_versions_with_data(self, client):
         versions = [
-            {"version_number": 2, "channel_id": "C001", "generated_at": "2026-01-02", "archived_at": "2026-01-03", "page_count": 5, "model": "flash"},
-            {"version_number": 1, "channel_id": "C001", "generated_at": "2026-01-01", "archived_at": "2026-01-02", "page_count": 3, "model": "flash"},
+            {
+                "version_number": 2,
+                "channel_id": "C001",
+                "generated_at": "2026-01-02",
+                "archived_at": "2026-01-03",
+                "page_count": 5,
+                "model": "flash",
+            },
+            {
+                "version_number": 1,
+                "channel_id": "C001",
+                "generated_at": "2026-01-01",
+                "archived_at": "2026-01-02",
+                "page_count": 3,
+                "model": "flash",
+            },
         ]
         mock_cache = AsyncMock()
         mock_vs = AsyncMock()

@@ -65,6 +65,7 @@ async def _get_gemini_client() -> Any:
     async with lock:
         if _gemini_client is None:
             from google import genai
+
             settings = get_settings()
             _gemini_client = genai.Client(api_key=settings.google_api_key)
         return _gemini_client
@@ -90,14 +91,13 @@ async def _poll_file_active(
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    raise TimeoutError(
-        f"File {file_name} did not reach ACTIVE state within {max_wait}s"
-    )
+    raise TimeoutError(f"File {file_name} did not reach ACTIVE state within {max_wait}s")
 
 
 @dataclass
 class MediaContent:
     """Result of media extraction."""
+
     text: str = ""
     media_urls: list[str] = field(default_factory=list)
     media_type: str = ""
@@ -169,9 +169,7 @@ class MediaExtractorRegistry:
         for ext in extractor.supported_extensions:
             self._ext_map[ext.lower()] = extractor
 
-    def get_extractor(
-        self, mimetype: str = "", filename: str = ""
-    ) -> MediaExtractor | None:
+    def get_extractor(self, mimetype: str = "", filename: str = "") -> MediaExtractor | None:
         """Find an extractor by MIME type or file extension."""
         if mimetype:
             extractor = self._mime_map.get(mimetype.lower())
@@ -219,6 +217,7 @@ class PdfExtractor(MediaExtractor):
         self, data: bytes, filename: str, metadata: dict[str, Any] | None = None
     ) -> MediaContent:
         from beever_atlas.infra.config import get_settings
+
         settings = get_settings()
 
         pages = await asyncio.to_thread(self._extract_pages, data, settings.pdf_max_pages)
@@ -235,10 +234,7 @@ class PdfExtractor(MediaExtractor):
 
         if settings.media_digest_enabled:
             digest_content = await self._digest_document(full_text)
-            desc = (
-                f"{header}\n"
-                f"[Document Digest]:\n{digest_content}"
-            )
+            desc = f"{header}\n[Document Digest]:\n{digest_content}"
         else:
             # Skip LLM digestion — return truncated raw text for speed
             truncated = full_text[:4000]
@@ -256,6 +252,7 @@ class PdfExtractor(MediaExtractor):
         """Extract text from each page independently. Returns one string per page."""
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(io.BytesIO(data))
             pages: list[str] = []
             total = len(reader.pages)
@@ -291,7 +288,11 @@ class ImageExtractor(MediaExtractor):
     @property
     def supported_mime_types(self) -> list[str]:
         return [
-            "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/gif",
+            "image/webp",
         ]
 
     @property
@@ -338,9 +339,7 @@ class ImageExtractor(MediaExtractor):
         "webp": "image/webp",
     }
 
-    async def _describe_image(
-        self, data: bytes, message_context: str, filename: str = ""
-    ) -> str:
+    async def _describe_image(self, data: bytes, message_context: str, filename: str = "") -> str:
         """Describe an image using direct Gemini API with multimodal parts."""
         settings = get_settings()
         if not settings.google_api_key:
@@ -360,7 +359,9 @@ class ImageExtractor(MediaExtractor):
 
             logger.info(
                 "ImageExtractor: calling generate_content for %s (%s, %d bytes)",
-                filename, mime_type, len(data),
+                filename,
+                mime_type,
+                len(data),
             )
             async with _get_image_semaphore():
                 async with GEMINI_LIMITER:
@@ -385,7 +386,8 @@ class ImageExtractor(MediaExtractor):
             result = response.text or ""
             logger.info(
                 "ImageExtractor: result for %s — %d chars",
-                filename, len(result),
+                filename,
+                len(result),
             )
             return result
         except Exception:
@@ -459,6 +461,7 @@ class OfficeExtractor(MediaExtractor):
     @staticmethod
     def _extract_docx(data: bytes, max_chars: int) -> str:
         from docx import Document
+
         doc = Document(io.BytesIO(data))
         parts: list[str] = []
         char_count = 0
@@ -479,6 +482,7 @@ class OfficeExtractor(MediaExtractor):
     @staticmethod
     def _extract_xlsx(data: bytes, max_chars: int) -> str:
         from openpyxl import load_workbook
+
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         parts: list[str] = []
         char_count = 0
@@ -502,6 +506,7 @@ class OfficeExtractor(MediaExtractor):
     @staticmethod
     def _extract_pptx(data: bytes, max_chars: int) -> str:
         from pptx import Presentation
+
         prs = Presentation(io.BytesIO(data))
         parts: list[str] = []
         char_count = 0
@@ -574,11 +579,21 @@ class VideoExtractor(MediaExtractor):
             from google.genai import types as genai_types
 
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp4"
-            mime_map = {"mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm", "avi": "video/x-msvideo"}
+            mime_map = {
+                "mp4": "video/mp4",
+                "mov": "video/quicktime",
+                "webm": "video/webm",
+                "avi": "video/x-msvideo",
+            }
             mime_type = mime_map.get(ext, "video/mp4")
 
             # Upload via Files API
-            logger.info("VideoExtractor: uploading %s (%s, %.1f MB)", filename, mime_type, len(data) / (1024 * 1024))
+            logger.info(
+                "VideoExtractor: uploading %s (%s, %.1f MB)",
+                filename,
+                mime_type,
+                len(data) / (1024 * 1024),
+            )
             uploaded = await asyncio.wait_for(
                 client.aio.files.upload(
                     file=io.BytesIO(data),
@@ -587,7 +602,12 @@ class VideoExtractor(MediaExtractor):
                 timeout=60,
             )
             file_uri: str = uploaded.uri or ""
-            logger.info("VideoExtractor: uploaded %s → %s (state=%s)", filename, uploaded.name, uploaded.state)
+            logger.info(
+                "VideoExtractor: uploaded %s → %s (state=%s)",
+                filename,
+                uploaded.name,
+                uploaded.state,
+            )
 
             # Poll until file is ready for use
             await _poll_file_active(client, uploaded.name)
@@ -634,7 +654,9 @@ class VideoExtractor(MediaExtractor):
 
         current_section = ""
         section_lines: dict[str, list[str]] = {
-            "transcript": [], "translation": [], "visual": [],
+            "transcript": [],
+            "translation": [],
+            "visual": [],
         }
 
         for line in text.split("\n"):
@@ -643,7 +665,7 @@ class VideoExtractor(MediaExtractor):
             if upper.startswith("TRANSCRIPT:"):
                 current_section = "transcript"
                 # Capture inline content after the label
-                rest = stripped[len("TRANSCRIPT:"):].strip()
+                rest = stripped[len("TRANSCRIPT:") :].strip()
                 if rest:
                     section_lines["transcript"].append(rest)
             elif upper.startswith("TRANSLATION"):
@@ -676,8 +698,14 @@ class AudioExtractor(MediaExtractor):
     @property
     def supported_mime_types(self) -> list[str]:
         return [
-            "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
-            "audio/mp4", "audio/m4a", "audio/ogg", "audio/x-m4a",
+            "audio/mpeg",
+            "audio/mp3",
+            "audio/wav",
+            "audio/x-wav",
+            "audio/mp4",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/x-m4a",
         ]
 
     @property
@@ -708,7 +736,13 @@ class AudioExtractor(MediaExtractor):
             from google.genai import types as genai_types
 
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
-            mime_map = {"mp3": "audio/mpeg", "wav": "audio/wav", "m4a": "audio/mp4", "ogg": "audio/ogg", "flac": "audio/flac"}
+            mime_map = {
+                "mp3": "audio/mpeg",
+                "wav": "audio/wav",
+                "m4a": "audio/mp4",
+                "ogg": "audio/ogg",
+                "flac": "audio/flac",
+            }
             mime_type = mime_map.get(ext, "audio/mpeg")
 
             # Upload via Files API
@@ -721,7 +755,12 @@ class AudioExtractor(MediaExtractor):
                 timeout=60,
             )
             file_uri: str = uploaded.uri or ""
-            logger.info("AudioExtractor: uploaded %s → %s (state=%s)", filename, uploaded.name, uploaded.state)
+            logger.info(
+                "AudioExtractor: uploaded %s → %s (state=%s)",
+                filename,
+                uploaded.name,
+                uploaded.state,
+            )
 
             # Poll until file is ready for use
             await _poll_file_active(client, uploaded.name)
@@ -747,7 +786,9 @@ class AudioExtractor(MediaExtractor):
                     timeout=60,
                 )
             if response.text:
-                logger.info("AudioExtractor: result for %s — %d chars", filename, len(response.text))
+                logger.info(
+                    "AudioExtractor: result for %s — %d chars", filename, len(response.text)
+                )
                 parts.append(f"[Audio summary]: {response.text}")
             else:
                 logger.warning("AudioExtractor: empty response for %s", filename)
@@ -775,7 +816,7 @@ class AudioExtractor(MediaExtractor):
             upper = stripped.upper()
             if upper.startswith("TRANSCRIPT:"):
                 current_section = "transcript"
-                rest = stripped[len("TRANSCRIPT:"):].strip()
+                rest = stripped[len("TRANSCRIPT:") :].strip()
                 if rest:
                     section_lines["transcript"].append(rest)
             elif upper.startswith("TRANSLATION"):

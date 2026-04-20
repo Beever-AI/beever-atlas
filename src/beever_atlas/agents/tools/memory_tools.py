@@ -75,7 +75,10 @@ async def search_qa_history(channel_id: str, query: str, limit: int = 5) -> list
         try:
             query_vector = await _embed_query(query)
         except Exception:
-            logger.warning("search_qa_history: embedding failed, using bm25 fallback for channel=%s", channel_id)
+            logger.warning(
+                "search_qa_history: embedding failed, using bm25 fallback for channel=%s",
+                channel_id,
+            )
             query_vector = None
         results = await store.search_qa_history(
             channel_id=channel_id, query=query, limit=limit, query_vector=query_vector
@@ -209,25 +212,29 @@ async def search_channel_facts(
                         continue
                 except (ValueError, TypeError):
                     pass
-            candidates.append({
-                "text": fact.memory_text,
-                "author": fact.author_name,
-                "author_id": fact.author_id,
-                "channel_id": fact.channel_id,
-                "channel_name": await resolve_channel_name(fact.channel_id),
-                "platform": fact.platform,
-                "message_ts": fact.message_ts,
-                "timestamp": _format_timestamp(fact.message_ts),
-                "permalink": fact.source_message_id,
-                "importance": fact.importance,
-                "confidence": round(fact.quality_score / 10.0, 2) if fact.quality_score else 0.5,
-                "fact_id": fact.id,
-                "topic_tags": fact.topic_tags,
-                "media_urls": fact.source_media_urls or [],
-                "media_type": fact.source_media_type or "",
-                "link_urls": fact.source_link_urls or [],
-                "link_titles": fact.source_link_titles or [],
-            })
+            candidates.append(
+                {
+                    "text": fact.memory_text,
+                    "author": fact.author_name,
+                    "author_id": fact.author_id,
+                    "channel_id": fact.channel_id,
+                    "channel_name": await resolve_channel_name(fact.channel_id),
+                    "platform": fact.platform,
+                    "message_ts": fact.message_ts,
+                    "timestamp": _format_timestamp(fact.message_ts),
+                    "permalink": fact.source_message_id,
+                    "importance": fact.importance,
+                    "confidence": round(fact.quality_score / 10.0, 2)
+                    if fact.quality_score
+                    else 0.5,
+                    "fact_id": fact.id,
+                    "topic_tags": fact.topic_tags,
+                    "media_urls": fact.source_media_urls or [],
+                    "media_type": fact.source_media_type or "",
+                    "link_urls": fact.source_link_urls or [],
+                    "link_titles": fact.source_link_titles or [],
+                }
+            )
 
         if not _mmr_logged and len(candidates) > limit:
             logger.info(
@@ -302,20 +309,24 @@ async def search_media_references(
             if media_type is None and not (has_images or has_links):
                 continue
 
-            output.append({
-                "text": fact.memory_text,
-                "media_urls": fact.source_media_urls or [],
-                "link_urls": fact.source_link_urls or [],
-                "link_titles": fact.source_link_titles or [],
-                "author": fact.author_name,
-                "channel_id": fact.channel_id,
-                "channel_name": await resolve_channel_name(fact.channel_id) if fact.channel_id else "",
-                "platform": fact.platform,
-                "message_ts": fact.message_ts,
-                "timestamp": _format_timestamp(fact.message_ts),
-                "media_type": fact.source_media_type or "unknown",
-                "fact_id": fact.id,
-            })
+            output.append(
+                {
+                    "text": fact.memory_text,
+                    "media_urls": fact.source_media_urls or [],
+                    "link_urls": fact.source_link_urls or [],
+                    "link_titles": fact.source_link_titles or [],
+                    "author": fact.author_name,
+                    "channel_id": fact.channel_id,
+                    "channel_name": await resolve_channel_name(fact.channel_id)
+                    if fact.channel_id
+                    else "",
+                    "platform": fact.platform,
+                    "message_ts": fact.message_ts,
+                    "timestamp": _format_timestamp(fact.message_ts),
+                    "media_type": fact.source_media_type or "unknown",
+                    "fact_id": fact.id,
+                }
+            )
             if len(output) >= limit:
                 break
         return output
@@ -376,19 +387,23 @@ async def get_recent_activity(
                     ts = float(fact.message_ts)
                     fact_dt = datetime.fromtimestamp(ts, tz=UTC)
                     if fact_dt >= cutoff:
-                        output.append({
-                            "text": fact.memory_text,
-                            "author": fact.author_name,
-                            "author_id": fact.author_id,
-                            "channel_id": fact.channel_id,
-                            "channel_name": await resolve_channel_name(fact.channel_id) if hasattr(fact, "channel_id") and fact.channel_id else "",
-                            "platform": getattr(fact, "platform", "slack"),
-                            "message_ts": fact.message_ts,
-                            "timestamp": _format_timestamp(fact.message_ts),
-                            "importance": fact.importance,
-                            "topic_tags": fact.topic_tags,
-                            "fact_id": fact.id,
-                        })
+                        output.append(
+                            {
+                                "text": fact.memory_text,
+                                "author": fact.author_name,
+                                "author_id": fact.author_id,
+                                "channel_id": fact.channel_id,
+                                "channel_name": await resolve_channel_name(fact.channel_id)
+                                if hasattr(fact, "channel_id") and fact.channel_id
+                                else "",
+                                "platform": getattr(fact, "platform", "slack"),
+                                "message_ts": fact.message_ts,
+                                "timestamp": _format_timestamp(fact.message_ts),
+                                "importance": fact.importance,
+                                "topic_tags": fact.topic_tags,
+                                "fact_id": fact.id,
+                            }
+                        )
                 except (ValueError, TypeError):
                     pass
 

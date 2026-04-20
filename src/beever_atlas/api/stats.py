@@ -50,6 +50,7 @@ async def get_sync_history(
         await assert_channel_access(principal, channel_id)
     stores = get_stores()
     events = await stores.mongodb.get_sync_history(
-        channel_id=channel_id, limit=limit,
+        channel_id=channel_id,
+        limit=limit,
     )
     return [e if isinstance(e, dict) else e.model_dump() for e in events]

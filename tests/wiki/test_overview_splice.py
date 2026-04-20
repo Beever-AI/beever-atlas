@@ -115,10 +115,18 @@ def test_splice_skips_sections_with_no_data():
 
 
 def test_splice_noop_on_empty_content():
-    assert _splice_overview_sections(
-        "", channel_summary=_make_summary(), clusters=[], tech_data=[],
-        project_data=[], decisions_count=0, skipped_topics=[],
-    ) == ""
+    assert (
+        _splice_overview_sections(
+            "",
+            channel_summary=_make_summary(),
+            clusters=[],
+            tech_data=[],
+            project_data=[],
+            decisions_count=0,
+            skipped_topics=[],
+        )
+        == ""
+    )
 
 
 def test_splice_recognizes_heading_aliases():

@@ -20,8 +20,7 @@ from beever_atlas.services.json_recovery import recover_truncated_json
 
 _GOOD_DOC = {
     "facts": [
-        {"id": i, "text": f"fact number {i}", "quality_score": 0.5 + i * 0.01}
-        for i in range(12)
+        {"id": i, "text": f"fact number {i}", "quality_score": 0.5 + i * 0.01} for i in range(12)
     ],
     "meta": {"source": "llm", "model": "gemini-2.5-flash"},
 }
@@ -49,9 +48,7 @@ def test_truncation_at_any_offset_is_safe(offset: int) -> None:
                 )
 
 
-_POISON_SUBSTRINGS = st.sampled_from(
-    ["}, ", "}]", "},", " }]", "}, {", "}]}"]
-)
+_POISON_SUBSTRINGS = st.sampled_from(["}, ", "}]", "},", " }]", "}, {", "}]}"])
 
 
 @given(

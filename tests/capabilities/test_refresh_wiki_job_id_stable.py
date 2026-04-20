@@ -37,20 +37,26 @@ async def test_refresh_wiki_job_id_matches_persisted_row():
     mock_cache.set_generation_status = AsyncMock()
 
     # Patch assert_channel_access to succeed silently.
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(),
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache",
-        return_value=mock_cache,
-    ), patch(
-        "beever_atlas.infra.config.get_settings",
-        return_value=MagicMock(mongodb_uri="mongodb://localhost:27017"),
-    ), patch(
-        "asyncio.ensure_future",
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(),
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.wiki.cache.WikiCache",
+            return_value=mock_cache,
+        ),
+        patch(
+            "beever_atlas.infra.config.get_settings",
+            return_value=MagicMock(mongodb_uri="mongodb://localhost:27017"),
+        ),
+        patch(
+            "asyncio.ensure_future",
+        ),
     ):
         result = await refresh_wiki("mcp:testhash", "ch-test")
 
@@ -67,27 +73,31 @@ async def test_refresh_wiki_job_id_matches_persisted_row():
 async def test_refresh_wiki_fallback_job_id_when_db_fails():
     """When create_sync_job raises, refresh_wiki falls back to a synthetic uuid and still returns."""
     mock_stores = MagicMock()
-    mock_stores.mongodb.create_sync_job = AsyncMock(
-        side_effect=RuntimeError("DB unavailable")
-    )
+    mock_stores.mongodb.create_sync_job = AsyncMock(side_effect=RuntimeError("DB unavailable"))
 
     mock_cache = MagicMock()
     mock_cache.set_generation_status = AsyncMock()
 
-    with patch(
-        "beever_atlas.capabilities.wiki.assert_channel_access",
-        new=AsyncMock(),
-    ), patch(
-        "beever_atlas.stores.get_stores",
-        return_value=mock_stores,
-    ), patch(
-        "beever_atlas.wiki.cache.WikiCache",
-        return_value=mock_cache,
-    ), patch(
-        "beever_atlas.infra.config.get_settings",
-        return_value=MagicMock(mongodb_uri="mongodb://localhost:27017"),
-    ), patch(
-        "asyncio.ensure_future",
+    with (
+        patch(
+            "beever_atlas.capabilities.wiki.assert_channel_access",
+            new=AsyncMock(),
+        ),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=mock_stores,
+        ),
+        patch(
+            "beever_atlas.wiki.cache.WikiCache",
+            return_value=mock_cache,
+        ),
+        patch(
+            "beever_atlas.infra.config.get_settings",
+            return_value=MagicMock(mongodb_uri="mongodb://localhost:27017"),
+        ),
+        patch(
+            "asyncio.ensure_future",
+        ),
     ):
         result = await refresh_wiki("mcp:testhash", "ch-fallback")
 

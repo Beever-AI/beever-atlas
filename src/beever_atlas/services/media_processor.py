@@ -42,12 +42,8 @@ class MediaProcessor:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._sem = asyncio.Semaphore(3)
-        self._supported_images = set(
-            self._settings.media_supported_image_types.split(",")
-        )
-        self._supported_docs = set(
-            self._settings.media_supported_doc_types.split(",")
-        )
+        self._supported_images = set(self._settings.media_supported_image_types.split(","))
+        self._supported_docs = set(self._settings.media_supported_doc_types.split(","))
         self._max_bytes = self._settings.media_max_file_size_mb * 1024 * 1024
         self._last_pdf_chunks: list[str] = []
         self._http_client: httpx.AsyncClient | None = None
@@ -56,15 +52,14 @@ class MediaProcessor:
     def get_registry():
         """Get the singleton media extractor registry."""
         from beever_atlas.services.media_extractors import create_default_registry
-        if not hasattr(MediaProcessor, '_registry'):
+
+        if not hasattr(MediaProcessor, "_registry"):
             MediaProcessor._registry = create_default_registry()
         return MediaProcessor._registry
 
     # ── Public API ──────────────────────────────────────────────────────
 
-    async def process_message_media(
-        self, msg: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def process_message_media(self, msg: dict[str, Any]) -> dict[str, Any]:
         """Process all media attachments for a single message.
 
         Returns dict with:
@@ -139,9 +134,7 @@ class MediaProcessor:
 
     # ── Internal methods ────────────────────────────────────────────────
 
-    async def _process_attachment(
-        self, att: dict[str, Any], message_text: str
-    ) -> dict[str, str]:
+    async def _process_attachment(self, att: dict[str, Any], message_text: str) -> dict[str, str]:
         """Route a single attachment to the appropriate extractor via registry."""
         url = att.get("url") or att.get("url_private") or ""
         name = att.get("name") or "file"
@@ -180,9 +173,7 @@ class MediaProcessor:
             }
 
         # Extract content via registry
-        content = await extractor.extract(
-            data, name, metadata={"message_text": message_text}
-        )
+        content = await extractor.extract(data, name, metadata={"message_text": message_text})
 
         # Pass through PDF chunks for virtual message expansion
         if content.chunks:
@@ -194,9 +185,7 @@ class MediaProcessor:
             "media_type": content.media_type or att_type or ext,
         }
 
-    async def _handle_pdf(
-        self, url: str, name: str
-    ) -> dict[str, str]:
+    async def _handle_pdf(self, url: str, name: str) -> dict[str, str]:
         """Download and extract text from a PDF using chunked extraction."""
         async with self._sem:
             data = await self._download_file(url)
@@ -205,6 +194,7 @@ class MediaProcessor:
             return {"description": "", "media_url": url, "media_type": "pdf"}
 
         from beever_atlas.services.media_extractors import PdfExtractor
+
         extractor = PdfExtractor()
         content = await extractor.extract(data, name)
 
@@ -214,9 +204,7 @@ class MediaProcessor:
 
         return {"description": content.text, "media_url": url, "media_type": "pdf"}
 
-    async def _handle_image(
-        self, url: str, name: str, message_text: str
-    ) -> dict[str, str]:
+    async def _handle_image(self, url: str, name: str, message_text: str) -> dict[str, str]:
         """Download and optionally describe an image via vision LLM."""
         if not self.should_use_vision(message_text, {"name": name}):
             # Text is sufficient — metadata only
@@ -240,10 +228,7 @@ class MediaProcessor:
         size_kb = len(data) // 1024
 
         if description:
-            desc = (
-                f"[Attachment: {name} (image, {size_kb} kB)]\n"
-                f"[Image description]: {description}"
-            )
+            desc = f"[Attachment: {name} (image, {size_kb} kB)]\n[Image description]: {description}"
         else:
             desc = f"[Attachment: {name} (image, {size_kb} kB)]"
 
@@ -260,7 +245,9 @@ class MediaProcessor:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
-    async def _download_file(self, url: str, _retries: int = 3, connection_id: str | None = None) -> bytes | None:
+    async def _download_file(
+        self, url: str, _retries: int = 3, connection_id: str | None = None
+    ) -> bytes | None:
         """Download a file via the bridge file proxy with retry on 429.
 
         The raw ``url`` originates from platform message attachments or
@@ -334,9 +321,7 @@ class MediaProcessor:
 
             return resp.content
         except Exception:
-            logger.warning(
-                "MediaProcessor: download error url=%s", url[:80], exc_info=True
-            )
+            logger.warning("MediaProcessor: download error url=%s", url[:80], exc_info=True)
             return None
 
     def _extract_pdf_text(self, data: bytes) -> str:
@@ -368,9 +353,7 @@ class MediaProcessor:
             logger.warning("MediaProcessor: PDF text extraction failed", exc_info=True)
             return ""
 
-    async def _describe_image(
-        self, data: bytes, message_context: str
-    ) -> str:
+    async def _describe_image(self, data: bytes, message_context: str) -> str:
         """Describe an image using Gemini vision API."""
         try:
             from google.genai import types as genai_types
@@ -408,9 +391,7 @@ class MediaProcessor:
 
             return response.text or ""
         except Exception:
-            logger.warning(
-                "MediaProcessor: vision description failed", exc_info=True
-            )
+            logger.warning("MediaProcessor: vision description failed", exc_info=True)
             return ""
 
     @staticmethod

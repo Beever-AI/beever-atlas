@@ -96,26 +96,17 @@ def _clean_slack_text(text: str) -> str:
 
 # Word-boundary pattern for bot-like usernames. Matches "deploy-bot", "ci_bot",
 # "bot-notifier" but NOT "abbott", "robotics", "appleton".
-_BOT_USERNAME_RE = re.compile(
-    r"(?:^|[-_])bot(?:[-_]|$)|^webhook$|^integration$", re.IGNORECASE
-)
+_BOT_USERNAME_RE = re.compile(r"(?:^|[-_])bot(?:[-_]|$)|^webhook$|^integration$", re.IGNORECASE)
 
 
 def _is_bot_message(msg: dict[str, Any]) -> bool:
     """Return True if the message appears to be from a bot."""
     raw_meta = msg.get("raw_metadata") if isinstance(msg.get("raw_metadata"), dict) else {}
 
-    if (
-        msg.get("is_bot")
-        or msg.get("bot_id")
-        or raw_meta.get("is_bot")
-        or raw_meta.get("bot_id")
-    ):
+    if msg.get("is_bot") or msg.get("bot_id") or raw_meta.get("is_bot") or raw_meta.get("bot_id"):
         return True
 
-    username = (
-        msg.get("username") or msg.get("author_name") or msg.get("author") or ""
-    )
+    username = msg.get("username") or msg.get("author_name") or msg.get("author") or ""
     if username and _BOT_USERNAME_RE.search(username):
         return True
 
@@ -254,12 +245,11 @@ async def _resolve_cross_batch_parent(
 
     try:
         from beever_atlas.stores import get_stores
+
         stores = get_stores()
 
         # Try MongoDB first
-        record = await stores.mongodb.db["raw_messages"].find_one(
-            {"message_ts": thread_ts}
-        )
+        record = await stores.mongodb.db["raw_messages"].find_one({"message_ts": thread_ts})
         if record:
             author = record.get("author_name") or record.get("author") or "unknown"
             text = (record.get("text") or record.get("content") or "").strip()
@@ -270,7 +260,11 @@ async def _resolve_cross_batch_parent(
         # Fallback: search Weaviate for a fact from this message
         weaviate_facts = await stores.weaviate.list_facts(
             channel_id=msg.get("channel_id", ""),
-            filters=type("F", (), {"topic": None, "entity": None, "importance": None, "since": None, "until": None})(),
+            filters=type(
+                "F",
+                (),
+                {"topic": None, "entity": None, "importance": None, "since": None, "until": None},
+            )(),
             page=1,
             limit=1,
         )
@@ -312,6 +306,7 @@ class PreprocessorAgent(BaseAgent):
     ) -> AsyncGenerator[Event, None]:
         """Execute preprocessing and yield a single completion event."""
         from beever_atlas.agents.callbacks.checkpoint_skip import should_skip_stage
+
         if should_skip_stage(ctx.session.state, "preprocessed_messages", self.name):
             yield Event(author=self.name, invocation_id=ctx.invocation_id)
             return
@@ -356,10 +351,7 @@ class PreprocessorAgent(BaseAgent):
             enriched["ts"] = _coerce_timestamp_str(msg)
             enriched["user"] = msg.get("user") or msg.get("author") or "unknown"
             enriched["username"] = (
-                msg.get("username")
-                or msg.get("author_name")
-                or msg.get("author")
-                or "unknown"
+                msg.get("username") or msg.get("author_name") or msg.get("author") or "unknown"
             )
             enriched["modality"] = _detect_modality(msg)
             enriched["thread_context"] = _build_thread_context(msg, messages_by_ts)
@@ -376,6 +368,7 @@ class PreprocessorAgent(BaseAgent):
                     fetch_channel_history,
                     resolve_coreferences,
                 )
+
                 history = await fetch_channel_history(
                     channel_id, limit=coref_settings.coref_history_limit
                 )
@@ -390,9 +383,7 @@ class PreprocessorAgent(BaseAgent):
         # --- Cross-batch thread context ---
         for enriched_msg in preprocessed:
             if enriched_msg.get("thread_context") is None:
-                cross_batch_ctx = await _resolve_cross_batch_parent(
-                    enriched_msg, messages_by_ts
-                )
+                cross_batch_ctx = await _resolve_cross_batch_parent(enriched_msg, messages_by_ts)
                 if cross_batch_ctx:
                     enriched_msg["thread_context"] = cross_batch_ctx
 
@@ -401,12 +392,16 @@ class PreprocessorAgent(BaseAgent):
         mixed_msgs: list[dict[str, Any]] = []
         for enriched_msg in preprocessed:
             # --- Extract link/unfurl metadata for ALL messages ---
-            raw_meta = enriched_msg.get("raw_metadata") if isinstance(enriched_msg.get("raw_metadata"), dict) else {}
+            raw_meta = (
+                enriched_msg.get("raw_metadata")
+                if isinstance(enriched_msg.get("raw_metadata"), dict)
+                else {}
+            )
             links = raw_meta.get("links") or enriched_msg.get("links") or []
 
             # Also extract bare URLs from message text (not already in unfurls)
             unfurl_urls = {link.get("url", "") for link in links}
-            text_urls = re.findall(r'https?://[^\s<>\]|)]+', enriched_msg.get("text", ""))
+            text_urls = re.findall(r"https?://[^\s<>\]|)]+", enriched_msg.get("text", ""))
             for url in text_urls:
                 # Strip trailing punctuation
                 url = url.rstrip(".,;:!?")
@@ -427,7 +422,11 @@ class PreprocessorAgent(BaseAgent):
                         link_titles.append(title)
                         link_descriptions.append(description)
                         if title or description:
-                            link_text_parts.append(f"[Link: {title} — {description} ({url})]" if description else f"[Link: {title} ({url})]")
+                            link_text_parts.append(
+                                f"[Link: {title} — {description} ({url})]"
+                                if description
+                                else f"[Link: {title} ({url})]"
+                            )
                 enriched_msg["source_link_urls"] = link_urls
                 enriched_msg["source_link_titles"] = link_titles
                 enriched_msg["source_link_descriptions"] = link_descriptions
@@ -457,7 +456,9 @@ class PreprocessorAgent(BaseAgent):
                 # Detect type from first attachment
                 first_att = all_atts[0] if all_atts else {}
                 att_type = first_att.get("type", "")
-                enriched_msg["source_media_type"] = att_type if att_type in ("image", "pdf", "video") else "file"
+                enriched_msg["source_media_type"] = (
+                    att_type if att_type in ("image", "pdf", "video") else "file"
+                )
 
             mixed_msgs.append(enriched_msg)
 
@@ -466,6 +467,7 @@ class PreprocessorAgent(BaseAgent):
         if mixed_msgs:
             import asyncio as _asyncio
             from beever_atlas.services.media_processor import MediaProcessor
+
             media_processor = MediaProcessor()
 
             async def _safe_process(msg: dict[str, Any]) -> dict[str, Any] | None:

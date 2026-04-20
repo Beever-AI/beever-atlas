@@ -83,9 +83,7 @@ def reset_principal(token: Token) -> None:
     try:
         _current_principal_id.reset(token)
     except (ValueError, LookupError, RuntimeError):
-        logger.warning(
-            "reset_principal: token invalid (cross-task or double-reset)"
-        )
+        logger.warning("reset_principal: token invalid (cross-task or double-reset)")
 
 
 @contextlib.contextmanager
@@ -111,6 +109,7 @@ def _get_principal() -> str | None:
 # ---------------------------------------------------------------------------
 # Error → structured dict translation
 # ---------------------------------------------------------------------------
+
 
 def _capability_error_to_dict(exc: CapabilityError) -> dict:
     """Translate a domain exception into a structured error dict.
@@ -166,7 +165,10 @@ async def list_connections_tool() -> dict:
     principal_id = _get_principal()
     if not principal_id:
         logger.warning("list_connections_tool called without a bound principal_id")
-        return {"error": "no_principal", "detail": "Principal identity not available in this context"}
+        return {
+            "error": "no_principal",
+            "detail": "Principal identity not available in this context",
+        }
 
     try:
         connections = await list_connections(principal_id)
@@ -218,7 +220,10 @@ async def list_channels_tool(connection_id: str) -> dict:
     principal_id = _get_principal()
     if not principal_id:
         logger.warning("list_channels_tool called without a bound principal_id")
-        return {"error": "no_principal", "detail": "Principal identity not available in this context"}
+        return {
+            "error": "no_principal",
+            "detail": "Principal identity not available in this context",
+        }
 
     try:
         channels = await list_channels(principal_id, connection_id)
@@ -274,7 +279,10 @@ async def trigger_sync_tool(
     principal_id = _get_principal()
     if not principal_id:
         logger.warning("trigger_sync_tool called without a bound principal_id")
-        return {"error": "no_principal", "detail": "Principal identity not available in this context"}
+        return {
+            "error": "no_principal",
+            "detail": "Principal identity not available in this context",
+        }
 
     try:
         result = await trigger_sync(
@@ -290,15 +298,11 @@ async def trigger_sync_tool(
         )
         return result
     except CapabilityError as exc:
-        logger.warning(
-            "trigger_sync_tool: capability error for channel=%s: %s", channel_id, exc
-        )
+        logger.warning("trigger_sync_tool: capability error for channel=%s: %s", channel_id, exc)
         return _capability_error_to_dict(exc)
     except ValueError as exc:
         # Raised by SyncRunner when a duplicate job exists.
-        logger.info(
-            "trigger_sync_tool: rejected for channel=%s: %s", channel_id, exc
-        )
+        logger.info("trigger_sync_tool: rejected for channel=%s: %s", channel_id, exc)
         return {"error": "sync_rejected", "detail": str(exc)}
     except Exception:
         logger.exception(
@@ -346,7 +350,10 @@ async def refresh_wiki_tool(
     principal_id = _get_principal()
     if not principal_id:
         logger.warning("refresh_wiki_tool called without a bound principal_id")
-        return {"error": "no_principal", "detail": "Principal identity not available in this context"}
+        return {
+            "error": "no_principal",
+            "detail": "Principal identity not available in this context",
+        }
 
     try:
         result = await refresh_wiki(
@@ -362,9 +369,7 @@ async def refresh_wiki_tool(
         )
         return result
     except CapabilityError as exc:
-        logger.warning(
-            "refresh_wiki_tool: capability error for channel=%s: %s", channel_id, exc
-        )
+        logger.warning("refresh_wiki_tool: capability error for channel=%s: %s", channel_id, exc)
         return _capability_error_to_dict(exc)
     except Exception:
         logger.exception(
@@ -404,14 +409,15 @@ async def get_job_status_tool(job_id: str) -> dict:
     principal_id = _get_principal()
     if not principal_id:
         logger.warning("get_job_status_tool called without a bound principal_id")
-        return {"error": "no_principal", "detail": "Principal identity not available in this context"}
+        return {
+            "error": "no_principal",
+            "detail": "Principal identity not available in this context",
+        }
 
     try:
         return await get_job_status(principal_id, job_id)
     except CapabilityError as exc:
-        logger.warning(
-            "get_job_status_tool: capability error for job=%s: %s", job_id, exc
-        )
+        logger.warning("get_job_status_tool: capability error for job=%s: %s", job_id, exc)
         return _capability_error_to_dict(exc)
     except Exception:
         logger.exception(

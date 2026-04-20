@@ -36,8 +36,10 @@ async def test_timeout_does_not_release_semaphore() -> None:
     fake_stores.mongodb.get_sync_status = AsyncMock(return_value=None)
 
     with (
-        patch("beever_atlas.services.policy_resolver.resolve_effective_policy",
-              AsyncMock(return_value=effective)),
+        patch(
+            "beever_atlas.services.policy_resolver.resolve_effective_policy",
+            AsyncMock(return_value=effective),
+        ),
         patch("beever_atlas.stores.get_stores", return_value=fake_stores),
         patch("asyncio.wait_for", AsyncMock(side_effect=asyncio.TimeoutError())),
     ):
@@ -73,8 +75,10 @@ async def test_successful_acquire_still_releases() -> None:
     fake_runner.start_sync = AsyncMock(return_value="job-1")
 
     with (
-        patch("beever_atlas.services.policy_resolver.resolve_effective_policy",
-              AsyncMock(return_value=effective)),
+        patch(
+            "beever_atlas.services.policy_resolver.resolve_effective_policy",
+            AsyncMock(return_value=effective),
+        ),
         patch("beever_atlas.stores.get_stores", return_value=fake_stores),
         patch("beever_atlas.api.sync.get_sync_runner", return_value=fake_runner),
     ):

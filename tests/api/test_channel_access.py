@@ -327,6 +327,7 @@ def test_bridge_key_delete_blocked_by_guard_when_flag_on(monkeypatch):
 
     # Disable the conftest fake-user override — we want the real dependency.
     from beever_atlas.infra.auth import require_user
+
     app.dependency_overrides.pop(require_user, None)
 
     _patch_auth_settings(monkeypatch, allow_bridge_as_user=True)
