@@ -109,8 +109,17 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       )}>
         {!collapsed && (
           <NavLink to="/" className="flex items-center gap-2 min-w-0 hover:opacity-80 transition-opacity">
-            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-border/50">
-              <img src="/logo.png" alt="Beever Atlas Logo" className="w-full h-full object-cover" />
+            <div className="w-8 h-8 flex items-center justify-center shrink-0">
+              <img
+                src="/logo-primary.svg"
+                alt="Beever Atlas Logo"
+                className="w-full h-full object-contain dark:hidden"
+              />
+              <img
+                src="/logo-white.svg"
+                alt="Beever Atlas Logo"
+                className="w-full h-full object-contain hidden dark:block"
+              />
             </div>
             <span className="font-heading text-xl font-medium text-foreground tracking-tight truncate">
               Beever Atlas
