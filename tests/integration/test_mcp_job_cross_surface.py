@@ -190,16 +190,25 @@ async def test_legacy_job_readable_by_non_mcp_principal():
 
 
 @pytest.mark.asyncio
-async def test_legacy_job_invisible_to_mcp_principal():
-    """Legacy rows (owner='legacy:shared') return JobNotFound for MCP principals."""
+async def test_legacy_job_invisible_to_mcp_principal_multi_tenant(monkeypatch):
+    """In multi-tenant mode, legacy rows (owner='legacy:shared') return
+    JobNotFound for MCP principals. Fix #5 intentionally admits MCP in
+    single-tenant mode — that single-tenant contract is covered in
+    ``tests/capabilities/test_jobs_mcp_access.py``."""
     from beever_atlas.capabilities import jobs as jobs_cap
+    from beever_atlas.infra.config import get_settings
 
     job_doc = _make_job_doc("job-legacy-001", owner="legacy:shared")
     stores_mock = _mock_stores(job_doc)
 
-    with patch("beever_atlas.stores.get_stores", return_value=stores_mock):
-        with pytest.raises(JobNotFound):
-            await jobs_cap.get_job_status(_MCP_PRINCIPAL, "job-legacy-001")
+    get_settings.cache_clear()
+    monkeypatch.setenv("BEEVER_SINGLE_TENANT", "false")
+    try:
+        with patch("beever_atlas.stores.get_stores", return_value=stores_mock):
+            with pytest.raises(JobNotFound):
+                await jobs_cap.get_job_status(_MCP_PRINCIPAL, "job-legacy-001")
+    finally:
+        get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------
