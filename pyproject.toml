@@ -58,6 +58,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/beever_atlas"]
 
+[tool.uv]
+# Security pin: Mako <1.3.11 has a path-traversal vulnerability in
+# TemplateLookup.get_template() (double-slash URI prefix). Mako is a
+# transitive dep via alembic, so we constrain it here without adding a
+# direct runtime import.
+constraint-dependencies = [
+    "mako>=1.3.11",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
