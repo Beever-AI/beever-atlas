@@ -21,6 +21,7 @@ export { classifyPlatformError } from "./bridge/platformError.js";
 import { classifyPlatformError } from "./bridge/platformError.js";
 import { jsonResponse } from "./http-utils.js";
 export { jsonResponse } from "./http-utils.js";
+import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -523,14 +524,14 @@ class SlackBridge implements PlatformBridge {
     if (response.status === 429 && retries > 0) {
       const retryAfter = parseInt(response.headers.get("retry-after") || "2", 10);
       const waitMs = retryAfter * 1000;
-      console.log(`Bridge: Slack rate limited (429), retrying after ${retryAfter}s (${retries} retries left)`);
+      logger.debug(`Bridge: Slack rate limited (429), retrying after ${retryAfter}s (${retries} retries left)`);
       await new Promise((r) => setTimeout(r, waitMs));
       return this._proxyFileInner(fileUrl, retries - 1);
     }
 
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("text/html") && decodedUrl.includes("files-pri")) {
-      console.log("Bridge: fileProxy got HTML, trying files.sharedPublicURL fallback");
+      logger.debug("Bridge: fileProxy got HTML, trying files.sharedPublicURL fallback");
       const match = decodedUrl.match(/files-pri\/[^/]+-(F[^/]+)\//);
       if (match) {
         const fileId = match[1];
@@ -544,7 +545,7 @@ class SlackBridge implements PlatformBridge {
             // Retry on 429 for fallback URL too
             if (response.status === 429 && retries > 0) {
               const retryAfter = parseInt(response.headers.get("retry-after") || "2", 10);
-              console.log(`Bridge: Slack rate limited on fallback (429), retrying after ${retryAfter}s`);
+              logger.debug(`Bridge: Slack rate limited on fallback (429), retrying after ${retryAfter}s`);
               await new Promise((r) => setTimeout(r, retryAfter * 1000));
               return this._proxyFileInner(fileUrl, retries - 1);
             }
@@ -2316,11 +2317,11 @@ export function registerBridgeRoutes(
 
     // GET /bridge/files?url=...&connection_id=...
     if (req.method === "GET" && url.startsWith("/bridge/files")) {
-      console.log("Bridge: /bridge/files route matched, url:", url.slice(0, 80));
+      logger.debug("Bridge: /bridge/files route matched, url:", url.slice(0, 80));
       const fileQuery = parseQuery(url);
       const fileUrl = fileQuery.get("url");
       const connId = fileQuery.get("connection_id") || undefined;
-      console.log("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60), "connection_id:", connId || "(auto-detect)");
+      logger.debug("Bridge: parsed fileUrl:", fileUrl?.slice(0, 60), "connection_id:", connId || "(auto-detect)");
       if (fileUrl) {
         await handleFileProxy(req, res, chatManager, fileUrl, undefined, connId);
         return true;
