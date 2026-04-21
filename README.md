@@ -62,7 +62,7 @@ Optional (skip unless you know you need them):
 | **2. Manual Docker** | CI/CD, ops environments, or when you want explicit control over every step. | ~3 min first run |
 | **3. Local development** | Active contributors who need hot-reload on backend and frontend. | varies |
 
-#### Option 1 — One-line install (recommended)
+### Option 1 — One-line install (recommended)
 
 ```bash
 ./atlas
@@ -87,7 +87,7 @@ GOOGLE_API_KEY=... JINA_API_KEY=... ./atlas --non-interactive
 
 Re-running `./atlas` on an existing stack is idempotent.
 
-#### Option 2 — Manual Docker
+### Option 2 — Manual Docker
 
 Full control, step-by-step.
 
@@ -134,7 +134,7 @@ Open **[http://localhost:3000](http://localhost:3000)**.
 
 First run takes 2–3 minutes while images build and databases initialize. Subsequent runs start in seconds.
 
-#### Option 3 — Local development
+### Option 3 — Local development
 
 Databases in Docker, app services native for hot-reload.
 
