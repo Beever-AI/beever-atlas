@@ -98,3 +98,6 @@ coverage.xml
 openspec/changes/
 openspec/specs/
 web/openspec/
+
+# Local env backups created by ./atlas on re-runs
+.env.backup.*

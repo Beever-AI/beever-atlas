@@ -32,7 +32,31 @@ make demo
 
 `make demo` brings up the full stack pre-loaded with a public Wikipedia corpus (Ada Lovelace + Python history). Seeding uses pre-computed fixtures — no API keys needed. Asking questions via `/api/ask` requires a free-tier `GOOGLE_API_KEY` because the QA agent calls Gemini. See [demo/README.md](demo/README.md) for curl examples.
 
-### 2b. Full setup (real LLM + platform connections)
+### 2b. Full setup with one command (recommended)
+
+```bash
+./atlas
+```
+
+The `atlas` installer walks you through a guided 4-step checklist:
+
+1. **Required LLM keys** — prompts for `GOOGLE_API_KEY` (Gemini) and `JINA_API_KEY` (embeddings); press Enter to skip either.
+2. **Optional integrations** — Tavily web search, Ollama, external MCP allowlist.
+3. **Graph backend** — Neo4j (default) or skip.
+4. **Auth tokens** — keep dev defaults or rotate now.
+
+Under the hood it verifies `docker` + `docker compose`, copies `.env.example` → `.env` (preserves your values on re-run), auto-generates `CREDENTIAL_MASTER_KEY` and `WEAVIATE_API_KEY`, runs a port-conflict preflight, and launches the full stack via `docker compose up -d` with `/api/health` polling.
+
+For CI or unattended installs:
+
+```bash
+GOOGLE_API_KEY=... JINA_API_KEY=... ./atlas --non-interactive
+```
+
+Reads required keys from shell env, emits no prompts, preserves existing `.env` values. Re-running `./atlas` on an existing stack is idempotent.
+
+<details>
+<summary><strong>Manual setup (advanced — skip the installer)</strong></summary>
 
 ```bash
 cp .env.example .env
@@ -60,7 +84,11 @@ CREDENTIAL_MASTER_KEY=$(openssl rand -hex 32)
 
 > **Tip:** `CREDENTIAL_MASTER_KEY` must be exactly 64 hex chars (AES-256-GCM). Setting `BEEVER_ENV=production` makes startup fail if any of the above are defaults.
 
+</details>
+
 ### 3. Start the full stack
+
+If you ran `./atlas`, services are already up. Otherwise:
 
 ```bash
 docker compose up
@@ -84,8 +112,8 @@ First run takes 2–3 minutes while images build and databases initialize. Subse
 
 Navigate to **[http://localhost:3000](http://localhost:3000)**.
 
-- **Mock mode** (default, `ADAPTER_MOCK=true`): uses fixture data — no platform credentials required.
-- **Real mode**: set `ADAPTER_MOCK=false`, then connect a workspace in **Settings → Connections** (Slack / Discord / Teams tokens are entered through the UI, not `.env`).
+- **Real mode** (default, `ADAPTER_MOCK=false`): connect a workspace in **Settings → Connections** — Slack / Discord / Teams tokens are entered through the UI, not `.env`.
+- **Mock mode** (`ADAPTER_MOCK=true`): uses fixture data — opt in for local UI iteration without platform credentials.
 
 ### 5. Sync a channel
 

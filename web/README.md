@@ -19,7 +19,7 @@ The Beever Atlas v2 web app — React/TypeScript frontend for the knowledge-memo
 
 ## Environment Variables
 
-These are **baked into the Vite bundle at build time** — changing them requires a full `npm run build`. See [`.env.example`](../.env.example) for the canonical list and descriptions.
+The web app reads env from the **root `.env`** (via Vite's `envDir`). There is no separate `web/.env` — edit the root file and the change applies to both `npm run dev` and Docker builds. See [`../.env.example`](../.env.example) §1.4 for the VITE_* vars.
 
 | Variable | Purpose |
 |---|---|
@@ -28,8 +28,6 @@ These are **baked into the Vite bundle at build time** — changing them require
 | `VITE_BEEVER_ADMIN_TOKEN` | Admin token for `/api/dev/*` calls |
 
 > **Note**: Vite inlines these values at build time. They are visible in the browser bundle — treat `VITE_BEEVER_API_KEY` as a low-privilege read-only key.
-
-Copy the root `.env.example` to `.env` and fill in values before running `npm run dev`.
 
 ## Project Layout
 

@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+#
+# Beever Atlas · Setup
+#
+# Usage:
+#   ./atlas                    # interactive guided setup
+#   ./atlas --non-interactive  # CI / unattended mode
+#
+# What it does (in order):
+#   Prerequisites → .env bootstrap →
+#   Step 1/4  Required LLM keys      (Google Gemini, Jina)
+#   Step 2/4  Optional integrations  (Tavily, Ollama, MCP server)
+#   Step 3/4  Graph backend          (neo4j or none)
+#   Step 4/4  Auth tokens            (keep dev defaults or rotate)
+#   Auto-gen secrets → docker compose up -d
+#
+# Defaults are tuned for local dev: pressing Enter through every prompt
+# gives you a working stack with safe defaults. Rotate before any deploy.
+#
+# See .env.example for the full environment variable reference.
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+# ---------------------------------------------------------------------
+# Colors (auto-disabled when stdout isn't a TTY or NO_COLOR is set)
+# ---------------------------------------------------------------------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\e[0m'
+  C_BOLD=$'\e[1m'
+  C_DIM=$'\e[2m'
+  C_GREEN=$'\e[32m'
+  C_RED=$'\e[31m'
+  C_YELLOW=$'\e[33m'
+  C_CYAN=$'\e[36m'
+else
+  C_RESET=""; C_BOLD=""; C_DIM=""; C_GREEN=""; C_RED=""; C_YELLOW=""; C_CYAN=""
+fi
+
+ok()      { printf "  ${C_GREEN}✓${C_RESET} %s\n" "$*"; }
+warn()    { printf "  ${C_YELLOW}!${C_RESET} %s\n" "$*"; }
+err()     { printf "  ${C_RED}✗${C_RESET} %s\n" "$*" >&2; }
+ask()     { printf "  ${C_CYAN}?${C_RESET} %s\n" "$*"; }
+hint()    { printf "    ${C_DIM}%s${C_RESET}\n" "$*"; }
+hinterr() { printf "    ${C_DIM}%s${C_RESET}\n" "$*" >&2; }
+section() { printf "\n${C_BOLD}%s${C_RESET}\n" "$*"; }
+step()    { printf "\n${C_DIM}──── ${C_RESET}${C_BOLD}Step %s${C_RESET} ${C_DIM}· %s ────────────────${C_RESET}\n" "$1" "$2"; }
+rule()    { printf "${C_DIM}%s${C_RESET}\n" "────────────────────────────────────────"; }
+
+# Port preflight helper — returns 0 if port is free (or if we can't check),
+# 1 if held by a non-docker process. Requires `lsof`; skips silently without it.
+check_port() {
+  local port="$1"
+  local service="$2"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local holder
+  holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}')
+  if [ -z "$holder" ]; then
+    return 0
+  fi
+  # Docker-owned ports are fine — our own stack may already hold them.
+  case "$holder" in
+    com.docke*|Docker*|docker*|vpnkit*) return 0 ;;
+  esac
+  warn "port ${port} is in use by: ${holder}  (needed for ${service})"
+  return 1
+}
+
+# ---------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------
+printf "\n"
+printf "  ${C_BOLD}Beever Atlas${C_RESET} ${C_DIM}· Setup${C_RESET}\n"
+printf "  "; rule
+
+# ---------------------------------------------------------------------
+# 1. Argument parsing
+# ---------------------------------------------------------------------
+NON_INTERACTIVE=false
+for arg in "$@"; do
+  case "$arg" in
+    --non-interactive) NON_INTERACTIVE=true ;;
+    -h|--help)
+      printf "Usage: %s [--non-interactive]\n" "$0"
+      exit 0
+      ;;
+    *)
+      err "Unknown flag: $arg"
+      hinterr "Usage: $0 [--non-interactive]"
+      exit 2
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------
+# 2. Prerequisites
+# ---------------------------------------------------------------------
+section "Prerequisites"
+
+if ! command -v docker >/dev/null 2>&1; then
+  err "docker is not installed or not on PATH"
+  hinterr "Install Docker: https://docs.docker.com/get-docker/"
+  exit 1
+fi
+ok "docker"
+
+COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+  ok "docker compose plugin"
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose --version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker-compose"
+  ok "docker-compose (legacy)"
+else
+  err "neither 'docker compose' plugin nor 'docker-compose' is available"
+  hinterr "Install: https://docs.docker.com/compose/install/"
+  exit 1
+fi
+
+PY_CMD=""
+if command -v python3 >/dev/null 2>&1; then
+  PY_CMD="python3"
+  ok "python3"
+elif command -v python >/dev/null 2>&1; then
+  PY_CMD="python"
+  ok "python"
+else
+  warn "python not found — secret regen will be manual"
+fi
+
+# ---------------------------------------------------------------------
+# 2b. Port preflight (fail fast if a host process owns a needed port)
+# ---------------------------------------------------------------------
+section "Ports"
+stack_running=false
+if $COMPOSE_CMD ps --services --filter "status=running" 2>/dev/null | grep -q .; then
+  stack_running=true
+  ok "compose stack already running — skipping port check"
+else
+  conflicts=0
+  # service:port pairs for every port the stack binds on localhost
+  for entry in "27017:MongoDB" "8080:Weaviate" "7687:Neo4j_Bolt" "7474:Neo4j_HTTP" "6380:Redis" "8000:backend" "3000:web" "3001:bot"; do
+    p="${entry%%:*}"
+    s="${entry#*:}"
+    check_port "$p" "$s" || conflicts=$((conflicts + 1))
+  done
+  if [ "$conflicts" -gt 0 ]; then
+    err "${conflicts} port(s) are already in use by non-docker processes"
+    hinterr "Free them (stop the listed process) and re-run, or edit docker-compose.yml to use different ports."
+    exit 1
+  fi
+  ok "no port conflicts"
+fi
+
+# ---------------------------------------------------------------------
+# 3. Environment file
+# ---------------------------------------------------------------------
+section "Environment"
+
+if [ -f .env ]; then
+  ok ".env already present — skipping copy"
+else
+  cp .env.example .env
+  ok "Created .env from .env.example"
+  # Restrict permissions: .env holds real secrets (API keys, master key).
+  # chmod 600 limits read to the owner. Non-fatal: some FS (Docker Desktop
+  # volume mounts) ignore permission bits.
+  if chmod 600 .env 2>/dev/null; then
+    : # silently succeeded
+  else
+    warn ".env permissions could not be restricted to 600 — set manually if on a shared machine"
+  fi
+fi
+
+# Replace KEY=value in .env in place, portable between macOS (BSD sed)
+# and Linux (GNU sed). `-i.bak` works on both; we delete the backup.
+replace_env_value() {
+  local key="$1"
+  local value="$2"
+  sed -i.bak "s|^${key}=.*|${key}=${value}|" .env
+  rm -f .env.bak
+}
+
+# Generate a random hex token of N bytes (2N hex chars). Echoes the
+# token on stdout. Requires $PY_CMD; callers must check that first.
+gen_hex() {
+  local bytes="${1:-24}"
+  "$PY_CMD" -c "import secrets; print(secrets.token_hex(${bytes}))"
+}
+
+# Confirm prompt. Args: default(Y|N), prompt text. Returns 0 for yes, 1 for no.
+confirm() {
+  local default="$1"
+  local question="$2"
+  local suffix
+  if [ "$default" = "Y" ]; then suffix="(Y/n)"; else suffix="(y/N)"; fi
+  printf "  ${C_CYAN}?${C_RESET} %s ${C_DIM}%s${C_RESET} " "$question" "$suffix"
+  local reply=""
+  read -r reply || true
+  reply="${reply:-$default}"
+  case "$reply" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    n|N|no|NO|No)    return 1 ;;
+    *) [ "$default" = "Y" ] && return 0 || return 1 ;;
+  esac
+}
+
+# External-provider key prompt: user pastes or presses Enter to skip.
+# Falls back to shell env var if the user presses Enter and the env var is set.
+prompt_external_key() {
+  local key="$1"
+  local label="$2"
+  local url="$3"
+
+  local current
+  current=$(grep -E "^${key}=" .env | head -n 1 | cut -d'=' -f2-)
+
+  ask "${C_BOLD}${label}${C_RESET} ${C_DIM}· ${url}${C_RESET}"
+  if [ -n "$current" ]; then
+    hint "Current: ${current:0:8}… (Enter = keep)"
+  else
+    hint "Paste the key, or press Enter to skip"
+  fi
+  printf "    ${C_DIM}${key}${C_RESET} "
+  local value=""
+  read -r value || true
+  if [ -z "$value" ]; then
+    # No explicit input — try shell environment as fallback
+    local env_val="${!key:-}" 2>/dev/null || env_val=""
+    if [ -n "$env_val" ]; then
+      replace_env_value "$key" "$env_val"
+      ok "pre-seeded from shell environment (saved)"
+    elif [ -n "$current" ]; then
+      ok "skipped — using existing value"
+    else
+      ok "skipped"
+    fi
+  else
+    replace_env_value "$key" "$value"
+    ok "saved"
+  fi
+}
+
+# Internal-secret prompt: user pastes OR presses Enter to auto-generate.
+prompt_internal_secret() {
+  local key="$1"
+  local label="$2"
+  local bytes="${3:-24}"
+
+  ask "${C_BOLD}${label}${C_RESET}"
+  hint "Paste your own value, or press Enter to auto-generate"
+  printf "    ${C_DIM}${key}${C_RESET} "
+  local value=""
+  read -r value || true
+  if [ -z "$value" ]; then
+    if [ -n "$PY_CMD" ]; then
+      value=$(gen_hex "$bytes")
+      replace_env_value "$key" "$value"
+      ok "auto-generated"
+    else
+      warn "Python not found — leaving ${key} unchanged, set manually later"
+    fi
+  else
+    replace_env_value "$key" "$value"
+    ok "saved"
+  fi
+}
+
+# ---------------------------------------------------------------------
+# Non-interactive shortcut: skip all prompts, only do idempotent work.
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" = "true" ]; then
+  section "Non-interactive mode"
+  ok "skipping prompts — all user-supplied values left as-is"
+fi
+
+# ---------------------------------------------------------------------
+# Step 1 · Required LLM keys (external providers, paste or skip)
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "1/4" "Required LLM keys"
+  hint "These power extraction, search, and answers. You can skip and add later."
+  prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
+  prompt_external_key "JINA_API_KEY"   "Jina v4 embeddings" "https://jina.ai/api-dashboard/"
+fi
+
+# ---------------------------------------------------------------------
+# Step 2 · Optional integrations
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "2/4" "Optional integrations"
+  hint "External web search, local LLMs, and MCP for Claude Code / Cursor."
+
+  if confirm "N" "Configure optional integrations now?"; then
+    # Tavily
+    prompt_external_key "TAVILY_API_KEY" "Tavily (external web search in QA)" "https://tavily.com/"
+
+    # Ollama (local LLM)
+    if confirm "N" "Enable Ollama (run a local LLM instead of Gemini)?"; then
+      replace_env_value "OLLAMA_ENABLED" "true"
+      ok "OLLAMA_ENABLED=true · OLLAMA_API_BASE=http://localhost:11434"
+    else
+      ok "skipped Ollama"
+    fi
+
+    # MCP server
+    if confirm "N" "Enable the MCP server for Claude Code / Cursor?"; then
+      replace_env_value "BEEVER_MCP_ENABLED" "true"
+      if [ -n "$PY_CMD" ]; then
+        mcp_key="mcp-$(gen_hex 24)"
+        replace_env_value "BEEVER_MCP_API_KEYS" "$mcp_key"
+        ok "BEEVER_MCP_ENABLED=true · auto-generated BEEVER_MCP_API_KEYS"
+      else
+        warn "BEEVER_MCP_ENABLED=true but python missing — set BEEVER_MCP_API_KEYS manually"
+      fi
+    else
+      ok "skipped MCP server"
+    fi
+  else
+    ok "skipped optional integrations"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# Step 3 · Graph backend
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "3/4" "Graph backend"
+  hint "1) neo4j  — recommended, powers entity graph queries"
+  hint "2) none   — semantic memory only, skips Neo4j entirely"
+  printf "    ${C_DIM}Choice [1]:${C_RESET} "
+  graph_reply=""
+  read -r graph_reply || true
+  case "${graph_reply:-1}" in
+    2|none|n|None|NONE)
+      replace_env_value "GRAPH_BACKEND" "none"
+      ok "GRAPH_BACKEND=none"
+      ;;
+    *)
+      replace_env_value "GRAPH_BACKEND" "neo4j"
+      ok "GRAPH_BACKEND=neo4j"
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------
+# Step 4 · Auth tokens (dev defaults vs rotate)
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "4/4" "Auth tokens"
+  hint "BEEVER_API_KEYS, BEEVER_ADMIN_TOKEN, BRIDGE_API_KEY."
+  hint "Dev defaults (e.g. 'dev-key-change-me') work for local testing."
+  hint "Rotate them to random secrets for any deploy."
+
+  if confirm "N" "Rotate auth tokens to fresh random secrets?"; then
+    if [ -z "$PY_CMD" ]; then
+      warn "Python not found — can't auto-generate, skipping rotation"
+    else
+      new_api=$(gen_hex 24)
+      new_admin=$(gen_hex 24)
+      new_bridge=$(gen_hex 24)
+      replace_env_value "BEEVER_API_KEYS"        "$new_api"
+      replace_env_value "BEEVER_ADMIN_TOKEN"     "$new_admin"
+      replace_env_value "BRIDGE_API_KEY"         "$new_bridge"
+      replace_env_value "VITE_BEEVER_API_KEY"    "$new_api"
+      replace_env_value "VITE_BEEVER_ADMIN_TOKEN" "$new_admin"
+      ok "Rotated BEEVER_API_KEYS"
+      ok "Rotated BEEVER_ADMIN_TOKEN"
+      ok "Rotated BRIDGE_API_KEY"
+      ok "Mirrored VITE_* tokens to match"
+    fi
+  else
+    ok "kept dev-default auth tokens (fine for local)"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# Non-interactive env pre-seeding: apply any keys set in the calling shell.
+# pydantic-settings / docker compose read .env, NOT the process env, so we
+# must write values to .env — not just export them. This runs before
+# "Finalizing secrets" so auto-gen logic sees the correct filled state.
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" = "true" ]; then
+  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY; do
+    _preseed_val="${!_preseed_key:-}" 2>/dev/null || _preseed_val=""
+    if [ -n "$_preseed_val" ]; then
+      replace_env_value "$_preseed_key" "$_preseed_val"
+      ok "${_preseed_key} pre-seeded from shell environment (saved)"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------
+# Auto-generated secrets (always, if placeholder/blank)
+# ---------------------------------------------------------------------
+section "Finalizing secrets"
+secrets_changed=false
+MASTER_KEY_PLACEHOLDER="00000000000000000000000000000000000000000000000000000000deadbeef"
+
+if grep -qF "CREDENTIAL_MASTER_KEY=${MASTER_KEY_PLACEHOLDER}" .env; then
+  if [ -n "$PY_CMD" ]; then
+    replace_env_value "CREDENTIAL_MASTER_KEY" "$(gen_hex 32)"
+    ok "Generated a fresh CREDENTIAL_MASTER_KEY"
+    secrets_changed=true
+  else
+    warn "Python not found — set CREDENTIAL_MASTER_KEY manually in .env:"
+    hint "python -c \"import secrets; print(secrets.token_hex(32))\""
+  fi
+fi
+
+if grep -qE "^WEAVIATE_API_KEY=$" .env; then
+  if [ -n "$PY_CMD" ]; then
+    replace_env_value "WEAVIATE_API_KEY" "$(gen_hex 16)"
+    ok "Generated a fresh WEAVIATE_API_KEY"
+    secrets_changed=true
+  else
+    warn "Python not found — set WEAVIATE_API_KEY manually in .env:"
+    hint "python -c \"import secrets; print(secrets.token_hex(16))\""
+  fi
+fi
+
+if ! $secrets_changed; then
+  ok "Master + Weaviate keys already set — nothing to regenerate"
+fi
+
+# ---------------------------------------------------------------------
+# Launch
+# ---------------------------------------------------------------------
+section "Launch"
+# --build:           rebuild the backend image if source or Dockerfile changed.
+# --force-recreate:  ensure containers pick up any .env changes this run.
+# --remove-orphans:  prune containers from old/removed services (e.g. retired
+#                    Nebula profile) so users don't see noisy orphan warnings.
+# All three flags are idempotent: no cost on a fresh clone.
+printf "    ${C_DIM}Building images + starting services…${C_RESET}\n"
+if $COMPOSE_CMD up -d --build --force-recreate --remove-orphans; then
+  ok "Services are running"
+
+  # ------------------------------------------------------------------
+  # Resolve ACTUAL host ports from compose. `docker compose port <svc>
+  # <container-port>` returns lines like `0.0.0.0:3000` or `[::]:3000`.
+  # Take the last colon-separated field to get the host port. Fall back
+  # to documented defaults if the lookup returns nothing (test stubs,
+  # custom override files, etc.).
+  # ------------------------------------------------------------------
+  web_port=$($COMPOSE_CMD port web 80 2>/dev/null | awk -F: '{print $NF}' | head -n1)
+  backend_port=$($COMPOSE_CMD port beever-atlas 8000 2>/dev/null | awk -F: '{print $NF}' | head -n1)
+  web_port="${web_port:-3000}"
+  backend_port="${backend_port:-8000}"
+
+  # ------------------------------------------------------------------
+  # Health poll: wait up to ATLAS_HEALTH_POLL_TIMEOUT seconds (default 15)
+  # for the backend to serve HTTP 200 on /api/health. Skipped when curl
+  # isn't available or when the timeout is set to 0.
+  # The poll is advisory — a slow backend MUST NOT fail the installer.
+  # ------------------------------------------------------------------
+  _poll_timeout="${ATLAS_HEALTH_POLL_TIMEOUT:-15}"
+  if [ "$_poll_timeout" -gt 0 ] 2>/dev/null && command -v curl >/dev/null 2>&1; then
+    _poll_elapsed=0
+    _poll_ok=false
+    while [ "$_poll_elapsed" -lt "$_poll_timeout" ]; do
+      if curl -sf --max-time 1 "http://localhost:${backend_port}/api/health" >/dev/null 2>&1; then
+        _poll_ok=true
+        break
+      fi
+      sleep 1
+      _poll_elapsed=$((_poll_elapsed + 1))
+    done
+    if $_poll_ok; then
+      ok "backend responding on :${backend_port}"
+    else
+      warn "backend not yet responding — it may still be starting; check \`${COMPOSE_CMD} logs -f beever-atlas\`"
+    fi
+  fi
+
+  printf "\n"
+  printf "  "; rule
+  printf "  ${C_BOLD}${C_GREEN}✓${C_RESET} ${C_BOLD}Beever Atlas is ready${C_RESET}\n\n"
+  printf "    ${C_DIM}Web UI  ${C_RESET}  ${C_CYAN}http://localhost:${web_port}${C_RESET}\n"
+  printf "    ${C_DIM}Backend ${C_RESET}  ${C_CYAN}http://localhost:${backend_port}${C_RESET}\n"
+  printf "\n"
+  printf "    ${C_DIM}Tail logs  ${C_RESET}${COMPOSE_CMD} logs -f\n"
+  printf "    ${C_DIM}Stop stack ${C_RESET}${COMPOSE_CMD} down\n"
+  printf "    ${C_DIM}Edit env   ${C_RESET}\$EDITOR .env\n"
+  printf "\n"
+else
+  status=$?
+  printf "\n"
+  err "Services failed to start"
+  hinterr "Fix the error above and re-run: ./atlas  (or: ${COMPOSE_CMD} up -d --build --force-recreate --remove-orphans)"
+  exit "$status"
+fi
