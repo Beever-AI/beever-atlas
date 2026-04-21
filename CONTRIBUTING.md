@@ -1,7 +1,15 @@
 # Contributing to Beever Atlas
 
 Thanks for your interest in contributing. This project ships under the Apache
-License 2.0, and all contributions are accepted under the same terms.
+License 2.0 (see LICENSE), and copyright is held by Beever AI Limited.
+
+A Contributor License Agreement is under development (tracked in RES-232).
+Until it is finalized and approved by legal counsel, contributions are
+accepted under the Apache License 2.0 terms in LICENSE. Contributors retain
+their copyright during this interim period. Once the CLA lands, all new
+contributions will require sign-off; prior contributions are not
+retroactively affected. Target: CLA finalization and enforcement within
+4 weeks of this PR merging.
 
 By participating, you agree to abide by our
 [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -92,7 +100,9 @@ This adds:
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-CI enforces the sign-off on every commit in a pull request.
+DCO sign-off is currently honor-system; CI enforcement will land alongside
+CLA-bot in a follow-up PR (tracked in RES-232). Until then, maintainers
+spot-check the sign-off trailer during review.
 
 ## Pull request checklist
 
