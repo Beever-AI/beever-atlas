@@ -162,6 +162,20 @@ Open **[http://localhost:5173](http://localhost:5173)** (the Vite dev port — *
 
 The Vite dev server proxies `/api/*` to `http://localhost:8000` (configured via `VITE_API_URL`).
 
+### Before going to production
+
+`.env.example` defaults are tuned for local testing. Before any real deploy, rotate the secrets that ship with placeholder values and flip the environment flag:
+
+| What to change | Why | How |
+|---|---|---|
+| `BEEVER_API_KEYS`, `BEEVER_ADMIN_TOKEN` | Ship as `dev-key-change-me` / `dev-admin-change-me` — public placeholders | `python -c "import secrets; print(secrets.token_hex(24))"` per token |
+| `BRIDGE_API_KEY` | Shared secret between backend and bot; blank by default, required outside local dev | Same `secrets.token_hex(24)` |
+| `VITE_BEEVER_API_KEY`, `VITE_BEEVER_ADMIN_TOKEN` | Vite bakes these into the web bundle at build time — must mirror the rotated backend values above | Copy the rotated `BEEVER_API_KEYS` / `BEEVER_ADMIN_TOKEN` values |
+| `NEO4J_PASSWORD` + password half of `NEO4J_AUTH` | Dev password is public in this repo | Pick a strong password; both values must match |
+| `BEEVER_ENV=production` | Enables fail-fast startup that rejects every dev default above | Flip the value in `.env` |
+
+Option 1 (`./atlas`) handles all of this through the **"Rotate auth tokens"** prompt in step 4 of the checklist — answer **Y** and the installer generates random tokens and mirrors the VITE_* values for you. If you used Option 2 or 3, you can re-run `./atlas` on the existing `.env`, skip every other prompt with Enter, and only accept the rotation prompt.
+
 ### 5. Open the dashboard
 
 Navigate to the URL for your chosen option:
