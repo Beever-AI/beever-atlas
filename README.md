@@ -1,16 +1,20 @@
+# 🦫 Beever Atlas — LLM-first Wiki Knowledge Base
+
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png" />
-    <img src="assets/banner.png" alt="Beever Atlas — LLM-first Wiki Knowledge Base" width="100%" />
+    <img src="assets/banner.png" alt="Beever Atlas — LLM-first Wiki Knowledge Base" width="65%" />
   </picture>
 </div>
 
-# 🦫 Beever Atlas — LLM-first Wiki Knowledge Base
+<p align="center"><strong>DAM THE NOISE!</strong></p>
 
-[![DOCS](https://img.shields.io/badge/DOCS-docs.beever.ai/atlas-FFC107?style=for-the-badge&labelColor=4A4A4A)](https://docs.beever.ai/atlas)
-[![LICENSE](https://img.shields.io/badge/LICENSE-Apache_2.0-7CB342?style=for-the-badge&labelColor=4A4A4A)](LICENSE)
-[![BUILT BY](https://img.shields.io/badge/BUILT_BY-BEEVER.AI-15404E?style=for-the-badge&labelColor=4A4A4A)](https://beever.ai)
-[![BUILT WITH](https://img.shields.io/badge/BUILT_WITH-Google_ADK-FF6F00?style=for-the-badge&labelColor=4A4A4A)](https://google.github.io/adk-docs/)
+<p align="center">
+  <a href="https://docs.beever.ai/atlas"><img src="https://img.shields.io/badge/DOCS-docs.beever.ai/atlas-FFC107?style=for-the-badge&labelColor=4A4A4A" alt="Docs" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Apache_2.0-7CB342?style=for-the-badge&labelColor=4A4A4A" alt="License Apache 2.0" /></a>
+  <a href="https://beever.ai"><img src="https://img.shields.io/badge/BUILT_BY-BEEVER.AI-15404E?style=for-the-badge&labelColor=4A4A4A" alt="Built by Beever.ai" /></a>
+  <a href="https://google.github.io/adk-docs/"><img src="https://img.shields.io/badge/BUILT_WITH-Google_ADK-FF6F00?style=for-the-badge&labelColor=4A4A4A" alt="Built with Google ADK" /></a>
+</p>
 
 **Beever Atlas turns the conversations your team already has on Slack, Discord, Microsoft Teams, and Mattermost into a self-maintaining wiki.** Atomic facts get extracted, deduplicated, and clustered into topic pages with citations. A graph store links the people, decisions, and projects mentioned across channels. Ask questions in natural language and get answers cited back to the source messages — through the dashboard, or through MCP into Claude Code and Cursor.
 
