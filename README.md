@@ -1,4 +1,6 @@
-<h1 align="center">🦫 Beever Atlas</h1>
+<h1 align="center">
+  <img src="web/public/logo-primary.svg" alt="" height="40" />&nbsp;Beever Atlas
+</h1>
 
 <div align="center">
   <picture>
@@ -7,7 +9,7 @@
   </picture>
 </div>
 
-<p align="center"><strong>DAM THE NOISE!</strong></p>
+<p align="center"><strong>Turn team conversations into a living, searchable knowledge base — automatically!</strong></p>
 
 <p align="center">
   <a href="https://docs.beever.ai/atlas"><img src="https://img.shields.io/badge/DOCS-docs.beever.ai/atlas-FFC107?style=for-the-badge&labelColor=4A4A4A" alt="Docs" /></a>
