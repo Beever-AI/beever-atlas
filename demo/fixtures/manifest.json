@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-04-20T20:50:05.900316+00:00",
+  "embedding_model": "jina-embeddings-v4",
+  "llm_model": "gemini-2.5-flash",
+  "jina_dimensions": 2048,
+  "corpus_files": [
+    "ada-lovelace-contributions.md",
+    "ada-lovelace.md",
+    "analytical-engine.md",
+    "charles-babbage.md",
+    "guido-van-rossum.md",
+    "python-design-philosophy.md",
+    "python-history.md"
+  ],
+  "note": "Re-generate with: make demo-regenerate-fixtures. Fixtures must be regenerated if JINA_DIMENSIONS or corpus files change."
+}

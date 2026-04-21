@@ -1,4 +1,4 @@
-.PHONY: install test lint dev docker-up docker-down clean
+.PHONY: install test lint dev docker-up docker-down clean demo demo-regenerate-fixtures
 
 install:
 	uv sync --extra dev
@@ -25,6 +25,12 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+demo:
+	docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up --build
+
+demo-regenerate-fixtures:
+	python demo/seed.py --live --write-fixtures
 
 clean:
 	find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
