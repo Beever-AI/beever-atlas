@@ -33,7 +33,7 @@
     "mermaid": "^11.14.0",
     "node-emoji": "^2.2.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.2",
     "recharts": "^3.8.1",
