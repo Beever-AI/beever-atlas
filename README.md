@@ -36,34 +36,34 @@ Six short clips — connect a workspace, sync history, watch memory build, brows
   <tr>
     <td width="33%" align="center" valign="top">
       <strong>Multi-Platform</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/multi-platform.mp4" controls muted loop></video><br>
+      <img src="assets/clips/multi-platform.gif" alt="Multi-platform connections demo" width="100%"><br>
       Connect Slack, Discord, Teams, Mattermost, or file imports. One bot, every workspace.
     </td>
     <td width="33%" align="center" valign="top">
       <strong>Message Sync</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/sync.mp4" controls muted loop></video><br>
+      <img src="assets/clips/sync.gif" alt="Channel sync demo" width="100%"><br>
       Pull channel history on demand or on a schedule. Resumable and rate-limit aware.
     </td>
     <td width="33%" align="center" valign="top">
       <strong>Memory Ingestion</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/memory.mp4" controls muted loop></video><br>
+      <img src="assets/clips/memory.gif" alt="Memory ingestion pipeline demo" width="100%"><br>
       6-stage ADK pipeline distils messages into atomic facts, entities, and relationships.
     </td>
   </tr>
   <tr>
     <td width="33%" align="center" valign="top">
       <strong>LLM Wiki</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/wiki.mp4" controls muted loop></video><br>
+      <img src="assets/clips/wiki.gif" alt="LLM wiki browsing demo" width="100%"><br>
       Auto-maintained wiki per channel — overview, topics, people, decisions, citations.
     </td>
     <td width="33%" align="center" valign="top">
       <strong>QA Agent</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/qa.mp4" controls muted loop></video><br>
+      <img src="assets/clips/qa.gif" alt="QA agent answering demo" width="100%"><br>
       Streams cited answers over SSE. Smart router picks semantic or graph per question.
     </td>
     <td width="33%" align="center" valign="top">
       <strong>MCP Server</strong><br><br>
-      <video src="https://github.com/votee/beever-atlas/releases/download/media-assets-v1/mcp.mp4" controls muted loop></video><br>
+      <img src="assets/clips/mcp.gif" alt="MCP server querying from Claude Code demo" width="100%"><br>
       Plug Claude Code / Cursor into your knowledge base — 16 tools, per-agent auth.
     </td>
   </tr>
