@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="assets/banner.png" alt="Beever Atlas — Turn your conversations into LLM-wiki knowledge" width="100%" />
+<img src="web/public/logo-primary.svg" alt="Beever Atlas" height="120" />
+
+# Beever Atlas
 
 **Turn team conversations into a living, searchable knowledge base — automatically.**
 
