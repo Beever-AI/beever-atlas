@@ -10,7 +10,6 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Latest version](https://img.shields.io/github/v/release/beever-ai/beever-atlas?label=version)](https://github.com/beever-ai/beever-atlas/releases)
 [![Star History](https://img.shields.io/github/stars/beever-ai/beever-atlas?style=social)](https://github.com/beever-ai/beever-atlas/stargazers)
-<!-- TODO: coverage badge once RES-208 lands -->
 
 </div>
 
