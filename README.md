@@ -354,3 +354,4 @@ All `/api/*` endpoints are **UNSTABLE** in 0.1.0. v0.2.0 will introduce a `/api/
 [Apache License 2.0](LICENSE) © 2026 Beever Atlas contributors. Third-party attributions in [NOTICE](NOTICE).
 
 Security policy: [SECURITY.md](SECURITY.md) | Community standards: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
