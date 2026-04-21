@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="web/public/logo-primary.svg" alt="Beever Atlas" height="120" />
-
-# Beever Atlas
+<img src="assets/banner.png" alt="Beever Atlas — Turn your conversations into LLM-wiki knowledge" width="100%" />
 
 **Turn team conversations into a living, searchable knowledge base — automatically.**
 
@@ -245,7 +243,11 @@ Live demo — coming in a future release. For now, run `make demo` locally via t
 
 ## Architecture
 
-Beever Atlas runs three services (backend, bot, frontend) backed by four data stores (Weaviate, Neo4j, MongoDB, Redis). Knowledge is held in two complementary memory systems: a semantic store for fast vector search and a graph store for relationship traversal.
+<p align="center">
+  <img src="assets/architecture.png" alt="Beever Atlas architecture — multi-platform chat → memory ingestion → 3-tier memory + graph memory → LLM Wiki and QA Agent → Dashboard and MCP clients" width="80%" />
+</p>
+
+Beever Atlas runs three services (backend, bot, frontend) backed by four data stores (Weaviate, Neo4j, MongoDB, Redis). Conversations from any supported platform flow into a unified ingestion pipeline that produces two complementary memory systems — a **3-tier semantic store** (channel / topic / atomic fact) for fast hybrid search, and a **graph store** that extracts entities and relationships. Those memories fuel two consumer surfaces: the **LLM Wiki** (distilled, auto-maintained) and **QA Agents** (served over the dashboard directly or over **MCP** to Claude Code / Cursor).
 
 See the [architecture overview](https://docs.beever.ai/atlas/concepts/architecture) on the documentation site for the full design, including component responsibilities, dual-memory internals, and the smart query router.
 
@@ -259,14 +261,45 @@ For a detailed comparison with other LLM knowledge tools, see [the comparison pa
 
 ---
 
-## Features
+## Features in action
 
-- **Multi-platform ingestion** — Slack, Discord, and Microsoft Teams supported out of the box.
-- **Dual semantic + graph memory** — Weaviate for hybrid BM25 + vector search; Neo4j for entity and relationship traversal.
-- **Auto-generated wiki** — hierarchical topic pages with Mermaid diagrams and source citations, cached in MongoDB.
-- **Smart query routing** — LLM-powered router picks semantic or graph retrieval per question.
-- **Wiki consolidation** — atomic facts are clustered by cosine similarity into browsable topic groups, no manual curation required.
-- **Self-hosted** — all data stays in databases you control; no telemetry is sent anywhere.
+Six short clips that walk through the core flow — connect a workspace, sync history, watch memory build, browse the auto-generated wiki, ask questions, and plug external AI agents in via MCP.
+
+### 1. Multi-Platform — connect Slack, Discord, Teams, Mattermost, or file imports
+
+One bot handles every platform. Add a workspace through the dashboard; tokens are encrypted at rest and never land in `.env`.
+
+<video src="assets/clips/multi-platform.mp4" controls muted loop width="100%"></video>
+
+### 2. Message Sync — pull channel history on demand or on a schedule
+
+Resumable, rate-limit-aware, thread-aware. The scheduler handles incremental back-fill; the dashboard shows progress per channel.
+
+<video src="assets/clips/sync.mp4" controls muted loop width="100%"></video>
+
+### 3. Memory Ingestion — turn raw messages into structured knowledge
+
+A 6-stage ADK pipeline distils messages into atomic facts, clusters them by topic, extracts entities and relationships, and writes the result to Weaviate + Neo4j with an outbox pattern for atomic cross-store persistence.
+
+<video src="assets/clips/memory.mp4" controls muted loop width="100%"></video>
+
+### 4. LLM Wiki — an auto-maintained wiki per channel
+
+Overview, topic pages, people, decisions, tech stack, FAQ, glossary — all hierarchical, all with inline citations back to source messages, all cached in MongoDB so reads are free.
+
+<video src="assets/clips/wiki.mp4" controls muted loop width="100%"></video>
+
+### 5. QA Agent — ask questions, get cited answers over SSE
+
+Streams reasoning, tool calls, and the final answer with citations. The smart router picks semantic-memory retrieval, graph traversal, or external web search per question.
+
+<video src="assets/clips/qa.mp4" controls muted loop width="100%"></video>
+
+### 6. MCP server — plug Claude Code, Cursor, and other AI agents into your knowledge base
+
+A curated MCP surface at `/mcp` exposes 16 tools (discovery, retrieval, graph traversal, long-running ops). Per-agent bearer tokens + per-channel ACLs. See [docs/mcp-server.md](docs/mcp-server.md) for client configs.
+
+<video src="assets/clips/mcp.mp4" controls muted loop width="100%"></video>
 
 ---
 
