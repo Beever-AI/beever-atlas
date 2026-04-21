@@ -1,5 +1,9 @@
 <h1 align="center">
-  <img src="web/public/logo-primary.svg" alt="" height="40" />&nbsp;Beever Atlas
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/logo-white.svg" />
+    <img src="web/public/logo-primary.svg" alt="" height="48" align="absmiddle" />
+  </picture>
+  &nbsp;Beever Atlas
 </h1>
 
 <div align="center">
