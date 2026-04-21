@@ -1,15 +1,15 @@
 <div align="center">
 
+<img src="web/public/logo-primary.svg" alt="Beever Atlas" height="120" />
+
 # Beever Atlas
 
 **Turn team conversations into a living, searchable knowledge base — automatically.**
 
-<!-- TODO: hero GIF/screenshot — track under separate ticket -->
-
-[![CI](https://img.shields.io/github/actions/workflow/status/beever-ai/beever-atlas/ci.yml?branch=main&label=CI)](https://github.com/beever-ai/beever-atlas/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/votee/beever-atlas/ci.yml?branch=main&label=CI)](https://github.com/votee/beever-atlas/actions)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Latest version](https://img.shields.io/github/v/release/beever-ai/beever-atlas?label=version)](https://github.com/beever-ai/beever-atlas/releases)
-[![Star History](https://img.shields.io/github/stars/beever-ai/beever-atlas?style=social)](https://github.com/beever-ai/beever-atlas/stargazers)
+[![Latest version](https://img.shields.io/github/v/release/votee/beever-atlas?label=version)](https://github.com/votee/beever-atlas/releases)
+[![Star History](https://img.shields.io/github/stars/votee/beever-atlas?style=social)](https://github.com/votee/beever-atlas/stargazers)
 
 </div>
 
@@ -22,7 +22,7 @@ Beever Atlas ships as a Docker Compose stack (backend + bot + web + 4 datastores
 ### 1. Get the code
 
 ```bash
-git clone https://github.com/beever-ai/beever-atlas.git
+git clone https://github.com/votee/beever-atlas.git
 cd beever-atlas
 ```
 
