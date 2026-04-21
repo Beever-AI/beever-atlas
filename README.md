@@ -1,21 +1,92 @@
 <div align="center">
-
-<img src="web/public/logo-primary.svg" alt="Beever Atlas" height="120" />
-
-# Beever Atlas
-
-**Turn team conversations into a living, searchable knowledge base — automatically.**
-
-[![CI](https://img.shields.io/github/actions/workflow/status/beever-ai/beever-atlas/ci.yml?branch=main&label=CI)](https://github.com/beever-ai/beever-atlas/actions)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Latest version](https://img.shields.io/github/v/release/beever-ai/beever-atlas?label=version)](https://github.com/beever-ai/beever-atlas/releases)
-[![Star History](https://img.shields.io/github/stars/beever-ai/beever-atlas?style=social)](https://github.com/beever-ai/beever-atlas/stargazers)
-
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png" />
+    <img src="assets/banner.png" alt="Beever Atlas — LLM-first Wiki Knowledge Base" width="100%" />
+  </picture>
 </div>
+
+# 🦫 Beever Atlas — LLM-first Wiki Knowledge Base
+
+[![DOCS](https://img.shields.io/badge/DOCS-docs.beever.ai/atlas-FFC107?style=for-the-badge&labelColor=4A4A4A)](https://docs.beever.ai/atlas)
+[![LICENSE](https://img.shields.io/badge/LICENSE-Apache_2.0-7CB342?style=for-the-badge&labelColor=4A4A4A)](LICENSE)
+[![BUILT BY](https://img.shields.io/badge/BUILT_BY-BEEVER.AI-15404E?style=for-the-badge&labelColor=4A4A4A)](https://beever.ai)
+[![BUILT WITH](https://img.shields.io/badge/BUILT_WITH-Google_ADK-FF6F00?style=for-the-badge&labelColor=4A4A4A)](https://google.github.io/adk-docs/)
+
+**Beever Atlas turns the conversations your team already has on Slack, Discord, Microsoft Teams, and Mattermost into a self-maintaining wiki.** Atomic facts get extracted, deduplicated, and clustered into topic pages with citations. A graph store links the people, decisions, and projects mentioned across channels. Ask questions in natural language and get answers cited back to the source messages — through the dashboard, or through MCP into Claude Code and Cursor.
+
+If you want a knowledge base that grows on its own from the chats your team already has, this is it.
 
 ---
 
-## Quick Start
+## ✨ Features in action
+
+Six short clips — connect a workspace, sync history, watch memory build, browse the auto-generated wiki, ask questions, plug external AI agents in via MCP.
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <strong>Multi-Platform</strong><br><br>
+      <video src="assets/clips/multi-platform.mp4" controls muted loop></video><br>
+      Connect Slack, Discord, Teams, Mattermost, or file imports. One bot, every workspace.
+    </td>
+    <td width="33%" align="center" valign="top">
+      <strong>Message Sync</strong><br><br>
+      <video src="assets/clips/sync.mp4" controls muted loop></video><br>
+      Pull channel history on demand or on a schedule. Resumable and rate-limit aware.
+    </td>
+    <td width="33%" align="center" valign="top">
+      <strong>Memory Ingestion</strong><br><br>
+      <video src="assets/clips/memory.mp4" controls muted loop></video><br>
+      6-stage ADK pipeline distils messages into atomic facts, entities, and relationships.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <strong>LLM Wiki</strong><br><br>
+      <video src="assets/clips/wiki.mp4" controls muted loop></video><br>
+      Auto-maintained wiki per channel — overview, topics, people, decisions, citations.
+    </td>
+    <td width="33%" align="center" valign="top">
+      <strong>QA Agent</strong><br><br>
+      <video src="assets/clips/qa.mp4" controls muted loop></video><br>
+      Streams cited answers over SSE. Smart router picks semantic or graph per question.
+    </td>
+    <td width="33%" align="center" valign="top">
+      <strong>MCP Server</strong><br><br>
+      <video src="assets/clips/mcp.mp4" controls muted loop></video><br>
+      Plug Claude Code / Cursor into your knowledge base — 16 tools, per-agent auth.
+    </td>
+  </tr>
+</table>
+
+---
+
+## 🏗️ Architecture
+
+Conversations from any supported platform flow into a unified ingestion pipeline that produces two complementary memory systems — a **3-tier semantic store** (channel / topic / atomic fact) for fast hybrid search, and a **graph store** that extracts entities and their relationships. Those memories fuel two consumer surfaces: the **LLM Wiki** (distilled, auto-maintained) and **QA Agents** (served through the dashboard directly, or through **MCP** into Claude Code / Cursor).
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png" />
+    <img src="assets/architecture.png" alt="Beever Atlas architecture — chat platforms → memory ingestion → 3-tier semantic memory + graph memory → LLM Wiki and QA Agent → Dashboard and MCP clients" width="60%" />
+  </picture>
+</p>
+
+<p align="center"><em>From chat platforms to MCP agents — one ingestion path, two memory systems, two delivery surfaces.</em></p>
+
+Under the hood, three services (backend, bot, frontend) are backed by four data stores (Weaviate, Neo4j, MongoDB, Redis). See the [architecture overview](https://docs.beever.ai/atlas/concepts/architecture) on the documentation site for the full design — component responsibilities, dual-memory internals, and the smart query router.
+
+---
+
+## 💡 Why Wiki-First RAG?
+
+Most RAG systems answer questions by retrieving raw message snippets and feeding them straight to an LLM. Beever Atlas takes a different approach: it continuously distils conversations into a structured, auto-maintained wiki — with topic pages, entity graphs, decisions, and citations — before any query is issued. When you ask a question, the retrieval layer works against clean, deduplicated knowledge rather than noisy chat history. This means answers are more consistent, citations are traceable to source messages, and the wiki itself becomes a useful artifact your team can browse independently of the Q&A interface. The dual-memory architecture (semantic + graph) lets the query router pick the right retrieval strategy per question, keeping latency low and context precise.
+
+For a detailed comparison with other LLM knowledge tools, see [the comparison page](https://docs.beever.ai/atlas/comparison) on the documentation site.
+
+---
+
+## 🚀 Quick Start
 
 Beever Atlas ships as a Docker Compose stack (backend + bot + web + 4 datastores). You can try a seeded demo in 30 seconds with zero keys, then pick one of **three deployment options** to install it for real.
 
@@ -227,103 +298,29 @@ Quick example (Claude Code):
 ### Common commands
 
 ```bash
-docker compose up -d              # Start in background
-docker compose logs -f beever-atlas   # Tail backend logs
-docker compose down               # Stop (keeps data)
-docker compose down -v            # Stop and DELETE all indexed data
-make demo                         # Full stack + seeded demo corpus
-make docker-up                    # Shortcut for `docker compose up -d`
+docker compose up -d                     # Start in background
+docker compose logs -f beever-atlas      # Tail backend logs
+docker compose down                      # Stop (keeps data)
+docker compose down -v                   # Stop and DELETE all indexed data
+make demo                                # Full stack + seeded demo corpus
+make docker-up                           # Shortcut for `docker compose up -d`
 ```
 
 ---
 
-## Live Demo
-
-Live demo — coming in a future release. For now, run `make demo` locally via the Quick Start above.
-
----
-
-## Architecture
-
-Conversations from any supported platform flow into a unified ingestion pipeline that produces two complementary memory systems — a **3-tier semantic store** (channel / topic / atomic fact) for fast hybrid search, and a **graph store** that extracts entities and their relationships. Those memories fuel two consumer surfaces: the **LLM Wiki** (distilled, auto-maintained) and **QA Agents** (served through the dashboard directly, or through **MCP** into Claude Code / Cursor).
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.png" />
-    <img src="assets/architecture.png" alt="Beever Atlas architecture — chat platforms → memory ingestion → 3-tier semantic memory + graph memory → LLM Wiki and QA Agent → Dashboard and MCP clients" width="60%" />
-  </picture>
-</p>
-
-<p align="center"><em>From chat platforms to MCP agents — one ingestion path, two memory systems, two delivery surfaces.</em></p>
-
-Under the hood, three services (backend, bot, frontend) are backed by four data stores (Weaviate, Neo4j, MongoDB, Redis). See the [architecture overview](https://docs.beever.ai/atlas/concepts/architecture) on the documentation site for the full design — component responsibilities, dual-memory internals, and the smart query router.
-
----
-
-## Why Wiki-First RAG?
-
-Most RAG systems answer questions by retrieving raw message snippets and feeding them straight to an LLM. Beever Atlas takes a different approach: it continuously distils conversations into a structured, auto-maintained wiki — with topic pages, entity graphs, decisions, and citations — before any query is issued. When you ask a question, the retrieval layer works against clean, deduplicated knowledge rather than noisy chat history. This means answers are more consistent, citations are traceable to source messages, and the wiki itself becomes a useful artifact your team can browse independently of the Q&A interface. The dual-memory architecture (semantic + graph) lets the query router pick the right retrieval strategy per question, keeping latency low and context precise.
-
-For a detailed comparison with other LLM knowledge tools, see [the comparison page](https://docs.beever.ai/atlas/comparison) on the documentation site.
-
----
-
-## Features in action
-
-Six short clips — connect a workspace, sync history, watch memory build, browse the auto-generated wiki, ask questions, plug external AI agents in via MCP.
-
-<table>
-  <tr>
-    <td width="33%" align="center" valign="top">
-      <strong>Multi-Platform</strong><br><br>
-      <video src="assets/clips/multi-platform.mp4" controls muted loop></video><br>
-      Connect Slack, Discord, Teams, Mattermost, or file imports. One bot, every workspace.
-    </td>
-    <td width="33%" align="center" valign="top">
-      <strong>Message Sync</strong><br><br>
-      <video src="assets/clips/sync.mp4" controls muted loop></video><br>
-      Pull channel history on demand or on a schedule. Resumable and rate-limit aware.
-    </td>
-    <td width="33%" align="center" valign="top">
-      <strong>Memory Ingestion</strong><br><br>
-      <video src="assets/clips/memory.mp4" controls muted loop></video><br>
-      6-stage ADK pipeline distils messages into atomic facts, entities, and relationships.
-    </td>
-  </tr>
-  <tr>
-    <td width="33%" align="center" valign="top">
-      <strong>LLM Wiki</strong><br><br>
-      <video src="assets/clips/wiki.mp4" controls muted loop></video><br>
-      Auto-maintained wiki per channel — overview, topics, people, decisions, citations.
-    </td>
-    <td width="33%" align="center" valign="top">
-      <strong>QA Agent</strong><br><br>
-      <video src="assets/clips/qa.mp4" controls muted loop></video><br>
-      Streams cited answers over SSE. Smart router picks semantic or graph per question.
-    </td>
-    <td width="33%" align="center" valign="top">
-      <strong>MCP Server</strong><br><br>
-      <video src="assets/clips/mcp.mp4" controls muted loop></video><br>
-      Plug Claude Code / Cursor into your knowledge base — 16 tools, per-agent auth.
-    </td>
-  </tr>
-</table>
-
----
-
-## Privacy & Telemetry
+## 🔒 Privacy & Telemetry
 
 Beever Atlas collects no telemetry. No usage data, error reports, or analytics are sent anywhere by default. All LLM calls go through API keys you configure in your own `.env`, and all data stays in the databases you control.
 
 ---
 
-## API Stability
+## 📐 API Stability
 
 All `/api/*` endpoints are **UNSTABLE** in 0.1.0. v0.2.0 will introduce a `/api/v1/*` prefix; clients pinning current paths will break. See [SECURITY.md](SECURITY.md).
 
 ---
 
-## License
+## 📜 License
 
 [Apache License 2.0](LICENSE) © 2026 Beever Atlas contributors. Third-party attributions in [NOTICE](NOTICE).
 
