@@ -13,7 +13,10 @@
   </picture>
 </div>
 
-<p align="center"><strong>Turn team conversations into a living, searchable knowledge base — automatically!</strong></p>
+<h3 align="center">
+  Turn your team's Slack, Discord, Teams &amp; Mattermost chats<br>
+  into a self-maintaining wiki — automatically.
+</h3>
 
 <p align="center">
   <a href="https://docs.beever.ai/atlas"><img src="https://img.shields.io/badge/DOCS-docs.beever.ai/atlas-FFC107?style=for-the-badge&labelColor=4A4A4A" alt="Docs" /></a>
@@ -28,7 +31,7 @@
   <a href="https://beever.ai/"><img src="https://img.shields.io/badge/WEBSITE-beever.ai-15404E?style=for-the-badge&labelColor=4A4A4A" alt="beever.ai" /></a>
 </p>
 
-**Beever Atlas turns the conversations your team already has on Slack, Discord, Microsoft Teams, and Mattermost into a self-maintaining wiki.** Atomic facts get extracted, deduplicated, and clustered into topic pages with citations. A graph store links the people, decisions, and projects mentioned across channels. Ask questions in natural language and get answers cited back to the source messages — through the dashboard, or through MCP into Claude Code and Cursor.
+Beever Atlas pulls the conversations your team already has on Slack, Discord, Microsoft Teams, and Mattermost, extracts atomic facts, deduplicates them, and clusters them into topic pages with citations. A graph store links the people, decisions, and projects mentioned across channels. Ask questions in natural language and get answers cited back to the source messages — through the dashboard, or through MCP into Claude Code and Cursor.
 
 If you want a knowledge base that grows on its own from the chats your team already has, this is it.
 
