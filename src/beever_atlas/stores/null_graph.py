@@ -150,7 +150,14 @@ class NullGraphStore:
     # ------------------------------------------------------------------
 
     async def delete_channel_data(self, channel_id: str) -> dict[str, int]:
-        return {"entities": 0, "relationships": 0, "events": 0, "media": 0}
+        # Issue #33 — match the GraphStore protocol's `*_deleted` keys used
+        # by Neo4jStore / NebulaStore / MockGraphStore. The previous
+        # `{entities, relationships, events, media}` shape caused KeyError
+        # in any caller that read `result["entities_deleted"]` (e.g.
+        # api/channels.py:552 spreads the dict into a response). Neo4j
+        # uses DETACH DELETE so it has no separate `relationships_deleted`
+        # key — the null shape mirrors that.
+        return {"entities_deleted": 0, "events_deleted": 0, "media_deleted": 0}
 
     # ------------------------------------------------------------------
     # Entity-registry support
