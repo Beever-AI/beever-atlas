@@ -485,7 +485,8 @@ class PersisterAgent(BaseAgent):
                 if skip_graph:
                     break
                 all_media_urls = [
-                    (url, fact.source_media_type or "file") for url in (fact.source_media_urls or [])
+                    (url, fact.source_media_type or "file")
+                    for url in (fact.source_media_urls or [])
                 ] + [(url, "link") for url in (fact.source_link_urls or [])]
                 for url, mtype in all_media_urls:
                     title = ""
