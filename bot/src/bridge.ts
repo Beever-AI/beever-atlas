@@ -19,7 +19,7 @@ import type { ChatManager } from "./chat-manager.js";
 export type { PlatformErrorShape } from "./bridge/platformError.js";
 export { classifyPlatformError } from "./bridge/platformError.js";
 import { classifyPlatformError } from "./bridge/platformError.js";
-import { jsonResponse } from "./http-utils.js";
+import { jsonResponse, readBody, BodyTooLargeError } from "./http-utils.js";
 export { jsonResponse } from "./http-utils.js";
 import { logger } from "./logger.js";
 
@@ -234,14 +234,7 @@ function parseQuery(url: string): URLSearchParams {
 
 // classifyPlatformError is imported from ./bridge/platformError.js above and re-exported.
 
-async function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
+// readBody is imported from ./http-utils.js (with MAX_BODY_SIZE cap and BodyTooLargeError).
 
 // ── User profile cache (module-level, persists across requests) ─────────────
 
@@ -1909,7 +1902,18 @@ async function handleRegisterAdapter(
   chatManager: ChatManager,
 ): Promise<void> {
   try {
-    const body = await readBody(req);
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        console.warn(`Bridge: rejected oversize body from ${req.socket?.remoteAddress ?? "unknown"} on ${req.url ?? "?"}`);
+        jsonResponse(res, 413, { error: "Request body too large", code: "PAYLOAD_TOO_LARGE" });
+        req.destroy();
+        return;
+      }
+      throw err;
+    }
     const { platform, credentials, connectionId } = JSON.parse(body);
 
     if (!platform || typeof platform !== "string") {
@@ -1962,7 +1966,18 @@ async function handleValidateAdapter(
   platform: string,
 ): Promise<void> {
   try {
-    const body = await readBody(req);
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        console.warn(`Bridge: rejected oversize body from ${req.socket?.remoteAddress ?? "unknown"} on ${req.url ?? "?"}`);
+        jsonResponse(res, 413, { error: "Request body too large", code: "PAYLOAD_TOO_LARGE" });
+        req.destroy();
+        return;
+      }
+      throw err;
+    }
     const { credentials } = JSON.parse(body);
 
     if (!credentials || typeof credentials !== "object") {

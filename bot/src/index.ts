@@ -8,7 +8,7 @@ import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
-import { jsonResponse } from "./http-utils.js";
+import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 import { WebhookBuffer } from "./webhook-buffer.js";
 
@@ -481,7 +481,19 @@ async function handleConnectionWebhook(
       return;
     }
 
-    const body = await readBody(req);
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        console.warn(`Webhook: rejected oversize body (connection ${connectionId}) from ${req.socket?.remoteAddress ?? "unknown"}`);
+        res.writeHead(500);
+        res.end("Internal Server Error");
+        req.destroy();   // preserve prior local-readBody behavior — terminate attacker connection immediately
+        return;
+      }
+      throw err;
+    }
     const webReq = new Request(`http://localhost:${port}${req.url}`, {
       method: "POST",
       headers: Object.fromEntries(
@@ -545,7 +557,19 @@ async function handlePlatformWebhook(
       return;
     }
 
-    const body = await readBody(req);
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        console.warn(`Webhook: rejected oversize body (platform ${platform}) from ${req.socket?.remoteAddress ?? "unknown"}`);
+        res.writeHead(500);
+        res.end("Internal Server Error");
+        req.destroy();   // preserve prior local-readBody behavior — terminate attacker connection immediately
+        return;
+      }
+      throw err;
+    }
     const webhooks = bot.webhooks as any;
 
     // Try each adapter for the platform; first successful response wins
@@ -649,25 +673,7 @@ function recordTeamsConversationFromActivity(body: string, connectionId: string)
   }
 }
 
-const MAX_BODY_SIZE = 1_048_576; // 1 MB
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    let size = 0;
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY_SIZE) {
-        req.destroy();
-        reject(new Error("Request body too large"));
-        return;
-      }
-      data += chunk.toString();
-    });
-    req.on("end", () => resolve(data));
-    req.on("error", reject);
-  });
-}
+// readBody, MAX_BODY_SIZE, and BodyTooLargeError are imported from ./http-utils.js.
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
