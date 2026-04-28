@@ -68,17 +68,29 @@ class QAHistoryStore:
         def _connect() -> weaviate.WeaviateClient:
             from urllib.parse import urlparse
 
+            from weaviate.classes.init import Auth
+
             parsed = urlparse(self._url)
             host = parsed.hostname or "localhost"
             port = parsed.port or (443 if parsed.scheme == "https" else 8080)
             secure = parsed.scheme == "https"
 
-            if host in ("localhost", "127.0.0.1") and not secure:
-                return weaviate.connect_to_local(port=port, grpc_port=50051)
+            # Match WeaviateStore's auth pattern — use Auth.api_key, pass
+            # to both connect_to_local and connect_to_custom. The previous
+            # implementation used a custom `X-Weaviate-Api-Key` header
+            # AND forgot to pass auth on local connections, which surfaced
+            # in the docker-compose smoke test (Weaviate runs with
+            # AUTHENTICATION_APIKEY_ALLOWED_KEYS set, so anonymous calls
+            # 401 on the meta endpoint).
+            auth = Auth.api_key(self._api_key) if self._api_key else None
 
-            headers: dict[str, str] = {}
-            if self._api_key:
-                headers["X-Weaviate-Api-Key"] = self._api_key
+            if host in ("localhost", "127.0.0.1") and not secure:
+                return weaviate.connect_to_local(
+                    port=port,
+                    grpc_port=50051,
+                    auth_credentials=auth,
+                )
+
             return weaviate.connect_to_custom(
                 http_host=host,
                 http_port=port,
@@ -86,7 +98,7 @@ class QAHistoryStore:
                 grpc_host=host,
                 grpc_port=50051,
                 grpc_secure=secure,
-                headers=headers,
+                auth_credentials=auth,
             )
 
         self._client = await asyncio.to_thread(_connect)
