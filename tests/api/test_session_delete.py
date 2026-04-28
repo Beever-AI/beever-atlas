@@ -2,16 +2,22 @@
 
 Verifies: POST (create) a chat session → DELETE → LIST → session not returned.
 Also verifies: DELETE of a non-existent session_id returns 404.
+
+After issue #31 Phase 3 migration, these tests patch the StoreClients
+singleton (`beever_atlas.stores._stores`) instead of the per-request
+`AsyncIOMotorClient` / `ChatHistoryStore` constructions, since the
+endpoints now read from the shared singleton.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import beever_atlas.stores as stores_mod
 from beever_atlas.server.app import app
 
 SESSION_ID = "test-delete-session-abc123"
@@ -44,6 +50,32 @@ def _make_session_doc(session_id: str, user_id: str) -> dict:
     }
 
 
+def _install_fake_stores(*, matched_count: int, sessions: list[dict] | None = None):
+    """Install a MagicMock StoreClients singleton with the chat_history.update_one
+    and chat_history.list_sessions_global behavior the test needs. Returns the
+    fake and a saved-original tuple for the test to restore."""
+    saved = stores_mod._stores
+
+    fake = MagicMock(name="FakeStoreClients")
+
+    # delete_ask_session() reads `get_stores().mongodb.db.chat_history.update_one(...)`
+    update_result = MagicMock()
+    update_result.matched_count = matched_count
+    update_call_capture: list = []
+
+    async def _update_one(filt, update):
+        update_call_capture.append((filt, update))
+        return update_result
+
+    fake.mongodb.db.chat_history.update_one = AsyncMock(side_effect=_update_one)
+
+    # list_ask_sessions() reads `get_stores().chat_history.list_sessions_global(...)`
+    fake.chat_history.list_sessions_global = AsyncMock(return_value=sessions or [])
+
+    stores_mod._stores = fake
+    return fake, update_call_capture, saved
+
+
 class TestSessionDelete:
     """Backend DELETE handler: soft-deletes and excludes from LIST."""
 
@@ -52,77 +84,34 @@ class TestSessionDelete:
         """DELETE a session → LIST returns empty (session not present)."""
         _make_session_doc(SESSION_ID, USER_ID)
 
-        # Simulate the DB: update_one matches 1 doc; find returns nothing after delete.
-        mock_update_result = MagicMock()
-        mock_update_result.matched_count = 1
-
-        # list_sessions_global patch: after delete, session is gone
-        mock_store = MagicMock()
-        mock_store.startup = AsyncMock()
-        mock_store.close = MagicMock()
-        mock_store.list_sessions_global = AsyncMock(return_value=[])
-
-        with (
-            patch(
-                "motor.motor_asyncio.AsyncIOMotorClient",
-                autospec=False,
-            ) as mock_motor_cls,
-            patch(
-                "beever_atlas.stores.chat_history_store.ChatHistoryStore",
-                return_value=mock_store,
-            ),
-        ):
-            # Wire the motor mock so update_one returns matched_count=1
-            # ask.py does: client["beever_atlas"].chat_history.update_one(...)
-            mock_collection = MagicMock()
-            mock_collection.update_one = AsyncMock(return_value=mock_update_result)
-            mock_db = MagicMock()
-            mock_db.chat_history = mock_collection
-            mock_client_instance = MagicMock()
-            mock_client_instance.__getitem__ = MagicMock(return_value=mock_db)
-            mock_client_instance.close = MagicMock()
-            mock_motor_cls.return_value = mock_client_instance
-
+        fake, update_calls, saved = _install_fake_stores(matched_count=1)
+        try:
             # DELETE the session
             resp = await client.delete(f"/api/ask/sessions/{SESSION_ID}")
             assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
             assert resp.json() == {"status": "ok"}
 
             # update_one was called with correct filter including user_id
-            mock_collection.update_one.assert_called_once()
-            call_filter = mock_collection.update_one.call_args[0][0]
+            assert len(update_calls) == 1
+            call_filter = update_calls[0][0]
             assert call_filter["session_id"] == SESSION_ID
             assert call_filter["user_id"] == USER_ID
 
-        # LIST sessions — store returns [] (session excluded after soft-delete)
-        with patch(
-            "beever_atlas.stores.chat_history_store.ChatHistoryStore",
-            return_value=mock_store,
-        ):
+            # LIST sessions — store returns [] (session excluded after soft-delete)
             list_resp = await client.get("/api/ask/sessions")
             assert list_resp.status_code == 200
             sessions = list_resp.json().get("sessions", [])
             ids = [s["session_id"] for s in sessions]
             assert SESSION_ID not in ids, f"Deleted session still in LIST: {ids}"
+        finally:
+            stores_mod._stores = saved
 
     @pytest.mark.anyio
     async def test_delete_nonexistent_returns_404(self, client: AsyncClient):
         """DELETE a session that doesn't exist → 404."""
-        mock_update_result = MagicMock()
-        mock_update_result.matched_count = 0
-
-        with patch(
-            "motor.motor_asyncio.AsyncIOMotorClient",
-            autospec=False,
-        ) as mock_motor_cls:
-            mock_collection = MagicMock()
-            mock_collection.update_one = AsyncMock(return_value=mock_update_result)
-            mock_db = MagicMock()
-            mock_db.chat_history = mock_collection
-            mock_client_instance = MagicMock()
-            mock_client_instance.__getitem__ = MagicMock(return_value=mock_db)
-            mock_client_instance.close = MagicMock()
-            mock_motor_cls.return_value = mock_client_instance
-
+        _, _, saved = _install_fake_stores(matched_count=0)
+        try:
             resp = await client.delete("/api/ask/sessions/nonexistent-session-xyz")
             assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        finally:
+            stores_mod._stores = saved
