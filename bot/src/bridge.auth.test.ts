@@ -7,7 +7,8 @@
  * - Wrong token → 401
  * - Correct token → 200 (proceeds to handler)
  * - BRIDGE_API_KEY unset AND BRIDGE_ALLOW_UNAUTH unset → 401
- * - BRIDGE_API_KEY unset AND BRIDGE_ALLOW_UNAUTH="true" → allowed + loud warn
+ * - BRIDGE_API_KEY unset AND BRIDGE_ALLOW_UNAUTH="true" AND BEEVER_ENV="development" → allowed + loud warn
+ * - BRIDGE_API_KEY unset AND BRIDGE_ALLOW_UNAUTH="true" AND BEEVER_ENV unset/staging → STILL 401 (issue #34)
  * - Non-"true" strings for BRIDGE_ALLOW_UNAUTH ("TRUE", "1", "yes") → still closed
  * - BRIDGE_API_KEY set AND BRIDGE_ALLOW_UNAUTH="true" → key wins (opt-in ignored)
  */
@@ -97,11 +98,44 @@ describe("checkAuth — bridge auth enforcement (M1)", () => {
     assert.equal(res.statusCode, 401);
   });
 
-  it("allows request when BRIDGE_API_KEY unset and BRIDGE_ALLOW_UNAUTH=\"true\"", () => {
+  it("allows request when BRIDGE_API_KEY unset, BRIDGE_ALLOW_UNAUTH=\"true\", AND BEEVER_ENV=\"development\"", () => {
     process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    process.env.BEEVER_ENV = "development";
     const res = makeRes();
     const ok = checkAuth(makeReq() as IncomingMessage, res as unknown as ServerResponse);
     assert.equal(ok, true);
+  });
+
+  // Issue #34 — BRIDGE_ALLOW_UNAUTH must require an explicit BEEVER_ENV=development
+  // marker. Without it, an operator who set the flag on staging or in their CI
+  // pipeline would have run the bridge wide-open. The flag is now silently
+  // ignored unless dev is the explicit env.
+  it("issue #34: BRIDGE_ALLOW_UNAUTH=\"true\" with no BEEVER_ENV → still 401", () => {
+    process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    // BEEVER_ENV intentionally not set
+    const res = makeRes();
+    const ok = checkAuth(makeReq() as IncomingMessage, res as unknown as ServerResponse);
+    assert.equal(ok, false, "without BEEVER_ENV=development the unauth flag must be ignored");
+    assert.equal(res.statusCode, 401);
+  });
+
+  it("issue #34: BRIDGE_ALLOW_UNAUTH=\"true\" with BEEVER_ENV=\"staging\" → still 401", () => {
+    process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    process.env.BEEVER_ENV = "staging";
+    const res = makeRes();
+    const ok = checkAuth(makeReq() as IncomingMessage, res as unknown as ServerResponse);
+    assert.equal(ok, false, "non-development envs must not honor the unauth flag");
+    assert.equal(res.statusCode, 401);
+  });
+
+  it("issue #34: BRIDGE_ALLOW_UNAUTH=\"true\" with NODE_ENV=\"development\" only → still 401", () => {
+    // The gate is BEEVER_ENV specifically, not the generic NODE_ENV.
+    process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    process.env.NODE_ENV = "development";
+    const res = makeRes();
+    const ok = checkAuth(makeReq() as IncomingMessage, res as unknown as ServerResponse);
+    assert.equal(ok, false, "BEEVER_ENV is the explicit dev marker, NODE_ENV is not");
+    assert.equal(res.statusCode, 401);
   });
 
   for (const variant of ["TRUE", "True", "1", "yes", " true"]) {
@@ -164,8 +198,9 @@ describe("assertBridgeAuthReady — startup warning for explicit opt-in", () => 
     resetEnv();
   });
 
-  it("emits a loud warning when running unauthenticated via opt-in", () => {
+  it("emits a loud warning when running unauthenticated via opt-in (with BEEVER_ENV=development)", () => {
     process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    process.env.BEEVER_ENV = "development";
     const captured: string[] = [];
     const originalWarn = console.warn;
     console.warn = (...args: unknown[]) => {
@@ -181,8 +216,35 @@ describe("assertBridgeAuthReady — startup warning for explicit opt-in", () => 
       "expected warning to contain BRIDGE_ALLOW_UNAUTH=true",
     );
     assert.ok(
-      captured.some((m) => m.includes("Do NOT use in production")),
-      "expected warning to contain a production-use caution",
+      captured.some((m) => m.includes("Do NOT use in staging or production")),
+      "expected warning to contain a staging/production-use caution",
+    );
+  });
+
+  // Issue #34 — when the operator sets BRIDGE_ALLOW_UNAUTH=true but
+  // doesn't explicitly mark the env as development, the flag is ignored
+  // at request time. Surface that loudly at startup so they don't think
+  // they've bypassed auth when in fact every request will 401.
+  it("issue #34: warns that flag is IGNORED when BEEVER_ENV is not development", () => {
+    process.env.BRIDGE_ALLOW_UNAUTH = "true";
+    // BEEVER_ENV intentionally not set
+    const captured: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      captured.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      assertBridgeAuthReady();
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.ok(
+      captured.some((m) => m.includes("IGNORED")),
+      "expected warning to clearly state the flag is being ignored",
+    );
+    assert.ok(
+      captured.some((m) => m.includes("BEEVER_ENV=development")),
+      "expected warning to point at the BEEVER_ENV gate",
     );
   });
 

@@ -89,7 +89,12 @@ services:
 
   bot:
     build: ./bot
-    ports: ["3001:3001"]
+    # Bind bot bridge to localhost only — it's an internal management
+    # surface (adapter registration, sync triggers, credential lookup),
+    # not user-facing. Datastores already bind to 127.0.0.1; the bot
+    # bridge was the outlier (issue #34). Backend (8000) and web (3000)
+    # remain on 0.0.0.0 since they're behind a reverse proxy in prod.
+    ports: ["127.0.0.1:3001:3001"]
     depends_on:
       redis:
         condition: service_healthy

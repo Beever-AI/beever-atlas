@@ -105,11 +105,17 @@ export function checkAuth(
   // and operators can swap keys without restarting (cost is negligible —
   // process.env lookup is a hash hit).
   const bridgeKey = process.env.BRIDGE_API_KEY || "";
-  const allowUnauth = process.env.BRIDGE_ALLOW_UNAUTH === "true";
+  // Issue #34 — BRIDGE_ALLOW_UNAUTH is a no-op outside dev. Previously any
+  // non-production environment honored the flag, which let operators
+  // accidentally run the bridge wide-open on staging. The flag now requires
+  // BEEVER_ENV === "development" (the explicit dev marker), not "anything
+  // but production".
+  const isDev = process.env.BEEVER_ENV === "development";
+  const allowUnauth = isDev && process.env.BRIDGE_ALLOW_UNAUTH === "true";
   const hmacDual = process.env.BEEVER_BRIDGE_HMAC_DUAL === "true";
 
   if (!bridgeKey) {
-    if (allowUnauth) return true; // explicit local-dev opt-in
+    if (allowUnauth) return true; // explicit local-dev opt-in (BEEVER_ENV=development gate)
     return unauthorized(res);
   }
 
@@ -135,7 +141,12 @@ export function checkAuth(
  */
 export function assertBridgeAuthReady(): void {
   const bridgeKey = process.env.BRIDGE_API_KEY || "";
-  const allowUnauth = process.env.BRIDGE_ALLOW_UNAUTH === "true";
+  // Issue #34 — match the new dev-only gate from `checkAuth`. The startup
+  // warning only fires for the *effective* unauth state, not the literal
+  // env value; setting BRIDGE_ALLOW_UNAUTH=true outside dev is silently
+  // ignored at request time (the bridge stays locked).
+  const isDev = process.env.BEEVER_ENV === "development";
+  const allowUnauth = isDev && process.env.BRIDGE_ALLOW_UNAUTH === "true";
   const isProd =
     process.env.BEEVER_ENV === "production" ||
     process.env.NODE_ENV === "production";
@@ -149,7 +160,18 @@ export function assertBridgeAuthReady(): void {
 
   if (!bridgeKey && allowUnauth) {
     console.warn(
-      "⚠️  BRIDGE_ALLOW_UNAUTH=true — running without bridge authentication. Do NOT use in production.",
+      "⚠️  BRIDGE_ALLOW_UNAUTH=true (with BEEVER_ENV=development) — running without bridge authentication. Do NOT use in staging or production.",
+    );
+  } else if (
+    !bridgeKey &&
+    process.env.BRIDGE_ALLOW_UNAUTH === "true" &&
+    !isDev
+  ) {
+    // Operator set the flag but BEEVER_ENV is not 'development' — surface
+    // a loud warning so they know the flag is being ignored and the bridge
+    // will return 401 on every call.
+    console.warn(
+      "⚠️  BRIDGE_ALLOW_UNAUTH=true is IGNORED unless BEEVER_ENV=development. The bridge will return 401 until BRIDGE_API_KEY is set or BEEVER_ENV is explicitly 'development'.",
     );
   }
 }
