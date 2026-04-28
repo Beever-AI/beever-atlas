@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -91,7 +91,9 @@ export function useGlobalConversationHistory() {
   }, []);
 
   // Keep ref in sync so loadMore always reads the latest search query.
-  searchQueryRef.current = searchQuery;
+  useLayoutEffect(() => {
+    searchQueryRef.current = searchQuery;
+  });
 
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current) return;

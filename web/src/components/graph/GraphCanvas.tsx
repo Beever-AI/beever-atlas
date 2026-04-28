@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import type { GraphEntity, GraphRelationship } from "@/hooks/useGraph";
 import { getTypeColors } from "./GraphFilters";
@@ -28,7 +28,9 @@ export function GraphCanvas({
   // in cytoscape event handlers (the main useEffect doesn't include
   // onSelectEntity in its deps to avoid destroying cytoscape on every render).
   const onSelectRef = useRef(onSelectEntity);
-  onSelectRef.current = onSelectEntity;
+  useLayoutEffect(() => {
+    onSelectRef.current = onSelectEntity;
+  });
 
   // Build elements whenever data changes
   useEffect(() => {

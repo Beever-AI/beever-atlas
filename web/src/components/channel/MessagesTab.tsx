@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useOutletContext } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -344,7 +344,9 @@ export function MessagesTab() {
 
   // Use ref for connectionId to avoid recreating fetchMessages on null→value transition
   const connectionIdRef = useRef(connectionId);
-  connectionIdRef.current = connectionId;
+  useLayoutEffect(() => {
+    connectionIdRef.current = connectionId;
+  });
 
   // Track previous channelId to only clear messages on actual channel change
   const prevChannelIdRef = useRef(channelId);

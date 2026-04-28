@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { Send, Square, Paperclip, X, Sparkles, ChevronDown, SlidersHorizontal, Loader2 } from "lucide-react";
 import type { AnswerMode, AttachmentFile } from "../../types/askTypes";
 import type { ToolDescriptor, ToolCategory } from "../../types/toolTypes";
@@ -103,14 +103,10 @@ export function ChatInputBar({
     return () => window.removeEventListener("keydown", handler);
   }, [showToolsMenu]);
 
-  const adjustHeight = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
+  const resizeTextarea = (el: HTMLTextAreaElement) => {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 180) + "px";
-  }, []);
-
-  useEffect(() => adjustHeight(), [text, adjustHeight]);
+  };
 
   const handleSubmit = () => {
     const trimmed = text.trim();
@@ -120,7 +116,7 @@ export function ChatInputBar({
     if (!trimmed || isStreaming || disabled || uploading) return;
     onSubmit(trimmed, { mode, attachments });
     setText("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (textareaRef.current) resizeTextarea(textareaRef.current);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -247,7 +243,7 @@ export function ChatInputBar({
             <textarea
               ref={textareaRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => { setText(e.target.value); resizeTextarea(e.target); }}
               onKeyDown={handleKeyDown}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
