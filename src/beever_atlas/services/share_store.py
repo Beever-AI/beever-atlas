@@ -30,7 +30,10 @@ class ShareStore:
     """CRUD for the `shared_conversations` collection."""
 
     def __init__(self, mongodb_uri: str, db_name: str | None = None) -> None:
-        resolved = db_name or os.environ.get("BEEVER_CHAT_HISTORY_DB", "beever_atlas")
+        # `os.environ.get(name, default)` returns "" when the env var is set
+        # to empty string. `.env.example` ships `BEEVER_CHAT_HISTORY_DB=` so
+        # the chained `or` is needed to fall back to the default name.
+        resolved = db_name or os.environ.get("BEEVER_CHAT_HISTORY_DB") or "beever_atlas"
         self._client = AsyncIOMotorClient(mongodb_uri)
         self._db = self._client[resolved]
         self._collection = self._db["shared_conversations"]

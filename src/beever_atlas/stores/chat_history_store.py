@@ -28,8 +28,12 @@ class ChatHistoryStore:
 
     def __init__(self, mongodb_uri: str, db_name: str | None = None) -> None:
         # Tests set BEEVER_CHAT_HISTORY_DB to route writes to an isolated
-        # database and avoid polluting the dev sidebar.
-        resolved = db_name or os.environ.get("BEEVER_CHAT_HISTORY_DB", "beever_atlas")
+        # database and avoid polluting the dev sidebar. Note: `os.environ.get(
+        # name, default)` returns "" when the env var is set to empty string —
+        # `.env.example` defaults to `BEEVER_CHAT_HISTORY_DB=` (empty) and
+        # docker-compose loads it as "". Using `or` chains the fallback so an
+        # empty value falls through to the default.
+        resolved = db_name or os.environ.get("BEEVER_CHAT_HISTORY_DB") or "beever_atlas"
         self._client = AsyncIOMotorClient(mongodb_uri)
         self._db = self._client[resolved]
         self._collection = self._db["chat_history"]
