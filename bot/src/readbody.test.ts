@@ -69,7 +69,7 @@ describe("readBody — size cap and ordering invariants", () => {
     const CHUNK = 64 * 1024;
     const totalChunks = 160; // 10 MB total
 
-    let rejectedAt = -1;
+    const rejectedAt = -1;
     promise.catch(() => {
       // record when the rejection settled; pushedSoFar is the visible bound
     });
