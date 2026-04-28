@@ -29,6 +29,22 @@ from beever_atlas.models import AtomicFact, GraphEntity, GraphRelationship
 logger = logging.getLogger(__name__)
 
 
+# Shared between the Weaviate error-capture site and the
+# `mark_intent_complete` conditional so a future format change at one site
+# cannot silently break the other (Critic-flagged).
+WEAVIATE_ERROR_PREFIX = "weaviate:"
+
+
+def weaviate_failed(persist_errors: list[str]) -> bool:
+    """Return True if `persist_errors` contains a Weaviate-prefixed entry.
+
+    Used by `_run_async_impl` to gate `mark_intent_complete`: when Weaviate
+    failed, the intent must stay in `weaviate_done=False` state so the
+    `WriteReconciler` retries the Weaviate write automatically.
+    """
+    return any(err.startswith(WEAVIATE_ERROR_PREFIX) for err in persist_errors)
+
+
 def match_media_by_word_overlap(
     fact: dict[str, Any],
     preprocessed_messages: list[dict[str, Any]],
@@ -342,7 +358,7 @@ class PersisterAgent(BaseAgent):
                 batch_num,
                 results[0],
             )
-            persist_errors.append(f"weaviate: {results[0]}")
+            persist_errors.append(f"{WEAVIATE_ERROR_PREFIX} {results[0]}")
         else:
             weaviate_ids = results[0]
 
@@ -424,20 +440,29 @@ class PersisterAgent(BaseAgent):
 
         # --- 6. Batch episodic links ---
         episodic_links: list[dict[str, Any]] = []
-        for fact, weaviate_id in zip(facts, weaviate_ids, strict=True):
-            if skip_graph:
-                break
-            for entity_name in fact.entity_tags:
-                episodic_links.append(
-                    {
-                        "entity_name": entity_name,
-                        "weaviate_fact_id": weaviate_id,
-                        "message_ts": fact.message_ts,
-                        "channel_id": fact.channel_id,
-                        "media_urls": fact.source_media_urls or [],
-                        "link_urls": fact.source_link_urls or [],
-                    }
-                )
+        if weaviate_ids:
+            for fact, weaviate_id in zip(facts, weaviate_ids, strict=True):
+                if skip_graph:
+                    break
+                for entity_name in fact.entity_tags:
+                    episodic_links.append(
+                        {
+                            "entity_name": entity_name,
+                            "weaviate_fact_id": weaviate_id,
+                            "message_ts": fact.message_ts,
+                            "channel_id": fact.channel_id,
+                            "media_urls": fact.source_media_urls or [],
+                            "link_urls": fact.source_link_urls or [],
+                        }
+                    )
+        else:
+            logger.warning(
+                "PersisterAgent: skipping episodic-link cross-reference (weaviate_ids empty — Weaviate failed for %d facts) job_id=%s channel=%s batch=%s",
+                len(facts),
+                sync_job_id,
+                channel_id,
+                batch_num,
+            )
 
         if episodic_links and not skip_graph:
             try:
@@ -455,51 +480,60 @@ class PersisterAgent(BaseAgent):
         # --- 7. Batch media nodes and entity-media links ---
         media_items: list[dict[str, Any]] = []
         entity_media_links: list[dict[str, Any]] = []
-        for fact, weaviate_id in zip(facts, weaviate_ids, strict=True):
-            if skip_graph:
-                break
-            all_media_urls = [
-                (url, fact.source_media_type or "file") for url in (fact.source_media_urls or [])
-            ] + [(url, "link") for url in (fact.source_link_urls or [])]
-            for url, mtype in all_media_urls:
-                title = ""
-                if mtype == "link":
-                    idx = (
-                        (fact.source_link_urls or []).index(url)
-                        if url in (fact.source_link_urls or [])
-                        else -1
-                    )
-                    if idx >= 0 and idx < len(fact.source_link_titles or []):
-                        title = fact.source_link_titles[idx]
-                    if not title:
-                        try:
-                            parts = url.split("//")[-1].split("/")
-                            title = "/".join(parts[:3]) if len(parts) > 2 else parts[0]
-                        except Exception:
-                            title = url
-                else:
-                    media_urls_list = fact.source_media_urls or []
-                    media_names = fact.source_media_names or []
-                    if url in media_urls_list:
-                        idx = media_urls_list.index(url)
-                        if idx < len(media_names) and media_names[idx]:
-                            title = media_names[idx]
-                media_items.append(
-                    {
-                        "url": url,
-                        "media_type": mtype,
-                        "title": title,
-                        "channel_id": fact.channel_id,
-                        "message_ts": fact.message_ts,
-                    }
-                )
-                for entity_name in fact.entity_tags:
-                    entity_media_links.append(
+        if weaviate_ids:
+            for fact, weaviate_id in zip(facts, weaviate_ids, strict=True):
+                if skip_graph:
+                    break
+                all_media_urls = [
+                    (url, fact.source_media_type or "file") for url in (fact.source_media_urls or [])
+                ] + [(url, "link") for url in (fact.source_link_urls or [])]
+                for url, mtype in all_media_urls:
+                    title = ""
+                    if mtype == "link":
+                        idx = (
+                            (fact.source_link_urls or []).index(url)
+                            if url in (fact.source_link_urls or [])
+                            else -1
+                        )
+                        if idx >= 0 and idx < len(fact.source_link_titles or []):
+                            title = fact.source_link_titles[idx]
+                        if not title:
+                            try:
+                                parts = url.split("//")[-1].split("/")
+                                title = "/".join(parts[:3]) if len(parts) > 2 else parts[0]
+                            except Exception:
+                                title = url
+                    else:
+                        media_urls_list = fact.source_media_urls or []
+                        media_names = fact.source_media_names or []
+                        if url in media_urls_list:
+                            idx = media_urls_list.index(url)
+                            if idx < len(media_names) and media_names[idx]:
+                                title = media_names[idx]
+                    media_items.append(
                         {
-                            "entity_name": entity_name,
-                            "media_url": url,
+                            "url": url,
+                            "media_type": mtype,
+                            "title": title,
+                            "channel_id": fact.channel_id,
+                            "message_ts": fact.message_ts,
                         }
                     )
+                    for entity_name in fact.entity_tags:
+                        entity_media_links.append(
+                            {
+                                "entity_name": entity_name,
+                                "media_url": url,
+                            }
+                        )
+        else:
+            logger.warning(
+                "PersisterAgent: skipping media-node cross-reference (weaviate_ids empty — Weaviate failed for %d facts) job_id=%s channel=%s batch=%s",
+                len(facts),
+                sync_job_id,
+                channel_id,
+                batch_num,
+            )
 
         if media_items and not skip_graph:
             try:
@@ -512,16 +546,25 @@ class PersisterAgent(BaseAgent):
             except Exception:  # noqa: BLE001
                 logger.warning("PersisterAgent: batch_link_entities_to_media failed", exc_info=True)
 
-        # --- 6. Mark intent fully complete ---
-        await stores.mongodb.mark_intent_complete(intent_id)
-        logger.info(
-            "PersisterAgent: intent complete job_id=%s channel=%s batch=%s intent=%s episodic_links_facts=%d",
-            sync_job_id,
-            channel_id,
-            batch_num,
-            intent_id,
-            len(weaviate_ids),
-        )
+        # --- 6. Mark intent fully complete (skip if Weaviate failed; reconciler retries) ---
+        if not weaviate_failed(persist_errors):
+            await stores.mongodb.mark_intent_complete(intent_id)
+            logger.info(
+                "PersisterAgent: intent complete job_id=%s channel=%s batch=%s intent=%s episodic_links_facts=%d",
+                sync_job_id,
+                channel_id,
+                batch_num,
+                intent_id,
+                len(weaviate_ids),
+            )
+        else:
+            logger.warning(
+                "PersisterAgent: leaving intent %s pending for reconciler retry (Weaviate failed) job_id=%s channel=%s batch=%s",
+                intent_id,
+                sync_job_id,
+                channel_id,
+                batch_num,
+            )
 
         # --- 7. Write result summary via event state_delta ---
         # ADK's InMemorySessionService only persists state changes that come
