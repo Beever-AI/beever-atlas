@@ -142,16 +142,13 @@ async def _build_decomposed_prompt(
 async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]:
     """Load last 10 turns from ChatHistoryStore as genai Content objects."""
     try:
-        from beever_atlas.infra.config import get_settings
-        from beever_atlas.stores.chat_history_store import ChatHistoryStore
+        # Phase 2 of #31 — use the shared singleton instead of per-request
+        # ChatHistoryStore construction. The singleton was started at app
+        # startup; do not call startup()/close() here.
+        from beever_atlas.stores import get_stores
 
-        settings = get_settings()
-        store = ChatHistoryStore(settings.mongodb_uri)
-        await store.startup()
-        try:
-            messages = await store.get_context_messages(session_id=session_id)
-        finally:
-            store.close()
+        store = get_stores().chat_history
+        messages = await store.get_context_messages(session_id=session_id)
 
         contents = []
         for msg in messages:
@@ -824,18 +821,17 @@ async def _persist_qa_history(
     When `use_v2_schema` is True, session is created without top-level channel_id
     and channel_id is stored per-message. Otherwise legacy v1 schema is used.
     """
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.qa_history_store import QAHistoryStore
-    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    # Phase 2 of #31 — use the shared StoreClients singleton instead of
+    # per-request store construction. The singleton was started at app
+    # startup; do not call startup()/shutdown()/close() per request.
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
+    stores = get_stores()
 
     # Write to QAHistory Weaviate collection — failures are non-fatal
     # QAHistory remains channel-scoped per entry regardless of schema version
     try:
-        qa_store = QAHistoryStore(settings.weaviate_url, settings.weaviate_api_key)
-        await qa_store.startup()
-        await qa_store.write_qa_entry(
+        await stores.qa_history.write_qa_entry(
             question=question,
             answer=answer,
             citations=citations,
@@ -843,14 +839,12 @@ async def _persist_qa_history(
             user_id=user_id,
             session_id=session_id,
         )
-        await qa_store.shutdown()
     except Exception:
         logger.exception("Failed to write QA entry to Weaviate for session=%s", session_id)
 
     # Write to MongoDB chat_history — failures are non-fatal but logged separately
     try:
-        chat_store = ChatHistoryStore(settings.mongodb_uri)
-        await chat_store.startup()
+        chat_store = stores.chat_history
         thinking_doc = _build_thinking_doc(thinking_text, thinking_duration_ms)
         persisted_tool_calls = tool_calls or None
         if use_v2_schema:
@@ -889,7 +883,6 @@ async def _persist_qa_history(
                 thinking=thinking_doc,
                 tool_calls=persisted_tool_calls,
             )
-        chat_store.close()
     except Exception:
         logger.exception("Failed to persist chat history to MongoDB for session=%s", session_id)
 
@@ -997,67 +990,63 @@ async def ask_history(
     Supports optional search filtering and excludes soft-deleted sessions.
     """
     await assert_channel_access(principal, channel_id)
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 2 of #31 — use the shared MongoDB client from StoreClients
+    # instead of opening a new AsyncIOMotorClient per request.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
 
     # Use direct MongoDB query to support is_deleted filter and search
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
-        collection = db["chat_history"]
+    db = get_stores().mongodb.db
+    collection = db["chat_history"]
 
-        skip = (page - 1) * page_size
-        query: dict = {
-            "channel_id": channel_id,
-            "user_id": user_id,
-            "is_deleted": {"$ne": True},
-        }
-        if search:
-            escaped_search = re.escape(search)
-            query["$or"] = [
-                {"title": {"$regex": escaped_search, "$options": "i"}},
-                {"messages.content": {"$regex": escaped_search, "$options": "i"}},
-            ]
+    skip = (page - 1) * page_size
+    query: dict = {
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "is_deleted": {"$ne": True},
+    }
+    if search:
+        escaped_search = re.escape(search)
+        query["$or"] = [
+            {"title": {"$regex": escaped_search, "$options": "i"}},
+            {"messages.content": {"$regex": escaped_search, "$options": "i"}},
+        ]
 
-        cursor = (
-            collection.find(
-                query,
-                {
-                    "_id": 0,
-                    "session_id": 1,
-                    "created_at": 1,
-                    "title": 1,
-                    "pinned": 1,
-                    "messages": {"$slice": 1},
-                },
-            )
-            .sort("created_at", -1)
-            .skip(skip)
-            .limit(page_size)
+    cursor = (
+        collection.find(
+            query,
+            {
+                "_id": 0,
+                "session_id": 1,
+                "created_at": 1,
+                "title": 1,
+                "pinned": 1,
+                "messages": {"$slice": 1},
+            },
         )
-        sessions = []
-        async for doc in cursor:
-            first_q = ""
-            msgs = doc.get("messages", [])
-            if msgs:
-                first_q = msgs[0].get("content", "")[:120]
-            created = doc.get("created_at")
-            sessions.append(
-                {
-                    "session_id": doc["session_id"],
-                    "created_at": created.isoformat()
-                    if hasattr(created, "isoformat")
-                    else str(created or ""),
-                    "first_question": first_q,
-                    "title": doc.get("title"),
-                    "pinned": doc.get("pinned", False),
-                }
-            )
-    finally:
-        client.close()
+        .sort("created_at", -1)
+        .skip(skip)
+        .limit(page_size)
+    )
+    sessions = []
+    async for doc in cursor:
+        first_q = ""
+        msgs = doc.get("messages", [])
+        if msgs:
+            first_q = msgs[0].get("content", "")[:120]
+        created = doc.get("created_at")
+        sessions.append(
+            {
+                "session_id": doc["session_id"],
+                "created_at": created.isoformat()
+                if hasattr(created, "isoformat")
+                else str(created or ""),
+                "first_question": first_q,
+                "title": doc.get("title"),
+                "pinned": doc.get("pinned", False),
+            }
+        )
 
     return {"sessions": sessions, "page": page, "page_size": page_size}
 
@@ -1170,32 +1159,27 @@ async def submit_feedback(
 ) -> dict:
     """Submit thumbs up/down feedback on an assistant response."""
     await assert_channel_access(principal, channel_id)
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 2 of #31 — use the shared MongoDB client from StoreClients.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
+    db = get_stores().mongodb.db
 
-        doc = {
-            "session_id": body.session_id,
-            "message_id": body.message_id,
-            "channel_id": channel_id,
-            "user_id": user_id,
-            "rating": body.rating,
-            "comment": body.comment,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
+    doc = {
+        "session_id": body.session_id,
+        "message_id": body.message_id,
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "rating": body.rating,
+        "comment": body.comment,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
 
-        await db.qa_feedback.update_one(
-            {"session_id": body.session_id, "message_id": body.message_id},
-            {"$set": doc},
-            upsert=True,
-        )
-    finally:
-        client.close()
+    await db.qa_feedback.update_one(
+        {"session_id": body.session_id, "message_id": body.message_id},
+        {"$set": doc},
+        upsert=True,
+    )
 
     return {"status": "ok", "feedback": doc}
 
