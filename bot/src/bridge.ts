@@ -197,7 +197,7 @@ function isPrivateIP(ip: string): boolean {
   return true;
 }
 
-async function assertPublicUrl(rawUrl: string): Promise<void> {
+export async function assertPublicUrl(rawUrl: string): Promise<void> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -1516,7 +1516,9 @@ class MattermostBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const fileUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
-    const response = await fetch(fileUrl, {
+    const decodedUrl = decodeURIComponent(fileUrl);
+    await assertPublicUrl(decodedUrl);
+    const response = await fetch(decodedUrl, {
       headers: { Authorization: `Bearer ${this.botToken}` },
     });
     if (!response.ok) {
