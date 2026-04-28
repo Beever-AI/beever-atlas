@@ -16,8 +16,6 @@ coverage without spinning up the full ADK invocation context.
 
 from __future__ import annotations
 
-import pytest
-
 from beever_atlas.agents.ingestion.persister import (
     WEAVIATE_ERROR_PREFIX,
     weaviate_failed,
