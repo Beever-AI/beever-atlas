@@ -1095,21 +1095,15 @@ async def _save_upload_blob(
     The blob survives session reload, so the chips in chat history stay
     clickable. Owner is stamped server-side and re-checked on GET.
     """
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.file_store import FileStore
+    # Phase 3 of #31 — shared singleton instead of per-request FileStore.
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
-    store = FileStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        return await store.save(
-            content=content,
-            filename=filename,
-            mime_type=mime_type,
-            owner_user_id=owner_user_id,
-        )
-    finally:
-        store.close()
+    return await get_stores().file_store.save(
+        content=content,
+        filename=filename,
+        mime_type=mime_type,
+        owner_user_id=owner_user_id,
+    )
 
 
 @router.post("/api/channels/{channel_id}/ask/upload")
@@ -1197,18 +1191,12 @@ async def get_session(
     must match the session's channel_id (so forged cross-channel URLs 404).
     """
     await assert_channel_access(principal, channel_id)
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
     from fastapi.responses import JSONResponse
 
     user_id = principal.id
-    settings = get_settings()
-    store = ChatHistoryStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        session = await store.load_session(session_id=session_id)
-    finally:
-        store.close()
+    session = await get_stores().chat_history.load_session(session_id=session_id)
 
     if not session:
         return JSONResponse(status_code=404, content={"error": "Session not found"})  # type: ignore[return-value]
@@ -1236,28 +1224,23 @@ async def update_session(
 ) -> dict:
     """Update session metadata (title, pinned status)."""
     await assert_channel_access(principal, channel_id)
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 3 of #31 — shared MongoDB client.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
+    db = get_stores().mongodb.db
 
-        update_fields = {}
-        if "title" in body:
-            update_fields["title"] = body["title"]
-        if "pinned" in body:
-            update_fields["pinned"] = body["pinned"]
+    update_fields = {}
+    if "title" in body:
+        update_fields["title"] = body["title"]
+    if "pinned" in body:
+        update_fields["pinned"] = body["pinned"]
 
-        if update_fields:
-            await db.chat_history.update_one(
-                {"session_id": session_id, "user_id": user_id},
-                {"$set": update_fields},
-            )
-    finally:
-        client.close()
+    if update_fields:
+        await db.chat_history.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            {"$set": update_fields},
+        )
 
     return {"status": "ok", "updated": update_fields}
 
@@ -1271,21 +1254,16 @@ async def delete_session(
 ) -> dict:
     """Soft-delete a conversation session."""
     await assert_channel_access(principal, channel_id)
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 3 of #31 — shared MongoDB client.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
+    db = get_stores().mongodb.db
 
-        await db.chat_history.update_one(
-            {"session_id": session_id, "user_id": user_id},
-            {"$set": {"is_deleted": True}},
-        )
-    finally:
-        client.close()
+    await db.chat_history.update_one(
+        {"session_id": session_id, "user_id": user_id},
+        {"$set": {"is_deleted": True}},
+    )
 
     return {"status": "ok"}
 
@@ -1380,24 +1358,18 @@ async def list_ask_sessions(
     principal: Principal = Depends(require_user),
 ) -> dict:
     """List all ask sessions for the authenticated user across all channels."""
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
 
     page_size = min(page_size, 50)
     user_id = principal.id
-    settings = get_settings()
-    store = ChatHistoryStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        # Fetch one extra to determine whether more pages exist.
-        sessions = await store.list_sessions_global(
-            user_id=user_id,
-            page=page,
-            page_size=page_size + 1,
-            search=search,
-        )
-    finally:
-        store.close()
+    # Fetch one extra to determine whether more pages exist.
+    sessions = await get_stores().chat_history.list_sessions_global(
+        user_id=user_id,
+        page=page,
+        page_size=page_size + 1,
+        search=search,
+    )
 
     has_more = len(sessions) > page_size
     if has_more:
@@ -1413,18 +1385,12 @@ async def get_ask_session(
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Load a full session with derived channel_ids (v2) or legacy fallback (v1)."""
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
     from fastapi.responses import JSONResponse
 
     user_id = principal.id
-    settings = get_settings()
-    store = ChatHistoryStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        session = await store.load_session_with_channels(session_id=session_id)
-    finally:
-        store.close()
+    session = await get_stores().chat_history.load_session_with_channels(session_id=session_id)
 
     if not session:
         return JSONResponse(status_code=404, content={"error": "Session not found"})  # type: ignore[return-value]
@@ -1444,26 +1410,21 @@ async def update_ask_session(
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Update session metadata (title, pinned)."""
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 3 of #31 — shared MongoDB client.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
-        update_fields: dict = {}
-        if "title" in body:
-            update_fields["title"] = body["title"]
-        if "pinned" in body:
-            update_fields["pinned"] = body["pinned"]
-        if update_fields:
-            await db.chat_history.update_one(
-                {"session_id": session_id, "user_id": user_id},
-                {"$set": update_fields},
-            )
-    finally:
-        client.close()
+    db = get_stores().mongodb.db
+    update_fields: dict = {}
+    if "title" in body:
+        update_fields["title"] = body["title"]
+    if "pinned" in body:
+        update_fields["pinned"] = body["pinned"]
+    if update_fields:
+        await db.chat_history.update_one(
+            {"session_id": session_id, "user_id": user_id},
+            {"$set": update_fields},
+        )
 
     return {"status": "ok", "updated": update_fields}
 
@@ -1475,20 +1436,15 @@ async def delete_ask_session(
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Soft-delete an ask session."""
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 3 of #31 — shared MongoDB client.
+    from beever_atlas.stores import get_stores
 
     user_id = principal.id
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
-        result = await db.chat_history.update_one(
-            {"session_id": session_id, "user_id": user_id},
-            {"$set": {"is_deleted": True}},
-        )
-    finally:
-        client.close()
+    db = get_stores().mongodb.db
+    result = await db.chat_history.update_one(
+        {"session_id": session_id, "user_id": user_id},
+        {"$set": {"is_deleted": True}},
+    )
 
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1530,16 +1486,10 @@ def _share_response(doc: dict) -> dict:
 
 async def _verify_session_ownership(session_id: str, user_id: str) -> dict:
     """Return the session doc or raise 403/404."""
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.chat_history_store import ChatHistoryStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
-    store = ChatHistoryStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        session = await store.load_session(session_id=session_id)
-    finally:
-        store.close()
+    session = await get_stores().chat_history.load_session(session_id=session_id)
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1564,42 +1514,37 @@ async def create_or_rotate_share(
     - Existing active share AND rotate=False: return it unchanged.
     - Existing active share AND rotate=True: atomic single-doc token rotation.
     """
-    from beever_atlas.infra.config import get_settings
+    # Phase 3 of #31 — shared singleton.
     from beever_atlas.services.share_snapshot import build_share_snapshot
-    from beever_atlas.services.share_store import ShareStore
+    from beever_atlas.stores import get_stores
 
     user_id = caller_user_id
     session = await _verify_session_ownership(session_id, user_id)
 
     visibility = (body.visibility if body else "owner") or "owner"
 
-    settings = get_settings()
-    store = ShareStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        existing = await store.get_active_by_session(user_id, session_id)
-        if existing and rotate:
-            rotated = await store.rotate_token(existing["_id"])
-            if rotated is None:
-                # Lost the race — someone else rotated/revoked first.
-                raise HTTPException(status_code=404, detail="Share no longer active")
-            return _share_response(rotated)
-        if existing and not rotate:
-            return _share_response(existing)
+    store = get_stores().share_store
+    existing = await store.get_active_by_session(user_id, session_id)
+    if existing and rotate:
+        rotated = await store.rotate_token(existing["_id"])
+        if rotated is None:
+            # Lost the race — someone else rotated/revoked first.
+            raise HTTPException(status_code=404, detail="Share no longer active")
+        return _share_response(rotated)
+    if existing and not rotate:
+        return _share_response(existing)
 
-        # Create new
-        title = session.get("title") or ""
-        scrubbed = build_share_snapshot(session.get("messages") or [])
-        doc = await store.create(
-            owner_user_id=user_id,
-            source_session_id=session_id,
-            visibility=visibility,
-            title=title,
-            messages=scrubbed,
-        )
-        return _share_response(doc)
-    finally:
-        store.close()
+    # Create new
+    title = session.get("title") or ""
+    scrubbed = build_share_snapshot(session.get("messages") or [])
+    doc = await store.create(
+        owner_user_id=user_id,
+        source_session_id=session_id,
+        visibility=visibility,
+        title=title,
+        messages=scrubbed,
+    )
+    return _share_response(doc)
 
 
 @router.put("/api/ask/sessions/{session_id}/share")
@@ -1609,28 +1554,23 @@ async def resnapshot_share(
     caller_user_id: str = Depends(require_user),
 ) -> dict:
     """Re-snapshot the session into the existing share (token stable)."""
-    from beever_atlas.infra.config import get_settings
+    # Phase 3 of #31 — shared singleton.
     from beever_atlas.services.share_snapshot import build_share_snapshot
-    from beever_atlas.services.share_store import ShareStore
+    from beever_atlas.stores import get_stores
 
     user_id = caller_user_id
     session = await _verify_session_ownership(session_id, user_id)
 
-    settings = get_settings()
-    store = ShareStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        existing = await store.get_active_by_session(user_id, session_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="No active share")
-        title = session.get("title") or ""
-        scrubbed = build_share_snapshot(session.get("messages") or [])
-        updated = await store.resnapshot(existing["_id"], title=title, messages=scrubbed)
-        if updated is None:
-            raise HTTPException(status_code=404, detail="No active share")
-        return _share_response(updated)
-    finally:
-        store.close()
+    store = get_stores().share_store
+    existing = await store.get_active_by_session(user_id, session_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No active share")
+    title = session.get("title") or ""
+    scrubbed = build_share_snapshot(session.get("messages") or [])
+    updated = await store.resnapshot(existing["_id"], title=title, messages=scrubbed)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active share")
+    return _share_response(updated)
 
 
 @router.patch("/api/ask/sessions/{session_id}/share/visibility")
@@ -1641,25 +1581,20 @@ async def update_share_visibility(
     caller_user_id: str = Depends(require_user),
 ) -> dict:
     """Update visibility tier of an existing active share."""
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.services.share_store import ShareStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
 
     user_id = caller_user_id
     await _verify_session_ownership(session_id, user_id)
 
-    settings = get_settings()
-    store = ShareStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        existing = await store.get_active_by_session(user_id, session_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="No active share")
-        updated = await store.update_visibility(existing["_id"], body.visibility)
-        if updated is None:
-            raise HTTPException(status_code=404, detail="No active share")
-        return _share_response(updated)
-    finally:
-        store.close()
+    store = get_stores().share_store
+    existing = await store.get_active_by_session(user_id, session_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No active share")
+    updated = await store.update_visibility(existing["_id"], body.visibility)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="No active share")
+    return _share_response(updated)
 
 
 @router.delete("/api/ask/sessions/{session_id}/share", status_code=204)
@@ -1669,24 +1604,19 @@ async def revoke_share(
     caller_user_id: str = Depends(require_user),
 ) -> Response:
     """Revoke the active share. Idempotent: 204 on transition, 404 if none active."""
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.services.share_store import ShareStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
 
     user_id = caller_user_id
     await _verify_session_ownership(session_id, user_id)
 
-    settings = get_settings()
-    store = ShareStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        existing = await store.get_active_by_session(user_id, session_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="No active share")
-        transitioned = await store.revoke(existing["_id"])
-        if not transitioned:
-            raise HTTPException(status_code=404, detail="No active share")
-    finally:
-        store.close()
+    store = get_stores().share_store
+    existing = await store.get_active_by_session(user_id, session_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No active share")
+    transitioned = await store.revoke(existing["_id"])
+    if not transitioned:
+        raise HTTPException(status_code=404, detail="No active share")
     return Response(status_code=204)
 
 
@@ -1756,14 +1686,12 @@ async def get_shared_conversation(
     any rate-limit bucket is consulted, otherwise an attacker replaying an old
     token could drain the quota of the new one.
     """
+    # Phase 3 of #31 — shared singleton.
     from fastapi.responses import JSONResponse
     from beever_atlas.infra.auth import require_user_optional
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.services.share_store import ShareStore
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
-    store = ShareStore(settings.mongodb_uri)
-    await store.startup()
+    store = get_stores().share_store
     try:
         doc = await store.get_by_token(share_token)
         # Hard-404 BEFORE any rate-limit accounting.
@@ -1835,7 +1763,9 @@ async def get_shared_conversation(
         }
         return JSONResponse(content=payload, headers=headers)
     finally:
-        store.close()
+        # Phase 3 of #31 — singleton owns lifecycle; nothing to close here.
+        # The try/finally is preserved as a no-op so the diff stays small.
+        pass
 
 
 @router.post("/api/ask/upload")
@@ -1893,51 +1823,46 @@ async def get_ask_attachment(
     memory is acceptable and keeps lifecycle simple (no streaming chunks
     that would keep the Mongo cursor open past the finally block).
     """
-    from beever_atlas.infra.config import get_settings
-    from beever_atlas.stores.file_store import FileStore
+    # Phase 3 of #31 — shared singleton.
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
-    store = FileStore(settings.mongodb_uri)
-    await store.startup()
-    try:
-        stream = await store.open(file_id)
-        if stream is None:
-            raise HTTPException(status_code=404, detail="File not found")
+    store = get_stores().file_store
+    stream = await store.open(file_id)
+    if stream is None:
+        raise HTTPException(status_code=404, detail="File not found")
 
-        meta = stream.metadata or {}
-        owner = meta.get("owner_user_id")
-        if owner and owner != principal.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
+    meta = stream.metadata or {}
+    owner = meta.get("owner_user_id")
+    if owner and owner != principal.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
-        mime = meta.get("mime_type") or "application/octet-stream"
-        filename = stream.filename or "file"
-        data = await stream.read()
-        from urllib.parse import quote
+    mime = meta.get("mime_type") or "application/octet-stream"
+    filename = stream.filename or "file"
+    data = await stream.read()
+    from urllib.parse import quote
 
-        safe_ascii = (
-            filename.encode("ascii", "ignore")
-            .decode()
-            .replace('"', "")
-            .replace("\r", "")
-            .replace("\n", "")
-        ) or "file"
-        encoded = quote(filename, safe="")
-        # `inline` lets <img src> render images directly; the frontend
-        # decides whether to download or preview based on mime_type.
-        return Response(
-            content=data,
-            media_type=mime,
-            headers={
-                "Content-Disposition": (
-                    f"inline; filename=\"{safe_ascii}\"; filename*=UTF-8''{encoded}"
-                ),
-                "Cache-Control": "private, max-age=300",
-                "X-Robots-Tag": "noindex, nofollow",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
-    finally:
-        store.close()
+    safe_ascii = (
+        filename.encode("ascii", "ignore")
+        .decode()
+        .replace('"', "")
+        .replace("\r", "")
+        .replace("\n", "")
+    ) or "file"
+    encoded = quote(filename, safe="")
+    # `inline` lets <img src> render images directly; the frontend
+    # decides whether to download or preview based on mime_type.
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": (
+                f"inline; filename=\"{safe_ascii}\"; filename*=UTF-8''{encoded}"
+            ),
+            "Cache-Control": "private, max-age=300",
+            "X-Robots-Tag": "noindex, nofollow",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/api/ask/feedback")
@@ -1960,28 +1885,23 @@ async def submit_ask_feedback(
     if body.channel_id:
         await assert_channel_access(principal, body.channel_id)
 
-    from beever_atlas.infra.config import get_settings
-    from motor.motor_asyncio import AsyncIOMotorClient
+    # Phase 3 of #31 — shared MongoDB client.
+    from beever_atlas.stores import get_stores
 
-    settings = get_settings()
-    client = AsyncIOMotorClient(settings.mongodb_uri)
-    try:
-        db = client["beever_atlas"]
-        doc = {
-            "session_id": body.session_id,
-            "message_id": body.message_id,
-            "channel_id": body.channel_id,
-            "user_id": user_id,
-            "rating": body.rating,
-            "comment": body.comment,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-        await db.qa_feedback.update_one(
-            {"session_id": body.session_id, "message_id": body.message_id},
-            {"$set": doc},
-            upsert=True,
-        )
-    finally:
-        client.close()
+    db = get_stores().mongodb.db
+    doc = {
+        "session_id": body.session_id,
+        "message_id": body.message_id,
+        "channel_id": body.channel_id,
+        "user_id": user_id,
+        "rating": body.rating,
+        "comment": body.comment,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    await db.qa_feedback.update_one(
+        {"session_id": body.session_id, "message_id": body.message_id},
+        {"$set": doc},
+        upsert=True,
+    )
 
     return {"status": "ok", "feedback": doc}

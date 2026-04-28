@@ -45,6 +45,41 @@ def _drop_chat_history_test_db():
         pass
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _init_stores_for_tests():
+    """Initialize the StoreClients singleton for the test session.
+
+    After issue #31 Phase 2/3 migrations, api/ask.py endpoints read from the
+    shared singleton instead of constructing per-request stores. Tests that
+    exercise endpoints via httpx ASGITransport bypass FastAPI's lifespan
+    hook, so the singleton is never initialized — `get_stores()` would
+    raise. This fixture mimics the lifespan by calling
+    `StoreClients.from_settings()` once per session.
+
+    Tests that want a mock can still depend on the `mock_stores` fixture,
+    which overrides `_stores` for the duration of the test.
+
+    `from_settings()` is sync and does not require any backing service
+    to be reachable — actual connections happen lazily on first query.
+    """
+    import beever_atlas.stores as stores_mod
+    from beever_atlas.stores import StoreClients
+    from beever_atlas.infra.config import get_settings
+
+    saved = stores_mod._stores
+    if saved is None:
+        try:
+            stores_mod._stores = StoreClients.from_settings(get_settings())
+        except Exception:
+            # If construction fails (e.g. graph backend unavailable in CI),
+            # leave _stores=None — individual tests can still patch it via
+            # `mock_stores`. The error surfaces only when those tests miss
+            # the dependency, which is the previous behavior.
+            pass
+    yield
+    stores_mod._stores = saved
+
+
 def _build_mock_connection(connection_id: str = "conn-mock") -> PlatformConnection:
     """One connected Slack connection — enough to satisfy channels.py flows.
 
