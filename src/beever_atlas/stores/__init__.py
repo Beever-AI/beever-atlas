@@ -18,6 +18,10 @@ from beever_atlas.stores.graph_errors import (
 )
 from beever_atlas.stores.entity_registry import EntityRegistry
 from beever_atlas.stores.platform_store import PlatformStore
+from beever_atlas.stores.chat_history_store import ChatHistoryStore
+from beever_atlas.stores.qa_history_store import QAHistoryStore
+from beever_atlas.stores.file_store import FileStore
+from beever_atlas.services.share_store import ShareStore
 from beever_atlas.infra.config import Settings
 
 
@@ -31,12 +35,20 @@ class StoreClients:
         graph: GraphStore,
         entity_registry: EntityRegistry,
         platform: PlatformStore,
+        chat_history: ChatHistoryStore,
+        qa_history: QAHistoryStore,
+        file_store: FileStore,
+        share_store: ShareStore,
     ):
         self.mongodb = mongodb
         self.weaviate = weaviate
         self.graph = graph
         self.entity_registry = entity_registry
         self.platform = platform
+        self.chat_history = chat_history
+        self.qa_history = qa_history
+        self.file_store = file_store
+        self.share_store = share_store
 
     @classmethod
     def from_settings(cls, settings: Settings) -> StoreClients:
@@ -69,12 +81,28 @@ class StoreClients:
         entity_registry = EntityRegistry(graph)
         # Reuse the same MongoDB connection as MongoDBStore
         platform = PlatformStore(mongodb.db["platform_connections"])
+
+        # The 4 stores below currently each open their own connection pool —
+        # the goal of issue #31 is to eliminate per-request store construction
+        # in api/ask.py. Phase 1 (this change) just consolidates them into the
+        # singleton so subsequent phases can swap callsites to use the shared
+        # instances. Each store's internal connection pooling is unchanged for
+        # now; pool unification across stores is a separate cleanup.
+        chat_history = ChatHistoryStore(settings.mongodb_uri)
+        qa_history = QAHistoryStore(settings.weaviate_url, settings.weaviate_api_key)
+        file_store = FileStore(settings.mongodb_uri)
+        share_store = ShareStore(settings.mongodb_uri)
+
         return cls(
             mongodb=mongodb,
             weaviate=weaviate,
             graph=graph,
             entity_registry=entity_registry,
             platform=platform,
+            chat_history=chat_history,
+            qa_history=qa_history,
+            file_store=file_store,
+            share_store=share_store,
         )
 
     async def startup(self) -> None:
@@ -82,8 +110,20 @@ class StoreClients:
         await self.weaviate.startup()
         await self.graph.startup()
         await self.platform.startup()
+        await self.chat_history.startup()
+        await self.qa_history.startup()
+        await self.file_store.startup()
+        await self.share_store.startup()
 
     async def shutdown(self) -> None:
+        # Per-store close()/shutdown() — order matches startup() in reverse.
+        # The 4 new stores expose either close() (sync) or shutdown() (async);
+        # ShareStore, FileStore, ChatHistoryStore use sync close(); QAHistoryStore
+        # has async shutdown().
+        self.share_store.close()
+        self.file_store.close()
+        await self.qa_history.shutdown()
+        self.chat_history.close()
         await self.graph.shutdown()
         await self.weaviate.shutdown()
         await self.mongodb.shutdown()
