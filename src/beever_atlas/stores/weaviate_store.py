@@ -542,33 +542,46 @@ class WeaviateStore:
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all objects for a channel (facts, clusters, summaries).
 
-        Returns count of deleted objects.
+        Returns count of deleted objects. Uses Weaviate's batch
+        ``data.delete_many`` with a server-side ``where`` filter, which
+        has no 10k client-side limit (issue #32). The previous
+        fetch-then-loop implementation silently dropped objects beyond
+        the first 10000 — a data-integrity bug for large channels.
         """
 
         def _delete() -> int:
             collection = self._collection()
             # Delete ALL tiers for this channel — atomic facts, topic clusters, summaries
-            result = collection.query.fetch_objects(
-                filters=Filter.by_property("channel_id").equal(channel_id),
-                limit=10000,
+            result = collection.data.delete_many(
+                where=Filter.by_property("channel_id").equal(channel_id),
             )
-            ids = [obj.uuid for obj in result.objects]
-            for uid in ids:
-                collection.data.delete_by_id(uuid=uid)
-            return len(ids)
+            return int(result.successful)
 
         return await asyncio.to_thread(_delete)
 
     async def delete_all(self) -> int:
-        """Delete ALL objects in the collection. Dev/reset use only."""
+        """Delete ALL objects in the collection. Dev/reset use only.
+
+        Loops fetch+delete with pagination so a collection larger than
+        10000 objects is fully drained (issue #32). ``delete_many``
+        requires a non-trivial ``where`` filter so we cannot use it
+        unconditionally for "delete everything"; the loop-until-empty
+        pattern is sufficient for the dev-reset scope this method
+        targets.
+        """
 
         def _delete_all() -> int:
             collection = self._collection()
-            result = collection.query.fetch_objects(limit=10000)
-            ids = [obj.uuid for obj in result.objects]
-            for uid in ids:
-                collection.data.delete_by_id(uuid=uid)
-            return len(ids)
+            total = 0
+            while True:
+                result = collection.query.fetch_objects(limit=1000)
+                ids = [obj.uuid for obj in result.objects]
+                if not ids:
+                    break
+                for uid in ids:
+                    collection.data.delete_by_id(uuid=uid)
+                total += len(ids)
+            return total
 
         return await asyncio.to_thread(_delete_all)
 
