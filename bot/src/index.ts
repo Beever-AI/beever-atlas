@@ -371,26 +371,31 @@ function startServer(chatManager: ChatManager): void {
   const handleBridge = registerBridgeRoutes(chatManager, () => lazySyncIfNeeded(chatManager));
   const webhookBuffer = new WebhookBuffer(chatManager);
 
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    // Health check
-    if (req.method === "GET" && req.url === "/health") {
-      jsonResponse(res, 200, {
-        status: "ok",
-        adapters: chatManager.listAdapters(),
-        transitioning: chatManager.isTransitioning(),
-      });
-      return;
-    }
-
-    // Bridge endpoints (Chat SDK data fetching for Python backend)
-    if (req.url?.startsWith("/bridge/")) {
-      await handleBridge(req, res);
-      return;
-    }
-
-    // Buffer webhook requests during Chat instance transitions
-    if (webhookBuffer.shouldBuffer()) {
-      await webhookBuffer.enqueue(req, res);
+  /**
+   * Routes a webhook request to the right per-platform / per-connection handler.
+   *
+   * Used by both:
+   *   1. The HTTP server callback for live requests
+   *   2. WebhookBuffer.drain() for replayed requests after a chat-manager rebuild
+   *
+   * For replayed requests: Node's IncomingMessage stays paused after enqueue
+   * (no `data` listener was attached), so internally-buffered chunks remain
+   * available when readBody() attaches its listeners during drain. Slow / large
+   * payloads where data is still arriving when drain fires continue to stream
+   * through normally. Client disconnects during the buffer window are caught
+   * by the req.destroyed guard at the top.
+   */
+  async function handleWebhookRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.destroyed) {
+      // Client disconnected during the buffer window — short-circuit to avoid
+      // attaching listeners to a dead stream. drain() will resolve the queue
+      // entry's promise via .finally().
+      try {
+        res.writeHead(204);
+        res.end();
+      } catch {
+        // res may also be destroyed (shared socket); ignore
+      }
       return;
     }
 
@@ -421,6 +426,39 @@ function startServer(chatManager: ChatManager): void {
 
     res.writeHead(404);
     res.end("Not Found");
+  }
+
+  // Drain buffered webhooks after each rebuild completes (#30).
+  // drain() returns void; per-entry handler errors are caught internally
+  // by WebhookBuffer.drain() and reported via the entry's .finally() block.
+  chatManager.onRebuildComplete(() => {
+    webhookBuffer.drain(handleWebhookRequest);
+  });
+
+  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // Health check
+    if (req.method === "GET" && req.url === "/health") {
+      jsonResponse(res, 200, {
+        status: "ok",
+        adapters: chatManager.listAdapters(),
+        transitioning: chatManager.isTransitioning(),
+      });
+      return;
+    }
+
+    // Bridge endpoints (Chat SDK data fetching for Python backend)
+    if (req.url?.startsWith("/bridge/")) {
+      await handleBridge(req, res);
+      return;
+    }
+
+    // Buffer webhook requests during Chat instance transitions
+    if (webhookBuffer.shouldBuffer()) {
+      await webhookBuffer.enqueue(req, res);
+      return;
+    }
+
+    await handleWebhookRequest(req, res);
   });
 
   server.listen(PORT, () => {

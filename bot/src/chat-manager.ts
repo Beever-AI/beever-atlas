@@ -47,6 +47,7 @@ export class ChatManager {
   private redisUrl: string;
   private transitioning: boolean = false;
   private rebuildListeners: Array<() => void> = [];
+  private rebuildCompleteListeners: Array<() => void> = [];
   /** Maps workspace identifiers to connectionId for URL-based routing.
    *  e.g. Slack team_id "T0APJ2FNUKZ" → connectionId "abc-123" */
   private workspaceIdMap: Map<string, string> = new Map();
@@ -113,119 +114,134 @@ export class ChatManager {
     }
   }
 
+  /** Register a callback invoked AFTER each rebuild completes (success, no-adapters, or error).
+   *  Distinct from `onRebuild`, which fires at rebuild START (used by bridge.ts for cache
+   *  invalidation). Used by WebhookBuffer to drain buffered requests once the new bot is ready. */
+  onRebuildComplete(listener: () => void): void {
+    this.rebuildCompleteListeners.push(listener);
+  }
+
+  private notifyRebuildCompleteListeners(): void {
+    for (const fn of this.rebuildCompleteListeners) {
+      try { fn(); } catch { /* listener errors must not break rebuild */ }
+    }
+  }
+
   async rebuild(): Promise<void> {
     this.transitioning = true;
     this.notifyRebuildListeners();
 
-    if (this.currentBot) {
-      try {
-        await this.currentBot.shutdown();
-      } catch (err: unknown) {
-        console.warn("ChatManager: error during shutdown:", err);
-      }
-      this.currentBot = null;
-    }
-
-    if (this.adapters.size === 0) {
-      console.log("ChatManager: no adapters registered, bot is offline");
-      this.transitioning = false;
-      return;
-    }
-
-    // Build fresh adapter instances from stored configs.
-    // The composite key is used as the Chat SDK adapter key.
-    // Platform is extracted from the entry for factory selection.
-    // Required credential keys per platform — entries missing any of these are
-    // skipped so a single broken connection cannot take down the entire bot.
-    const REQUIRED_CREDENTIALS: Record<string, string[]> = {
-      slack: ["botToken", "signingSecret"],
-      discord: ["botToken", "publicKey", "applicationId"],
-      teams: ["appId", "appPassword"],
-      telegram: ["botToken"],
-      mattermost: ["baseUrl", "botToken"],
-    };
-
-    const adapterInstances: Record<string, unknown> = {};
-
-    for (const [key, entry] of this.adapters.entries()) {
-      const required = REQUIRED_CREDENTIALS[entry.platform];
-      if (required) {
-        const missing = required.filter((k) => !entry.config[k]);
-        if (missing.length > 0) {
-          console.warn(`ChatManager: skipping "${key}" — missing required credentials: ${missing.join(", ")}`);
-          continue;
+    try {
+      if (this.currentBot) {
+        try {
+          await this.currentBot.shutdown();
+        } catch (err: unknown) {
+          console.warn("ChatManager: error during shutdown:", err);
         }
+        this.currentBot = null;
       }
 
-      try {
-        if (entry.platform === "slack") {
-          const slackAdapter = createSlackAdapter({
-            botToken: entry.config.botToken,
-            signingSecret: entry.config.signingSecret,
-          });
-          adapterInstances[key] = slackAdapter;
-          // Cache team_id → connectionId for URL-based file routing
-          try {
-            const authResult = await (slackAdapter as any).client.auth.test();
-            if (authResult?.team_id) {
-              this.workspaceIdMap.set(authResult.team_id, entry.connectionId);
-              console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
+      if (this.adapters.size === 0) {
+        console.log("ChatManager: no adapters registered, bot is offline");
+        return;
+      }
+
+      // Build fresh adapter instances from stored configs.
+      // The composite key is used as the Chat SDK adapter key.
+      // Platform is extracted from the entry for factory selection.
+      // Required credential keys per platform — entries missing any of these are
+      // skipped so a single broken connection cannot take down the entire bot.
+      const REQUIRED_CREDENTIALS: Record<string, string[]> = {
+        slack: ["botToken", "signingSecret"],
+        discord: ["botToken", "publicKey", "applicationId"],
+        teams: ["appId", "appPassword"],
+        telegram: ["botToken"],
+        mattermost: ["baseUrl", "botToken"],
+      };
+
+      const adapterInstances: Record<string, unknown> = {};
+
+      for (const [key, entry] of this.adapters.entries()) {
+        const required = REQUIRED_CREDENTIALS[entry.platform];
+        if (required) {
+          const missing = required.filter((k) => !entry.config[k]);
+          if (missing.length > 0) {
+            console.warn(`ChatManager: skipping "${key}" — missing required credentials: ${missing.join(", ")}`);
+            continue;
+          }
+        }
+
+        try {
+          if (entry.platform === "slack") {
+            const slackAdapter = createSlackAdapter({
+              botToken: entry.config.botToken,
+              signingSecret: entry.config.signingSecret,
+            });
+            adapterInstances[key] = slackAdapter;
+            // Cache team_id → connectionId for URL-based file routing
+            try {
+              const authResult = await (slackAdapter as any).client.auth.test();
+              if (authResult?.team_id) {
+                this.workspaceIdMap.set(authResult.team_id, entry.connectionId);
+                console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
+              }
+            } catch (err) {
+              console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, err);
             }
-          } catch (err) {
-            console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, err);
+          } else if (entry.platform === "discord") {
+            const discordOpts: Record<string, unknown> = {
+              botToken: entry.config.botToken,
+              publicKey: entry.config.publicKey,
+              applicationId: entry.config.applicationId,
+            };
+            if (entry.config.mentionRoleIds) {
+              discordOpts.mentionRoleIds = String(entry.config.mentionRoleIds).split(",").map((s: string) => s.trim()).filter(Boolean);
+            }
+            adapterInstances[key] = createDiscordAdapter(discordOpts);
+          } else if (entry.platform === "teams") {
+            adapterInstances[key] = createTeamsAdapter({
+              appId: entry.config.appId,
+              appPassword: entry.config.appPassword,
+              appTenantId: entry.config.appTenantId,
+              appType: entry.config.appType as "MultiTenant" | "SingleTenant" | undefined,
+            });
+          } else if (entry.platform === "telegram") {
+            adapterInstances[key] = createTelegramAdapter({
+              botToken: entry.config.botToken,
+              secretToken: entry.config.secretToken,
+            });
+          } else if (entry.platform === "mattermost") {
+            adapterInstances[key] = createMattermostAdapter({
+              baseUrl: entry.config.baseUrl,
+              botToken: entry.config.botToken,
+            });
+          } else {
+            console.warn(`ChatManager: unknown platform "${entry.platform}", skipping`);
           }
-        } else if (entry.platform === "discord") {
-          const discordOpts: Record<string, unknown> = {
-            botToken: entry.config.botToken,
-            publicKey: entry.config.publicKey,
-            applicationId: entry.config.applicationId,
-          };
-          if (entry.config.mentionRoleIds) {
-            discordOpts.mentionRoleIds = String(entry.config.mentionRoleIds).split(",").map((s: string) => s.trim()).filter(Boolean);
-          }
-          adapterInstances[key] = createDiscordAdapter(discordOpts);
-        } else if (entry.platform === "teams") {
-          adapterInstances[key] = createTeamsAdapter({
-            appId: entry.config.appId,
-            appPassword: entry.config.appPassword,
-            appTenantId: entry.config.appTenantId,
-            appType: entry.config.appType as "MultiTenant" | "SingleTenant" | undefined,
-          });
-        } else if (entry.platform === "telegram") {
-          adapterInstances[key] = createTelegramAdapter({
-            botToken: entry.config.botToken,
-            secretToken: entry.config.secretToken,
-          });
-        } else if (entry.platform === "mattermost") {
-          adapterInstances[key] = createMattermostAdapter({
-            baseUrl: entry.config.baseUrl,
-            botToken: entry.config.botToken,
-          });
-        } else {
-          console.warn(`ChatManager: unknown platform "${entry.platform}", skipping`);
+        } catch (err) {
+          console.error(`ChatManager: failed to create adapter for "${key}":`, err);
         }
-      } catch (err) {
-        console.error(`ChatManager: failed to create adapter for "${key}":`, err);
       }
-    }
 
-    if (Object.keys(adapterInstances).length === 0) {
-      console.warn("ChatManager: no valid adapters could be created");
+      if (Object.keys(adapterInstances).length === 0) {
+        console.warn("ChatManager: no valid adapters could be created");
+        return;
+      }
+
+      const newBot = new Chat({
+        userName: "beever",
+        adapters: adapterInstances as Record<string, import("chat").Adapter>,
+        state: createRedisState({ url: this.redisUrl }),
+      });
+
+      this.registerHandlers(newBot);
+      this.currentBot = newBot;
+
+      console.log(`ChatManager: bot rebuilt with adapters: ${Object.keys(adapterInstances).join(", ")}`);
+    } finally {
       this.transitioning = false;
-      return;
+      this.notifyRebuildCompleteListeners();
     }
-
-    const newBot = new Chat({
-      userName: "beever",
-      adapters: adapterInstances as Record<string, import("chat").Adapter>,
-      state: createRedisState({ url: this.redisUrl }),
-    });
-
-    this.registerHandlers(newBot);
-    this.currentBot = newBot;
-    this.transitioning = false;
-
-    console.log(`ChatManager: bot rebuilt with adapters: ${Object.keys(adapterInstances).join(", ")}`);
   }
 
   getCurrentBot(): Chat | null {

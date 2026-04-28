@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
+import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { WebhookBuffer } from "./webhook-buffer.js";
 import type { ChatManager } from "./chat-manager.js";
@@ -209,5 +210,120 @@ describe("WebhookBuffer — maxDuration timeout", () => {
     await buf.enqueue(makeMockReq(), makeMockRes() as unknown as ServerResponse);
 
     assert.strictEqual(buf.queueSize(), 0);
+  });
+});
+
+// ── onRebuildComplete wiring (#30) ─────────────────────────────────────────────
+
+/** ChatManager stub that supports both isTransitioning() and onRebuildComplete().
+ *  Tests register listeners and trigger them via fireRebuildComplete(). */
+function makeRebuildAwareChatManager(initiallyTransitioning: boolean): {
+  manager: ChatManager;
+  setTransitioning(value: boolean): void;
+  fireRebuildComplete(): void;
+} {
+  let transitioning = initiallyTransitioning;
+  const listeners: Array<() => void> = [];
+  const manager = {
+    isTransitioning: () => transitioning,
+    onRebuildComplete: (listener: () => void) => {
+      listeners.push(listener);
+    },
+  } as unknown as ChatManager;
+  return {
+    manager,
+    setTransitioning(value) { transitioning = value; },
+    fireRebuildComplete() { for (const l of listeners) l(); },
+  };
+}
+
+describe("WebhookBuffer — onRebuildComplete wiring (#30)", () => {
+  it("drain fires when the registered onRebuildComplete listener is invoked", async () => {
+    const stub = makeRebuildAwareChatManager(true);
+    const buf = new WebhookBuffer(stub.manager);
+
+    const handledReqs: IncomingMessage[] = [];
+    const handler = async (req: IncomingMessage, _res: ServerResponse) => {
+      handledReqs.push(req);
+    };
+
+    // Production wiring: index.ts registers this once at startup.
+    stub.manager.onRebuildComplete(() => buf.drain(handler));
+
+    // Two requests arrive during the transition and get buffered.
+    const req1 = makeMockReq();
+    const req2 = makeMockReq();
+    const p1 = buf.enqueue(req1, makeMockRes() as unknown as ServerResponse);
+    const p2 = buf.enqueue(req2, makeMockRes() as unknown as ServerResponse);
+
+    assert.strictEqual(buf.queueSize(), 2);
+
+    // Rebuild completes; the listener fires and drains the queue.
+    stub.setTransitioning(false);
+    stub.fireRebuildComplete();
+
+    await Promise.all([p1, p2]);
+
+    assert.strictEqual(handledReqs.length, 2);
+    assert.strictEqual(buf.queueSize(), 0);
+  });
+
+  it("drain is a no-op with empty queue", () => {
+    const stub = makeRebuildAwareChatManager(false);
+    const buf = new WebhookBuffer(stub.manager);
+
+    let handlerCalled = false;
+    const handler = async () => { handlerCalled = true; };
+
+    stub.manager.onRebuildComplete(() => buf.drain(handler));
+    stub.fireRebuildComplete();
+
+    assert.strictEqual(handlerCalled, false);
+    assert.strictEqual(buf.queueSize(), 0);
+  });
+});
+
+// ── Body-stream replay (Architect Patch 1) ─────────────────────────────────────
+
+/** Mirror of bot/src/index.ts readBody() for testing the drain-replay path.
+ *  Verifies that a paused IncomingMessage stream still delivers buffered chunks
+ *  when a `data` listener is attached after enqueue (during drain). */
+function readBodyForTest(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+}
+
+describe("WebhookBuffer — body-stream replay survives enqueue (#30)", () => {
+  it("readBody can consume the body of a buffered IncomingMessage during drain", async () => {
+    const stub = makeRebuildAwareChatManager(true);
+    const buf = new WebhookBuffer(stub.manager);
+
+    const payload = JSON.stringify({ type: "url_verification", challenge: "abc123" });
+    // Readable.from() produces a paused readable stream — same model as
+    // an IncomingMessage in a createServer callback.
+    const mockReq = Readable.from([Buffer.from(payload)]) as unknown as IncomingMessage;
+    Object.assign(mockReq, { method: "POST", url: "/api/slack" });
+
+    let receivedBody: string | undefined;
+    const handler = async (req: IncomingMessage, _res: ServerResponse) => {
+      // Production handler chain calls readBody() — verify it works on a
+      // request that was enqueued (paused) before the drain.
+      receivedBody = await readBodyForTest(req);
+    };
+
+    stub.manager.onRebuildComplete(() => buf.drain(handler));
+
+    const enqueuePromise = buf.enqueue(mockReq, makeMockRes() as unknown as ServerResponse);
+
+    stub.setTransitioning(false);
+    stub.fireRebuildComplete();
+
+    await enqueuePromise;
+
+    assert.strictEqual(receivedBody, payload);
   });
 });
