@@ -2,9 +2,17 @@
 
 Provides a StoreClients singleton that manages connections to all data stores
 (MongoDB, Weaviate, Neo4j) with proper startup/shutdown via FastAPI lifespan.
+
+Issue #36 — `_stores_ready` `asyncio.Event` lets non-HTTP code paths
+(background tasks, scheduler jobs, MCP handlers) `await wait_for_stores_ready()`
+to tolerate startup races. HTTP requests don't need it because FastAPI's
+lifespan ensures `init_stores()` completes before any request fires.
 """
 
 from __future__ import annotations
+
+import asyncio
+import logging
 
 from beever_atlas.stores.mongodb_store import MongoDBStore
 from beever_atlas.stores.weaviate_store import WeaviateStore
@@ -129,17 +137,80 @@ class StoreClients:
         await self.mongodb.shutdown()
 
 
+logger = logging.getLogger(__name__)
+
 _stores: StoreClients | None = None
+_stores_ready: asyncio.Event = asyncio.Event()
 
 
 def init_stores(stores: StoreClients) -> None:
-    """Set the global store clients singleton."""
+    """Set the global store clients singleton.
+
+    Re-initialization is allowed (test fixtures rely on this) but logs a
+    WARNING — in production it would indicate a bug in the lifespan
+    sequencing.
+    """
     global _stores
+    if _stores is not None:
+        logger.warning(
+            "init_stores called while _stores is already set; "
+            "overwriting singleton (this is normal in tests, "
+            "unexpected in production)."
+        )
     _stores = stores
+    _stores_ready.set()
 
 
+# NOTE: background tasks / non-HTTP code paths should
+# `await wait_for_stores_ready()` before calling `get_stores()` to
+# tolerate startup races (issue #36).
 def get_stores() -> StoreClients:
     """Return the global store clients. Raises if not initialized."""
     if _stores is None:
         raise RuntimeError("Stores not initialized. Call init_stores() during app startup.")
     return _stores
+
+
+async def wait_for_stores_ready(timeout: float | None = 30.0) -> None:
+    """Block until ``init_stores()`` has been called.
+
+    Use this in background tasks or non-HTTP code paths that may start
+    before the FastAPI lifespan has finished initializing stores::
+
+        await wait_for_stores_ready()
+        stores = get_stores()  # guaranteed to succeed
+
+    HTTP request handlers do NOT need this — FastAPI's lifespan protocol
+    ensures stores are ready before any request is served.
+
+    Args:
+        timeout: Seconds to wait. Default 30s — long enough that the
+            lifespan has clearly hung, short enough that callers don't
+            wait forever in misconfigured environments (CLI entry points
+            that bypass the lifespan, tests that import without setup).
+            Pass ``None`` to wait indefinitely. On timeout, raises
+            ``RuntimeError`` with a diagnostic message rather than
+            ``asyncio.TimeoutError`` so the failure mode is obvious.
+    """
+    if timeout is None:
+        await _stores_ready.wait()
+        return
+    try:
+        await asyncio.wait_for(_stores_ready.wait(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(
+            f"Stores not initialized within {timeout}s — is "
+            "init_stores() being called via the FastAPI lifespan?"
+        ) from exc
+
+
+def _reset_stores_for_tests() -> None:
+    """Reset stores state for test isolation. Not for production use.
+
+    Replaces ``_stores_ready`` with a fresh ``asyncio.Event`` rather than
+    calling ``.clear()`` so tests in different event loops don't
+    accidentally share state.
+    """
+    global _stores, _stores_ready
+    _stores = None
+    _stores_ready = asyncio.Event()

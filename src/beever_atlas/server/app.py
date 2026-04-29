@@ -19,6 +19,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from beever_atlas.infra.auth import require_bridge, require_user, require_user_loader
+from beever_atlas.infra.loader_url_headers import LoaderUrlSecurityHeadersMiddleware
 
 from beever_atlas.adapters import close_adapter
 from beever_atlas.infra.rate_limit import limiter
@@ -221,6 +222,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Admin-Token"],
 )
+# Issue #35 — harden responses to URLs carrying ?access_token= so a leaked
+# loader URL doesn't leak the embedded API key via the Referer header
+# (outbound navigation) or browser disk cache. Endpoints that set their
+# own Cache-Control / Referrer-Policy (e.g. the public share GET) are
+# preserved via setdefault.
+app.add_middleware(LoaderUrlSecurityHeadersMiddleware)
 
 # All routers require Bearer auth except /api/health (declared below) and MCP mount.
 _auth = [Depends(require_user)]
