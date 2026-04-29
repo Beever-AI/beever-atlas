@@ -11,8 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      # Issue #42 — service images pinned by digest. Tag-only references
+      # (e.g. `neo4j:5.26`) are vulnerable to a compromised-tag supply-chain
+      # attack: a malicious push to the same tag would silently affect this
+      # CI run. The `supply-chain-lint` job in `ci.yml` now scans this file
+      # so any future `image:` reference without `@sha256:` fails CI.
       neo4j:
-        image: neo4j:5.26
+        image: neo4j:5.26@sha256:b357872da95a164c5243ca8d9060601130717ff43cee3c829402fab46209a412
         env:
           NEO4J_AUTH: neo4j/beever_atlas_dev
           NEO4J_PLUGINS: '["apoc"]'
@@ -26,17 +31,17 @@ jobs:
           --health-retries 20
 
       nebula-metad:
-        image: vesoft/nebula-metad:v3.8.0
+        image: vesoft/nebula-metad:v3.8.0@sha256:ab687bd32d3e441d436842b41427ba0961a5e169c46997ef03fa4dcfd5388b35
         ports:
           - 9559:9559
 
       nebula-storaged:
-        image: vesoft/nebula-storaged:v3.8.0
+        image: vesoft/nebula-storaged:v3.8.0@sha256:7142642ee69001a5b5c50520196538d58bb2ec3930707c067cb4c4e2be3890f9
         ports:
           - 9779:9779
 
       nebula-graphd:
-        image: vesoft/nebula-graphd:v3.8.0
+        image: vesoft/nebula-graphd:v3.8.0@sha256:1040573cc684ea6cc5e673b667422e9abab607c9d553c2c17c7bac6ad8a74e05
         ports:
           - 9669:9669
 

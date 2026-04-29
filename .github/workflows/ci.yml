@@ -171,8 +171,17 @@ jobs:
               esac
             done < "$f"
           done
-          # Compose files: reject `image:` lines without @sha256:.
-          for f in docker-compose.yml docker-compose.nebula.yml; do
+          # Compose files + GitHub Actions workflow service images: reject
+          # `image:` lines without @sha256:. Issue #42 added the workflows
+          # scan after the nightly job's `services:` images were caught
+          # running unpinned. The existing
+          # `^[[:space:]]*image:[[:space:]]+` regex matches both
+          # compose-level and `services:` block image references.
+          targets="docker-compose.yml docker-compose.nebula.yml"
+          for wf in .github/workflows/*.yml; do
+            [ -f "$wf" ] && targets="$targets $wf"
+          done
+          for f in $targets; do
             [ -f "$f" ] || continue
             while IFS= read -r line; do
               ref="$(echo "$line" | awk '/^[[:space:]]*image:[[:space:]]+/{print $2}')"
