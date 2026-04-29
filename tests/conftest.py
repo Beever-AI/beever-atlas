@@ -77,6 +77,11 @@ def _init_stores_for_tests():
     if saved is None:
         try:
             stores_mod._stores = StoreClients.from_settings(get_settings())
+            # Issue #36 — surface readiness via the new asyncio.Event so
+            # any code under test that awaits `wait_for_stores_ready()`
+            # proceeds. Direct assignment + set instead of `init_stores()`
+            # avoids the re-init WARNING log when multiple tests run.
+            stores_mod._stores_ready.set()
         except Exception:
             # If construction fails (e.g. graph backend unavailable in CI),
             # leave _stores=None — individual tests can still patch it via
@@ -84,7 +89,11 @@ def _init_stores_for_tests():
             # the dependency, which is the previous behavior.
             pass
     yield
+    # Restore prior state. If `saved` was None, also reset the event so
+    # the next test starts from a clean barrier (issue #36 test isolation).
     stores_mod._stores = saved
+    if saved is None:
+        stores_mod._reset_stores_for_tests()
 
 
 def _build_mock_connection(connection_id: str = "conn-mock") -> PlatformConnection:
@@ -159,10 +168,15 @@ def mock_stores():
     fake.mongodb.get_channel_sync_state = AsyncMock(return_value=None)
 
     stores_mod._stores = fake
+    # Issue #36 — set the readiness event so barrier-aware code under test
+    # can `await wait_for_stores_ready()` and proceed.
+    stores_mod._stores_ready.set()
     try:
         yield fake
     finally:
         stores_mod._stores = saved
+        if saved is None:
+            stores_mod._reset_stores_for_tests()
 
 
 @pytest.fixture(autouse=True)

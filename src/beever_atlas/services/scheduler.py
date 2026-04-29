@@ -41,9 +41,16 @@ class SyncScheduler:
         self._started = False
 
     async def startup(self) -> None:
-        """Load all channel policies, register jobs, start the scheduler."""
-        from beever_atlas.stores import get_stores
+        """Load all channel policies, register jobs, start the scheduler.
 
+        Issue #36 — `await wait_for_stores_ready()` is a no-op in the
+        current lifespan ordering (the event is set before this method
+        runs) but documents the dependency and protects against future
+        lifespan reorders.
+        """
+        from beever_atlas.stores import get_stores, wait_for_stores_ready
+
+        await wait_for_stores_ready()
         stores = get_stores()
         defaults = await stores.mongodb.get_global_defaults()
         self._global_semaphore = asyncio.Semaphore(defaults.max_concurrent_syncs)
