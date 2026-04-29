@@ -1698,12 +1698,30 @@ function getFirstBridge(chatManager: ChatManager): { platform: string; bridge: P
   return null;
 }
 
-/** Infer platform from a file URL pattern. */
+/** Infer platform from a file URL.
+ *
+ * Uses parsed-URL hostname checks (exact match or proper subdomain suffix),
+ * NOT `url.includes(host)` substring matching. Substring matching against a
+ * full URL string would let an attacker host like `evil.com/files.slack.com`
+ * or `files.slack.com.evil.com` route to the wrong platform — wrong-adapter
+ * routing, not a direct security sink (the SSRF defense lives in
+ * `assertAllowedFetchUrl` per-platform), but worth fixing for hygiene and to
+ * close CodeQL `js/incomplete-url-substring-sanitization` (alerts #12–#18).
+ * Mattermost has no fixed host (per-instance baseUrl) so its detection still
+ * uses a path-pattern check.
+ */
 function detectPlatformFromUrl(url: string): string | null {
-  if (url.includes("files.slack.com") || url.includes("slack-files.com")) return "slack";
-  if (url.includes("cdn.discordapp.com") || url.includes("media.discordapp.net")) return "discord";
-  if (url.includes("graph.microsoft.com") || url.includes("sharepoint.com")) return "teams";
-  if (url.includes("api.telegram.org")) return "telegram";
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host === "files.slack.com" || host === "slack-files.com") return "slack";
+  if (host === "cdn.discordapp.com" || host === "media.discordapp.net") return "discord";
+  if (host === "graph.microsoft.com" || host.endsWith(".sharepoint.com")) return "teams";
+  if (host === "api.telegram.org") return "telegram";
+  // Mattermost is self-hosted on a per-instance baseUrl; detect by API path.
   if (url.includes("/api/v4/files/")) return "mattermost";
   return null;
 }
