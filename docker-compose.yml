@@ -33,7 +33,10 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         VITE_BEEVER_API_KEY: ${VITE_BEEVER_API_KEY:-}
-    ports: ["3000:80"]
+    # Issue #39 — web container now runs as nginx-unprivileged listening on
+    # 8080 (CIS Docker Benchmark — non-root). Host port 3000 unchanged so
+    # existing dev URLs (http://localhost:3000/) keep working.
+    ports: ["3000:8080"]
     depends_on:
       - beever-atlas
 

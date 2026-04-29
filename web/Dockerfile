@@ -13,11 +13,16 @@ ENV VITE_BEEVER_API_KEY=${VITE_BEEVER_API_KEY}
 
 RUN npm run build
 
-FROM nginx:alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+FROM nginxinc/nginx-unprivileged:alpine@sha256:f35982400455b4f359083ba9d1ef573fbbe4221a6a8a194dc7a14beb4e2cd3dc
+# Issue #39 — drop root. The `nginxinc/nginx-unprivileged` image is the official
+# upstream nginx variant configured to run as the `nginx` user (UID 101) and
+# listen on port 8080 by default. Avoids fragile manual chown of /var/cache/nginx,
+# /var/run, /etc/nginx/conf.d that breaks across nginx version bumps. The host-side
+# port mapping in docker-compose is updated atomically (3000:80 → 3000:8080).
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY <<'EOF' /etc/nginx/conf.d/default.conf
 server {
-    listen 80;
+    listen 8080;
     root /usr/share/nginx/html;
     location / {
         try_files $uri $uri/ /index.html;
@@ -30,5 +35,5 @@ server {
     }
 }
 EOF
-EXPOSE 80
+EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
