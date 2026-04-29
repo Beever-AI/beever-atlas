@@ -1,0 +1,61 @@
+# Optional auth overlay for MongoDB + Redis (issue #50).
+#
+# The default `docker-compose.yml` runs MongoDB and Redis without
+# authentication — fine for single-developer local dev where only the
+# trusted backend container shares the network. This overlay enables
+# password auth for both services, useful when:
+#   * Running on a shared dev box where another local user could connect
+#   * Running with custom compose overrides that add untrusted containers
+#   * Running in any pre-production environment that mimics prod hardening
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.auth.yml up
+#
+# Required env vars (set in .env or shell):
+#   MONGODB_USERNAME=<root user>           e.g. "beever_atlas_root"
+#   MONGODB_PASSWORD=<strong password>     gen with: $(openssl rand -hex 16)
+#   REDIS_PASSWORD=<strong password>       gen with: $(openssl rand -hex 16)
+#
+# The backend's MONGODB_URI is rewritten here to include credentials and
+# `?authSource=admin`, so callers don't need to change. Other compose
+# files (e.g. `demo/docker-compose.demo.yml`) that hard-code the URI
+# would need a parallel override; out of scope here.
+
+services:
+  mongodb:
+    # Setting MONGO_INITDB_ROOT_* on the official mongo image causes the
+    # entrypoint to start mongod with --auth and create the root user
+    # on first boot. Existing volumes are NOT migrated — destroy
+    # `mongo_data` volume before applying this overlay if you want to
+    # convert an existing no-auth deployment.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:?MONGODB_USERNAME must be set when using docker-compose.auth.yml}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:?MONGODB_PASSWORD must be set when using docker-compose.auth.yml}
+    healthcheck:
+      # Healthcheck must authenticate too once auth is enabled.
+      test: ["CMD", "mongosh", "--quiet", "-u", "${MONGODB_USERNAME}", "-p", "${MONGODB_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    # `--requirepass` enables AUTH on Redis. The default image's CMD
+    # (`redis-server`) is replaced here so we can pass the flag.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set when using docker-compose.auth.yml}"]
+    healthcheck:
+      # `redis-cli ping` over an auth-enabled instance needs `-a <pw>`
+      # (the unauthenticated client receives NOAUTH and the healthcheck
+      # would fail).
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  beever-atlas:
+    # Rewrite MONGODB_URI + REDIS_URL with credentials so the backend
+    # connects through the new auth gates. The base file's
+    # `MONGODB_URI: mongodb://mongodb:27017/beever_atlas` is overridden
+    # here in full — compose merges environment maps key-by-key.
+    environment:
+      MONGODB_URI: mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@mongodb:27017/beever_atlas?authSource=admin
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379

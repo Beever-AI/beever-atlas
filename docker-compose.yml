@@ -71,6 +71,12 @@ services:
       timeout: 5s
       retries: 5
 
+  # Issue #50 — MongoDB and Redis run without auth by default. The
+  # 127.0.0.1 host bindings prevent external access, but any container
+  # added to this compose network can read/write freely. Apply the
+  # `docker-compose.auth.yml` overlay for password auth in shared-host
+  # or pre-prod environments:
+  #   docker compose -f docker-compose.yml -f docker-compose.auth.yml up
   mongodb:
     image: mongo:7.0@sha256:43fddee7e532a920f3dfdee9e8f4834398c155c26bcb92d790cc1cd3c630fc40
     ports: ["127.0.0.1:27017:27017"]
