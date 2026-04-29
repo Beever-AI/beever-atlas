@@ -560,7 +560,10 @@ async function handleConnectionWebhook(
       jsonResponse(res, 404, { error: `No webhook handler for connection ${connectionId}` });
     }
   } catch (err) {
-    console.error(`Connection webhook error (${connectionId}):`, err);
+    // CodeQL js/tainted-format-string (alert #21): pass the format string
+    // as a static literal and the user-tainted value as an argument so it
+    // cannot influence format-specifier interpretation downstream.
+    console.error("Connection webhook error (%s):", connectionId, err);
     res.writeHead(500);
     res.end("Internal Server Error");
   }

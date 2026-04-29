@@ -2080,7 +2080,9 @@ async function handleValidateAdapter(
       jsonResponse(res, 400, { valid: false, error: `Unknown platform: ${platform}` });
     }
   } catch (err) {
-    console.error(`Bridge: validateAdapter(${platform}) error:`, err);
+    // CodeQL js/tainted-format-string (alert #22): static format string +
+    // arguments so user-tainted `platform` cannot influence format specifiers.
+    console.error("Bridge: validateAdapter(%s) error:", platform, err);
     jsonResponse(res, 200, { valid: false, error: String(err) });
   }
 }
@@ -2107,7 +2109,8 @@ async function handleConnectionRoute(
     if (classified.status === 404) {
       console.warn(`Bridge: connection route (${connectionId}): ${(err as any)?.data?.error || err}`);
     } else {
-      console.error(`Bridge: connection route error (${connectionId}):`, err);
+      // CodeQL js/tainted-format-string (alert #23).
+      console.error("Bridge: connection route error (%s):", connectionId, err);
     }
     jsonResponse(res, classified.status, { error: String(err), code: classified.code });
   }
@@ -2128,7 +2131,8 @@ async function handleConnectionChannels(
     const channels = await result.bridge.listChannels();
     jsonResponse(res, 200, { channels });
   } catch (err) {
-    console.error(`Bridge: listChannels error (connection ${connectionId}):`, err);
+    // CodeQL js/tainted-format-string (alert #24).
+    console.error("Bridge: listChannels error (connection %s):", connectionId, err);
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: String(err), code: classified.code });
   }
@@ -2157,12 +2161,14 @@ async function handlePlatformChannelsAggregated(
           allChannels.push({ ...ch, connection_id: connectionId });
         }
       } catch (err) {
-        console.error(`Bridge: listChannels error for ${platform}:${connectionId}:`, err);
+        // CodeQL js/tainted-format-string (alert #25).
+        console.error("Bridge: listChannels error for %s:%s:", platform, connectionId, err);
       }
     }
     jsonResponse(res, 200, { channels: allChannels });
   } catch (err) {
-    console.error(`Bridge: aggregated listChannels error for ${platform}:`, err);
+    // CodeQL js/tainted-format-string (alert #26).
+    console.error("Bridge: aggregated listChannels error for %s:", platform, err);
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: String(err), code: classified.code });
   }
