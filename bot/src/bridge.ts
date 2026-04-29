@@ -1635,17 +1635,22 @@ function detectPlatformFromUrl(url: string): string | null {
  * Returns null if no identifier can be extracted.
  *
  * - Slack: files-pri/{TEAM_ID}-{FILE_ID}/ → TEAM_ID (e.g. "T0APJ2FNUKZ")
- * - Telegram: api.telegram.org/file/bot{TOKEN}/... → bot token prefix
- * - Discord/Teams: not reliably extractable from URL
+ * - Discord/Teams/Telegram: not reliably extractable from URL — fall through
+ *   to the try-all-adapters path in the proxy handler.
+ *
+ * Issue #47 — the Telegram regex used to extract the bot token from
+ * `api.telegram.org/file/bot{TOKEN}/` and return it as a "workspace id"
+ * lookup key. But `chatManager.workspaceIdMap` is only populated for
+ * Slack (`team_id → connectionId`); Telegram never inserts. The lookup
+ * always missed and we fell through to try-all-adapters anyway. Removed
+ * to delete the dead routing path. If multi-Telegram-bot routing is
+ * needed later, populate the map in `chat-manager.ts` first (with a
+ * stable hash of the bot token, not the token itself).
  */
 function extractWorkspaceIdFromUrl(url: string): string | null {
   // Slack: extract team ID from files-pri/TEAM_ID-FILE_ID/
   const slackMatch = url.match(/files-pri\/([A-Z0-9]+)-[A-Z0-9]+\//);
   if (slackMatch) return slackMatch[1];
-
-  // Telegram: extract bot token from api.telegram.org/file/bot{TOKEN}/
-  const telegramMatch = url.match(/api\.telegram\.org\/file\/bot([^/]+)\//);
-  if (telegramMatch) return telegramMatch[1];
 
   return null;
 }
