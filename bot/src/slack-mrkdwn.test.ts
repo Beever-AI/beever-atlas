@@ -125,6 +125,16 @@ describe("cleanSlackMrkdwn", () => {
     );
   });
 
+  // CodeQL js/double-escaping (alert #8): if the user literally typed
+  // `&lt;`, Slack escapes the leading `&` as `&amp;`, so the message we
+  // receive is `&amp;lt;`. We must decode `&lt;`/`&gt;` before `&amp;`
+  // so the final pass surfaces `&lt;` as text, not `<`.
+  it("does not double-decode user-typed entities", () => {
+    assert.strictEqual(cleanSlackMrkdwn("&amp;lt;"), "&lt;");
+    assert.strictEqual(cleanSlackMrkdwn("&amp;gt;"), "&gt;");
+    assert.strictEqual(cleanSlackMrkdwn("&amp;amp;"), "&amp;");
+  });
+
   // ── Formatting markers ────────────────────────────────────────────
 
   it("strips *bold* markers", () => {

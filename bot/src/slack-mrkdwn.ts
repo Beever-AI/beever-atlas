@@ -54,10 +54,18 @@ export function cleanSlackMrkdwn(
     return inner;
   });
 
-  // 2. Decode HTML entities that Slack uses
-  cleaned = cleaned.replace(/&amp;/g, "&");
+  // 2. Decode HTML entities that Slack uses.
+  //
+  // Order matters (CodeQL js/double-escaping, alert #8): decode `&amp;`
+  // LAST. Slack escapes user-typed `&` as `&amp;`, so an original input
+  // of literally `&lt;` arrives as `&amp;lt;`. If we decode `&amp;` →
+  // `&` first, the result `&lt;` then gets decoded to `<`, swallowing
+  // the user's literal text. Decoding the angle-brackets first leaves
+  // any `&amp;`-escaped sequences intact for the final `&amp;` → `&`
+  // pass, so a literal `&lt;` survives as `&lt;` text.
   cleaned = cleaned.replace(/&lt;/g, "<");
   cleaned = cleaned.replace(/&gt;/g, ">");
+  cleaned = cleaned.replace(/&amp;/g, "&");
 
   // 3. Strip bold/italic/strikethrough markers (preserve content)
   //    Use non-greedy match, avoid stripping mid-word underscores (e.g. snake_case)
