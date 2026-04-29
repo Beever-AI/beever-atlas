@@ -10,10 +10,11 @@ import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { useStats, useActivity } from "@/hooks/useStats";
 import { WelcomeScreen } from "@/components/onboarding/WelcomeScreen";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
+import { FileImportWizard } from "@/components/settings/FileImportWizard";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import type { PlatformConnection } from "@/lib/types";
 
-type Platform = "slack" | "discord" | "teams" | "telegram";
+type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 
 interface Channel {
   channel_id: string;
@@ -33,6 +34,7 @@ export function Dashboard() {
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
   const [wizardPlatform, setWizardPlatform] = useState<Platform>("slack");
+  const [showFileImport, setShowFileImport] = useState(false);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const { stats, loading: statsLoading } = useStats();
@@ -67,8 +69,12 @@ export function Dashboard() {
       <>
         <WelcomeScreen
           onConnect={(platform) => {
-            setWizardPlatform(platform as Platform);
-            setShowWizard(true);
+            if (platform === "file") {
+              setShowFileImport(true);
+            } else {
+              setWizardPlatform(platform as Platform);
+              setShowWizard(true);
+            }
           }}
         />
         {showWizard && (
@@ -77,6 +83,16 @@ export function Dashboard() {
             onClose={() => setShowWizard(false)}
             onComplete={() => {
               setShowWizard(false);
+              fetchConnections();
+              window.dispatchEvent(new Event("connections-changed"));
+            }}
+          />
+        )}
+        {showFileImport && (
+          <FileImportWizard
+            onClose={() => setShowFileImport(false)}
+            onComplete={() => {
+              setShowFileImport(false);
               fetchConnections();
               window.dispatchEvent(new Event("connections-changed"));
             }}
