@@ -658,6 +658,13 @@ class SlackBridge implements PlatformBridge {
  *  serve API traffic. Exact match; no wildcard. */
 const DISCORD_API_HOSTS = ["discord.com"] as const;
 
+/** Hosts allowed for Discord file CDN fetches (CodeQL alert #29).
+ *  These fetches do NOT carry the bot token — Discord CDN URLs are signed —
+ *  so the SSRF risk is amplification / internal probing rather than token
+ *  exfiltration. Kept disjoint from `DISCORD_API_HOSTS` so no future caller
+ *  accidentally sends the bot token to the file CDN. */
+const DISCORD_FILE_HOSTS = ["cdn.discordapp.com", "media.discordapp.net"] as const;
+
 class DiscordBridge implements PlatformBridge {
   private adapter: unknown;
   private botToken: string;
@@ -896,7 +903,7 @@ class DiscordBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
+    await assertAllowedFetchUrl(decodedUrl, DISCORD_FILE_HOSTS);
 
     // Discord CDN signed URLs expire. Try the URL as-is first.
     let response = await fetch(decodedUrl);
@@ -914,6 +921,9 @@ class DiscordBridge implements PlatformBridge {
           for (const msg of msgs) {
             for (const att of msg.attachments ?? []) {
               if (att.id === attachmentId || att.url?.includes(attachmentId)) {
+                // Defense-in-depth: even though att.url came from Discord's
+                // API response, validate before re-fetching.
+                await assertAllowedFetchUrl(att.url, DISCORD_FILE_HOSTS);
                 response = await fetch(att.url);
                 if (response.ok) break;
               }

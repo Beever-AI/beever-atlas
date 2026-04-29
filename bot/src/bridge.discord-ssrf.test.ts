@@ -120,3 +120,64 @@ describe("assertAllowedFetchUrl — Discord API host allowlist", () => {
     );
   });
 });
+
+const DISCORD_FILE_HOSTS = ["cdn.discordapp.com", "media.discordapp.net"] as const;
+
+describe("assertAllowedFetchUrl — Discord file CDN allowlist (alert #29)", () => {
+  it("accepts canonical cdn.discordapp.com attachment URL", async () => {
+    await assert.doesNotReject(() =>
+      assertAllowedFetchUrl(
+        "https://cdn.discordapp.com/attachments/123/456/file.png",
+        DISCORD_FILE_HOSTS,
+      ),
+    );
+  });
+
+  it("accepts media.discordapp.net (video / preview CDN)", async () => {
+    await assert.doesNotReject(() =>
+      assertAllowedFetchUrl(
+        "https://media.discordapp.net/attachments/123/456/clip.mp4",
+        DISCORD_FILE_HOSTS,
+      ),
+    );
+  });
+
+  it("rejects unrelated public host (core SSRF case)", async () => {
+    await assert.rejects(
+      () => assertAllowedFetchUrl("https://attacker.com/file.png", DISCORD_FILE_HOSTS),
+      /not in allowlist/i,
+    );
+  });
+
+  it("rejects substring-bypass `cdn.discordapp.com.evil.com`", async () => {
+    await assert.rejects(
+      () =>
+        assertAllowedFetchUrl(
+          "https://cdn.discordapp.com.evil.com/file.png",
+          DISCORD_FILE_HOSTS,
+        ),
+      /not in allowlist/i,
+    );
+  });
+
+  it("rejects discord.com (API host MUST NOT receive unauthenticated CDN-style fetches)", async () => {
+    // Keeps the API allowlist disjoint from the CDN allowlist so the bot
+    // token's allowlist (#28) and the unauthenticated CDN allowlist (#29)
+    // do not overlap.
+    await assert.rejects(
+      () => assertAllowedFetchUrl("https://discord.com/x", DISCORD_FILE_HOSTS),
+      /not in allowlist/i,
+    );
+  });
+
+  it("rejects sub.cdn.discordapp.com (subdomain isolation, no wildcard)", async () => {
+    await assert.rejects(
+      () =>
+        assertAllowedFetchUrl(
+          "https://sub.cdn.discordapp.com/attachments/123/456/x.png",
+          DISCORD_FILE_HOSTS,
+        ),
+      /not in allowlist/i,
+    );
+  });
+});
