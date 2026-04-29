@@ -151,6 +151,31 @@ class WeaviateStore:
         ("last_mentioned_at", DataType.TEXT),
     ]
 
+    def _apply_schema_migration(self, collection) -> None:  # type: ignore[no-untyped-def]
+        """Add any missing ``_EXPECTED_PROPERTIES`` to ``collection`` in-place.
+
+        Single source of truth for the schema-migration loop, shared by
+        the async ``ensure_schema()`` and the sync ``_ensure_schema_sync()``
+        paths so the two cannot drift if a future contributor adds a new
+        property to ``_EXPECTED_PROPERTIES`` (issue #38).
+
+        Limitation: handles property ADDITIONS only. Property type
+        changes are not migrated — Weaviate does not support in-place
+        property type changes anyway (it would require dropping and
+        recreating the collection). A type change in
+        ``_EXPECTED_PROPERTIES`` for an existing property silently
+        no-ops here.
+        """
+        existing_names = {p.name for p in collection.config.get().properties}
+        for prop_name, prop_type in self._EXPECTED_PROPERTIES:
+            if prop_name not in existing_names:
+                collection.config.add_property(Property(name=prop_name, data_type=prop_type))
+                logger.info(
+                    "WeaviateStore: added missing property '%s' to %s",
+                    prop_name,
+                    COLLECTION_NAME,
+                )
+
     async def ensure_schema(self) -> None:
         """Create or migrate the MemoryFact collection."""
 
@@ -159,17 +184,7 @@ class WeaviateStore:
             if self._client.collections.exists(COLLECTION_NAME):
                 # Auto-migrate: add any missing properties to existing collections.
                 collection = self._client.collections.get(COLLECTION_NAME)
-                existing_names = {p.name for p in collection.config.get().properties}
-                for prop_name, prop_type in self._EXPECTED_PROPERTIES:
-                    if prop_name not in existing_names:
-                        collection.config.add_property(
-                            Property(name=prop_name, data_type=prop_type)
-                        )
-                        logger.info(
-                            "WeaviateStore: added missing property '%s' to %s",
-                            prop_name,
-                            COLLECTION_NAME,
-                        )
+                self._apply_schema_migration(collection)
                 return
             self._client.collections.create(
                 name=COLLECTION_NAME,
@@ -198,9 +213,19 @@ class WeaviateStore:
         return self._client.collections.get(COLLECTION_NAME)
 
     def _ensure_schema_sync(self) -> None:
-        """Synchronous version of ensure_schema for use within _collection()."""
+        """Synchronous version of ensure_schema for use within _collection().
+
+        Issue #38 — symmetric with the async ``ensure_schema()``: when
+        the collection already exists, run the same migration helper to
+        add any missing properties. The branch is rarely hit in normal
+        operation (`_collection()` only calls this on missing-collection
+        path), but is defense-in-depth for edge cases like manual
+        collection creation by ops or partial startup.
+        """
         assert self._client is not None
         if self._client.collections.exists(COLLECTION_NAME):
+            collection = self._client.collections.get(COLLECTION_NAME)
+            self._apply_schema_migration(collection)
             return
         self._client.collections.create(
             name=COLLECTION_NAME,
