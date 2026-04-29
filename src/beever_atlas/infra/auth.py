@@ -79,8 +79,43 @@ def _principal_id_for_key(key: str) -> str:
     """Stable, non-reversible principal id derived from the raw API key.
 
     Using sha256 prevents key material from leaking into logs (the
-    previous `key[:6]` prefix could collide across users).
+    previous ``key[:6]`` prefix could collide across users).
+
+    Why SHA-256 here is correct (not a CodeQL ``py/weak-sensitive-data-
+    hashing`` issue, alerts #42 / #43):
+
+      * ``key`` is a pre-shared bearer token loaded from
+        ``BEEVER_API_KEYS``. By the time this function runs the token has
+        ALREADY been verified against the configured keyset via
+        ``hmac.compare_digest`` in :func:`_match_user_key`. We are not
+        hashing a user-chosen password to store-and-later-verify — that
+        is the use case CodeQL's rule targets.
+      * The output is used solely as a stable, non-reversible
+        identifier. Properties needed: deterministic per key, low
+        collision probability across the configured keyset (≤ a few
+        hundred entries), and resistance to log-leak inversion. Plain
+        SHA-256 satisfies all three.
+      * The output is persisted as ``PlatformConnection.owner_principal_id``
+        for channel-access ownership checks (see
+        :mod:`beever_atlas.infra.channel_access`). Switching to a slow
+        KDF (Argon2 / bcrypt / PBKDF2) or to HMAC with a server-side
+        secret would change the output bytes, invalidating every
+        existing ownership record and locking users out of their
+        connections — a functional regression we explicitly avoid.
+      * Slow KDFs and HMAC-with-secret defend against offline
+        brute-force of leaked password databases. Neither threat applies
+        here: there is no database of these digests, and the tokens
+        they're derived from are server-config bearer tokens, not user
+        passwords subject to dictionary attack.
+
+    If a future change requires a stronger primitive, it must come with
+    a migration plan for ``owner_principal_id`` (e.g. dual-read v1/v2
+    during a deprecation window).
     """
+    # lgtm[py/weak-sensitive-data-hashing] -- intentional: see docstring above.
+    # SHA-256 here derives a stable, non-reversible identifier from an
+    # already-verified bearer token; it is NOT password storage. Changing
+    # the algorithm would invalidate every persisted owner_principal_id.
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return f"user:{digest}"
 
@@ -95,7 +130,14 @@ def _principal_id_for_mcp_key(key: str) -> str:
     list/access calls agree on what's visible. In multi-tenant mode the
     MCP principal must own each connection explicitly. Bridge principals
     are always strict.
+
+    The SHA-256 derivation rationale and migration constraint are
+    documented on :func:`_principal_id_for_key` — same primitive, same
+    reasoning. CodeQL alert #43 is a false positive for the same reason
+    as #42.
     """
+    # lgtm[py/weak-sensitive-data-hashing] -- intentional: see _principal_id_for_key
+    # docstring. Mirror function; same rationale, same migration constraint.
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return f"mcp:{digest}"
 
