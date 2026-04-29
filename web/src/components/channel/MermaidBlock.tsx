@@ -69,10 +69,14 @@ function simplifyMermaid(code: string): string {
     if (/^(graph|flowchart)\s+/i.test(line)) { kept.push(line); continue; }
     if (/^(style|classDef|class |click|linkStyle|subgraph|end\b|%%|direction\b)/i.test(line)) continue;
     // Dangling edge: arrow with no right-hand target.
-    if (/-->\s*\|[^|]*\|\s*$/.test(line)) continue;
+    if (/--!?>\s*\|[^|]*\|\s*$/.test(line)) continue;
     if (/--\s*$/.test(line)) continue;
-    // Must look like an edge or a node declaration.
-    if (!/-->|---|==>|-\.-/.test(line) && !/\[|\(|\{/.test(line)) continue;
+    // Must look like an edge or a node declaration. Accept both `-->` and
+    // `--!>` arrow terminators (CodeQL js/bad-tag-filter, alert #9). The
+    // shorter `-->`-only pattern was flagged because it overlaps with the
+    // HTML-comment-end matcher; including the optional `!` is harmless
+    // here — invalid Mermaid edges are dropped by `mermaid.parse` later.
+    if (!/--!?>|---|==>|-\.-/.test(line) && !/\[|\(|\{/.test(line)) continue;
     kept.push(line);
   }
   if (!kept.some((l) => /^(graph|flowchart)\s+/i.test(l))) kept.unshift("flowchart TD");
