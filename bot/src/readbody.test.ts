@@ -153,9 +153,13 @@ describe("readBody — HTTP integration (Test #7)", () => {
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", got: body.length }));
-      } catch (err) {
+      } catch (_err) {
+        // Test fixture: surface only a generic 500 to satisfy CodeQL
+        // js/stack-trace-exposure (alert #11). The real bridge handlers
+        // route through `safeErrorMessage`; this fixture only exercises
+        // the 413 path so the message itself is irrelevant to the test.
         res.writeHead(500);
-        res.end(String(err));
+        res.end("internal error");
       }
     });
 

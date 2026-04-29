@@ -13,6 +13,39 @@ export function jsonResponse(res: ServerResponse, status: number, data: unknown)
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Render an unknown thrown value as a short, single-line, stack-trace-free
+ * string suitable for inclusion in HTTP error responses.
+ *
+ * `String(err)` on a typical `Error` returns just `"<Name>: <message>"`, but
+ * CodeQL `js/stack-trace-exposure` (alerts #10, #11) flags any flow from a
+ * caught error to the response body because some hosts attach `.stack` to
+ * the default `toString` (or callers later substitute a thrown object whose
+ * `toString` interpolates `.stack`). We extract `err.message` explicitly,
+ * collapse whitespace, and cap the length so the response never carries
+ * line-numbered frame data even if a future call site goes through here.
+ */
+const _MAX_ERROR_MESSAGE_LEN = 200;
+
+export function safeErrorMessage(err: unknown): string {
+  let raw: string;
+  if (err instanceof Error) {
+    raw = err.message || err.name || "error";
+  } else if (typeof err === "string") {
+    raw = err;
+  } else if (err && typeof err === "object" && "message" in err) {
+    const m = (err as { message?: unknown }).message;
+    raw = typeof m === "string" ? m : "error";
+  } else {
+    raw = "error";
+  }
+  // Collapse all whitespace runs (including newlines from any accidentally
+  // multi-line message) into single spaces, then trim and length-cap.
+  const flat = raw.replace(/\s+/g, " ").trim();
+  if (flat.length <= _MAX_ERROR_MESSAGE_LEN) return flat;
+  return `${flat.slice(0, _MAX_ERROR_MESSAGE_LEN)}…`;
+}
+
 /** Maximum HTTP request body the bot will accept (1 MB). */
 export const MAX_BODY_SIZE = 1_048_576;
 
