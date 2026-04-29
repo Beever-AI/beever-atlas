@@ -18,7 +18,7 @@ Issue #88 — narrow ``?access_token=`` auth surface to loader endpoints.
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -116,6 +116,24 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
         logger.warning("media_proxy rejected url: host=%s reason=%s", host, type(exc).__name__)
         raise HTTPException(status_code=400, detail="Invalid media URL") from None
 
+    # Rebuild the request URL from the validated `parsed` components so the
+    # value sent to httpx never reuses the raw user-provided string. The
+    # scheme/host/path/query/fragment are unchanged in network behaviour
+    # (identical bytes on the wire), but the explicit reconstruction acts
+    # as a sanitization barrier for CodeQL py/full-ssrf alerts #37 and #38
+    # — without it, static analysis follows the raw `url` straight into
+    # `client.get(...)` and ignores the host-allowlist + DNS guards above.
+    safe_url = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
     client = get_proxy_client()
     headers: dict[str, str] = {
         "User-Agent": "BeeverAtlas-MediaProxy/1.0",
@@ -132,10 +150,10 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
         for token in tokens:
             try:
                 resp = await client.get(
-                    url, headers={**headers, "Authorization": f"Bearer {token}"}
+                    safe_url, headers={**headers, "Authorization": f"Bearer {token}"}
                 )
             except httpx.HTTPError:
-                logger.warning("media proxy: slack fetch error for %s", url, exc_info=True)
+                logger.warning("media proxy: slack fetch error for host=%s", host, exc_info=True)
                 continue
             last_status = resp.status_code
             if resp.status_code == 200:
@@ -149,9 +167,9 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
 
     # Discord CDN and similar: public signed URLs, no auth needed.
     try:
-        resp = await client.get(url, headers=headers)
+        resp = await client.get(safe_url, headers=headers)
     except httpx.HTTPError:
-        logger.warning("media proxy: fetch error for %s", url, exc_info=True)
+        logger.warning("media proxy: fetch error for host=%s", host, exc_info=True)
         raise HTTPException(status_code=502, detail="Upstream fetch failed") from None
     if resp.status_code != 200:
         status = resp.status_code
