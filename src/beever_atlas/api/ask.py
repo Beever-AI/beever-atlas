@@ -1066,6 +1066,12 @@ async def ask_channel(
     await assert_channel_access(principal, channel_id)
     user_id = principal.id
     session_id = body.session_id or str(uuid.uuid4())
+    # Issue #45 — when the client supplies a session_id, verify it isn't
+    # someone else's session before persisting Q&A messages or feedback to
+    # it. New session_ids (those not yet in chat_history) pass through
+    # silently as legitimate first-message sessions.
+    if body.session_id:
+        await _assert_session_ownership_or_new(session_id, user_id)
 
     return StreamingResponse(
         _run_agent_stream(
@@ -1153,10 +1159,15 @@ async def submit_feedback(
 ) -> dict:
     """Submit thumbs up/down feedback on an assistant response."""
     await assert_channel_access(principal, channel_id)
+    user_id = principal.id
+    # Issue #45 — verify the session belongs to the caller before upserting
+    # feedback. Without this, any authenticated user could submit feedback
+    # against another user's session_id (the v2 endpoint already had this
+    # check via _verify_session_ownership; v1 was missed).
+    await _verify_session_ownership(body.session_id, user_id)
     # Phase 2 of #31 — use the shared MongoDB client from StoreClients.
     from beever_atlas.stores import get_stores
 
-    user_id = principal.id
     db = get_stores().mongodb.db
 
     doc = {
@@ -1312,6 +1323,9 @@ async def ask_v2(
     await assert_channel_access(principal, body.channel_id)
     user_id = principal.id
     session_id = body.session_id or str(uuid.uuid4())
+    # Issue #45 — verify ownership when the client supplies a session_id.
+    if body.session_id:
+        await _assert_session_ownership_or_new(session_id, user_id)
 
     return StreamingResponse(
         _run_agent_stream(
@@ -1498,6 +1512,29 @@ async def _verify_session_ownership(session_id: str, user_id: str) -> dict:
     if session.get("user_id") != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     return session
+
+
+async def _assert_session_ownership_or_new(session_id: str, user_id: str) -> bool:
+    """Issue #45 — variant of `_verify_session_ownership` for endpoints
+    where a NEW session_id is legitimate (the ask endpoints accept
+    client-generated UUIDs for first-message sessions).
+
+    Returns True if the session exists and belongs to ``user_id``.
+    Returns False if the session doesn't exist (caller should treat as a
+    new session).
+    Raises 403 if the session exists but belongs to a different user —
+    this is the bug class issue #45 closes: client-supplied session_ids
+    being used to inject Q&A messages and feedback into another user's
+    session document.
+    """
+    from beever_atlas.stores import get_stores
+
+    session = await get_stores().chat_history.load_session(session_id=session_id)
+    if not session:
+        return False
+    if session.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return True
 
 
 @router.post("/api/ask/sessions/{session_id}/share")
