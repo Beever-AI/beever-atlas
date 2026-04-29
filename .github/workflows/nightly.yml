@@ -5,6 +5,10 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+# Least-privilege default. CodeQL alert #1 — actions/missing-workflow-permissions.
+permissions:
+  contents: read
+
 jobs:
   contracts:
     name: Graph backend contract tests

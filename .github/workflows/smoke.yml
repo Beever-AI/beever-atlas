@@ -11,6 +11,10 @@ concurrency:
   group: smoke-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege default. CodeQL alert #6 — actions/missing-workflow-permissions.
+permissions:
+  contents: read
+
 jobs:
   smoke:
     name: Docker Compose smoke test

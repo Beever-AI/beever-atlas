@@ -10,6 +10,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to least-privilege at the workflow level. Individual jobs may
+# elevate via their own `permissions:` block if a future change needs
+# write access (e.g. to comment on PRs or upload SBOMs). CodeQL alerts
+# #2, #4, #5, #7 — actions/missing-workflow-permissions.
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (Python 3.12)

@@ -12,6 +12,10 @@ concurrency:
   group: audit-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege default. CodeQL alert #3 — actions/missing-workflow-permissions.
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: pip-audit + npm audit (HIGH/CRITICAL gate)
