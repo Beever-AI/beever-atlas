@@ -1267,6 +1267,12 @@ export function recordTelegramChat(
   bucket.set(chatId, { chatId, title, type: chat.type || "unknown", lastSeenAt: Date.now() });
 }
 
+/** Host allowed for Telegram file fetches (CodeQL alert #31).
+ *  Telegram's Bot API serves file content only at `api.telegram.org`. The
+ *  URL path embeds the bot token (`/file/bot<TOKEN>/<path>`), so an SSRF
+ *  here would leak the token to whichever host the request actually hit. */
+const TELEGRAM_FILE_HOSTS = ["api.telegram.org"] as const;
+
 class TelegramBridge implements PlatformBridge {
   private adapter: unknown;
   private connectionId: string;
@@ -1329,7 +1335,7 @@ class TelegramBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
+    await assertAllowedFetchUrl(decodedUrl, TELEGRAM_FILE_HOSTS);
     const response = await fetch(decodedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
