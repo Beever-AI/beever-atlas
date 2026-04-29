@@ -11,9 +11,21 @@ import { ProxiedImage } from "@/components/common/ProxiedImage";
 import type { WikiCitation } from "@/lib/types";
 
 /** Returns the route path needed to mint a signed loader token, or null
- * if the URL is public (no proxy needed). */
+ * if the URL is public (no proxy needed).
+ *
+ * Compares the parsed-URL hostname against the allowlist instead of
+ * `url.includes("files.slack.com")` — substring matching against the full
+ * URL would treat `evil.com/files.slack.com` as a Slack file and 404 on
+ * the proxy with attacker-controlled bytes in the URL. CodeQL alert #20.
+ */
 function proxyPathFor(url: string): string | null {
-  if (url.includes("files.slack.com")) {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host === "files.slack.com") {
     return `/api/files/proxy?url=${encodeURIComponent(url)}`;
   }
   return null;

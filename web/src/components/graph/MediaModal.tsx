@@ -15,7 +15,18 @@ export function MediaModal({ name, url, mediaType, onClose }: MediaModalProps) {
   // synchronous `buildLoaderUrl` (raw key) because anchor URLs cannot
   // await an async mint without click-time resolution; that migration
   // is tracked as a follow-up.
-  const isSlackFile = url.includes("files.slack.com");
+  //
+  // CodeQL alert #19: parse the URL and compare the hostname rather
+  // than `url.includes("files.slack.com")` — substring matching against
+  // the full URL would treat an attacker URL like
+  // `evil.com/files.slack.com` as a Slack file.
+  const isSlackFile = (() => {
+    try {
+      return new URL(url).hostname.toLowerCase() === "files.slack.com";
+    } catch {
+      return false;
+    }
+  })();
   const proxyPath = `/api/files/proxy?url=${encodeURIComponent(url)}`;
   const anchorHref = isSlackFile ? buildLoaderUrl(proxyPath) : url;
 
