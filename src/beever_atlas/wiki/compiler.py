@@ -2578,7 +2578,11 @@ class WikiCompiler:
                 domain = "unknown"
             if domain in _SOCIAL_DOMAINS:
                 cap = 5
-            elif "github.com" in domain:
+            elif domain == "github.com" or domain.endswith(".github.com"):
+                # CodeQL alert #33: `domain` is already a parsed hostname
+                # (line ~2567), so substring `"github.com" in domain` is
+                # redundant AND would match `github.com.evil.com`. Use
+                # exact-match-or-proper-subdomain instead.
                 cap = 10
             else:
                 cap = 5
