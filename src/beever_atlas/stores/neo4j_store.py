@@ -320,8 +320,7 @@ class Neo4jStore:
         if all(isinstance(r, BaseException) for r in results):
             first_exc = next(r for r in results if isinstance(r, BaseException))
             raise RuntimeError(
-                f"Neo4jStore: all {len(entities)} entity upserts failed; "
-                f"first error: {first_exc!r}"
+                f"Neo4jStore: all {len(entities)} entity upserts failed; first error: {first_exc!r}"
             ) from first_exc
         ids: list[str] = []
         for entity, res in zip(entities, results):
