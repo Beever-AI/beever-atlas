@@ -280,6 +280,44 @@ class MockGraphStore:
         if entity:
             entity.name_vector = vector
 
+    # -- Batch operations (issue #43 — GraphStore protocol conformance) ------
+
+    async def batch_create_episodic_links(self, links: list[dict]) -> int:
+        """Delegate to the single-record path; return count for parity with
+        Neo4j/Nebula stores. Returns 0 on empty input."""
+        for link in links:
+            await self.create_episodic_link(**link)
+        return len(links)
+
+    async def batch_upsert_media(self, items: list[dict]) -> int:
+        for item in items:
+            await self.upsert_media(**item)
+        return len(items)
+
+    async def batch_link_entities_to_media(self, links: list[dict]) -> int:
+        for link in links:
+            await self.link_entity_to_media(link["entity_name"], link["media_url"])
+        return len(links)
+
+    async def batch_promote_pending(self, names: list[str]) -> int:
+        """Promote N pending entities to `active` in one call. Returns the
+        number of entities actually transitioned (non-pending names + missing
+        names are silently skipped, matching the Neo4j store's idempotency)."""
+        count = 0
+        for name in names:
+            entity = self._entities.get(name)
+            if entity and entity.status == "pending":
+                entity.status = "active"
+                entity.pending_since = None
+                count += 1
+        return count
+
+    async def batch_find_entities_by_name(self, names: list[str]) -> set[str]:
+        """Return the subset of `names` that exist in the store as canonical
+        entity names. Aliases are NOT searched (mirrors NullGraphStore + the
+        Neo4j store's batch behaviour)."""
+        return {n for n in names if n in self._entities}
+
 
 # ---------------------------------------------------------------------------
 # Protocol Conformance Tests
@@ -290,9 +328,16 @@ class TestProtocolConformance:
     """Verify that store implementations satisfy the GraphStore protocol."""
 
     def test_mock_graph_store_is_graph_store(self):
-        pytest.skip(
-            "MockGraphStore does not implement new batch_* protocol methods; "
-            "conformance check bypassed pending mock extension."
+        # Issue #43 — MockGraphStore now implements all 5 batch_* protocol
+        # methods (`batch_create_episodic_links`, `batch_upsert_media`,
+        # `batch_link_entities_to_media`, `batch_promote_pending`,
+        # `batch_find_entities_by_name`), so the runtime-checkable protocol
+        # check returns True. The previous `pytest.skip` masked drift —
+        # any future protocol addition will now fail this test.
+        store = MockGraphStore()
+        assert isinstance(store, GraphStore), (
+            "MockGraphStore must satisfy the GraphStore protocol — see "
+            "graph_protocol.py for the required method set"
         )
 
     def test_neo4j_store_is_graph_store(self):
