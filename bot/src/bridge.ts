@@ -945,6 +945,13 @@ class DiscordBridge implements PlatformBridge {
   }
 }
 
+/** Hosts allowed for Teams file fetches (CodeQL alert #30).
+ *  Teams attachments are served by Microsoft Graph (`graph.microsoft.com`)
+ *  and per-tenant SharePoint subdomains (`<tenant>.sharepoint.com`,
+ *  `<tenant>-my.sharepoint.com`). The dot-prefix entry matches subdomains
+ *  only — `sharepoint.com` apex is NOT allowed. */
+const TEAMS_FILE_HOSTS = ["graph.microsoft.com", ".sharepoint.com"] as const;
+
 // ── TeamsBridge ──────────────────────────────────────────────────────────────
 // Pull-model ingestion via the Chat SDK Teams adapter's built-in fetch methods
 // (fetchMessages, fetchChannelMessages, fetchChannelInfo, listThreads). The
@@ -1148,7 +1155,7 @@ class TeamsBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
+    await assertAllowedFetchUrl(decodedUrl, TEAMS_FILE_HOSTS);
     const response = await fetch(decodedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
