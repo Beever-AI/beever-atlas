@@ -77,13 +77,14 @@ web/dist/
 /package-lock.json
 
 # Claude Code runtime state
-.claude/scheduled_tasks.lock
+.claude/
 
 # QA harness output artifacts
 scripts/_qa_harness_out/
 
 # Local scratch notes
 daily_update.md
+future/
 
 # hypothesis cache
 .hypothesis/
@@ -95,8 +96,7 @@ htmlcov/
 coverage.xml
 
 # OpenSpec scratch artifacts — commit specific change dirs explicitly with `git add -f`
-openspec/changes/
-openspec/specs/
+openspec/
 web/openspec/
 
 # Local env backups created by ./atlas on re-runs
