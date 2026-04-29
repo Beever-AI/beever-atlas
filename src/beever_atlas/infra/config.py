@@ -57,6 +57,18 @@ class ConfigurationError(RuntimeError):
     """Raised when feature-flag coupling or settings are invalid."""
 
 
+# Issue #41 — the well-known development placeholder shipped in `.env.example`
+# (and seeded by the `atlas` installer when Python is missing without this fix).
+# It IS valid 64-char hex so the bare hex_ok check would pass it, but using it
+# as the AES-256-GCM master key makes "encrypted" credentials effectively
+# plaintext to anyone who reads the public `.env.example`. The validator
+# rejects this exact value: hard error in production, loud warning in dev.
+# The `tests/infra/test_credential_master_key_validation.py` regression test
+# asserts this constant matches the value in `.env.example` so the two
+# sources cannot drift.
+_INSECURE_PLACEHOLDER_KEY = "00000000000000000000000000000000000000000000000000000000deadbeef"
+
+
 class Settings(BaseSettings):
     """Beever Atlas configuration — all values from env vars."""
 
@@ -428,6 +440,21 @@ class Settings(BaseSettings):
         hex_ok = len(key) == 64 and all(c in "0123456789abcdefABCDEF" for c in key)
         if not hex_ok:
             problems.append("CREDENTIAL_MASTER_KEY must be 64 hex chars (AES-256-GCM)")
+        elif key.lower() == _INSECURE_PLACEHOLDER_KEY:
+            # Issue #41 — reject the well-known dev placeholder. It IS valid
+            # 64-char hex but it's published in `.env.example`, so any
+            # encrypted credential under this key is effectively plaintext to
+            # anyone who reads the repo. Production raises (existing logic at
+            # L442-445); dev/test logs the same problem string at WARNING
+            # severity — the INSECURE/PLAINTEXT keywords carry the loudness;
+            # do NOT escalate to logger.critical/error to keep severity
+            # consistent with the rest of `_validate_production`.
+            problems.append(
+                "CREDENTIAL_MASTER_KEY is the INSECURE well-known placeholder "
+                "from .env.example — encryption is effectively PLAINTEXT. "
+                'Regenerate with: python -c "import secrets; '
+                'print(secrets.token_hex(32))"'
+            )
         if self.neo4j_password in {"beever_atlas_dev", ""}:
             problems.append("NEO4J_AUTH password is a dev default or empty")
         if self.nebula_password == "nebula":

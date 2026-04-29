@@ -190,10 +190,25 @@ replace_env_value() {
 }
 
 # Generate a random hex token of N bytes (2N hex chars). Echoes the
-# token on stdout. Requires $PY_CMD; callers must check that first.
+# token on stdout. Issue #41 — falls back to POSIX `od /dev/urandom`
+# when Python is missing, so minimal hosts no longer leave the public
+# .env.example placeholder in place. Returns non-zero only when both
+# Python and /dev/urandom are unavailable.
 gen_hex() {
   local bytes="${1:-24}"
-  "$PY_CMD" -c "import secrets; print(secrets.token_hex(${bytes}))"
+  if [ -n "$PY_CMD" ]; then
+    "$PY_CMD" -c "import secrets; print(secrets.token_hex(${bytes}))"
+    return $?
+  fi
+  if [ -r /dev/urandom ]; then
+    # POSIX `od` (BSD + GNU + busybox); strip spaces and newlines from
+    # the output. Produces 2N hex chars matching `secrets.token_hex(N)`.
+    od -An -tx1 -N"${bytes}" /dev/urandom | tr -d ' \n'
+    echo
+    return 0
+  fi
+  error "gen_hex: neither Python nor /dev/urandom available — cannot generate secret"
+  return 1
 }
 
 # Confirm prompt. Args: default(Y|N), prompt text. Returns 0 for yes, 1 for no.
@@ -261,12 +276,14 @@ prompt_internal_secret() {
   local value=""
   read -r value || true
   if [ -z "$value" ]; then
-    if [ -n "$PY_CMD" ]; then
-      value=$(gen_hex "$bytes")
+    # Issue #41 — gen_hex now falls back to /dev/urandom if Python is
+    # missing. Only warn-and-skip when both paths fail.
+    value=$(gen_hex "$bytes")
+    if [ -n "$value" ]; then
       replace_env_value "$key" "$value"
       ok "auto-generated"
     else
-      warn "Python not found — leaving ${key} unchanged, set manually later"
+      warn "Cannot auto-generate ${key} (no Python and no /dev/urandom) — set manually later"
     fi
   else
     replace_env_value "$key" "$value"
@@ -314,12 +331,14 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
     # MCP server
     if confirm "N" "Enable the MCP server for Claude Code / Cursor?"; then
       replace_env_value "BEEVER_MCP_ENABLED" "true"
-      if [ -n "$PY_CMD" ]; then
-        mcp_key="mcp-$(gen_hex 24)"
-        replace_env_value "BEEVER_MCP_API_KEYS" "$mcp_key"
+      # Issue #41 — gen_hex now falls back to /dev/urandom; only warn-and-skip
+      # when both paths fail.
+      mcp_random=$(gen_hex 24)
+      if [ -n "$mcp_random" ]; then
+        replace_env_value "BEEVER_MCP_API_KEYS" "mcp-${mcp_random}"
         ok "BEEVER_MCP_ENABLED=true · auto-generated BEEVER_MCP_API_KEYS"
       else
-        warn "BEEVER_MCP_ENABLED=true but python missing — set BEEVER_MCP_API_KEYS manually"
+        warn "BEEVER_MCP_ENABLED=true but cannot auto-generate (no Python and no /dev/urandom) — set BEEVER_MCP_API_KEYS manually"
       fi
     else
       ok "skipped MCP server"
@@ -361,12 +380,14 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
   hint "Rotate them to random secrets for any deploy."
 
   if confirm "N" "Rotate auth tokens to fresh random secrets?"; then
-    if [ -z "$PY_CMD" ]; then
-      warn "Python not found — can't auto-generate, skipping rotation"
+    # Issue #41 — gen_hex now falls back to /dev/urandom; only skip
+    # rotation when BOTH Python and /dev/urandom are unavailable.
+    new_api=$(gen_hex 24)
+    new_admin=$(gen_hex 24)
+    new_bridge=$(gen_hex 24)
+    if [ -z "$new_api" ] || [ -z "$new_admin" ] || [ -z "$new_bridge" ]; then
+      warn "Cannot auto-generate (no Python and no /dev/urandom) — skipping rotation"
     else
-      new_api=$(gen_hex 24)
-      new_admin=$(gen_hex 24)
-      new_bridge=$(gen_hex 24)
       replace_env_value "BEEVER_API_KEYS"        "$new_api"
       replace_env_value "BEEVER_ADMIN_TOKEN"     "$new_admin"
       replace_env_value "BRIDGE_API_KEY"         "$new_bridge"
@@ -406,25 +427,30 @@ secrets_changed=false
 MASTER_KEY_PLACEHOLDER="00000000000000000000000000000000000000000000000000000000deadbeef"
 
 if grep -qF "CREDENTIAL_MASTER_KEY=${MASTER_KEY_PLACEHOLDER}" .env; then
-  if [ -n "$PY_CMD" ]; then
-    replace_env_value "CREDENTIAL_MASTER_KEY" "$(gen_hex 32)"
-    ok "Generated a fresh CREDENTIAL_MASTER_KEY"
-    secrets_changed=true
-  else
-    warn "Python not found — set CREDENTIAL_MASTER_KEY manually in .env:"
-    hint "python -c \"import secrets; print(secrets.token_hex(32))\""
+  # Issue #41 — `gen_hex` now falls back to /dev/urandom if Python is
+  # missing. Exit fail-loud if BOTH paths fail rather than ship the
+  # public placeholder, which would leave AES-256-GCM encryption
+  # effectively plaintext.
+  new_master_key="$(gen_hex 32)"
+  if [ -z "$new_master_key" ]; then
+    error "Cannot generate CREDENTIAL_MASTER_KEY — neither Python nor /dev/urandom available."
+    error "Set it manually in .env (64 hex chars) and re-run atlas."
+    exit 1
   fi
+  replace_env_value "CREDENTIAL_MASTER_KEY" "$new_master_key"
+  ok "Generated a fresh CREDENTIAL_MASTER_KEY"
+  secrets_changed=true
 fi
 
 if grep -qE "^WEAVIATE_API_KEY=$" .env; then
-  if [ -n "$PY_CMD" ]; then
-    replace_env_value "WEAVIATE_API_KEY" "$(gen_hex 16)"
-    ok "Generated a fresh WEAVIATE_API_KEY"
-    secrets_changed=true
-  else
-    warn "Python not found — set WEAVIATE_API_KEY manually in .env:"
-    hint "python -c \"import secrets; print(secrets.token_hex(16))\""
+  new_weaviate_key="$(gen_hex 16)"
+  if [ -z "$new_weaviate_key" ]; then
+    error "Cannot generate WEAVIATE_API_KEY — neither Python nor /dev/urandom available."
+    exit 1
   fi
+  replace_env_value "WEAVIATE_API_KEY" "$new_weaviate_key"
+  ok "Generated a fresh WEAVIATE_API_KEY"
+  secrets_changed=true
 fi
 
 if ! $secrets_changed; then
