@@ -45,22 +45,29 @@ def _drop_chat_history_test_db():
         pass
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def _init_stores_for_tests():
-    """Initialize the StoreClients singleton for the test session.
+    """Initialize the StoreClients singleton for each test.
 
     After issue #31 Phase 2/3 migrations, api/ask.py endpoints read from the
     shared singleton instead of constructing per-request stores. Tests that
     exercise endpoints via httpx ASGITransport bypass FastAPI's lifespan
     hook, so the singleton is never initialized — `get_stores()` would
     raise. This fixture mimics the lifespan by calling
-    `StoreClients.from_settings()` once per session.
+    `StoreClients.from_settings()` per test.
+
+    Function-scoped (not session) because pytest-asyncio gives each test a
+    fresh event loop in `auto` mode. Motor's `AsyncIOMotorClient` binds its
+    connection pool to the running loop on first use; a session-scoped
+    singleton would carry a pool tied to the *first* test's loop, raising
+    `RuntimeError: Event loop is closed` for every later test.
 
     Tests that want a mock can still depend on the `mock_stores` fixture,
     which overrides `_stores` for the duration of the test.
 
     `from_settings()` is sync and does not require any backing service
-    to be reachable — actual connections happen lazily on first query.
+    to be reachable — actual connections happen lazily on first query, on
+    the test's own event loop.
     """
     import beever_atlas.stores as stores_mod
     from beever_atlas.stores import StoreClients
