@@ -80,6 +80,14 @@ class Neo4jStore:
     """Manages a Neo4j knowledge graph with Entity nodes, Event nodes, and
     flexible relationship types."""
 
+    # Issue #37 — bound concurrent Neo4j sessions per batch upsert. Peak
+    # concurrent sessions per process =
+    #   ingest_batch_concurrency * Neo4jStore._BATCH_CONCURRENCY
+    # Default: 4 (ingest_batch_concurrency) * 16 = 64. Keep the product
+    # below the driver's `max_connection_pool_size` (default 100) to
+    # avoid pool exhaustion under tuned `ingest_batch_concurrency`.
+    _BATCH_CONCURRENCY: int = 16
+
     def __init__(self, uri: str, user: str, password: str) -> None:
         # Filter informational Neo4j notifications (e.g. SUPERSEDES relationship
         # type missing on OPTIONAL MATCH — pre-existing harmless noise). The
@@ -279,8 +287,40 @@ class Neo4jStore:
             return record["eid"]  # type: ignore[index]
 
     async def batch_upsert_entities(self, entities: list[GraphEntity]) -> list[str]:
-        """Upsert multiple entities in parallel. Returns element IDs."""
-        return list(await asyncio.gather(*[self.upsert_entity(e) for e in entities]))
+        """Upsert multiple entities in parallel. Returns element IDs.
+
+        Issue #37 — concurrent sessions are bounded by
+        ``self._BATCH_CONCURRENCY`` (default 16) so a large batch can't
+        exhaust the Neo4j driver's connection pool. Per-entity failures
+        are tolerated via ``return_exceptions=True``: the failure is
+        logged and its slot in the returned list is an empty string,
+        sibling entities still persist (matches the existing
+        ``batch_upsert_relationships`` pattern).
+        """
+        if not entities:
+            return []
+        sem = asyncio.Semaphore(self._BATCH_CONCURRENCY)
+
+        async def _bounded(e: GraphEntity) -> str:
+            async with sem:
+                return await self.upsert_entity(e)
+
+        results = await asyncio.gather(
+            *[_bounded(e) for e in entities],
+            return_exceptions=True,
+        )
+        ids: list[str] = []
+        for entity, res in zip(entities, results):
+            if isinstance(res, BaseException):
+                logger.warning(
+                    "Neo4jStore: entity upsert failed (name=%s): %s",
+                    entity.name,
+                    res,
+                )
+                ids.append("")
+            else:
+                ids.append(res)
+        return ids
 
     # ------------------------------------------------------------------
     # Write — relationships
@@ -348,9 +388,21 @@ class Neo4jStore:
         poison the whole batch — the failure is logged, its slot in the
         returned list is an empty string, and sibling relationships still
         persist.
+
+        Issue #37 — concurrent sessions are bounded by
+        ``self._BATCH_CONCURRENCY`` (default 16) so a large batch can't
+        exhaust the Neo4j driver's connection pool.
         """
+        if not rels:
+            return []
+        sem = asyncio.Semaphore(self._BATCH_CONCURRENCY)
+
+        async def _bounded(r: GraphRelationship) -> str:
+            async with sem:
+                return await self.upsert_relationship(r)
+
         results = await asyncio.gather(
-            *[self.upsert_relationship(r) for r in rels],
+            *[_bounded(r) for r in rels],
             return_exceptions=True,
         )
         ids: list[str] = []
