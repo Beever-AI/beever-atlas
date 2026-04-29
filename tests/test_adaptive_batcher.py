@@ -188,8 +188,13 @@ class TestBatcherPerformance:
         batches = token_aware_batches(msgs, max_tokens=12_000)
         elapsed = time.perf_counter() - t0
         assert sum(len(b) for b in batches) == 1000
-        # Adaptive batcher must stay well under 1s for 1k messages on CI hardware.
-        assert elapsed < 1.0, f"default batching too slow: {elapsed:.3f}s"
+        # Issue #55 — sanity ceiling, not a perf gate. The batcher is pure
+        # Python with no I/O so 1k messages typically completes in <50ms;
+        # 3.0s gives ~60x headroom for loaded CI hosts while still catching
+        # O(n²) regressions (those would push past several seconds at 1k).
+        # Algorithmic regression detection lives in
+        # test_perf_parity_default_vs_output_aware (relative, load-immune).
+        assert elapsed < 3.0, f"default batching too slow: {elapsed:.3f}s"
 
     def test_perf_with_output_budget_1000_messages(self):
         msgs = self._make_messages(1000)
@@ -199,8 +204,10 @@ class TestBatcherPerformance:
         )
         elapsed = time.perf_counter() - t0
         assert sum(len(b) for b in batches) == 1000
-        # Output-aware path must not regress materially vs. default.
-        assert elapsed < 1.0, f"output-aware batching too slow: {elapsed:.3f}s"
+        # Issue #55 — see test_perf_default_1000_messages for threshold
+        # rationale; output-aware regression vs. default is checked
+        # relatively in test_perf_parity_default_vs_output_aware.
+        assert elapsed < 3.0, f"output-aware batching too slow: {elapsed:.3f}s"
 
     def test_perf_parity_default_vs_output_aware(self):
         """Output-aware path must not be more than 3x slower than default."""
