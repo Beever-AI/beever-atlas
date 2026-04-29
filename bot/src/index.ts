@@ -11,6 +11,7 @@ import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } fro
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 import { WebhookBuffer } from "./webhook-buffer.js";
+import { validateEnv } from "./validate-env.js";
 
 // ── Environment validation ──────────────────────────────────────────────────
 
@@ -18,10 +19,9 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const PORT = parseInt(process.env.BOT_PORT || "3001", 10);
 
-function validateEnv(): void {
-  // No platform-specific env vars are required — connections are loaded at
-  // runtime from the backend database or fall back to .env credentials.
-}
+// Issue #53 — validateEnv lives in ./validate-env.ts; it's WARN-only and
+// never gates startup (platform-specific creds are loaded from the backend
+// database at runtime). See that module for the full check list.
 
 // ── Handler registration ─────────────────────────────────────────────────────
 
