@@ -151,7 +151,29 @@ def _staging_root() -> Path:
 
 
 def _stage_paths(file_id: str) -> tuple[Path, Path, Path]:
-    base = _staging_root() / file_id
+    """Resolve the on-disk paths for a given staged file_id.
+
+    Validates ``file_id`` as a strict UUID before joining it to the
+    staging root and confirms the resolved path is contained inside the
+    root (CodeQL ``py/path-injection``, alerts #39/#40/#41). Without
+    this, a caller-supplied ``file_id`` of e.g. ``../etc/passwd`` would
+    let ``_meta`` / ``_rm_tree`` touch files outside the staging
+    directory. Server-generated ids always satisfy ``uuid.UUID()`` so
+    legitimate flows are unaffected.
+    """
+    try:
+        uuid.UUID(str(file_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid file_id")
+
+    root = _staging_root().resolve()
+    base = (root / file_id).resolve()
+    # Defense in depth: even with the UUID guard above, refuse to return
+    # any path that doesn't sit under the staging root.
+    try:
+        base.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file_id")
     return base, base / "original", base / "meta.json"
 
 

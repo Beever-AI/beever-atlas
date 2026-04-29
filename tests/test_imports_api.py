@@ -90,11 +90,29 @@ def test_preview_undecodable_file_returns_400(client: TestClient) -> None:
     assert "decode" in resp.json()["detail"].lower()
 
 
-def test_commit_unknown_file_id_returns_404(client: TestClient) -> None:
+def test_commit_malformed_file_id_returns_400(client: TestClient) -> None:
+    # CodeQL py/path-injection (alerts #39, #40, #41): non-UUID file_ids
+    # are rejected at the path-construction boundary before any filesystem
+    # access, preventing `../` traversal out of the staging dir.
     resp = client.post(
         "/api/imports/commit",
         json={
             "file_id": "does-not-exist",
+            "channel_name": "x",
+            "mapping": {"content": "Content"},
+        },
+    )
+    assert resp.status_code == 400
+    assert "Invalid file_id" in resp.json()["detail"]
+
+
+def test_commit_unknown_uuid_file_id_returns_404(client: TestClient) -> None:
+    import uuid as _uuid
+
+    resp = client.post(
+        "/api/imports/commit",
+        json={
+            "file_id": str(_uuid.uuid4()),
             "channel_name": "x",
             "mapping": {"content": "Content"},
         },
