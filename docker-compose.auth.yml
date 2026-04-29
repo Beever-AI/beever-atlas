@@ -59,3 +59,15 @@ services:
     environment:
       MONGODB_URI: mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@mongodb:27017/beever_atlas?authSource=admin
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+
+  bot:
+    # The bot service in docker-compose.yml has its own hard-coded
+    # `REDIS_URL: redis://redis:6379` under `environment:`, which takes
+    # precedence over the `env_file: .env` value. We re-override it here
+    # so the bot can authenticate against the password-protected Redis.
+    # Without this, the bot crash-loops on its
+    # `redis: { condition: service_healthy }` startup gate (NOAUTH from
+    # rate-limit / queue clients), breaking the whole stack when the
+    # overlay is applied.
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
