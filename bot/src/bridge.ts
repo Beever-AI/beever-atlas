@@ -241,6 +241,66 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
   }
 }
 
+/**
+ * Pure host-string matcher. Matches by EXACT lowercase hostname — no
+ * substring, no suffix-by-default. Pass an entry prefixed with "." (e.g.
+ * `.sharepoint.com`) to allow that suffix as a proper subdomain match
+ * (`a.sharepoint.com` matches, `sharepoint.com` does NOT).
+ *
+ * Exported so per-platform allowlist semantics can be unit-tested without
+ * touching DNS.
+ */
+export function isHostAllowed(host: string, allowedHosts: ReadonlyArray<string>): boolean {
+  const lower = host.toLowerCase();
+  for (const entry of allowedHosts) {
+    const normalized = entry.toLowerCase();
+    if (normalized.startsWith(".")) {
+      if (lower.endsWith(normalized) && lower.length > normalized.length) return true;
+    } else if (lower === normalized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Composes a strict host allowlist with `assertPublicUrl`.
+ *
+ * `assertPublicUrl` alone only blocks RFC1918/loopback/link-local/cloud-metadata
+ * targets — it accepts ANY public host. For token-bearing fetches (Slack/
+ * Mattermost bot tokens, Discord bot tokens, Telegram bot tokens) that's
+ * insufficient: an attacker who can route any URL through the proxy could
+ * exfiltrate the token to a public host they control.
+ *
+ * Order matters: the allowlist check runs BEFORE the DNS resolution in
+ * `assertPublicUrl`. Non-allowlisted hosts are rejected immediately with no
+ * DNS lookup, so attacker URLs do not leak to our resolver. Allowlisted hosts
+ * still pass through `assertPublicUrl` for the private-IP guard (defense
+ * against DNS poisoning where a trusted host resolves to a private IP).
+ *
+ * Returns the parsed URL on success so callers don't have to parse twice.
+ */
+export async function assertAllowedFetchUrl(
+  rawUrl: string,
+  allowedHosts: ReadonlyArray<string>,
+): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported scheme: ${parsed.protocol}`);
+  }
+  if (!parsed.hostname) throw new Error("missing host");
+  if (!isHostAllowed(parsed.hostname, allowedHosts)) {
+    throw new Error(`host not in allowlist: ${parsed.hostname.toLowerCase()}`);
+  }
+  await assertPublicUrl(rawUrl);
+  return parsed;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 // jsonResponse is imported from ./http-utils.js above and re-exported.
@@ -264,6 +324,10 @@ const userProfileCache = new Map<string, { name: string; image: string | null }>
 const USER_LOOKUP_CONCURRENCY = 8;
 
 // ── SlackBridge ──────────────────────────────────────────────────────────────
+
+/** Hosts allowed for token-bearing Slack file fetches (CodeQL alert #27).
+ *  Must be EXACT host matches — no substring, no wildcard suffix. */
+const SLACK_FILE_HOSTS = ["files.slack.com", "slack-files.com"] as const;
 
 class SlackBridge implements PlatformBridge {
   private adapter: SlackAdapter;
@@ -528,7 +592,7 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
-    await assertPublicUrl(decodedUrl);
+    await assertAllowedFetchUrl(decodedUrl, SLACK_FILE_HOSTS);
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
     let response = await fetch(decodedUrl, {
@@ -554,6 +618,9 @@ class SlackBridge implements PlatformBridge {
           const fileInfo = await (this.adapter as any).client.files.info({ file: fileId });
           const downloadUrl = fileInfo.file?.url_private_download || fileInfo.file?.url_private;
           if (downloadUrl) {
+            // Defense-in-depth: even though downloadUrl came from Slack's
+            // files.info API, validate before sending the bot token.
+            await assertAllowedFetchUrl(downloadUrl, SLACK_FILE_HOSTS);
             response = await fetch(downloadUrl, {
               headers: { Authorization: `Bearer ${token}` },
             });
