@@ -653,6 +653,11 @@ class SlackBridge implements PlatformBridge {
 
 // ── DiscordBridge ─────────────────────────────────────────────────────────────
 
+/** Host the Discord bot token may be sent to (CodeQL alert #28).
+ *  Discord's REST API lives only at the apex `discord.com` — no subdomains
+ *  serve API traffic. Exact match; no wildcard. */
+const DISCORD_API_HOSTS = ["discord.com"] as const;
+
 class DiscordBridge implements PlatformBridge {
   private adapter: unknown;
   private botToken: string;
@@ -685,7 +690,12 @@ class DiscordBridge implements PlatformBridge {
   }
 
   private async executeDiscordRequest(path: string, retries: number): Promise<any> {
-    const res = await fetch(`https://discord.com/api/v10${path}`, {
+    const url = `https://discord.com/api/v10${path}`;
+    // Lock the host to discord.com so a malformed `path` cannot pivot the
+    // request elsewhere with the bot token attached. Belt-and-suspenders for
+    // CodeQL js/request-forgery (alert #28).
+    await assertAllowedFetchUrl(url, DISCORD_API_HOSTS);
+    const res = await fetch(url, {
       headers: { Authorization: `Bot ${this.botToken}` },
     });
 
