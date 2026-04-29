@@ -1358,11 +1358,22 @@ class MattermostBridge implements PlatformBridge {
   private botToken: string;
   private connectionId: string;
   private botUserId: string | null = null;
+  /** Hosts allowed for token-bearing fetches (CodeQL alert #32).
+   *  Derived from `baseUrl` at construction so each Mattermost instance is
+   *  locked to its own configured host — cross-instance pivots are rejected. */
+  private readonly allowedHosts: ReadonlyArray<string>;
 
   constructor(_adapter: unknown, connectionId: string, baseUrl: string, botToken: string) {
     this.connectionId = connectionId;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.botToken = botToken;
+    let parsedBase: URL;
+    try {
+      parsedBase = new URL(this.baseUrl);
+    } catch {
+      throw new Error(`MattermostBridge: invalid baseUrl ${baseUrl}`);
+    }
+    this.allowedHosts = [parsedBase.hostname.toLowerCase()];
   }
 
   private async _fetch(path: string, init?: RequestInit): Promise<any> {
@@ -1632,7 +1643,7 @@ class MattermostBridge implements PlatformBridge {
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const fileUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
     const decodedUrl = decodeURIComponent(fileUrl);
-    await assertPublicUrl(decodedUrl);
+    await assertAllowedFetchUrl(decodedUrl, this.allowedHosts);
     const response = await fetch(decodedUrl, {
       headers: { Authorization: `Bearer ${this.botToken}` },
     });

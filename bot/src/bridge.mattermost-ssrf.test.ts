@@ -25,7 +25,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { assertPublicUrl } from "./bridge.js";
+import { assertPublicUrl, assertAllowedFetchUrl, isHostAllowed } from "./bridge.js";
 
 describe("assertPublicUrl — SSRF guard", () => {
   it("rejects IPv4 cloud metadata (169.254.169.254)", async () => {
@@ -93,5 +93,61 @@ describe("assertPublicUrl — SSRF guard", () => {
 
   it("rejects IPv4-mapped IPv6 ([::ffff:127.0.0.1])", async () => {
     await assert.rejects(() => assertPublicUrl("http://[::ffff:127.0.0.1]/secret"));
+  });
+});
+
+/**
+ * Per-instance allowlist for MattermostBridge (CodeQL alert #32).
+ *
+ * `assertPublicUrl` blocks private-IP destinations but accepts any public
+ * host. The Mattermost bot token is per-instance, so cross-instance
+ * pivots (instance A's bot token sent to instance B) must be rejected
+ * even if instance B is public. The bridge derives its allowlist from
+ * `baseUrl`'s hostname at construction; we exercise that derivation
+ * shape via the underlying matcher.
+ */
+describe("MattermostBridge — per-instance host allowlist (alert #32)", () => {
+  it("instance allowlist accepts the configured baseUrl host (exact match)", () => {
+    // Simulates `new URL(baseUrl).hostname` → single-entry allowlist.
+    const allowed = ["mm.acme.example"] as const;
+    assert.equal(isHostAllowed("mm.acme.example", allowed), true);
+  });
+
+  it("instance allowlist rejects a sibling instance on a different host", () => {
+    const allowed = ["mm.acme.example"] as const;
+    assert.equal(isHostAllowed("mm.attacker.example", allowed), false);
+    assert.equal(isHostAllowed("acme.example", allowed), false);
+    assert.equal(isHostAllowed("a.mm.acme.example", allowed), false);
+  });
+
+  it("rejects substring-bypass against a configured baseUrl host", async () => {
+    await assert.rejects(
+      () =>
+        assertAllowedFetchUrl(
+          "https://mm.acme.example.evil.com/api/v4/files/abc",
+          ["mm.acme.example"],
+        ),
+      /not in allowlist/i,
+    );
+  });
+
+  it("instance allowlist is case-insensitive", () => {
+    const allowed = ["mm.acme.example"] as const;
+    assert.equal(isHostAllowed("MM.ACME.example", allowed), true);
+  });
+
+  it("composed-baseUrl with relative path resolves against the configured host", async () => {
+    // proxyFile composes `${baseUrl}${url}` when url is a relative path
+    // (e.g. `/api/v4/files/abc`). The composed URL must still hostname-
+    // match the per-instance allowlist.
+    const composed = "https://mm.acme.example" + "/api/v4/files/abc";
+    // assertAllowedFetchUrl follows the same parse + allowlist sequence
+    // proxyFile uses; rejection here is via the (synthetic-host) DNS path,
+    // but allowlist match runs first so the regex is "not in allowlist"
+    // for any non-allowlisted host.
+    await assert.rejects(
+      () => assertAllowedFetchUrl(composed, ["other.host.example"]),
+      /not in allowlist/i,
+    );
   });
 });
