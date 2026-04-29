@@ -109,7 +109,15 @@ def resolve_and_validate(url: str, allowlist: Iterable[str] | None = None) -> tu
             raise PermissionError(f"host {host} not in allowlist")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        # Honour the docstring contract: NXDOMAIN / DNS errors surface as
+        # ValueError("no DNS result"), not as a leaked socket.gaierror /
+        # OSError. Callers (proxy_media, validate_proxy_url) already handle
+        # ValueError; wrapping here keeps the helper's exception surface
+        # consistent across all call sites.
+        raise ValueError(f"DNS resolution failed: {exc}") from exc
     ips: set[str] = set()
     for info in infos:
         addr = info[4][0]

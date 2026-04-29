@@ -40,7 +40,12 @@ def get_proxy_client() -> httpx.AsyncClient:
     if _client is None:
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(15.0, connect=5.0),
-            follow_redirects=True,
+            # SSRF defense (CodeQL alerts #37, #38): refuse to follow redirects
+            # so an allowlisted host cannot 302 the request to a private IP or
+            # off-allowlist target after our pre-fetch validation passes.
+            # Slack files.slack.com and Discord CDN signed URLs serve content
+            # directly with 200 — they do not redirect in normal operation.
+            follow_redirects=False,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
     return _client
