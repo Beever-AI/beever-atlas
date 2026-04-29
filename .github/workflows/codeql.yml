@@ -35,11 +35,7 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
-          # TODO(res-206 Q1.1 follow-up): remove `upload: never` once Code
-          # Scanning is enabled on this repo (free on public repos after
-          # OSS launch; requires GitHub Advanced Security on private repos).
-          # Until then, the SARIF upload fails with "Code Security must be
-          # enabled for this repository" and blocks CI. The CodeQL queries
-          # still run — any crash during analysis will still fail the job —
-          # but findings don't surface as Code Scanning alerts.
-          upload: never
+          # Issue #48 — Code Scanning is now enabled on this repo, so the
+          # SARIF upload (default) succeeds and findings surface in the
+          # GitHub Security tab. The previous `upload: never` workaround
+          # is removed; analysis crashes still fail the job (unchanged).
