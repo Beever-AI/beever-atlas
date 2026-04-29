@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import ValidationError
 
 from beever_atlas.models import (
     ActivityEvent,
@@ -17,6 +19,8 @@ from beever_atlas.models.sync_policy import (
     ChannelPolicy,
     GlobalPolicyDefaults,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MongoDBStore:
@@ -348,7 +352,18 @@ class MongoDBStore:
             if cid:
                 try:
                     result[cid] = ChannelSyncState(**doc)
-                except Exception:  # noqa: BLE001
+                except ValidationError as exc:
+                    # Issue #40 — log corrupt / schema-drifted documents so
+                    # operators can diagnose silent channel disappearances.
+                    # The single-record `get_channel_sync_state` raises on
+                    # the same condition; we keep the batch path tolerant
+                    # (skip + log) so one corrupt row doesn't poison the
+                    # whole sync-status response.
+                    logger.warning(
+                        "get_channel_sync_states_batch: failed to deserialize channel %s: %s",
+                        cid,
+                        exc,
+                    )
                     continue
         return result
 
