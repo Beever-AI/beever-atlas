@@ -249,6 +249,51 @@ async def _run_once(gathered: dict, cassette: CassetteLLM) -> tuple[float, list[
     return wall_ms, handler.records, pages
 
 
+async def _bench_loop(
+    gathered: dict,
+    cassette: CassetteLLM,
+    n_runs: int,
+) -> tuple[list[float], int, int, int, int]:
+    """Run every benchmark iteration in a single event loop.
+
+    Returns (durations_ms, parse_failures_total, empty_content_total,
+    dash_wall_pages_total, page_count). Per-iteration progress prints stay
+    inside this coroutine so timing output matches the pre-#54 cadence.
+    """
+    durations: list[float] = []
+    parse_failures_total = 0
+    empty_content_total = 0
+    dash_wall_pages_total = 0
+    page_count = 0
+
+    for run_idx in range(n_runs):
+        wall_ms, records, pages = await _run_once(gathered, cassette)
+        durations.append(wall_ms)
+
+        parse_fail = _count_warnings(records, "failed to parse LLM JSON")
+        empty = _count_warnings(records, "empty content after")
+        parse_failures_total += parse_fail
+        empty_content_total += empty
+
+        dash_walls = sum(1 for p in pages.values() if _is_degenerate_page(p))
+        dash_wall_pages_total += dash_walls
+        page_count = len(pages)
+
+        print(
+            f"  run {run_idx + 1}/{n_runs}: {wall_ms:.0f}ms  "
+            f"pages={page_count}  parse_fail={parse_fail}  "
+            f"empty={empty}  dash_wall={dash_walls}"
+        )
+
+    return (
+        durations,
+        parse_failures_total,
+        empty_content_total,
+        dash_wall_pages_total,
+        page_count,
+    )
+
+
 def _p_percentile(values: list[float], p: int) -> int:
     if not values:
         return 0
@@ -284,30 +329,17 @@ def run_bench(
     gathered = _load_fixture(fixture_path)
     cassette = CassetteLLM(cassette_path)
 
-    durations: list[float] = []
-    parse_failures_total = 0
-    empty_content_total = 0
-    dash_wall_pages_total = 0
-    page_count = 0
-
-    for run_idx in range(n_runs):
-        wall_ms, records, pages = asyncio.run(_run_once(gathered, cassette))
-        durations.append(wall_ms)
-
-        parse_fail = _count_warnings(records, "failed to parse LLM JSON")
-        empty = _count_warnings(records, "empty content after")
-        parse_failures_total += parse_fail
-        empty_content_total += empty
-
-        dash_walls = sum(1 for p in pages.values() if _is_degenerate_page(p))
-        dash_wall_pages_total += dash_walls
-        page_count = len(pages)
-
-        print(
-            f"  run {run_idx + 1}/{n_runs}: {wall_ms:.0f}ms  "
-            f"pages={page_count}  parse_fail={parse_fail}  "
-            f"empty={empty}  dash_wall={dash_walls}"
-        )
+    # Issue #54 — single asyncio.run() drives every iteration through one
+    # event loop instead of N (was: asyncio.run() inside the for body),
+    # avoiding loop-churn overhead and the FD-leak risk if any future
+    # _run_once change adds real async resources.
+    (
+        durations,
+        parse_failures_total,
+        empty_content_total,
+        dash_wall_pages_total,
+        page_count,
+    ) = asyncio.run(_bench_loop(gathered, cassette, n_runs))
 
     if cassette.misses:
         raise CassetteLLM.CassetteMissError(
