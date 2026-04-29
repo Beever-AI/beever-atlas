@@ -51,8 +51,16 @@ jobs:
           RESP=$(curl -sf http://localhost:8000/api/health)
           echo "Health response: $RESP"
           STATUS=$(echo "$RESP" | jq -r '.status')
-          if [ "$STATUS" != "healthy" ] && [ "$STATUS" != "degraded" ]; then
+          # Issue #56 — smoke runs against a fresh `docker compose up` with
+          # every registered dependency (weaviate, neo4j, mongodb, redis)
+          # available, so anything other than "healthy" indicates a real
+          # problem. Previously "degraded" was accepted, which masked
+          # failures of non-critical components that are still expected
+          # to be up under CI.
+          if [ "$STATUS" != "healthy" ]; then
             echo "Unexpected status: $STATUS"
+            echo "Components NOT 'up':"
+            echo "$RESP" | jq -r '.components | to_entries[] | select(.value.status != "up") | "  - \(.key): status=\(.value.status) error=\(.value.error // "n/a") critical=\(.value.critical)"'
             exit 1
           fi
           echo "$RESP" | jq -e '.components | keys | length > 0' > /dev/null
@@ -68,8 +76,12 @@ jobs:
           docker compose logs --no-color --timestamps --tail=all || true
           echo '== raw docker ps -a =='
           docker ps -a || true
-          echo '== raw beever-atlas logs =='
-          docker logs beever-atlas-beever-atlas-1 2>&1 || true
+          # Issue #56 — `docker compose logs <service>` uses the stable
+          # service name from compose, not the project-prefixed container
+          # name (which breaks if the working directory is renamed or
+          # Compose changes its naming convention).
+          echo '== beever-atlas logs (compose) =='
+          docker compose logs --no-color --timestamps --tail=all beever-atlas || true
 
       - name: Tear down
         if: always()
