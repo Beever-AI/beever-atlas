@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from beever_atlas.wiki.compiler import (
     WikiCompiler,
     _compute_size_tier,
@@ -137,7 +139,10 @@ def test_filter_media_social_cap_is_5_per_platform():
         for i in range(20)
     ]
     filtered = WikiCompiler._filter_media_for_resources(items)
-    x_items = [m for m in filtered if "x.com" in m["url"]]
+    # CodeQL alert #34: parse hostname instead of substring-matching the URL
+    # so a hypothetical `evil.com/x.com/...` test fixture would not be
+    # mis-counted as an x.com item.
+    x_items = [m for m in filtered if (urlparse(m["url"]).hostname or "").lower() == "x.com"]
     assert len(x_items) == 5
 
 
@@ -164,8 +169,16 @@ def test_filter_media_twitter_and_x_share_a_cap():
             }
         )
     filtered = WikiCompiler._filter_media_for_resources(items)
+
     # Both canonicalize to x.com, so 10 candidates collapse to the cap.
-    social = [m for m in filtered if ("x.com" in m["url"] or "twitter.com" in m["url"])]
+    # CodeQL alerts #35, #36: parse hostname instead of substring-matching
+    # the URL. Hosts compared exactly so attacker-positioned `evil.com/x.com`
+    # would not be mis-counted as social.
+    def _is_x_or_twitter(url: str) -> bool:
+        host = (urlparse(url).hostname or "").lower()
+        return host in ("x.com", "twitter.com")
+
+    social = [m for m in filtered if _is_x_or_twitter(m["url"])]
     assert len(social) == 5
 
 
