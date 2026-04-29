@@ -240,7 +240,18 @@ prompt_external_key() {
 
   ask "${C_BOLD}${label}${C_RESET} ${C_DIM}· ${url}${C_RESET}"
   if [ -n "$current" ]; then
-    hint "Current: ${current:0:8}… (Enter = keep)"
+    # Issue #52 — show only the last 4 chars (not the first 8). The
+    # leading bytes of provider keys are structured (`AIzaSy…` for
+    # Google, `jina_…` for Jina) and revealing them aids targeted
+    # brute-force if the terminal is logged. The trailing 4 are
+    # enough for the operator to recognize their own key, and we
+    # fall back to length-only for keys too short to mask safely.
+    local len=${#current}
+    if [ "$len" -ge 12 ]; then
+      hint "Current: …${current: -4} (Enter = keep)"
+    else
+      hint "Current: ${len}-char value set (Enter = keep)"
+    fi
   else
     hint "Paste the key, or press Enter to skip"
   fi

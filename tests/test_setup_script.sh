@@ -400,6 +400,36 @@ assert "exited with status 0 despite slow backend"     "[ $status -eq 0 ]"
 assert "health poll warning emitted"                   "grep -qF 'backend not yet responding' '$WS/stdout'"
 
 # ────────────────────────────────────────────────────────────────────
+# Test 16: existing-key prompt masks all but the last 4 chars (#52)
+# ────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 16: prompt for existing key masks prefix"
+WS="$TMP_ROOT/t16"
+mk_workspace "$WS"
+# Seed .env: a long Google key (full mask) + a short Jina key (length-only).
+# Both contain unmistakable substrings the test asserts must NOT leak.
+sed -i.bak 's/^GOOGLE_API_KEY=.*/GOOGLE_API_KEY=AIzaSyB-fake-prefix-LONG-SUFFIX-WXYZ/' "$WS/.env.example"
+sed -i.bak 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_S3CR/' "$WS/.env.example"
+rm -f "$WS/.env.example.bak"
+# Use --non-interactive once to materialise .env (preserves seeded values),
+# then drive interactive mode pressing Enter through every prompt.
+run_in_workspace "$WS" --non-interactive > /dev/null 2> /dev/null
+: > "$WS/stubs/.calls"
+printf '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' | (
+  cd "$WS"
+  ATLAS_HEALTH_POLL_TIMEOUT=0 PATH="${WS}/stubs:${MINBIN}" bash ./atlas
+) > "$WS/stdout" 2> "$WS/stderr"
+status=$?
+assert "long key shows last 4 chars (…WXYZ)"          "grep -qF '…WXYZ' '$WS/stdout'"
+assert "long key prefix NOT leaked"                   "! grep -qF 'AIzaSyB-' '$WS/stdout'"
+assert "long key middle NOT leaked"                   "! grep -qF 'fake-prefix' '$WS/stdout'"
+assert "short key shows length-only marker"           "grep -qF '9-char value set' '$WS/stdout'"
+assert "short key value NOT leaked"                   "! grep -qF 'jina_S3CR' '$WS/stdout'"
+assert "GOOGLE_API_KEY unchanged on Enter"            "grep -qF 'GOOGLE_API_KEY=AIzaSyB-fake-prefix-LONG-SUFFIX-WXYZ' '$WS/.env'"
+assert "JINA_API_KEY unchanged on Enter"              "grep -qF 'JINA_API_KEY=jina_S3CR' '$WS/.env'"
+assert "exited with status 0"                         "[ $status -eq 0 ]"
+
+# ────────────────────────────────────────────────────────────────────
 # Results
 # ────────────────────────────────────────────────────────────────────
 echo ""
