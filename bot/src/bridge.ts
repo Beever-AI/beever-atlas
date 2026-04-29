@@ -122,7 +122,18 @@ export function checkAuth(
   const authHeader = req.headers.authorization || "";
   const expected = `Bearer ${bridgeKey}`;
   if (!constantTimeEqual(authHeader, expected)) {
-    if (hmacDual && authHeader === expected) {
+    // Issue #49 — keep the comparison constant-time on every path.
+    // Previously this used `authHeader === expected`, which leaks
+    // string-comparison timing information about the bearer token
+    // (only exploitable when BEEVER_BRIDGE_HMAC_DUAL=true is set; the
+    // path is opt-in and slated for removal next release per the
+    // existing deprecation note). The branch is logically equivalent
+    // to the outer check (same inputs → same equality outcome), so
+    // it can never accept where the outer rejected — but using
+    // `constantTimeEqual` here makes the contract explicit and
+    // survives any future change to `expected` (e.g. multi-key
+    // rotation) that would make the branch reachable.
+    if (hmacDual && constantTimeEqual(authHeader, expected)) {
       console.warn(
         "Bridge auth: accepted via legacy == path (BEEVER_BRIDGE_HMAC_DUAL). Retire flag next release.",
       );
