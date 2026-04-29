@@ -555,6 +555,16 @@ class WeaviateStore:
             result = collection.data.delete_many(
                 where=Filter.by_property("channel_id").equal(channel_id),
             )
+            # Surface partial failures — the caller (api/channels.py) reports the
+            # returned count to the user, so silent drops would mislead operators.
+            if result.failed > 0:
+                logger.error(
+                    "delete_by_channel %s: %d failed, %d succeeded (matched=%d)",
+                    channel_id,
+                    int(result.failed),
+                    int(result.successful),
+                    int(result.matches),
+                )
             return int(result.successful)
 
         return await asyncio.to_thread(_delete)
