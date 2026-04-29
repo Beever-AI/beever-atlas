@@ -296,6 +296,14 @@ class Neo4jStore:
         logged and its slot in the returned list is an empty string,
         sibling entities still persist (matches the existing
         ``batch_upsert_relationships`` pattern).
+
+        Circuit-breaker: when EVERY entity fails (e.g. Neo4j fully
+        unreachable), this raises rather than returning an all-empty
+        list. Otherwise callers in ``persister.py`` /  ``reconciler.py``
+        would call ``mark_intent_neo4j_done`` after a no-op write, and
+        the reconciler's next pass would skip the intent — silently
+        dropping every entity in the batch. Partial failures (≥1
+        success) keep the best-effort behavior.
         """
         if not entities:
             return []
@@ -309,6 +317,12 @@ class Neo4jStore:
             *[_bounded(e) for e in entities],
             return_exceptions=True,
         )
+        if all(isinstance(r, BaseException) for r in results):
+            first_exc = next(r for r in results if isinstance(r, BaseException))
+            raise RuntimeError(
+                f"Neo4jStore: all {len(entities)} entity upserts failed; "
+                f"first error: {first_exc!r}"
+            ) from first_exc
         ids: list[str] = []
         for entity, res in zip(entities, results):
             if isinstance(res, BaseException):
@@ -392,6 +406,12 @@ class Neo4jStore:
         Issue #37 — concurrent sessions are bounded by
         ``self._BATCH_CONCURRENCY`` (default 16) so a large batch can't
         exhaust the Neo4j driver's connection pool.
+
+        Circuit-breaker: when EVERY relationship fails (e.g. Neo4j fully
+        unreachable), this raises rather than returning an all-empty
+        list — same rationale as ``batch_upsert_entities``: prevents
+        ``mark_intent_neo4j_done`` running after a no-op write and the
+        reconciler silently skipping the intent on retry.
         """
         if not rels:
             return []
@@ -405,6 +425,12 @@ class Neo4jStore:
             *[_bounded(r) for r in rels],
             return_exceptions=True,
         )
+        if all(isinstance(r, BaseException) for r in results):
+            first_exc = next(r for r in results if isinstance(r, BaseException))
+            raise RuntimeError(
+                f"Neo4jStore: all {len(rels)} relationship upserts failed; "
+                f"first error: {first_exc!r}"
+            ) from first_exc
         ids: list[str] = []
         for rel, res in zip(rels, results):
             if isinstance(res, BaseException):

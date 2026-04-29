@@ -6,11 +6,16 @@ Covers:
   * (b/e) partial-failure tolerance — one failing entity/relationship
     does not poison the batch
   * (c/f) empty input — short-circuits without invoking inner upsert
+  * (g/h) circuit-breaker — when EVERY entity/relationship fails, raise
+    rather than returning an all-empty list (prevents silent data loss
+    when persister/reconciler call mark_intent_neo4j_done on a no-op)
 """
 
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 
 from beever_atlas.models.domain import GraphEntity, GraphRelationship
 from beever_atlas.stores.neo4j_store import Neo4jStore
@@ -175,13 +180,88 @@ async def test_batch_upsert_entities_logs_entity_name_on_failure(monkeypatch) ->
 
     store = Neo4jStore.__new__(Neo4jStore)
 
-    async def fake_upsert(_entity: GraphEntity) -> str:
-        raise RuntimeError("boom")
+    async def fake_upsert(entity: GraphEntity) -> str:
+        if entity.name == "alice":
+            raise RuntimeError("boom")
+        return f"eid-{entity.name}"
 
     monkeypatch.setattr(store, "upsert_entity", fake_upsert)
 
-    entities = [_make_entity("alice")]
+    # Mix one failing and one succeeding entity so the all-fail
+    # circuit-breaker (issue #37 — added in this PR) doesn't trip;
+    # we want to assert the per-entity WARNING log content, not the
+    # all-fail RuntimeError.
+    entities = [_make_entity("alice"), _make_entity("bob")]
     ids = await store.batch_upsert_entities(entities)
 
-    assert ids == [""]
+    assert ids == ["", "eid-bob"]
     assert any("alice" in m for m in captured), f"expected 'alice' in log; got {captured}"
+
+
+# ── Circuit-breaker: all-fail raises (g, h) ──────────────────────────────
+
+
+async def test_batch_upsert_entities_all_fail_raises(monkeypatch) -> None:
+    """When EVERY entity fails (e.g. Neo4j fully unreachable), the batch
+    must raise — not silently return an all-empty list. Otherwise
+    `persister._upsert_graph` would call `mark_intent_neo4j_done` after
+    a no-op write and the reconciler would skip the intent on retry,
+    silently dropping every entity in the batch."""
+    store = Neo4jStore.__new__(Neo4jStore)
+
+    async def fake_upsert(_entity: GraphEntity) -> str:
+        raise RuntimeError("neo4j unreachable")
+
+    monkeypatch.setattr(store, "upsert_entity", fake_upsert)
+
+    entities = [_make_entity(f"e{i}") for i in range(3)]
+    with pytest.raises(RuntimeError, match=r"all 3 entity upserts failed"):
+        await store.batch_upsert_entities(entities)
+
+
+async def test_batch_upsert_entities_partial_failure_does_not_raise(monkeypatch) -> None:
+    """Partial failures (≥1 success) keep the existing best-effort
+    behavior — only the all-fail case raises."""
+    store = Neo4jStore.__new__(Neo4jStore)
+
+    async def fake_upsert(entity: GraphEntity) -> str:
+        if entity.name == "e1":
+            raise RuntimeError("transient")
+        return f"eid-{entity.name}"
+
+    monkeypatch.setattr(store, "upsert_entity", fake_upsert)
+
+    entities = [_make_entity(f"e{i}") for i in range(3)]
+    ids = await store.batch_upsert_entities(entities)
+
+    assert ids == ["eid-e0", "", "eid-e2"]
+
+
+async def test_batch_upsert_relationships_all_fail_raises(monkeypatch) -> None:
+    """Same circuit-breaker for relationships — when all fail, raise."""
+    store = Neo4jStore.__new__(Neo4jStore)
+
+    async def fake_upsert(_rel: GraphRelationship) -> str:
+        raise RuntimeError("neo4j unreachable")
+
+    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+
+    rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(3)]
+    with pytest.raises(RuntimeError, match=r"all 3 relationship upserts failed"):
+        await store.batch_upsert_relationships(rels)
+
+
+async def test_batch_upsert_relationships_partial_failure_does_not_raise(monkeypatch) -> None:
+    store = Neo4jStore.__new__(Neo4jStore)
+
+    async def fake_upsert(rel: GraphRelationship) -> str:
+        if rel.source == "a1":
+            raise RuntimeError("transient")
+        return f"rel-{rel.source}"
+
+    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+
+    rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(3)]
+    ids = await store.batch_upsert_relationships(rels)
+
+    assert ids == ["rel-a0", "", "rel-a2"]
