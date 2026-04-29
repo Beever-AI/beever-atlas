@@ -4,11 +4,17 @@ Usage:
     python scripts/nebula_setup.py
 
 Requires nebula3-python: pip install nebula3-python
+
+Reads NEBULA_USER / NEBULA_PASSWORD from the environment (same names the
+runtime uses); falls back to NebulaGraph's factory defaults so a fresh
+local cluster works out of the box. Override both for any non-local
+deployment — the factory defaults are widely known.
 """
 from __future__ import annotations
 
-import time
+import os
 import sys
+import time
 
 
 def main() -> None:
@@ -21,8 +27,13 @@ def main() -> None:
 
     host = "127.0.0.1"
     port = 9669
-    user = "root"
-    password = "nebula"
+    user = os.environ.get("NEBULA_USER", "root")
+    password = os.environ.get("NEBULA_PASSWORD", "nebula")
+    if password == "nebula":
+        print(
+            "WARNING: using NebulaGraph factory-default password ('nebula'). "
+            "Set NEBULA_PASSWORD for any non-local deployment."
+        )
 
     print(f"Connecting to NebulaGraph at {host}:{port}...")
 
