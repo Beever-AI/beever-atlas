@@ -163,31 +163,45 @@ def _safe_stage_base(file_id: str) -> Path:
     """Resolve a staged file_id to a Path that is guaranteed to lie
     under the resolved staging root.
 
-    Implements the CodeQL ``py/path-injection`` two-state sanitizer
-    model (alerts #39/#40/#41/#44/#51/#57/#58):
+    Implements the canonical CodeQL ``py/path-injection`` two-state
+    sanitizer pattern (alerts #39/#40/#41/#44/#51/#57/#58/#59):
 
-      1. **PathNormalization** — ``(root / file_id).resolve()`` collapses
-         any ``..`` traversal so subsequent checks operate on the real
-         on-disk target.
-      2. **SafeAccessCheck** — ``str(candidate).startswith(str(root) +
-         os.sep)`` is the canonical pattern the data-flow analysis
-         recognises as a barrier on the normalised path. The trailing
-         separator is mandatory: without it, ``/var/staging2/...`` would
-         pass the prefix test against ``/var/staging``.
+      1. **PathNormalization** — ``os.path.normpath(os.path.join(root,
+         file_id))``. CodeQL only models ``os.path.normpath`` /
+         ``abspath`` / ``realpath`` as ``PathNormalization::Range``; it
+         does NOT model ``pathlib.Path.resolve()`` (which is in fact
+         classified as a `FileSystemAccess` SINK in
+         ``Stdlib.qll`` line 2722, so an earlier ``pathlib`` form
+         re-fired the alert AT the ``.resolve()`` call itself).
+      2. **SafeAccessCheck** — ``candidate.startswith(root + os.sep)``.
+         CodeQL only models ``str.startswith`` as ``SafeAccessCheck::
+         Range`` (Stdlib.qll line 5153) — neither ``Path.is_relative_to``
+         nor ``os.path.commonpath`` are recognised. The trailing
+         ``os.sep`` is mandatory: without it ``/var/staging2/...``
+         would pass the prefix test against ``/var/staging``.
 
-    The strict UUID regex is kept for clear API rejection but is *not*
-    the sanitizer — CodeQL does not model regex matches as
-    `py/path-injection` barriers, so the startswith check is what closes
-    the alert.
+    Pattern lifted verbatim from CodeQL's own canonical safe example
+    (``python/ql/src/Security/CWE-022/examples/tainted_path.py``):
+
+        fullpath = os.path.normpath(os.path.join(base_path, filename))
+        if not fullpath.startswith(base_path):
+            raise Exception("not allowed")
+        data = open(fullpath, 'rb').read()
+
+    The strict UUID regex is kept for clean API rejection but is *not*
+    the sanitizer — CodeQL doesn't model regex matches as path-injection
+    barriers.
     """
     if not isinstance(file_id, str) or not _FILE_ID_RE.fullmatch(file_id):
         raise HTTPException(status_code=400, detail="Invalid file_id")
 
-    root = _staging_root().resolve()
-    candidate = (root / file_id).resolve()
-    if not str(candidate).startswith(str(root) + os.sep):
+    # Resolve the staging root ONCE, as a string — CodeQL's model treats
+    # the trusted base as a constant, not a Path object.
+    root = os.path.realpath(str(_staging_root()))
+    candidate = os.path.normpath(os.path.join(root, file_id))
+    if not candidate.startswith(root + os.sep):
         raise HTTPException(status_code=400, detail="Invalid file_id")
-    return candidate
+    return Path(candidate)
 
 
 def _stage_paths(file_id: str) -> tuple[Path, Path, Path]:
