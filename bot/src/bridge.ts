@@ -338,26 +338,70 @@ const USER_LOOKUP_CONCURRENCY = 8;
 
 /** Hosts allowed for token-bearing Slack file fetches (CodeQL alert #27).
  *  Must be EXACT host matches — no substring, no wildcard suffix. */
-const SLACK_FILE_HOSTS = ["files.slack.com", "slack-files.com"] as const;
+const SLACK_FILE_HOSTS: readonly string[] = ["files.slack.com", "slack-files.com"];
 
 /** Hosts allowed for Discord CDN / attachment fetches (CodeQL alert #29). */
-const DISCORD_FILE_HOSTS = ["cdn.discordapp.com", "media.discordapp.net"] as const;
+const DISCORD_FILE_HOSTS: readonly string[] = ["cdn.discordapp.com", "media.discordapp.net"];
 
 /** Host allowed for the Discord REST API (CodeQL alert #28). */
-const DISCORD_API_HOSTS = ["discord.com"] as const;
+const DISCORD_API_HOST = "discord.com";
 
-/** Hosts allowed for Teams attachment fetches (CodeQL alert #30).
- *  ``.sharepoint.com`` is a suffix entry — `isHostAllowed` matches any
- *  proper subdomain (e.g. ``contoso.sharepoint.com``) but not the bare
- *  apex. */
-const TEAMS_FILE_HOSTS = [
-  "graph.microsoft.com",
-  ".sharepoint.com",
-  ".sharepointonline.com",
-] as const;
+/** Exact-match hosts for Teams attachment fetches (CodeQL alert #30). */
+const TEAMS_EXACT_HOSTS: readonly string[] = ["graph.microsoft.com"];
+
+/** SharePoint subdomain pattern. Matches ``<tenant>.sharepoint.com`` and
+ *  ``<tenant>.sharepointonline.com`` exactly — the explicit literal suffix
+ *  is what CodeQL recognises as a regex sanitizer barrier (alert #30). */
+const TEAMS_SHAREPOINT_RE = /^[a-z0-9-]+\.sharepoint(?:online)?\.com$/;
 
 /** Host allowed for Telegram bot API + file fetches (CodeQL alert #31). */
-const TELEGRAM_FILE_HOSTS = ["api.telegram.org"] as const;
+const TELEGRAM_FILE_HOSTS: readonly string[] = ["api.telegram.org"];
+
+/**
+ * Build a fetch URL whose HOST is constrained to the allowlist.
+ *
+ * CodeQL `js/request-forgery` requires that the host portion of any URL
+ * passed to `fetch` is verified against a hardcoded allowlist (or
+ * regex). Our previous helper `assertAllowedFetchUrl` did the
+ * verification but the data-flow analysis didn't trace the sanitization
+ * back through `parsed.href` to the call site, so the alerts re-fired.
+ *
+ * This helper:
+ *   1. Parses the URL with the WHATWG `URL` constructor (rejects
+ *      malformed input).
+ *   2. Lowercases the hostname and checks `Array.includes` against the
+ *      `allowedHosts` constant — this is one of the patterns the
+ *      `js/request-forgery` sanitizer DSL recognises.
+ *   3. Re-runs the DNS / private-IP guard via `assertPublicUrl` so an
+ *      allowlisted host that resolves to RFC1918 still fails closed.
+ *   4. Returns a URL string concatenated from `${protocol}//${hostname}
+ *      ${pathname}${search}` — the hostname has been narrowed to one of
+ *      the literal allowlist entries by the inclusion check, so the
+ *      resulting host portion is treated as sanitized.
+ *
+ * The path/query/hash remain user-controlled (which is correct for the
+ * file-proxy use case — only the host matters for SSRF).
+ */
+async function buildAllowlistedFetchUrl(
+  rawUrl: string,
+  allowedHosts: readonly string[],
+): Promise<string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`unsupported scheme: ${parsed.protocol}`);
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (!allowedHosts.includes(hostname)) {
+    throw new Error(`host not in allowlist: ${hostname}`);
+  }
+  await assertPublicUrl(rawUrl);
+  return `${parsed.protocol}//${hostname}${parsed.pathname}${parsed.search}`;
+}
 
 class SlackBridge implements PlatformBridge {
   private adapter: SlackAdapter;
@@ -622,14 +666,14 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
-    // Use the parsed URL returned by assertAllowedFetchUrl as the value
-    // passed to fetch — CodeQL js/request-forgery (alert #27) follows the
-    // raw `decodedUrl` variable through the host check unless we hand it
-    // a structurally-rebuilt value.
-    const parsedSlack = await assertAllowedFetchUrl(decodedUrl, SLACK_FILE_HOSTS);
+    // CodeQL js/request-forgery (alert #27): host narrowed to a literal
+    // allowlist entry by the `Array.includes` check inside the helper,
+    // and the URL passed to fetch is reconstructed with the verified
+    // hostname so static analysis sees the sanitization barrier.
+    const slackSafeUrl = await buildAllowlistedFetchUrl(decodedUrl, SLACK_FILE_HOSTS);
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
-    let response = await fetch(parsedSlack.href, {
+    let response = await fetch(slackSafeUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -654,8 +698,8 @@ class SlackBridge implements PlatformBridge {
           if (downloadUrl) {
             // Defense-in-depth: even though downloadUrl came from Slack's
             // files.info API, validate before sending the bot token.
-            const parsedFallback = await assertAllowedFetchUrl(downloadUrl, SLACK_FILE_HOSTS);
-            response = await fetch(parsedFallback.href, {
+            const fallbackSafeUrl = await buildAllowlistedFetchUrl(downloadUrl, SLACK_FILE_HOSTS);
+            response = await fetch(fallbackSafeUrl, {
               headers: { Authorization: `Bearer ${token}` },
             });
             // Retry on 429 for fallback URL too
@@ -721,15 +765,17 @@ class DiscordBridge implements PlatformBridge {
   private async executeDiscordRequest(path: string, retries: number): Promise<any> {
     // CodeQL js/request-forgery (alert #28): `path` is caller-controlled,
     // so reject anything that could pivot the request to a different host
-    // (scheme injection, parent-dir traversal, backslash) BEFORE building
-    // the URL. The allowlist check on the assembled URL is layered on top
-    // as defense in depth.
-    if (!path.startsWith("/") || path.includes("://") || path.includes("\\") || path.includes("..")) {
-      throw new Error(`invalid Discord API path`);
+    // BEFORE building the URL. Strict regex match (only relative paths
+    // composed of safe chars) is the form CodeQL recognises as a
+    // sanitizer barrier — the previous `startsWith("/") + includes(...)`
+    // check was correct but invisible to the data-flow analysis.
+    if (!/^\/[A-Za-z0-9_\-./?&=,@%:]*$/.test(path)) {
+      throw new Error("invalid Discord API path");
     }
-    const apiUrl = `https://discord.com/api/v10${path}`;
-    const parsedDiscordApi = await assertAllowedFetchUrl(apiUrl, DISCORD_API_HOSTS);
-    const res = await fetch(parsedDiscordApi.href, {
+    // Hardcoded literal host (`discord.com`) means the URL we hand to
+    // fetch has no caller-controlled host portion at all.
+    const apiUrl = `https://${DISCORD_API_HOST}/api/v10${path}`;
+    const res = await fetch(apiUrl, {
       headers: { Authorization: `Bot ${this.botToken}` },
     });
 
@@ -931,18 +977,18 @@ class DiscordBridge implements PlatformBridge {
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
     // CodeQL js/request-forgery (alert #29): bind to the Discord CDN
-    // host allowlist (was previously only `assertPublicUrl`, which
-    // accepts any public host).
-    const parsedDiscord = await assertAllowedFetchUrl(decodedUrl, DISCORD_FILE_HOSTS);
+    // host allowlist with a literal-host URL reconstruction.
+    const discordSafeUrl = await buildAllowlistedFetchUrl(decodedUrl, DISCORD_FILE_HOSTS);
 
     // Discord CDN signed URLs expire. Try the URL as-is first.
-    let response = await fetch(parsedDiscord.href);
+    let response = await fetch(discordSafeUrl);
 
     // If expired/404, try to refresh the attachment URL via the API.
     // Extract channel ID and message ID from the CDN URL pattern:
     // https://cdn.discordapp.com/attachments/{channel_id}/{attachment_id}/...
-    if (!response.ok && parsedDiscord.hostname === "cdn.discordapp.com" && parsedDiscord.pathname.startsWith("/attachments/")) {
-      const match = parsedDiscord.pathname.match(/^\/attachments\/(\d+)\/(\d+)\//);
+    const cdnPrefix = "https://cdn.discordapp.com/attachments/";
+    if (!response.ok && discordSafeUrl.startsWith(cdnPrefix)) {
+      const match = discordSafeUrl.slice(cdnPrefix.length).match(/^(\d+)\/(\d+)\//);
       if (match) {
         const [, channelId, attachmentId] = match;
         try {
@@ -954,8 +1000,8 @@ class DiscordBridge implements PlatformBridge {
                 try {
                   // Re-validate even though att.url originated from the
                   // Discord API — defense in depth.
-                  const parsedAtt = await assertAllowedFetchUrl(String(att.url), DISCORD_FILE_HOSTS);
-                  response = await fetch(parsedAtt.href);
+                  const attSafeUrl = await buildAllowlistedFetchUrl(String(att.url), DISCORD_FILE_HOSTS);
+                  response = await fetch(attSafeUrl);
                   if (response.ok) break;
                 } catch {
                   // Skip attachments whose URL doesn't pass the allowlist.
@@ -1183,11 +1229,27 @@ class TeamsBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // CodeQL js/request-forgery (alert #30): bind Teams attachment fetches
-    // to the Microsoft Graph + SharePoint allowlist instead of the broad
-    // `assertPublicUrl` check.
-    const parsedTeams = await assertAllowedFetchUrl(decodedUrl, TEAMS_FILE_HOSTS);
-    const response = await fetch(parsedTeams.href);
+    // CodeQL js/request-forgery (alert #30): Teams files live on either
+    // graph.microsoft.com OR a tenant SharePoint subdomain. Verify the
+    // hostname inline against (a) the literal exact-match list and (b)
+    // a tightly-scoped regex over the SharePoint suffix — both are
+    // patterns the data-flow analysis recognises as sanitizer barriers.
+    let parsedTeams: URL;
+    try {
+      parsedTeams = new URL(decodedUrl);
+    } catch {
+      throw new Error("invalid Teams file URL");
+    }
+    if (parsedTeams.protocol !== "https:") {
+      throw new Error(`Teams file URL must be https`);
+    }
+    const teamsHost = parsedTeams.hostname.toLowerCase();
+    if (!TEAMS_EXACT_HOSTS.includes(teamsHost) && !TEAMS_SHAREPOINT_RE.test(teamsHost)) {
+      throw new Error(`Teams host not in allowlist: ${teamsHost}`);
+    }
+    await assertPublicUrl(decodedUrl);
+    const teamsSafeUrl = `https://${teamsHost}${parsedTeams.pathname}${parsedTeams.search}`;
+    const response = await fetch(teamsSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
     }
@@ -1361,9 +1423,9 @@ class TelegramBridge implements PlatformBridge {
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
     // CodeQL js/request-forgery (alert #31): bind Telegram file fetches
-    // to api.telegram.org instead of the broad `assertPublicUrl` check.
-    const parsedTelegram = await assertAllowedFetchUrl(decodedUrl, TELEGRAM_FILE_HOSTS);
-    const response = await fetch(parsedTelegram.href);
+    // to api.telegram.org via literal-host URL reconstruction.
+    const telegramSafeUrl = await buildAllowlistedFetchUrl(decodedUrl, TELEGRAM_FILE_HOSTS);
+    const response = await fetch(telegramSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
     }
@@ -1660,18 +1722,36 @@ class MattermostBridge implements PlatformBridge {
     const fileUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
     const decodedUrl = decodeURIComponent(fileUrl);
     // CodeQL js/request-forgery (alert #32): the Mattermost host is
-    // installation-specific (each tenant runs at its own domain), so the
-    // allowlist is derived from the configured `baseUrl` rather than a
-    // global constant. A request that doesn't land on that host is
-    // rejected before the bot token is sent.
+    // installation-specific (each tenant runs at its own domain). Parse
+    // both URLs, then narrow the request hostname via `Array.includes`
+    // against a single-element allowlist derived from the configured
+    // baseUrl. The reconstructed `mmSafeUrl` uses the verified hostname
+    // so the host portion is sanitized in CodeQL's view.
     let mattermostHost: string;
+    let parsedBase: URL;
     try {
-      mattermostHost = new URL(this.baseUrl).hostname;
+      parsedBase = new URL(this.baseUrl);
+      mattermostHost = parsedBase.hostname.toLowerCase();
     } catch {
       throw new Error("Mattermost baseUrl is malformed");
     }
-    const parsedMM = await assertAllowedFetchUrl(decodedUrl, [mattermostHost]);
-    const response = await fetch(parsedMM.href, {
+    let parsedMM: URL;
+    try {
+      parsedMM = new URL(decodedUrl);
+    } catch {
+      throw new Error("invalid Mattermost file URL");
+    }
+    if (parsedMM.protocol !== "https:" && parsedMM.protocol !== "http:") {
+      throw new Error("Mattermost file URL must be http(s)");
+    }
+    const mmHost = parsedMM.hostname.toLowerCase();
+    const allowedMM: readonly string[] = [mattermostHost];
+    if (!allowedMM.includes(mmHost)) {
+      throw new Error(`Mattermost host not in allowlist: ${mmHost}`);
+    }
+    await assertPublicUrl(decodedUrl);
+    const mmSafeUrl = `${parsedMM.protocol}//${mmHost}${parsedMM.pathname}${parsedMM.search}`;
+    const response = await fetch(mmSafeUrl, {
       headers: { Authorization: `Bearer ${this.botToken}` },
     });
     if (!response.ok) {
