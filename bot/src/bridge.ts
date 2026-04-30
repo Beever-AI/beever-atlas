@@ -340,6 +340,25 @@ const USER_LOOKUP_CONCURRENCY = 8;
  *  Must be EXACT host matches — no substring, no wildcard suffix. */
 const SLACK_FILE_HOSTS = ["files.slack.com", "slack-files.com"] as const;
 
+/** Hosts allowed for Discord CDN / attachment fetches (CodeQL alert #29). */
+const DISCORD_FILE_HOSTS = ["cdn.discordapp.com", "media.discordapp.net"] as const;
+
+/** Host allowed for the Discord REST API (CodeQL alert #28). */
+const DISCORD_API_HOSTS = ["discord.com"] as const;
+
+/** Hosts allowed for Teams attachment fetches (CodeQL alert #30).
+ *  ``.sharepoint.com`` is a suffix entry — `isHostAllowed` matches any
+ *  proper subdomain (e.g. ``contoso.sharepoint.com``) but not the bare
+ *  apex. */
+const TEAMS_FILE_HOSTS = [
+  "graph.microsoft.com",
+  ".sharepoint.com",
+  ".sharepointonline.com",
+] as const;
+
+/** Host allowed for Telegram bot API + file fetches (CodeQL alert #31). */
+const TELEGRAM_FILE_HOSTS = ["api.telegram.org"] as const;
+
 class SlackBridge implements PlatformBridge {
   private adapter: SlackAdapter;
 
@@ -603,10 +622,14 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
-    await assertAllowedFetchUrl(decodedUrl, SLACK_FILE_HOSTS);
+    // Use the parsed URL returned by assertAllowedFetchUrl as the value
+    // passed to fetch — CodeQL js/request-forgery (alert #27) follows the
+    // raw `decodedUrl` variable through the host check unless we hand it
+    // a structurally-rebuilt value.
+    const parsedSlack = await assertAllowedFetchUrl(decodedUrl, SLACK_FILE_HOSTS);
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
-    let response = await fetch(decodedUrl, {
+    let response = await fetch(parsedSlack.href, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -631,8 +654,8 @@ class SlackBridge implements PlatformBridge {
           if (downloadUrl) {
             // Defense-in-depth: even though downloadUrl came from Slack's
             // files.info API, validate before sending the bot token.
-            await assertAllowedFetchUrl(downloadUrl, SLACK_FILE_HOSTS);
-            response = await fetch(downloadUrl, {
+            const parsedFallback = await assertAllowedFetchUrl(downloadUrl, SLACK_FILE_HOSTS);
+            response = await fetch(parsedFallback.href, {
               headers: { Authorization: `Bearer ${token}` },
             });
             // Retry on 429 for fallback URL too
@@ -696,7 +719,17 @@ class DiscordBridge implements PlatformBridge {
   }
 
   private async executeDiscordRequest(path: string, retries: number): Promise<any> {
-    const res = await fetch(`https://discord.com/api/v10${path}`, {
+    // CodeQL js/request-forgery (alert #28): `path` is caller-controlled,
+    // so reject anything that could pivot the request to a different host
+    // (scheme injection, parent-dir traversal, backslash) BEFORE building
+    // the URL. The allowlist check on the assembled URL is layered on top
+    // as defense in depth.
+    if (!path.startsWith("/") || path.includes("://") || path.includes("\\") || path.includes("..")) {
+      throw new Error(`invalid Discord API path`);
+    }
+    const apiUrl = `https://discord.com/api/v10${path}`;
+    const parsedDiscordApi = await assertAllowedFetchUrl(apiUrl, DISCORD_API_HOSTS);
+    const res = await fetch(parsedDiscordApi.href, {
       headers: { Authorization: `Bot ${this.botToken}` },
     });
 
@@ -897,16 +930,19 @@ class DiscordBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
+    // CodeQL js/request-forgery (alert #29): bind to the Discord CDN
+    // host allowlist (was previously only `assertPublicUrl`, which
+    // accepts any public host).
+    const parsedDiscord = await assertAllowedFetchUrl(decodedUrl, DISCORD_FILE_HOSTS);
 
     // Discord CDN signed URLs expire. Try the URL as-is first.
-    let response = await fetch(decodedUrl);
+    let response = await fetch(parsedDiscord.href);
 
     // If expired/404, try to refresh the attachment URL via the API.
     // Extract channel ID and message ID from the CDN URL pattern:
     // https://cdn.discordapp.com/attachments/{channel_id}/{attachment_id}/...
-    if (!response.ok && decodedUrl.includes("cdn.discordapp.com/attachments/")) {
-      const match = decodedUrl.match(/attachments\/(\d+)\/(\d+)\//);
+    if (!response.ok && parsedDiscord.hostname === "cdn.discordapp.com" && parsedDiscord.pathname.startsWith("/attachments/")) {
+      const match = parsedDiscord.pathname.match(/^\/attachments\/(\d+)\/(\d+)\//);
       if (match) {
         const [, channelId, attachmentId] = match;
         try {
@@ -914,9 +950,17 @@ class DiscordBridge implements PlatformBridge {
           const msgs: any[] = await this.discordApi(`/channels/${channelId}/messages?limit=50`);
           for (const msg of msgs) {
             for (const att of msg.attachments ?? []) {
-              if (att.id === attachmentId || att.url?.includes(attachmentId)) {
-                response = await fetch(att.url);
-                if (response.ok) break;
+              if (att.id === attachmentId || (typeof att.url === "string" && att.url.includes(attachmentId))) {
+                try {
+                  // Re-validate even though att.url originated from the
+                  // Discord API — defense in depth.
+                  const parsedAtt = await assertAllowedFetchUrl(String(att.url), DISCORD_FILE_HOSTS);
+                  response = await fetch(parsedAtt.href);
+                  if (response.ok) break;
+                } catch {
+                  // Skip attachments whose URL doesn't pass the allowlist.
+                  continue;
+                }
               }
             }
             if (response.ok) break;
@@ -1139,8 +1183,11 @@ class TeamsBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
-    const response = await fetch(decodedUrl);
+    // CodeQL js/request-forgery (alert #30): bind Teams attachment fetches
+    // to the Microsoft Graph + SharePoint allowlist instead of the broad
+    // `assertPublicUrl` check.
+    const parsedTeams = await assertAllowedFetchUrl(decodedUrl, TEAMS_FILE_HOSTS);
+    const response = await fetch(parsedTeams.href);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
     }
@@ -1313,8 +1360,10 @@ class TelegramBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    await assertPublicUrl(decodedUrl);
-    const response = await fetch(decodedUrl);
+    // CodeQL js/request-forgery (alert #31): bind Telegram file fetches
+    // to api.telegram.org instead of the broad `assertPublicUrl` check.
+    const parsedTelegram = await assertAllowedFetchUrl(decodedUrl, TELEGRAM_FILE_HOSTS);
+    const response = await fetch(parsedTelegram.href);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
     }
@@ -1610,8 +1659,19 @@ class MattermostBridge implements PlatformBridge {
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const fileUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
     const decodedUrl = decodeURIComponent(fileUrl);
-    await assertPublicUrl(decodedUrl);
-    const response = await fetch(decodedUrl, {
+    // CodeQL js/request-forgery (alert #32): the Mattermost host is
+    // installation-specific (each tenant runs at its own domain), so the
+    // allowlist is derived from the configured `baseUrl` rather than a
+    // global constant. A request that doesn't land on that host is
+    // rejected before the bot token is sent.
+    let mattermostHost: string;
+    try {
+      mattermostHost = new URL(this.baseUrl).hostname;
+    } catch {
+      throw new Error("Mattermost baseUrl is malformed");
+    }
+    const parsedMM = await assertAllowedFetchUrl(decodedUrl, [mattermostHost]);
+    const response = await fetch(parsedMM.href, {
       headers: { Authorization: `Bearer ${this.botToken}` },
     });
     if (!response.ok) {
