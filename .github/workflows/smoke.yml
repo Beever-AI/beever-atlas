@@ -11,6 +11,12 @@ concurrency:
   group: smoke-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege GITHUB_TOKEN — workflow only checks out the repo and
+# runs `docker compose up`. No artifact uploads or PR comments, so
+# contents: read is sufficient (CodeQL #6).
+permissions:
+  contents: read
+
 jobs:
   smoke:
     name: Docker Compose smoke test

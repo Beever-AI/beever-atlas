@@ -12,6 +12,12 @@ concurrency:
   group: audit-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege GITHUB_TOKEN — workflow only checks out the repo and
+# runs pip-audit / npm audit. No artifact uploads or PR comments, so
+# contents: read is sufficient (CodeQL #3).
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: pip-audit + npm audit (HIGH/CRITICAL gate)

@@ -10,6 +10,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege GITHUB_TOKEN — every job here only checks out the repo
+# and runs tests / lint / build. No artifact uploads, PR comments, or
+# pushes, so contents: read covers all four jobs (CodeQL #2, #4, #5, #7).
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (Python 3.12)

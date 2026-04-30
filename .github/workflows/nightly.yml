@@ -5,6 +5,12 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN — workflow only checks out the repo and
+# runs tests against ephemeral service containers. No artifact uploads,
+# PR comments, or pushes, so contents: read is sufficient (CodeQL #1).
+permissions:
+  contents: read
+
 jobs:
   contracts:
     name: Graph backend contract tests
