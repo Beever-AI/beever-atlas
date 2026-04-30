@@ -690,6 +690,16 @@ class SlackBridge implements PlatformBridge {
     }
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
+    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
+    // variable passed to fetch with a literal `https://<host>/` prefix.
+    // The earlier hostnameSanitizingPrefixEdge attempt (literal-prefix
+    // template alone) did not satisfy CodeQL in this branching context.
+    if (
+      !slackSafeUrl.startsWith("https://files.slack.com/") &&
+      !slackSafeUrl.startsWith("https://slack-files.com/")
+    ) {
+      throw new Error("Slack file URL did not match expected prefix");
+    }
     let response = await fetch(slackSafeUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -735,6 +745,14 @@ class SlackBridge implements PlatformBridge {
               fallbackSafeUrl = `https://slack-files.com/${fallbackTail}`;
             } else {
               throw new Error("Slack fallback URL did not match expected host");
+            }
+            // CodeQL HostnameSanitizerGuard — same pattern as the primary
+            // fetch above. Required on the exact variable passed to fetch.
+            if (
+              !fallbackSafeUrl.startsWith("https://files.slack.com/") &&
+              !fallbackSafeUrl.startsWith("https://slack-files.com/")
+            ) {
+              throw new Error("Slack fallback URL did not match expected prefix");
             }
             response = await fetch(fallbackSafeUrl, {
               headers: { Authorization: `Bearer ${token}` },
@@ -1036,6 +1054,14 @@ class DiscordBridge implements PlatformBridge {
       throw new Error("Discord file URL did not match expected host");
     }
 
+    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
+    // variable passed to fetch with a literal `https://<host>/` prefix.
+    if (
+      !discordSafeUrl.startsWith("https://cdn.discordapp.com/") &&
+      !discordSafeUrl.startsWith("https://media.discordapp.net/")
+    ) {
+      throw new Error("Discord file URL did not match expected prefix");
+    }
     // Discord CDN signed URLs expire. Try the URL as-is first.
     let response = await fetch(discordSafeUrl);
 
@@ -1068,6 +1094,15 @@ class DiscordBridge implements PlatformBridge {
                   } else if (parsedAtt.hostname.toLowerCase() === "media.discordapp.net") {
                     attSafeUrl = `https://media.discordapp.net/${attTail}`;
                   } else {
+                    continue;
+                  }
+                  // CodeQL HostnameSanitizerGuard — same pattern as
+                  // proxyFile above. Required on the exact variable
+                  // passed to fetch.
+                  if (
+                    !attSafeUrl.startsWith("https://cdn.discordapp.com/") &&
+                    !attSafeUrl.startsWith("https://media.discordapp.net/")
+                  ) {
                     continue;
                   }
                   response = await fetch(attSafeUrl);
@@ -1316,6 +1351,11 @@ class TeamsBridge implements PlatformBridge {
         ? parsedTeams.pathname.slice(1)
         : parsedTeams.pathname) + parsedTeams.search;
     const teamsSafeUrl = `https://graph.microsoft.com/${teamsTail}`;
+    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
+    // variable passed to fetch with a literal `https://<host>/` prefix.
+    if (!teamsSafeUrl.startsWith("https://graph.microsoft.com/")) {
+      throw new Error("Teams file URL did not match expected prefix");
+    }
     const response = await fetch(teamsSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
@@ -1505,6 +1545,11 @@ class TelegramBridge implements PlatformBridge {
         ? parsedTelegram.pathname.slice(1)
         : parsedTelegram.pathname) + parsedTelegram.search;
     const telegramSafeUrl = `https://api.telegram.org/${telegramTail}`;
+    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
+    // variable passed to fetch with a literal `https://<host>/` prefix.
+    if (!telegramSafeUrl.startsWith("https://api.telegram.org/")) {
+      throw new Error("Telegram file URL did not match expected prefix");
+    }
     const response = await fetch(telegramSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
