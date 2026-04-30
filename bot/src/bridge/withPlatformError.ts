@@ -9,7 +9,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { classifyPlatformError } from "./platformError.js";
-import { jsonResponse } from "../http-utils.js";
+import { jsonResponse, messageForCode } from "../http-utils.js";
 
 export type BridgeHandler = (
   req: IncomingMessage,
@@ -21,8 +21,12 @@ export function withPlatformError(handler: BridgeHandler): BridgeHandler {
     try {
       await handler(req, res);
     } catch (err) {
+      // CodeQL js/stack-trace-exposure (alert #60): the response prose
+      // is derived ONLY from the closed `code` enum, never from `err`.
+      // The full error is still available to operators via console.error.
       const { status, code } = classifyPlatformError(err);
-      jsonResponse(res, status, { error: String(err), code });
+      console.error("Bridge: handler error:", err);
+      jsonResponse(res, status, { error: messageForCode(code), code });
     }
   };
 }

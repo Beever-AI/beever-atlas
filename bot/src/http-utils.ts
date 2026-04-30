@@ -46,6 +46,44 @@ export function safeErrorMessage(err: unknown): string {
   return `${flat.slice(0, _MAX_ERROR_MESSAGE_LEN)}…`;
 }
 
+/**
+ * Static prose dictionary for the closed enum returned by
+ * `classifyPlatformError`. Use this — NOT `safeErrorMessage` — when
+ * building HTTP error responses.
+ *
+ * CodeQL `js/stack-trace-exposure` (alert #60) treats any data-flow
+ * edge from a caught `Error` to a response body as tainted, including
+ * `err.message` access — its taint model can't prove `.message`
+ * doesn't carry frame data on arbitrary SDK errors. Routing the
+ * response through this dictionary breaks the edge entirely: the
+ * outgoing string is derived only from the `code` enum, which is a
+ * compile-time literal set. Operators retain full debug visibility
+ * via `console.error("...", err)` at every catch site — logs are not
+ * the response body.
+ *
+ * Directive: do NOT call `safeErrorMessage(err)` (or `String(err)`,
+ * `err.message`, `err.toString()`) at a response sink. Always derive
+ * the response prose from `messageForCode(classifyPlatformError(err).code)`.
+ */
+const _CODE_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
+  NOT_FOUND: "resource not found",
+  FORBIDDEN: "access denied",
+  RATE_LIMITED: "rate limited",
+  NOT_SUPPORTED: "operation not supported",
+  PLATFORM_ERROR: "upstream platform error",
+});
+
+export function messageForCode(code: string): string {
+  // Object.prototype.hasOwnProperty.call avoids prototype-pollution
+  // bypass — `code` is a closed enum from classifyPlatformError but
+  // the helper is exported, so a future caller could pass arbitrary
+  // input.
+  if (Object.prototype.hasOwnProperty.call(_CODE_MESSAGES, code)) {
+    return _CODE_MESSAGES[code];
+  }
+  return "internal error";
+}
+
 /** Maximum HTTP request body the bot will accept (1 MB). */
 export const MAX_BODY_SIZE = 1_048_576;
 

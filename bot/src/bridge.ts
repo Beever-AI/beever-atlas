@@ -19,8 +19,13 @@ import type { ChatManager } from "./chat-manager.js";
 export type { PlatformErrorShape } from "./bridge/platformError.js";
 export { classifyPlatformError } from "./bridge/platformError.js";
 import { classifyPlatformError } from "./bridge/platformError.js";
-import { jsonResponse, readBody, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
-export { jsonResponse, safeErrorMessage } from "./http-utils.js";
+import {
+  jsonResponse,
+  readBody,
+  BodyTooLargeError,
+  messageForCode,
+} from "./http-utils.js";
+export { jsonResponse, safeErrorMessage, messageForCode } from "./http-utils.js";
 import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -2081,7 +2086,7 @@ async function handleListChannels(
   } catch (err) {
     console.error("Bridge: listChannels error:", err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2150,7 +2155,7 @@ async function handleGetMessages(
   } catch (err) {
     console.error("Bridge: getMessages error:", err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2182,7 +2187,7 @@ async function handleGetMessageCount(
   } catch (err) {
     console.error("Bridge: getMessageCount error:", err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2215,7 +2220,7 @@ async function handleGetThreadMessages(
   } catch (err) {
     console.error("Bridge: getThreadMessages error:", err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2275,7 +2280,7 @@ async function handleFileProxy(
         // All adapters failed
         console.error("Bridge: fileProxy all adapters failed:", lastErr);
         const classified = classifyPlatformError(lastErr);
-        jsonResponse(res, classified.status, { error: safeErrorMessage(lastErr), code: classified.code });
+        jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
         return;
       }
     }
@@ -2300,7 +2305,7 @@ async function handleFileProxy(
   } catch (err) {
     console.error("Bridge: fileProxy error:", err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2345,8 +2350,10 @@ async function handleRegisterAdapter(
     await chatManager.register(platform, normalizedCreds, connectionId || undefined);
     jsonResponse(res, 200, { status: "ok", platform, connectionId: connectionId || platform });
   } catch (err) {
+    // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
+    // from `err`. Operators see the full error in the console.error line above.
     console.error("Bridge: registerAdapter error:", err);
-    jsonResponse(res, 500, { status: "error", message: safeErrorMessage(err) });
+    jsonResponse(res, 500, { status: "error", message: "adapter registration failed" });
   }
 }
 
@@ -2365,8 +2372,10 @@ async function handleUnregisterAdapter(
     }
     jsonResponse(res, 200, { status: "ok" });
   } catch (err) {
+    // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
+    // from `err`. Operators see the full error in the console.error line above.
     console.error("Bridge: unregisterAdapter error:", err);
-    jsonResponse(res, 500, { status: "error", message: safeErrorMessage(err) });
+    jsonResponse(res, 500, { status: "error", message: "adapter unregistration failed" });
   }
 }
 
@@ -2463,8 +2472,10 @@ async function handleValidateAdapter(
   } catch (err) {
     // CodeQL js/tainted-format-string (alert #22): static format string +
     // arguments so user-tainted `platform` cannot influence format specifiers.
+    // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
+    // from `err`. Operators see the full error in the console.error line above.
     console.error("Bridge: validateAdapter(%s) error:", platform, err);
-    jsonResponse(res, 200, { valid: false, error: safeErrorMessage(err) });
+    jsonResponse(res, 200, { valid: false, error: "validation failed" });
   }
 }
 
@@ -2493,7 +2504,7 @@ async function handleConnectionRoute(
       // CodeQL js/tainted-format-string (alert #23).
       console.error("Bridge: connection route error (%s):", connectionId, err);
     }
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2515,7 +2526,7 @@ async function handleConnectionChannels(
     // CodeQL js/tainted-format-string (alert #24).
     console.error("Bridge: listChannels error (connection %s):", connectionId, err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
@@ -2551,7 +2562,7 @@ async function handlePlatformChannelsAggregated(
     // CodeQL js/tainted-format-string (alert #26).
     console.error("Bridge: aggregated listChannels error for %s:", platform, err);
     const classified = classifyPlatformError(err);
-    jsonResponse(res, classified.status, { error: safeErrorMessage(err), code: classified.code });
+    jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
 }
 
