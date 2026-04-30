@@ -110,9 +110,14 @@ async def test_fetch_all_messages_parses_iso_since_string(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_run_sync_marks_job_failed_when_batches_have_errors(
+async def test_run_sync_marks_completed_with_errors_when_batches_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """PR-0: extraction failures alone produce ``completed_with_errors`` (not
+    ``failed``) and populate ``failed_batches`` so an operator can recover.
+
+    Spec: sync-cursor-resilience > Three terminal sync statuses.
+    """
     calls: dict[str, object] = {}
 
     class _Mongo:
@@ -122,8 +127,14 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
             status: str,
             errors: list[str] | None = None,
             failed_stage: str | None = None,
+            failed_batches: list[dict[str, object]] | None = None,
         ) -> None:
-            calls["complete"] = {"job_id": job_id, "status": status, "errors": errors}
+            calls["complete"] = {
+                "job_id": job_id,
+                "status": status,
+                "errors": errors,
+                "failed_batches": failed_batches,
+            }
 
         async def log_activity(
             self, event_type: str, channel_id: str, details: dict[str, object]
@@ -161,7 +172,16 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
         return BatchResult(
             total_facts=0,
             total_entities=0,
-            errors=[{"batch_num": 0, "error": "boom"}],
+            errors=[
+                {
+                    "batch_num": 0,
+                    "error": "503 UNAVAILABLE",
+                    "error_class": "ServerError",
+                    "message_count": 50,
+                    "timestamp_range_start": "2026-04-29T10:00:00Z",
+                    "timestamp_range_end": "2026-04-29T10:05:00Z",
+                }
+            ],
         )
 
     runner = sync_runner_module.SyncRunner()
@@ -176,10 +196,92 @@ async def test_run_sync_marks_job_failed_when_batches_have_errors(
 
     complete = calls.get("complete")
     assert isinstance(complete, dict)
-    assert complete["status"] == "failed"
+    # PR-0: extraction failure ≠ sync failure. Status reflects partial success.
+    assert complete["status"] == "completed_with_errors"
+    failed_batches = complete["failed_batches"]
+    assert isinstance(failed_batches, list) and len(failed_batches) == 1
+    entry = failed_batches[0]
+    assert entry["batch_index"] == 0
+    assert entry["error_class"] == "ServerError"
+    assert entry["message_count"] == 50
+    assert entry["error_summary"].startswith("503")
+    # Activity log event_type stays binary (matches existing UI contract;
+    # frontend dedupe lands in PR-B).
     activity = calls.get("activity")
     assert isinstance(activity, dict)
     assert activity["event_type"] == "sync_failed"
+
+
+@pytest.mark.asyncio
+async def test_run_sync_advances_cursor_even_when_batches_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR-0: cursor advances on successful fetch regardless of extraction errors.
+
+    Spec: sync-cursor-resilience > Cursor advances on successful fetch
+    independent of extraction outcome > Scenario: Fetch succeeds, some
+    extraction batches fail.
+    """
+    calls: dict[str, object] = {}
+
+    class _Mongo:
+        async def complete_sync_job(self, **kwargs) -> None:
+            calls["complete"] = kwargs
+
+        async def log_activity(self, **kwargs) -> None:
+            calls.setdefault("activity_calls", []).append(kwargs)  # type: ignore[union-attr]
+
+        async def update_channel_sync_state(self, **kwargs) -> None:
+            calls["sync_state"] = kwargs
+
+    stores = SimpleNamespace(mongodb=_Mongo())
+    monkeypatch.setattr(sync_runner_module, "get_stores", lambda: stores)
+
+    async def _fake_resolve_policy(channel_id):
+        from types import SimpleNamespace as NS
+
+        return NS(ingestion=NS(), sync=NS(max_messages=100))
+
+    monkeypatch.setattr(
+        "beever_atlas.services.sync_runner.resolve_effective_policy",
+        _fake_resolve_policy,
+        raising=False,
+    )
+
+    async def _process_messages(**kwargs) -> BatchResult:
+        # 3 batches reported; 1 failed.
+        return BatchResult(
+            total_facts=10,
+            total_entities=5,
+            errors=[{"batch_num": 1, "error": "503", "message_count": 50}],
+        )
+
+    runner = sync_runner_module.SyncRunner()
+    runner._batch_processor = SimpleNamespace(process_messages=_process_messages)
+
+    # Provide messages with timestamps so last_ts is computable.
+    latest = datetime(2026, 4, 29, 11, 0, tzinfo=UTC)
+    earlier = datetime(2026, 4, 29, 10, 0, tzinfo=UTC)
+    msg_old = SimpleNamespace(message_id="m1", thread_id=None, timestamp=earlier)
+    msg_new = SimpleNamespace(message_id="m2", thread_id=None, timestamp=latest)
+
+    await runner._run_sync(
+        job_id="job-2",
+        channel_id="C456",
+        channel_name="general",
+        messages=[msg_old, msg_new],
+        parent_count=2,
+    )
+
+    # Cursor MUST advance even though one batch failed.
+    sync_state = calls.get("sync_state")
+    assert isinstance(sync_state, dict), "cursor not advanced — PR-0 regression"
+    assert sync_state["channel_id"] == "C456"
+    assert sync_state["last_sync_ts"] == latest.isoformat()
+
+    complete = calls.get("complete")
+    assert isinstance(complete, dict)
+    assert complete["status"] == "completed_with_errors"
 
 
 @pytest.mark.asyncio

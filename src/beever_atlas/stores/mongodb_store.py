@@ -223,8 +223,14 @@ class MongoDBStore:
         status: str,
         errors: list[str] | None = None,
         failed_stage: str | None = None,
+        failed_batches: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Mark a sync job as completed or failed with an optional error list."""
+        """Mark a sync job as completed or failed with an optional error list.
+
+        ``failed_batches`` records per-batch diagnostic context so an operator
+        can identify which messages need manual recovery after a partial failure
+        (PR-0 of the OSS pipeline + wiki redesign).
+        """
         update: dict[str, Any] = {
             "status": status,
             "completed_at": datetime.now(tz=UTC),
@@ -233,6 +239,8 @@ class MongoDBStore:
             update["errors"] = errors
         if failed_stage is not None:
             update["current_stage"] = failed_stage
+        if failed_batches is not None:
+            update["failed_batches"] = failed_batches
         await self._sync_jobs.update_one({"id": job_id}, {"$set": update})
 
     async def get_sync_status(self, channel_id: str) -> SyncJob | None:

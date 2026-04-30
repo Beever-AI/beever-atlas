@@ -641,28 +641,79 @@ class SyncRunner:
                         )
 
             # Mark job complete.
-            sync_status = "failed" if result.errors else "completed"
+            # PR-0: Three terminal states replace the prior all-or-nothing model.
+            # ``completed_with_errors`` lets the cursor advance even when some
+            # batches fail, so successful batches are not discarded by a Gemini 503.
+            sync_status = "completed" if not result.errors else "completed_with_errors"
             sync_errors = None
             failed_stage = None
+            failed_batches: list[dict[str, Any]] = []
             if result.errors:
                 sync_errors = [
                     f"batch={err.get('batch_num')} error={err.get('error')}"
                     for err in result.errors
                 ]
-                # Record the last failed batch as the failed stage for the UI.
+                # Record the last failed batch as the failed stage for the UI
+                # (preserved for backward compat — UI may still surface this).
                 last_err = result.errors[-1]
                 failed_stage = f"Failed at batch {last_err.get('batch_num')}: {last_err.get('error', 'unknown error')}"
+
+                # PR-0: Build structured per-batch diagnostics and emit a WARN log
+                # per failed batch so operators can trace and re-sync if needed.
+                # Cross-reference batch_breakdowns for duration / counts where present.
+                breakdown_by_idx = {
+                    bb.batch_num: bb for bb in result.batch_breakdowns
+                }
+                for err in result.errors:
+                    batch_idx = err.get("batch_num")
+                    err_str = str(err.get("error", "unknown"))
+                    err_class = err.get("error_class") or type(err.get("error_obj", Exception())).__name__
+                    bb = breakdown_by_idx.get(batch_idx) if batch_idx is not None else None
+                    entry = {
+                        "batch_index": batch_idx,
+                        "message_count": err.get("message_count"),
+                        "error_class": err_class,
+                        "error_summary": err_str[:500],
+                        "timestamp_range_start": err.get("timestamp_range_start"),
+                        "timestamp_range_end": err.get("timestamp_range_end"),
+                        "duration_seconds": (bb.duration_seconds if bb else None),
+                    }
+                    failed_batches.append(entry)
+                    logger.warning(
+                        "SyncRunner: failed_batch job_id=%s channel=%s batch=%s msgs=%s err_class=%s err=%.200s",
+                        job_id,
+                        channel_id,
+                        batch_idx,
+                        entry["message_count"],
+                        err_class,
+                        err_str,
+                        extra={
+                            "event": "failed_batch",
+                            "sync_job_id": job_id,
+                            "channel_id": channel_id,
+                            "batch_index": batch_idx,
+                            "message_count": entry["message_count"],
+                            "error_class": err_class,
+                            "error_summary": entry["error_summary"],
+                            "timestamp_range_start": entry["timestamp_range_start"],
+                            "timestamp_range_end": entry["timestamp_range_end"],
+                        },
+                    )
             await stores.mongodb.complete_sync_job(
                 job_id=job_id,
                 status=sync_status,
                 errors=sync_errors,
                 failed_stage=failed_stage,
+                failed_batches=failed_batches if failed_batches else None,
             )
 
-            # Update channel sync state — only advance cursor if ALL batches succeeded.
-            # If any batches failed, keep the old cursor so retry re-fetches the
-            # unprocessed messages instead of skipping them forever.
-            if last_ts is not None and not result.errors:
+            # PR-0: Cursor advances on successful fetch regardless of extraction
+            # outcome. Successful batches are no longer discarded when sibling
+            # batches fail — the per-batch ``failed_batches`` diagnostic above is
+            # the trace for any messages that need manual recovery. The full
+            # self-healing path arrives with PR-A (Message Store) + PR-B
+            # (background extraction worker).
+            if last_ts is not None:
                 if sync_type == "incremental":
                     await stores.mongodb.update_channel_sync_state(
                         channel_id=channel_id,
