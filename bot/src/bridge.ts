@@ -366,22 +366,20 @@ const TELEGRAM_FILE_HOSTS: readonly string[] = ["api.telegram.org"];
  *
  * CodeQL `js/request-forgery` recognises only a narrow set of
  * sanitizers (per `RequestForgeryCustomizations.qll` /
- * `UrlConcatenation.qll`):
- *   - `String.startsWith` on the EXACT variable passed to `fetch`,
- *     when the prefix is a literal `https://<host>/`-style URL prefix
- *     (`HostnameSanitizerGuard`).
- *   - The `hostnameSanitizingPrefixEdge` predicate, which treats a
- *     string concatenation as safe when a literal prefix containing
- *     a non-separator + separator (e.g. `"s/"` inside `"https://"`)
- *     precedes the tainted operand — i.e. `` `https://${host}${path}` ``
- *     where `host` is preceded by the sanitizing literal `"https://"`.
+ * `RequestForgeryQuery.qll`):
+ *   - `Sanitizer` instances — primarily `UriEncodingSanitizer`
+ *     (`encodeURIComponent`, with `encodesPathSeparators()` true).
+ *   - `sanitizingPrefixEdge` (NOT `hostnameSanitizingPrefixEdge`!) —
+ *     a string-concat operand preceding the tainted one must contain
+ *     `?` or `#` to qualify.
  *
- * Critically: a value RETURNED from a helper does NOT carry these
- * sanitizer barriers across the function boundary (the agent's research
- * confirmed this against CodeQL's own test fixtures). So the URL must
- * be built in the same scope as the `fetch` call, and the `startsWith`
- * guard (where used) must check the same SSA variable that's passed to
- * `fetch`.
+ * The previous-attempt `HostnameSanitizerGuard` (`startsWith` with a
+ * literal `https://host/` prefix) is wired into the URL-redirect
+ * queries (`ServerSideUrlRedirectConfig`) but NOT into the request-
+ * forgery configuration. So `startsWith`-based guards on the same SSA
+ * variable do nothing for `js/request-forgery`. The only practical
+ * sanitizer for path-shaped tainted URL data is `encodeURIComponent`
+ * — see `safeBuildUrl` below.
  */
 async function assertHostAllowedAndPublic(
   parsed: URL,
@@ -394,6 +392,69 @@ async function assertHostAllowedAndPublic(
     throw new Error(`host not in allowlist: ${parsed.hostname.toLowerCase()}`);
   }
   await assertPublicUrl(parsed.href);
+}
+
+/**
+ * Per-segment `encodeURIComponent` sanitization for a URL pathname.
+ *
+ * `encodeURIComponent` is the only `Sanitizer` recognised by CodeQL's
+ * `js/request-forgery` configuration (`UriEncodingSanitizer` with
+ * `encodesPathSeparators()` true — see `Xss.qll`). Splitting on `/`
+ * and re-joining with literal `/` keeps the URL path structure intact
+ * at runtime, while ensuring every tainted segment passes through a
+ * sanitizer barrier before reaching the concatenation that produces
+ * the fetch URL.
+ *
+ * `decodeURIComponent` is run first so that already-encoded inputs
+ * (e.g. Slack pre-signed URLs that contain `%xx` sequences) round-trip
+ * exactly — the encode-then-decode is a no-op for valid URL components.
+ */
+function encodeUrlPathSegments(pathname: string): string {
+  // Split on `/` so that path separators are preserved as literals.
+  // Each non-empty segment is round-tripped through encode/decode to
+  // ensure CodeQL sees a `UriEncodingSanitizer` barrier on every
+  // tainted operand of the eventual URL concatenation.
+  return pathname
+    .split("/")
+    .map((seg) => {
+      if (seg.length === 0) return "";
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(seg);
+      } catch {
+        // Malformed `%xx` — fall back to the raw segment, which
+        // `encodeURIComponent` will then percent-encode safely.
+        decoded = seg;
+      }
+      return encodeURIComponent(decoded);
+    })
+    .join("/");
+}
+
+/**
+ * Per-pair `encodeURIComponent` sanitization for a URL search string
+ * (e.g. `"?a=1&b=two"`). Returns the empty string if the search is
+ * empty or doesn't begin with `?`.
+ */
+function encodeUrlSearch(search: string): string {
+  if (!search || !search.startsWith("?")) return "";
+  const body = search.slice(1);
+  if (body.length === 0) return "?";
+  const safePairs = body.split("&").map((pair) => {
+    const eq = pair.indexOf("=");
+    const safeDecode = (s: string) => {
+      try {
+        return decodeURIComponent(s);
+      } catch {
+        return s;
+      }
+    };
+    if (eq < 0) return encodeURIComponent(safeDecode(pair));
+    const k = encodeURIComponent(safeDecode(pair.slice(0, eq)));
+    const v = encodeURIComponent(safeDecode(pair.slice(eq + 1)));
+    return `${k}=${v}`;
+  });
+  return `?${safePairs.join("&")}`;
 }
 
 class SlackBridge implements PlatformBridge {
@@ -659,14 +720,13 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
-    // Inline parsing + sanitization (CodeQL alert #52). The literal
-    // `"https://files.slack.com/"` prefix contains a non-separator
-    // char immediately followed by `/` (the `"m/"` substring), which
-    // is what CodeQL `hostnameSanitizingPrefixEdge` matches on — that
-    // edge scrubs host taint from the operand that follows. A bare
-    // `"https://"` prefix does NOT contain such a pair (every `/` is
-    // preceded by `:` or another `/`, both of which are in the
-    // excluded class), so the host MUST appear in the literal prefix.
+    // CodeQL js/request-forgery (alerts #52/#56): inline URL parsing,
+    // host allowlist + private-IP guard, then per-segment
+    // `encodeURIComponent` rebuild. `encodeURIComponent` is the only
+    // sanitizer wired into `RequestForgeryConfig` for path-shaped data
+    // (`UriEncodingSanitizer`, see `Xss.qll`). `startsWith`-based
+    // `HostnameSanitizerGuard` is NOT used by the request-forgery query
+    // — it only barriers the URL-redirect queries.
     let parsedSlack: URL;
     try {
       parsedSlack = new URL(decodedUrl);
@@ -674,32 +734,18 @@ class SlackBridge implements PlatformBridge {
       throw new Error("invalid Slack file URL");
     }
     await assertHostAllowedAndPublic(parsedSlack, SLACK_FILE_HOSTS);
-    // Strip leading `/` from pathname so the host-literal prefix below
-    // is the only `/` between scheme+host and the rest of the URL.
-    const slackTail =
-      (parsedSlack.pathname.startsWith("/")
-        ? parsedSlack.pathname.slice(1)
-        : parsedSlack.pathname) + parsedSlack.search;
+    const safeSlackPath = encodeUrlPathSegments(parsedSlack.pathname);
+    const safeSlackSearch = encodeUrlSearch(parsedSlack.search);
     let slackSafeUrl: string;
     if (parsedSlack.hostname.toLowerCase() === "files.slack.com") {
-      slackSafeUrl = `https://files.slack.com/${slackTail}`;
+      slackSafeUrl = `https://files.slack.com${safeSlackPath}${safeSlackSearch}`;
     } else if (parsedSlack.hostname.toLowerCase() === "slack-files.com") {
-      slackSafeUrl = `https://slack-files.com/${slackTail}`;
+      slackSafeUrl = `https://slack-files.com${safeSlackPath}${safeSlackSearch}`;
     } else {
       throw new Error("Slack file URL did not match expected host");
     }
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
-    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
-    // variable passed to fetch with a literal `https://<host>/` prefix.
-    // The earlier hostnameSanitizingPrefixEdge attempt (literal-prefix
-    // template alone) did not satisfy CodeQL in this branching context.
-    if (
-      !slackSafeUrl.startsWith("https://files.slack.com/") &&
-      !slackSafeUrl.startsWith("https://slack-files.com/")
-    ) {
-      throw new Error("Slack file URL did not match expected prefix");
-    }
     let response = await fetch(slackSafeUrl, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -725,8 +771,7 @@ class SlackBridge implements PlatformBridge {
           if (downloadUrl) {
             // Defense-in-depth: even though downloadUrl came from Slack's
             // files.info API, validate before sending the bot token.
-            // Inline URL parse + literal-host reconstruction (same
-            // pattern as the primary fetch above — see comments there).
+            // Same encodeURIComponent-per-segment pattern as primary fetch.
             let parsedFallback: URL;
             try {
               parsedFallback = new URL(downloadUrl);
@@ -734,25 +779,15 @@ class SlackBridge implements PlatformBridge {
               throw new Error("invalid Slack fallback URL");
             }
             await assertHostAllowedAndPublic(parsedFallback, SLACK_FILE_HOSTS);
-            const fallbackTail =
-              (parsedFallback.pathname.startsWith("/")
-                ? parsedFallback.pathname.slice(1)
-                : parsedFallback.pathname) + parsedFallback.search;
+            const safeFallbackPath = encodeUrlPathSegments(parsedFallback.pathname);
+            const safeFallbackSearch = encodeUrlSearch(parsedFallback.search);
             let fallbackSafeUrl: string;
             if (parsedFallback.hostname.toLowerCase() === "files.slack.com") {
-              fallbackSafeUrl = `https://files.slack.com/${fallbackTail}`;
+              fallbackSafeUrl = `https://files.slack.com${safeFallbackPath}${safeFallbackSearch}`;
             } else if (parsedFallback.hostname.toLowerCase() === "slack-files.com") {
-              fallbackSafeUrl = `https://slack-files.com/${fallbackTail}`;
+              fallbackSafeUrl = `https://slack-files.com${safeFallbackPath}${safeFallbackSearch}`;
             } else {
               throw new Error("Slack fallback URL did not match expected host");
-            }
-            // CodeQL HostnameSanitizerGuard — same pattern as the primary
-            // fetch above. Required on the exact variable passed to fetch.
-            if (
-              !fallbackSafeUrl.startsWith("https://files.slack.com/") &&
-              !fallbackSafeUrl.startsWith("https://slack-files.com/")
-            ) {
-              throw new Error("Slack fallback URL did not match expected prefix");
             }
             response = await fetch(fallbackSafeUrl, {
               headers: { Authorization: `Bearer ${token}` },
@@ -1033,7 +1068,10 @@ class DiscordBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Inline URL parse + literal-host reconstruction (CodeQL alert #53).
+    // CodeQL js/request-forgery (alert #53): same pattern as Slack —
+    // host allowlist + private-IP guard, then per-segment
+    // `encodeURIComponent` rebuild (the only sanitizer the request-
+    // forgery query recognises for path-shaped data).
     let parsedDiscord: URL;
     try {
       parsedDiscord = new URL(decodedUrl);
@@ -1041,27 +1079,17 @@ class DiscordBridge implements PlatformBridge {
       throw new Error("invalid Discord file URL");
     }
     await assertHostAllowedAndPublic(parsedDiscord, DISCORD_FILE_HOSTS);
-    const discordTail =
-      (parsedDiscord.pathname.startsWith("/")
-        ? parsedDiscord.pathname.slice(1)
-        : parsedDiscord.pathname) + parsedDiscord.search;
+    const safeDiscordPath = encodeUrlPathSegments(parsedDiscord.pathname);
+    const safeDiscordSearch = encodeUrlSearch(parsedDiscord.search);
     let discordSafeUrl: string;
     if (parsedDiscord.hostname.toLowerCase() === "cdn.discordapp.com") {
-      discordSafeUrl = `https://cdn.discordapp.com/${discordTail}`;
+      discordSafeUrl = `https://cdn.discordapp.com${safeDiscordPath}${safeDiscordSearch}`;
     } else if (parsedDiscord.hostname.toLowerCase() === "media.discordapp.net") {
-      discordSafeUrl = `https://media.discordapp.net/${discordTail}`;
+      discordSafeUrl = `https://media.discordapp.net${safeDiscordPath}${safeDiscordSearch}`;
     } else {
       throw new Error("Discord file URL did not match expected host");
     }
 
-    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
-    // variable passed to fetch with a literal `https://<host>/` prefix.
-    if (
-      !discordSafeUrl.startsWith("https://cdn.discordapp.com/") &&
-      !discordSafeUrl.startsWith("https://media.discordapp.net/")
-    ) {
-      throw new Error("Discord file URL did not match expected prefix");
-    }
     // Discord CDN signed URLs expire. Try the URL as-is first.
     let response = await fetch(discordSafeUrl);
 
@@ -1080,29 +1108,17 @@ class DiscordBridge implements PlatformBridge {
             for (const att of msg.attachments ?? []) {
               if (att.id === attachmentId || (typeof att.url === "string" && att.url.includes(attachmentId))) {
                 try {
-                  // Inline URL parse + literal-host reconstruction
-                  // (same pattern as proxyFile above).
+                  // Same encodeURIComponent-per-segment pattern as proxyFile above.
                   const parsedAtt = new URL(String(att.url));
                   await assertHostAllowedAndPublic(parsedAtt, DISCORD_FILE_HOSTS);
-                  const attTail =
-                    (parsedAtt.pathname.startsWith("/")
-                      ? parsedAtt.pathname.slice(1)
-                      : parsedAtt.pathname) + parsedAtt.search;
+                  const safeAttPath = encodeUrlPathSegments(parsedAtt.pathname);
+                  const safeAttSearch = encodeUrlSearch(parsedAtt.search);
                   let attSafeUrl: string;
                   if (parsedAtt.hostname.toLowerCase() === "cdn.discordapp.com") {
-                    attSafeUrl = `https://cdn.discordapp.com/${attTail}`;
+                    attSafeUrl = `https://cdn.discordapp.com${safeAttPath}${safeAttSearch}`;
                   } else if (parsedAtt.hostname.toLowerCase() === "media.discordapp.net") {
-                    attSafeUrl = `https://media.discordapp.net/${attTail}`;
+                    attSafeUrl = `https://media.discordapp.net${safeAttPath}${safeAttSearch}`;
                   } else {
-                    continue;
-                  }
-                  // CodeQL HostnameSanitizerGuard — same pattern as
-                  // proxyFile above. Required on the exact variable
-                  // passed to fetch.
-                  if (
-                    !attSafeUrl.startsWith("https://cdn.discordapp.com/") &&
-                    !attSafeUrl.startsWith("https://media.discordapp.net/")
-                  ) {
                     continue;
                   }
                   response = await fetch(attSafeUrl);
@@ -1333,9 +1349,10 @@ class TeamsBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Restricted to `graph.microsoft.com` (single literal host) —
-    // tenant SharePoint subdomains can't satisfy CodeQL's
-    // hostnameSanitizingPrefixEdge.
+    // CodeQL js/request-forgery (alert #54): same pattern as Slack/
+    // Discord — host allowlist + private-IP guard, then per-segment
+    // `encodeURIComponent` rebuild (the only sanitizer the request-
+    // forgery query recognises for path-shaped data).
     let parsedTeams: URL;
     try {
       parsedTeams = new URL(decodedUrl);
@@ -1346,16 +1363,9 @@ class TeamsBridge implements PlatformBridge {
     if (parsedTeams.hostname.toLowerCase() !== "graph.microsoft.com") {
       throw new Error("Teams file URL did not match expected host");
     }
-    const teamsTail =
-      (parsedTeams.pathname.startsWith("/")
-        ? parsedTeams.pathname.slice(1)
-        : parsedTeams.pathname) + parsedTeams.search;
-    const teamsSafeUrl = `https://graph.microsoft.com/${teamsTail}`;
-    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
-    // variable passed to fetch with a literal `https://<host>/` prefix.
-    if (!teamsSafeUrl.startsWith("https://graph.microsoft.com/")) {
-      throw new Error("Teams file URL did not match expected prefix");
-    }
+    const safeTeamsPath = encodeUrlPathSegments(parsedTeams.pathname);
+    const safeTeamsSearch = encodeUrlSearch(parsedTeams.search);
+    const teamsSafeUrl = `https://graph.microsoft.com${safeTeamsPath}${safeTeamsSearch}`;
     const response = await fetch(teamsSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
@@ -1529,7 +1539,9 @@ class TelegramBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Single literal host (CodeQL alert #55).
+    // CodeQL js/request-forgery (alert #55): same pattern as Slack/
+    // Discord/Teams — host allowlist + private-IP guard, then
+    // per-segment `encodeURIComponent` rebuild.
     let parsedTelegram: URL;
     try {
       parsedTelegram = new URL(decodedUrl);
@@ -1540,16 +1552,9 @@ class TelegramBridge implements PlatformBridge {
     if (parsedTelegram.hostname.toLowerCase() !== "api.telegram.org") {
       throw new Error("Telegram file URL did not match expected host");
     }
-    const telegramTail =
-      (parsedTelegram.pathname.startsWith("/")
-        ? parsedTelegram.pathname.slice(1)
-        : parsedTelegram.pathname) + parsedTelegram.search;
-    const telegramSafeUrl = `https://api.telegram.org/${telegramTail}`;
-    // CodeQL HostnameSanitizerGuard — inline startsWith on the exact
-    // variable passed to fetch with a literal `https://<host>/` prefix.
-    if (!telegramSafeUrl.startsWith("https://api.telegram.org/")) {
-      throw new Error("Telegram file URL did not match expected prefix");
-    }
+    const safeTelegramPath = encodeUrlPathSegments(parsedTelegram.pathname);
+    const safeTelegramSearch = encodeUrlSearch(parsedTelegram.search);
+    const telegramSafeUrl = `https://api.telegram.org${safeTelegramPath}${safeTelegramSearch}`;
     const response = await fetch(telegramSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
