@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -158,44 +159,47 @@ def _staging_root() -> Path:
     return root
 
 
-def _stage_paths(file_id: str) -> tuple[Path, Path, Path]:
-    """Resolve the on-disk paths for a given staged file_id.
+def _safe_stage_base(file_id: str) -> Path:
+    """Resolve a staged file_id to a Path that is guaranteed to lie
+    under the resolved staging root.
 
-    The strict UUID regex is checked INLINE here (rather than via the
-    `_validate_file_id` helper) because CodeQL `py/path-injection`
-    does not propagate sanitizer barriers across function-call
-    boundaries — the alert refires on the path-construction line
-    unless the regex check sits in the same function scope (alerts
-    #39/#40/#41/#44/#51).
+    Implements the CodeQL ``py/path-injection`` two-state sanitizer
+    model (alerts #39/#40/#41/#44/#51/#57/#58):
 
-    Defense in depth: the resolved base path is also verified to lie
-    under the resolved staging root via `Path.relative_to`.
+      1. **PathNormalization** — ``(root / file_id).resolve()`` collapses
+         any ``..`` traversal so subsequent checks operate on the real
+         on-disk target.
+      2. **SafeAccessCheck** — ``str(candidate).startswith(str(root) +
+         os.sep)`` is the canonical pattern the data-flow analysis
+         recognises as a barrier on the normalised path. The trailing
+         separator is mandatory: without it, ``/var/staging2/...`` would
+         pass the prefix test against ``/var/staging``.
+
+    The strict UUID regex is kept for clear API rejection but is *not*
+    the sanitizer — CodeQL does not model regex matches as
+    `py/path-injection` barriers, so the startswith check is what closes
+    the alert.
     """
     if not isinstance(file_id, str) or not _FILE_ID_RE.fullmatch(file_id):
         raise HTTPException(status_code=400, detail="Invalid file_id")
 
     root = _staging_root().resolve()
-    base = (root / file_id).resolve()
-    try:
-        base.relative_to(root)
-    except ValueError:
+    candidate = (root / file_id).resolve()
+    if not str(candidate).startswith(str(root) + os.sep):
         raise HTTPException(status_code=400, detail="Invalid file_id")
+    return candidate
+
+
+def _stage_paths(file_id: str) -> tuple[Path, Path, Path]:
+    base = _safe_stage_base(file_id)
     return base, base / "original", base / "meta.json"
 
 
 def _meta(file_id: str) -> dict[str, Any] | None:
-    # Inline regex sanitizer (see `_stage_paths` — CodeQL does not
-    # propagate validation across function boundaries, so the match
-    # check must live in the same scope as the path use).
-    if not isinstance(file_id, str) or not _FILE_ID_RE.fullmatch(file_id):
-        raise HTTPException(status_code=400, detail="Invalid file_id")
-
-    root = _staging_root().resolve()
-    base = (root / file_id).resolve()
-    try:
-        base.relative_to(root)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid file_id")
+    # Re-run the sanitizer here so callers that bypass `_stage_paths`
+    # also hit the normalize + startswith barrier in the same scope as
+    # the filesystem access (CodeQL py/path-injection).
+    base = _safe_stage_base(file_id)
     meta = base / "meta.json"
     if not meta.exists():
         return None
