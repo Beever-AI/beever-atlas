@@ -861,6 +861,13 @@ class DiscordBridge implements PlatformBridge {
     if (!/^\/[A-Za-z0-9_\-./?&=,@%:]*$/.test(path)) {
       throw new Error("invalid Discord API path");
     }
+    // Defense in depth: the regex above permits `.` so `..` would slip
+    // through as a literal character class match. Reject any path that
+    // contains `..` or `//` to prevent traversal / authority injection
+    // even though the literal-host concat already prevents host change.
+    if (path.includes("..") || path.includes("//")) {
+      throw new Error("invalid Discord API path");
+    }
     const apiUrl = `https://${DISCORD_API_HOST}/api/v10${path}`;
     // CodeQL HostnameSanitizerGuard — inline startsWith on the
     // concatenated URL with a literal `https://<host>/` prefix.
