@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-30
+
 ### Added
 - MCP server at `/mcp` with auth middleware, 16 curated tools, 5 resources,
   3 prompts, and principal-keyed rate limits (gated by `BEEVER_MCP_ENABLED=true`).
@@ -62,6 +64,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header (commit `043a0c6`).
 - MCP principal ACL single-tenant fallback (commit `9dff213`).
 - `/mcp` rename and legacy mount retirement (commits `3a50cfc`, `0d84ad6`).
+- CodeQL hardening sweep (alerts #1–#60): least-privilege workflow permissions,
+  static-dictionary error messages at HTTP sinks, `safeErrorMessage` on bot
+  responses, exact-host URL substring matching, per-platform host allowlists
+  for bridge file fetches, strict UUID validation for `file_id` in imports
+  staging, media-proxy URL rebuilt from validated parts, mermaid edge regex
+  accepts `--!?>`, double HTML-entity decoding fix in `cleanSlackMrkdwn`,
+  intentional sha256 principal-id derivation marked, tainted format-string
+  arguments split from static templates.
+- SSRF hardening: SlackBridge host allowlist, MattermostBridge `assertPublicUrl`
+  guard on `proxyFile`, `proxy_media` DNS validation with redirects disabled.
+- HMAC-signed scoped loader tokens; `?access_token=` query-string auth narrowed
+  to loader endpoints with hardened response handling.
+- Bot bridge bound to localhost; `BRIDGE_ALLOW_UNAUTH` gated on dev-only.
+- Bridge `readBody` capped at 1 MB to prevent OOM DoS.
+- Session-ownership verification in v1 feedback + ask endpoints.
+- `litellm` bumped to 1.83.14 to patch GHSA-xqmj-j6mv-4862.
+- Optional Mongo + Redis auth overlay for hardened deploys.
+- All Dockerfiles drop root.
+- HMAC dual-fallback path uses `constantTimeEqual`.
+- `CREDENTIAL_MASTER_KEY` placeholder + bash fallback rejected by atlas.
+
+### Fixed (additional)
+- Preprocessor: removed broken cross-batch Weaviate fallback (#44).
+- PersisterAgent: graceful degradation on Weaviate failure (#29).
+- Weaviate: batch `delete_many` to avoid 10k cap data loss.
+- Stores: corrupt sync-state docs logged in batch deserialization;
+  `NullGraphStore.delete_channel_data` keys aligned with protocol; asyncio
+  `Event` barrier added for startup synchronization.
+- Neo4j: `batch_upsert` concurrency bounded with per-entity failure tolerance.
+- Webhooks: `WebhookBuffer.drain()` wired to post-rebuild callback.
+- Web: onboarding welcome screen shows all 5 platforms.
+- Bridge: dead Telegram workspace-ID extraction removed; bot `validateEnv()`
+  stub replaced with WARN-only startup checks.
+- Installer: existing API keys masked to last 4 chars.
+- Scripts: `wiki_bench` collapsed to a single asyncio event loop;
+  `nebula_setup` reads `NEBULA_USER`/`PASSWORD` from env.
+- Make: trap-based cleanup for `dev` target with `stop` helper.
+
+### Changed (additional)
+- CI: nightly service images pinned by digest, supply-chain lint extended to
+  workflows; `docker/setup-buildx-action` v3→v4, `github/codeql-action` v3→v4,
+  `setup-node` v6, `setup-python` v6, `setup-uv` v7; smoke gates only on
+  healthy services and use the compose service name.
+- Refactor: hot-path and remaining callsites in `ask` migrated to shared
+  `StoreClients`; `StoreClients` extended with `chat_history` / `qa_history` /
+  `file_store` / `share_store`; Weaviate schema migration symmetrized between
+  sync + async paths.
+- Tests: adaptive-batcher perf-test ceilings raised 1.0s → 3.0s.
 
 ### Deprecated
 - The legacy `search_channel_knowledge` MCP tool is removed. Callers now
@@ -145,4 +195,6 @@ follow-up polish documented below.
 ### Removed
 - Unused `ANTHROPIC_API_KEY` environment variable.
 
-[Unreleased]: https://github.com/Beever-AI/beever-atlas/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Beever-AI/beever-atlas/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Beever-AI/beever-atlas/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/Beever-AI/beever-atlas/compare/v0.1.0...v0.1.1
