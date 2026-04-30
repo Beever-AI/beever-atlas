@@ -659,8 +659,14 @@ class SlackBridge implements PlatformBridge {
     retries = 3,
   ): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(fileUrl);
-    // Inline parsing + sanitization (CodeQL alert #52 — the
-    // sanitization barrier must sit in the same scope as `fetch`).
+    // Inline parsing + sanitization (CodeQL alert #52). The literal
+    // `"https://files.slack.com/"` prefix contains a non-separator
+    // char immediately followed by `/` (the `"m/"` substring), which
+    // is what CodeQL `hostnameSanitizingPrefixEdge` matches on — that
+    // edge scrubs host taint from the operand that follows. A bare
+    // `"https://"` prefix does NOT contain such a pair (every `/` is
+    // preceded by `:` or another `/`, both of which are in the
+    // excluded class), so the host MUST appear in the literal prefix.
     let parsedSlack: URL;
     try {
       parsedSlack = new URL(decodedUrl);
@@ -668,19 +674,19 @@ class SlackBridge implements PlatformBridge {
       throw new Error("invalid Slack file URL");
     }
     await assertHostAllowedAndPublic(parsedSlack, SLACK_FILE_HOSTS);
-    // Build safeUrl with a literal `https://` prefix and the
-    // hostname-sanitizing-prefix-edge in CodeQL recognises this
-    // template as scrubbing host taint (the literal `"s/"` inside
-    // `"https://"` is the sanitizing substring).
-    const slackSafeUrl =
-      `https://${parsedSlack.hostname}${parsedSlack.pathname}${parsedSlack.search}`;
-    // Belt-and-braces: same-SSA `startsWith` guard
-    // (HostnameSanitizerGuard) on the exact variable passed to fetch.
-    if (
-      !slackSafeUrl.startsWith("https://files.slack.com/") &&
-      !slackSafeUrl.startsWith("https://slack-files.com/")
-    ) {
-      throw new Error("Slack file URL did not match expected prefix");
+    // Strip leading `/` from pathname so the host-literal prefix below
+    // is the only `/` between scheme+host and the rest of the URL.
+    const slackTail =
+      (parsedSlack.pathname.startsWith("/")
+        ? parsedSlack.pathname.slice(1)
+        : parsedSlack.pathname) + parsedSlack.search;
+    let slackSafeUrl: string;
+    if (parsedSlack.hostname.toLowerCase() === "files.slack.com") {
+      slackSafeUrl = `https://files.slack.com/${slackTail}`;
+    } else if (parsedSlack.hostname.toLowerCase() === "slack-files.com") {
+      slackSafeUrl = `https://slack-files.com/${slackTail}`;
+    } else {
+      throw new Error("Slack file URL did not match expected host");
     }
     const token = (this.adapter as any).defaultBotToken || (this.adapter as any).getToken();
 
@@ -709,8 +715,8 @@ class SlackBridge implements PlatformBridge {
           if (downloadUrl) {
             // Defense-in-depth: even though downloadUrl came from Slack's
             // files.info API, validate before sending the bot token.
-            // Inline URL parse + reconstruction (same-scope sanitizer
-            // barrier — see SlackBridge primary fetch above).
+            // Inline URL parse + literal-host reconstruction (same
+            // pattern as the primary fetch above — see comments there).
             let parsedFallback: URL;
             try {
               parsedFallback = new URL(downloadUrl);
@@ -718,13 +724,17 @@ class SlackBridge implements PlatformBridge {
               throw new Error("invalid Slack fallback URL");
             }
             await assertHostAllowedAndPublic(parsedFallback, SLACK_FILE_HOSTS);
-            const fallbackSafeUrl =
-              `https://${parsedFallback.hostname}${parsedFallback.pathname}${parsedFallback.search}`;
-            if (
-              !fallbackSafeUrl.startsWith("https://files.slack.com/") &&
-              !fallbackSafeUrl.startsWith("https://slack-files.com/")
-            ) {
-              throw new Error("Slack fallback URL did not match expected prefix");
+            const fallbackTail =
+              (parsedFallback.pathname.startsWith("/")
+                ? parsedFallback.pathname.slice(1)
+                : parsedFallback.pathname) + parsedFallback.search;
+            let fallbackSafeUrl: string;
+            if (parsedFallback.hostname.toLowerCase() === "files.slack.com") {
+              fallbackSafeUrl = `https://files.slack.com/${fallbackTail}`;
+            } else if (parsedFallback.hostname.toLowerCase() === "slack-files.com") {
+              fallbackSafeUrl = `https://slack-files.com/${fallbackTail}`;
+            } else {
+              throw new Error("Slack fallback URL did not match expected host");
             }
             response = await fetch(fallbackSafeUrl, {
               headers: { Authorization: `Bearer ${token}` },
@@ -1005,7 +1015,7 @@ class DiscordBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Inline URL parse + reconstruction (CodeQL alert #53).
+    // Inline URL parse + literal-host reconstruction (CodeQL alert #53).
     let parsedDiscord: URL;
     try {
       parsedDiscord = new URL(decodedUrl);
@@ -1013,13 +1023,17 @@ class DiscordBridge implements PlatformBridge {
       throw new Error("invalid Discord file URL");
     }
     await assertHostAllowedAndPublic(parsedDiscord, DISCORD_FILE_HOSTS);
-    const discordSafeUrl =
-      `https://${parsedDiscord.hostname}${parsedDiscord.pathname}${parsedDiscord.search}`;
-    if (
-      !discordSafeUrl.startsWith("https://cdn.discordapp.com/") &&
-      !discordSafeUrl.startsWith("https://media.discordapp.net/")
-    ) {
-      throw new Error("Discord file URL did not match expected prefix");
+    const discordTail =
+      (parsedDiscord.pathname.startsWith("/")
+        ? parsedDiscord.pathname.slice(1)
+        : parsedDiscord.pathname) + parsedDiscord.search;
+    let discordSafeUrl: string;
+    if (parsedDiscord.hostname.toLowerCase() === "cdn.discordapp.com") {
+      discordSafeUrl = `https://cdn.discordapp.com/${discordTail}`;
+    } else if (parsedDiscord.hostname.toLowerCase() === "media.discordapp.net") {
+      discordSafeUrl = `https://media.discordapp.net/${discordTail}`;
+    } else {
+      throw new Error("Discord file URL did not match expected host");
     }
 
     // Discord CDN signed URLs expire. Try the URL as-is first.
@@ -1040,16 +1054,20 @@ class DiscordBridge implements PlatformBridge {
             for (const att of msg.attachments ?? []) {
               if (att.id === attachmentId || (typeof att.url === "string" && att.url.includes(attachmentId))) {
                 try {
-                  // Inline URL parse + reconstruction (same-scope
-                  // sanitizer — see proxyFile above).
+                  // Inline URL parse + literal-host reconstruction
+                  // (same pattern as proxyFile above).
                   const parsedAtt = new URL(String(att.url));
                   await assertHostAllowedAndPublic(parsedAtt, DISCORD_FILE_HOSTS);
-                  const attSafeUrl =
-                    `https://${parsedAtt.hostname}${parsedAtt.pathname}${parsedAtt.search}`;
-                  if (
-                    !attSafeUrl.startsWith("https://cdn.discordapp.com/") &&
-                    !attSafeUrl.startsWith("https://media.discordapp.net/")
-                  ) {
+                  const attTail =
+                    (parsedAtt.pathname.startsWith("/")
+                      ? parsedAtt.pathname.slice(1)
+                      : parsedAtt.pathname) + parsedAtt.search;
+                  let attSafeUrl: string;
+                  if (parsedAtt.hostname.toLowerCase() === "cdn.discordapp.com") {
+                    attSafeUrl = `https://cdn.discordapp.com/${attTail}`;
+                  } else if (parsedAtt.hostname.toLowerCase() === "media.discordapp.net") {
+                    attSafeUrl = `https://media.discordapp.net/${attTail}`;
+                  } else {
                     continue;
                   }
                   response = await fetch(attSafeUrl);
@@ -1280,11 +1298,9 @@ class TeamsBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Restricted to `graph.microsoft.com` — tenant SharePoint
-    // subdomains can't be enumerated at compile time so cannot satisfy
-    // CodeQL's HostnameSanitizerGuard. Production Teams adapters route
-    // file content through the Graph `/sites/.../drive/items/.../
-    // content` endpoint, so this preserves the user-visible behaviour.
+    // Restricted to `graph.microsoft.com` (single literal host) —
+    // tenant SharePoint subdomains can't satisfy CodeQL's
+    // hostnameSanitizingPrefixEdge.
     let parsedTeams: URL;
     try {
       parsedTeams = new URL(decodedUrl);
@@ -1292,11 +1308,14 @@ class TeamsBridge implements PlatformBridge {
       throw new Error("invalid Teams file URL");
     }
     await assertHostAllowedAndPublic(parsedTeams, TEAMS_EXACT_HOSTS);
-    const teamsSafeUrl =
-      `https://${parsedTeams.hostname}${parsedTeams.pathname}${parsedTeams.search}`;
-    if (!teamsSafeUrl.startsWith("https://graph.microsoft.com/")) {
-      throw new Error("Teams file URL did not match expected prefix");
+    if (parsedTeams.hostname.toLowerCase() !== "graph.microsoft.com") {
+      throw new Error("Teams file URL did not match expected host");
     }
+    const teamsTail =
+      (parsedTeams.pathname.startsWith("/")
+        ? parsedTeams.pathname.slice(1)
+        : parsedTeams.pathname) + parsedTeams.search;
+    const teamsSafeUrl = `https://graph.microsoft.com/${teamsTail}`;
     const response = await fetch(teamsSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Teams file: ${response.status}`);
@@ -1470,7 +1489,7 @@ class TelegramBridge implements PlatformBridge {
 
   async proxyFile(url: string): Promise<{ contentType: string; buffer: Buffer }> {
     const decodedUrl = decodeURIComponent(url);
-    // Inline URL parse + reconstruction (CodeQL alert #55).
+    // Single literal host (CodeQL alert #55).
     let parsedTelegram: URL;
     try {
       parsedTelegram = new URL(decodedUrl);
@@ -1478,11 +1497,14 @@ class TelegramBridge implements PlatformBridge {
       throw new Error("invalid Telegram file URL");
     }
     await assertHostAllowedAndPublic(parsedTelegram, TELEGRAM_FILE_HOSTS);
-    const telegramSafeUrl =
-      `https://${parsedTelegram.hostname}${parsedTelegram.pathname}${parsedTelegram.search}`;
-    if (!telegramSafeUrl.startsWith("https://api.telegram.org/")) {
-      throw new Error("Telegram file URL did not match expected prefix");
+    if (parsedTelegram.hostname.toLowerCase() !== "api.telegram.org") {
+      throw new Error("Telegram file URL did not match expected host");
     }
+    const telegramTail =
+      (parsedTelegram.pathname.startsWith("/")
+        ? parsedTelegram.pathname.slice(1)
+        : parsedTelegram.pathname) + parsedTelegram.search;
+    const telegramSafeUrl = `https://api.telegram.org/${telegramTail}`;
     const response = await fetch(telegramSafeUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch Telegram file: ${response.status}`);
