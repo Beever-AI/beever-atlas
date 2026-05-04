@@ -13,7 +13,7 @@ ENV VITE_BEEVER_API_KEY=${VITE_BEEVER_API_KEY}
 
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:alpine@sha256:f35982400455b4f359083ba9d1ef573fbbe4221a6a8a194dc7a14beb4e2cd3dc
+FROM nginxinc/nginx-unprivileged:alpine@sha256:53ffe9cc959fc72aeed04a85d517099a42bfcc5f5f0b07a2b1048e08abf2f1eb
 # Issue #39 — drop root. The `nginxinc/nginx-unprivileged` image is the official
 # upstream nginx variant configured to run as the `nginx` user (UID 101) and
 # listen on port 8080 by default. Avoids fragile manual chown of /var/cache/nginx,
