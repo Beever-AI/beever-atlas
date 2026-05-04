@@ -270,17 +270,20 @@ mk_workspace "$WS"
 #   2. JINA_API_KEY          (skip)
 #   3. Configure integrations? y
 #   4. TAVILY_API_KEY        my-tavily-key
-#   5. Ollama?               y
-#   6. MCP server?           y
-#   7. Graph backend         [1 = default neo4j]
-#   8. Rotate auth tokens?   y
-printf '\n\ny\nmy-tavily-key\ny\ny\n\ny\n' | (
+#   5. OLOSTEP_API_KEY       (skip)
+#   6. WEB_SEARCH_PROVIDER   (default tavily)
+#   7. Ollama?               y
+#   8. MCP server?           y
+#   9. Graph backend         [1 = default neo4j]
+#   10. Rotate auth tokens?  y
+printf '\n\ny\nmy-tavily-key\n\n\ny\ny\n\ny\n' | (
   cd "$WS"
   PATH="${WS}/stubs:${MINBIN}" bash ./atlas
 ) > "$WS/stdout" 2> "$WS/stderr"
 status=$?
 assert "exited with status 0"                     "[ $status -eq 0 ]"
 assert "TAVILY_API_KEY was written"               "grep -qE '^TAVILY_API_KEY=my-tavily-key$' '$WS/.env'"
+assert "WEB_SEARCH_PROVIDER defaulted"            "grep -qE '^WEB_SEARCH_PROVIDER=tavily$' '$WS/.env'"
 assert "OLLAMA_ENABLED=true"                      "grep -qE '^OLLAMA_ENABLED=true$' '$WS/.env'"
 assert "BEEVER_MCP_ENABLED=true"                  "grep -qE '^BEEVER_MCP_ENABLED=true$' '$WS/.env'"
 assert "BEEVER_MCP_API_KEYS auto-generated"       "grep -qE '^BEEVER_MCP_API_KEYS=mcp-' '$WS/.env'"
@@ -369,7 +372,7 @@ mk_workspace "$WS"
 (
   cd "$WS"
   # Ensure neither key is in the environment
-  env -u GOOGLE_API_KEY -u JINA_API_KEY -u TAVILY_API_KEY \
+  env -u GOOGLE_API_KEY -u JINA_API_KEY -u TAVILY_API_KEY -u OLOSTEP_API_KEY -u WEB_SEARCH_PROVIDER \
     ATLAS_HEALTH_POLL_TIMEOUT=0 PATH="${WS}/stubs:${MINBIN}" bash ./atlas --non-interactive
 ) > "$WS/stdout" 2> "$WS/stderr"
 status=$?

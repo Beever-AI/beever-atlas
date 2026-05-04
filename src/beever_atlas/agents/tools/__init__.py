@@ -98,7 +98,7 @@ QA_TOOL_DESCRIPTORS: list[ToolDescriptor] = [
     {
         "name": "search_external_knowledge",
         "category": "external",
-        "description": "Search external web knowledge via the Tavily API.",
+        "description": "Search external web knowledge via the configured provider (Tavily or Olostep).",
     },
     # Orchestration tools — available in deep mode only. Surfaced here so the
     # Tools panel can disable them per request via AskRequest.disabled_tools.

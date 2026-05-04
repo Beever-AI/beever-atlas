@@ -9,7 +9,7 @@
 # What it does (in order):
 #   Prerequisites → .env bootstrap →
 #   Step 1/4  Required LLM keys      (Google Gemini, Jina)
-#   Step 2/4  Optional integrations  (Tavily, Ollama, MCP server)
+#   Step 2/4  Optional integrations  (Tavily/Olostep, Ollama, MCP server)
 #   Step 3/4  Graph backend          (neo4j or none)
 #   Step 4/4  Auth tokens            (keep dev defaults or rotate)
 #   Auto-gen secrets → docker compose up -d
@@ -331,6 +331,30 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
     # Tavily
     prompt_external_key "TAVILY_API_KEY" "Tavily (external web search in QA)" "https://tavily.com/"
 
+    # Olostep
+    prompt_external_key "OLOSTEP_API_KEY" "Olostep (external web search in QA)" "https://www.olostep.com/dashboard"
+
+    # Web search provider (only if at least one key is set)
+    tavily_key=$(grep -E "^TAVILY_API_KEY=" .env | head -n 1 | cut -d'=' -f2-)
+    olostep_key=$(grep -E "^OLOSTEP_API_KEY=" .env | head -n 1 | cut -d'=' -f2-)
+    if [ -n "$tavily_key" ] || [ -n "$olostep_key" ]; then
+      current_provider=$(grep -E "^WEB_SEARCH_PROVIDER=" .env | head -n 1 | cut -d'=' -f2-)
+      ask "Web search provider (tavily/olostep)"
+      if [ -n "$current_provider" ]; then
+        hint "Current: ${current_provider} (Enter = keep)"
+      else
+        hint "Press Enter for default (tavily)"
+      fi
+      printf "    ${C_DIM}WEB_SEARCH_PROVIDER${C_RESET} "
+      provider=""
+      read -r provider || true
+      if [ -z "$provider" ]; then
+        provider="${current_provider:-tavily}"
+      fi
+      replace_env_value "WEB_SEARCH_PROVIDER" "$provider"
+      ok "WEB_SEARCH_PROVIDER=${provider}"
+    fi
+
     # Ollama (local LLM)
     if confirm "N" "Enable Ollama (run a local LLM instead of Gemini)?"; then
       replace_env_value "OLLAMA_ENABLED" "true"
@@ -421,7 +445,7 @@ fi
 # "Finalizing secrets" so auto-gen logic sees the correct filled state.
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" = "true" ]; then
-  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY; do
+  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY OLOSTEP_API_KEY WEB_SEARCH_PROVIDER; do
     _preseed_val="${!_preseed_key:-}" 2>/dev/null || _preseed_val=""
     if [ -n "$_preseed_val" ]; then
       replace_env_value "$_preseed_key" "$_preseed_val"

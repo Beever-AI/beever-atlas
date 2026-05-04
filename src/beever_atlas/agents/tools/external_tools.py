@@ -1,4 +1,4 @@
-"""External knowledge tool: Tavily web search."""
+"""External knowledge tool: web search."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ SUPPORTED_MODES = frozenset({"general", "documentation", "best_practices"})
 
 @cite_tool_output(kind="web_result")
 async def search_external_knowledge(query: str, mode: str = "general") -> dict:
-    """Search external web knowledge via Tavily API.
+    """Search external web knowledge via Tavily or Olostep.
 
     Cost: ~$0.01. Target latency: ~1s.
-    Requires TAVILY_API_KEY environment variable.
+    Requires TAVILY_API_KEY or OLOSTEP_API_KEY environment variable.
 
     Args:
         query: Search query.
@@ -33,6 +33,31 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
         from beever_atlas.infra.config import get_settings
 
         settings = get_settings()
+        provider = (settings.web_search_provider or "tavily").strip().lower()
+        if provider == "olostep":
+            api_key = settings.olostep_api_key
+            if not api_key:
+                return {
+                    "error": "olostep_unavailable",
+                    "message": "OLOSTEP_API_KEY is not configured. External search unavailable.",
+                    "results": [],
+                    "source": "external",
+                }
+
+            results = await asyncio.to_thread(
+                search_with_olostep,
+                query,
+                api_key,
+                5,
+            )
+
+            return {
+                "answer": "",
+                "results": results,
+                "source": "external_olostep",
+                "mode": mode,
+            }
+
         api_key = settings.tavily_api_key
         if not api_key:
             return {
@@ -91,3 +116,36 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
             "results": [],
             "source": "external",
         }
+
+
+def search_with_olostep(query: str, api_key: str, max_results: int = 5) -> list[dict]:
+    """Search the web using Olostep /searches endpoint.
+
+    Returns a list of result dicts with 'title', 'url', 'content', 'text',
+    and 'score' keys to match the shape expected by callers.
+    """
+    import httpx
+
+    response = httpx.post(
+        "https://api.olostep.com/v1/searches",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={"query": query},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    links = data.get("result", {}).get("links", [])[:max_results]
+
+    return [
+        {
+            "title": link.get("title", ""),
+            "url": link.get("url", ""),
+            "content": link.get("description", "")[:500],
+            "text": link.get("description", "")[:500],
+            "score": 0.0,
+        }
+        for link in links
+    ]

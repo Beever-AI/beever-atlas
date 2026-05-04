@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional Olostep web search provider for QA external search, selectable via
+  `WEB_SEARCH_PROVIDER=olostep` and `OLOSTEP_API_KEY`.
+
 ## [0.1.2] - 2026-04-30
 
 ### Added
