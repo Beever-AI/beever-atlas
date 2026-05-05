@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/beever-ai-beever-atlas-badge.png)](https://mseep.ai/app/beever-ai-beever-atlas)
+
 <h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="web/public/logo-white.svg" />
