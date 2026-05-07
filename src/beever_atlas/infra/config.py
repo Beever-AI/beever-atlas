@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     jina_api_key: str = Field(default="")
     tavily_api_key: str = Field(default="")
     olostep_api_key: str = Field(default="")
-    web_search_provider: str = Field(default="tavily")
+    web_search_provider: Literal["tavily", "olostep"] = Field(default="tavily")
 
     # LLM model tiers (ADK pipeline)
     llm_fast_model: str = Field(default="gemini-2.5-flash")

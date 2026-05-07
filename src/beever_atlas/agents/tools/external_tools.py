@@ -33,7 +33,8 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
         from beever_atlas.infra.config import get_settings
 
         settings = get_settings()
-        provider = (settings.web_search_provider or "tavily").strip().lower()
+        provider = settings.web_search_provider
+        logger.info("web_search.provider=%s mode=%s", provider, mode)
         if provider == "olostep":
             api_key = settings.olostep_api_key
             if not api_key:
@@ -137,7 +138,10 @@ def search_with_olostep(query: str, api_key: str, max_results: int = 5) -> list[
     )
     response.raise_for_status()
     data = response.json()
-    links = data.get("result", {}).get("links", [])[:max_results]
+    links = data.get("result", {}).get("links", [])
+    if not links:
+        logger.warning("olostep response missing links: %s", list(data.keys()))
+    links = links[:max_results]
 
     return [
         {
