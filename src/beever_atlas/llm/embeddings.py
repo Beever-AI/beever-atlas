@@ -1,0 +1,382 @@
+"""Provider-agnostic embedding shim built on ``litellm.aembedding``.
+
+Single entry point for every embedding call in the codebase — pipeline,
+entity registry, query-time hybrid search, backfill scripts. Replaces the
+six raw ``httpx.post(jina_api_url, ...)`` blocks that used to live across
+the project.
+
+Behaviour intentionally preserved from the original ``embedder.py``:
+  * 100-text chunking (Jina's effective batch ceiling; safe everywhere).
+  * Retry on ``{429, 500, 502, 503, 504}`` plus transient httpx exceptions.
+  * Exponential backoff ``(2 ** attempt) * uniform(0.8, 1.2)``, max 3 retries.
+  * Each chunk wrapped in ``EMBEDDING_LIMITER`` so concurrent batches don't
+    exceed ``settings.embedding_rpm``.
+  * Structured ``cat=embed`` log lines via ``infra.logging.embed_log``.
+
+Provider routing is delegated to LiteLLM. Unsupported provider-specific
+kwargs (Jina's ``task=``, Cohere's ``input_type=``) are silently dropped by
+``litellm.drop_params = True`` set during ``initialize_embedding_runtime``.
+
+The ``JINA_API_KEY`` env var is bridged to ``JINA_AI_API_KEY`` at startup so
+existing installations keep working when the default provider is Jina.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import random
+import time
+from typing import Any
+
+import httpx
+
+from beever_atlas.infra.config import Settings, get_settings
+from beever_atlas.infra.logging import embed_log
+from beever_atlas.infra.rate_limit import EMBEDDING_LIMITER
+from beever_atlas.llm.known_embedding_models import (
+    SUPPORTED_PROVIDERS,
+    model_accepts_task,
+)
+
+logger = logging.getLogger(__name__)
+
+# Public knobs — defaults preserve the legacy embedder.py behaviour.
+_BATCH_SIZE = 100
+_MAX_RETRIES = 3
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_DEFAULT_TIMEOUT_SECONDS = 60.0
+
+
+class EmbeddingError(RuntimeError):
+    """Base class for embedding shim errors."""
+
+
+class EmbeddingProviderError(EmbeddingError):
+    """Raised when the configured provider prefix is not recognised."""
+
+
+class EmbeddingResponseError(EmbeddingError):
+    """Raised when the provider response cannot be aligned with the input."""
+
+
+# Process-wide flag so ``initialize_embedding_runtime`` is idempotent.
+_runtime_initialised: bool = False
+
+# Runtime API key resolved from MongoDB at boot (PR-E). Sits between the
+# explicit ``EMBEDDING_API_KEY`` env override (highest priority) and the
+# provider-default env vars LiteLLM falls back to (lowest). ``None`` means
+# "no DB-stored key" — the shim falls through to env defaults.
+_runtime_db_api_key: str | None = None
+
+
+def set_runtime_db_api_key(value: str | None) -> None:
+    """Set the DB-stored API key resolved at boot (or via UI write).
+
+    Idempotent. ``None`` clears. Plaintext lives only inside this module's
+    closure plus whatever LiteLLM sends to the provider.
+    """
+    global _runtime_db_api_key
+    _runtime_db_api_key = value or None
+
+
+def initialize_embedding_runtime(settings: Settings | None = None) -> None:
+    """Configure the LiteLLM client + bridge legacy env vars.
+
+    Safe to call multiple times — idempotent. Should run once during app
+    startup, before any ``embed_texts`` call.
+
+    Side effects:
+      * ``litellm.drop_params = True`` — provider-specific kwargs (Jina's
+        ``task``, Cohere's ``input_type``) flow through gracefully and are
+        stripped for providers that reject them. Kept module-global because
+        the alternative (passing ``drop_params=True`` per-call) silently
+        breaks if any caller forgets it.
+      * ``os.environ["JINA_AI_API_KEY"]`` set from ``JINA_API_KEY`` when the
+        target is unset. ``setdefault`` semantics — never overrides an
+        operator-supplied value.
+    """
+    global _runtime_initialised
+    if _runtime_initialised:
+        return
+
+    cfg = settings or get_settings()
+
+    # Bridge JINA_API_KEY → JINA_AI_API_KEY so existing installs keep working
+    # without an .env edit. ``setdefault`` so a deliberately-set
+    # JINA_AI_API_KEY wins.
+    if cfg.jina_api_key and "JINA_AI_API_KEY" not in os.environ:
+        os.environ["JINA_AI_API_KEY"] = cfg.jina_api_key
+
+    # Configure LiteLLM. Imported lazily so ``init_llm_provider`` callers
+    # don't pay the import cost on cold paths that never embed (e.g. wiki-only
+    # admin tools). ADK already imports litellm so this is essentially free in
+    # the hot path.
+    import litellm  # type: ignore[import-untyped]
+
+    litellm.drop_params = True
+    # Suppress LiteLLM's own embedding telemetry / debug noise; we have our
+    # own ``cat=embed`` channel and don't want litellm.suppress_debug_info
+    # echoes dirtying logs.
+    litellm.suppress_debug_info = True
+
+    _runtime_initialised = True
+    logger.debug(
+        "embeddings: runtime initialised (provider=%s model=%s dim=%s drop_params=on)",
+        cfg.embedding_provider,
+        cfg.embedding_model,
+        cfg.embedding_dimensions,
+    )
+
+
+def _resolve_api_key(cfg: Settings) -> str | None:
+    """Return the API key to use for this call, or None to fall back to env.
+
+    Precedence (matches design D4):
+      1. ``settings.embedding_api_key`` — env override (`EMBEDDING_API_KEY`).
+      2. ``_runtime_db_api_key`` — DB-stored, decrypted at boot (PR-E).
+      3. ``None`` — let LiteLLM read the provider-default env var
+         (``JINA_AI_API_KEY``, ``OPENAI_API_KEY``, …).
+    """
+    if cfg.embedding_api_key:
+        return cfg.embedding_api_key
+    if _runtime_db_api_key:
+        return _runtime_db_api_key
+    return None
+
+
+def _resolve_model_string(cfg: Settings) -> str:
+    """Build the LiteLLM-flavoured ``provider/model`` string.
+
+    Validates against the small set of supported provider prefixes so a typo
+    in env (``jian_ai/...``) surfaces as a fail-fast error rather than a
+    confusing 404 from a random LiteLLM router.
+    """
+    provider = cfg.embedding_provider.strip().lower()
+    if provider not in SUPPORTED_PROVIDERS:
+        raise EmbeddingProviderError(
+            f"Unsupported embedding provider {cfg.embedding_provider!r}. "
+            f"Supported: {', '.join(SUPPORTED_PROVIDERS)}. "
+            "Set EMBEDDING_PROVIDER to one of those, or add a new entry "
+            "to known_embedding_models.py."
+        )
+    return f"{provider}/{cfg.embedding_model}"
+
+
+def _build_extra_kwargs(cfg: Settings, *, task: str) -> dict[str, Any]:
+    """Per-call kwargs forwarded to ``litellm.aembedding``.
+
+    Conservative: only forwards ``dimensions``, ``api_base``, and ``task``
+    when applicable. ``litellm.drop_params=True`` strips ``task`` for
+    providers that reject it, but we still gate explicitly so the request
+    body shape is predictable for tests + telemetry.
+    """
+    kwargs: dict[str, Any] = {}
+    if cfg.embedding_dimensions:
+        kwargs["dimensions"] = cfg.embedding_dimensions
+    if cfg.embedding_api_base:
+        kwargs["api_base"] = cfg.embedding_api_base
+    api_key = _resolve_api_key(cfg)
+    if api_key:
+        kwargs["api_key"] = api_key
+    if task and model_accepts_task(cfg.embedding_provider, cfg.embedding_model):
+        kwargs["task"] = task
+    return kwargs
+
+
+async def _aembedding_call(
+    *,
+    model: str,
+    chunk: list[str],
+    extra_kwargs: dict[str, Any],
+) -> list[list[float]]:
+    """One LiteLLM ``aembedding`` round trip — extracted for test patchability.
+
+    Importing ``litellm`` inside the call keeps this module import-cheap and
+    lets tests patch ``beever_atlas.llm.embeddings._aembedding_call`` cleanly
+    without monkeypatching the package-level import.
+    """
+    import litellm  # type: ignore[import-untyped]
+
+    response = await litellm.aembedding(
+        model=model,
+        input=chunk,
+        timeout=_DEFAULT_TIMEOUT_SECONDS,
+        **extra_kwargs,
+    )
+    # LiteLLM normalises every provider to OpenAI shape:
+    #   response["data"] = [{"embedding": [...], "index": ...}, ...]
+    # ``response`` may be a pydantic model or a plain dict depending on
+    # litellm version — handle both.
+    raw = response if isinstance(response, dict) else response.model_dump()
+    data = raw.get("data") or []
+    return [item["embedding"] for item in data]
+
+
+def _retry_status(response_status: int) -> bool:
+    return response_status in _RETRYABLE_STATUS
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """Exponential backoff with ±20% jitter to decorrelate concurrent batches."""
+    return (2**attempt) * (1 + random.uniform(-0.2, 0.2))
+
+
+async def embed_texts(
+    texts: list[str],
+    *,
+    task: str | None = None,
+    settings: Settings | None = None,
+) -> list[list[float]]:
+    """Embed `texts` and return one vector per input, in input order.
+
+    Args:
+        texts: Inputs to embed. Empty list returns ``[]`` without making a
+            request.
+        task: Provider hint. Default ``None`` resolves to
+            ``settings.embedding_task`` (``"text-matching"`` for Jina). The
+            kwarg is dropped automatically for providers that don't honour
+            it (see ``known_embedding_models.model_accepts_task``).
+        settings: Override Settings — primarily for tests. Production
+            callers should pass ``None`` and rely on ``get_settings()``.
+
+    Raises:
+        EmbeddingProviderError: configured provider prefix is unknown.
+        EmbeddingResponseError: provider returned a different number of
+            vectors than texts in a chunk.
+        httpx.HTTPStatusError: non-retryable provider HTTP error, or
+            retry budget exhausted.
+        httpx.ConnectError / ReadTimeout / RemoteProtocolError: same.
+    """
+    if not texts:
+        return []
+
+    cfg = settings or get_settings()
+    if not _runtime_initialised:
+        # Defensive — covers test paths that import the shim before app boot.
+        initialize_embedding_runtime(cfg)
+
+    effective_task = task or cfg.embedding_task or "text-matching"
+    model = _resolve_model_string(cfg)
+    extra_kwargs = _build_extra_kwargs(cfg, task=effective_task)
+
+    total_chunks = (len(texts) - 1) // _BATCH_SIZE + 1
+    out: list[list[float]] = []
+
+    for chunk_index_zero, start in enumerate(range(0, len(texts), _BATCH_SIZE)):
+        chunk = texts[start : start + _BATCH_SIZE]
+        chunk_index = chunk_index_zero + 1
+        attempt = 0
+        chunk_started = time.monotonic()
+
+        embed_log(
+            logger,
+            "chunk start",
+            provider=cfg.embedding_provider,
+            model=cfg.embedding_model,
+            chunk=f"{chunk_index}/{total_chunks}",
+            size=len(chunk),
+        )
+
+        while True:
+            try:
+                async with EMBEDDING_LIMITER:
+                    vectors = await _aembedding_call(
+                        model=model,
+                        chunk=chunk,
+                        extra_kwargs=extra_kwargs,
+                    )
+            except (
+                httpx.ConnectError,
+                httpx.ReadTimeout,
+                httpx.RemoteProtocolError,
+            ) as transient_err:
+                attempt += 1
+                if attempt > _MAX_RETRIES:
+                    embed_log(
+                        logger,
+                        "chunk failed",
+                        level="error",
+                        provider=cfg.embedding_provider,
+                        model=cfg.embedding_model,
+                        chunk=f"{chunk_index}/{total_chunks}",
+                        error=type(transient_err).__name__,
+                        attempts=attempt,
+                    )
+                    raise
+                wait = _backoff_seconds(attempt)
+                embed_log(
+                    logger,
+                    "chunk transient retry",
+                    level="warning",
+                    provider=cfg.embedding_provider,
+                    model=cfg.embedding_model,
+                    chunk=f"{chunk_index}/{total_chunks}",
+                    error=type(transient_err).__name__,
+                    retry_in=round(wait, 2),
+                    attempt=attempt,
+                    max_retries=_MAX_RETRIES,
+                )
+                await asyncio.sleep(wait)
+                continue
+            except httpx.HTTPStatusError as http_err:
+                if not _retry_status(http_err.response.status_code):
+                    raise
+                attempt += 1
+                if attempt > _MAX_RETRIES:
+                    embed_log(
+                        logger,
+                        "chunk failed",
+                        level="error",
+                        provider=cfg.embedding_provider,
+                        model=cfg.embedding_model,
+                        chunk=f"{chunk_index}/{total_chunks}",
+                        status=http_err.response.status_code,
+                        attempts=attempt,
+                    )
+                    raise
+                wait = _backoff_seconds(attempt)
+                embed_log(
+                    logger,
+                    "chunk retryable status",
+                    level="warning",
+                    provider=cfg.embedding_provider,
+                    model=cfg.embedding_model,
+                    chunk=f"{chunk_index}/{total_chunks}",
+                    status=http_err.response.status_code,
+                    retry_in=round(wait, 2),
+                    attempt=attempt,
+                    max_retries=_MAX_RETRIES,
+                )
+                await asyncio.sleep(wait)
+                continue
+
+            if len(vectors) != len(chunk):
+                # Strict alignment — silent truncation would corrupt search.
+                raise EmbeddingResponseError(
+                    f"Provider returned {len(vectors)} vectors for "
+                    f"{len(chunk)} inputs (chunk {chunk_index}/{total_chunks})"
+                )
+            out.extend(vectors)
+            embed_log(
+                logger,
+                "chunk done",
+                provider=cfg.embedding_provider,
+                model=cfg.embedding_model,
+                chunk=f"{chunk_index}/{total_chunks}",
+                embedded=len(vectors),
+                elapsed_ms=int((time.monotonic() - chunk_started) * 1000),
+            )
+            break
+
+    return out
+
+
+__all__ = [
+    "EmbeddingError",
+    "EmbeddingProviderError",
+    "EmbeddingResponseError",
+    "embed_texts",
+    "initialize_embedding_runtime",
+]

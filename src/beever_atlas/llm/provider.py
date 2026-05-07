@@ -203,11 +203,24 @@ class LLMProvider:
 
     @property
     def embedding_model(self) -> str:
-        return self._settings.jina_model
+        """Effective embedding model identifier (provider/model not included).
+
+        Reads the generic ``embedding_model`` field. The Settings layer
+        bridges legacy ``JINA_MODEL`` into ``embedding_model`` at boot, so
+        existing installs that only set the legacy env still get the right
+        value here.
+        """
+        return self._settings.embedding_model
 
     @property
     def embedding_dimensions(self) -> int:
-        return self._settings.jina_dimensions
+        """Configured embedding dimension (e.g. 2048 for Jina v4)."""
+        return self._settings.embedding_dimensions
+
+    @property
+    def embedding_provider(self) -> str:
+        """LiteLLM provider prefix (e.g. ``jina_ai``, ``openai``)."""
+        return self._settings.embedding_provider
 
 
 _provider: LLMProvider | None = None
@@ -237,10 +250,43 @@ def _validate_model_resolution(provider: LLMProvider) -> None:
 
 
 def init_llm_provider(settings: Settings) -> None:
+    """Initialise both the chat-side LLMProvider and the embedding runtime.
+
+    Order matters:
+      1. Configure LiteLLM globals + bridge ``JINA_API_KEY`` →
+         ``JINA_AI_API_KEY`` so any subsequent embedding call has the right
+         env var visible. Must run before model resolution because chat
+         models can also flow through LiteLLM (Ollama path).
+      2. Resolve chat-tier models so a misconfigured ``LLM_FAST_MODEL``
+         fails fast at boot rather than mid-sync.
+
+    The embedding dimension guard runs separately (``run_embedding_dim_guard``
+    below) because it needs ``StoreClients`` initialised first — the guard is
+    invoked from the FastAPI startup hook in ``server/app.py`` after
+    ``init_stores``.
+    """
+    from beever_atlas.llm.embeddings import initialize_embedding_runtime
+
     global _provider
     provider = LLMProvider(settings)
+    initialize_embedding_runtime(settings)
     _validate_model_resolution(provider)
     _provider = provider
+
+
+async def run_embedding_dim_guard(settings: Settings) -> None:
+    """Run the boot-time embedding probe + dimension-mismatch guard.
+
+    Separated from ``init_llm_provider`` so the caller controls ordering
+    against ``StoreClients.startup``. Raises
+    :class:`EmbeddingDimensionMismatch` on a fatal mismatch unless
+    ``settings.embedding_dim_guard`` is False (in which case the failure
+    downgrades to a loud WARN).
+    """
+    from beever_atlas.llm.embedding_health import probe_and_validate
+    from beever_atlas.stores import get_stores
+
+    await probe_and_validate(settings, get_stores())
 
 
 def get_llm_provider() -> LLMProvider:

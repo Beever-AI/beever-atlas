@@ -797,6 +797,98 @@ class MongoDBStore:
         )
 
     # ------------------------------------------------------------------
+    # Embedding meta — drives the boot-time dimension guard.
+    # ------------------------------------------------------------------
+    # Schema:
+    #   {
+    #     "_id": "embedding_meta",
+    #     "provider": "<litellm prefix>",
+    #     "model": "<model id>",
+    #     "dimensions": <int>,
+    #     "last_probe_at": <ISO timestamp>,
+    #     "last_probe_ok": <bool>,
+    #     "last_probe_error": <str | None>,
+    #   }
+    #
+    # Updated by ``llm.embedding_health.probe_and_validate`` once at boot,
+    # and by the re-embed migration after a successful run. The dim guard
+    # compares ``dimensions`` against the configured ``EMBEDDING_DIMENSIONS``
+    # to refuse boots that would corrupt the existing Weaviate index.
+
+    async def get_embedding_meta(self) -> dict[str, Any] | None:
+        """Return the persisted embedding configuration record, or None."""
+        doc = await self.db["embedding_meta"].find_one({"_id": "embedding_meta"})
+        if doc:
+            doc.pop("_id", None)
+        return doc
+
+    async def set_embedding_meta(
+        self,
+        *,
+        provider: str,
+        model: str,
+        dimensions: int,
+        ok: bool,
+        error: str | None = None,
+    ) -> None:
+        """Upsert the embedding meta record after a probe / migration."""
+        from datetime import UTC, datetime
+
+        await self.db["embedding_meta"].update_one(
+            {"_id": "embedding_meta"},
+            {
+                "$set": {
+                    "provider": provider,
+                    "model": model,
+                    "dimensions": dimensions,
+                    "last_probe_at": datetime.now(tz=UTC).isoformat(),
+                    "last_probe_ok": ok,
+                    "last_probe_error": error,
+                }
+            },
+            upsert=True,
+        )
+
+    # ------------------------------------------------------------------
+    # Encrypted embedding API key — written by the Settings UI, decrypted
+    # only inside the embedding shim immediately before the LiteLLM call.
+    # ------------------------------------------------------------------
+
+    async def get_embedding_secret(self) -> dict[str, Any] | None:
+        """Return the ciphertext + iv + tag for the stored API key, or None."""
+        doc = await self.db["embedding_secret"].find_one({"_id": "embedding_api_key"})
+        if doc:
+            doc.pop("_id", None)
+        return doc
+
+    async def set_embedding_secret(
+        self,
+        *,
+        ciphertext_b64: str,
+        iv_b64: str,
+        tag_b64: str,
+    ) -> None:
+        """Persist an encrypted API key — values are pre-encoded base64
+        strings so the document JSON-serialises cleanly."""
+        from datetime import UTC, datetime
+
+        await self.db["embedding_secret"].update_one(
+            {"_id": "embedding_api_key"},
+            {
+                "$set": {
+                    "ciphertext_b64": ciphertext_b64,
+                    "iv_b64": iv_b64,
+                    "tag_b64": tag_b64,
+                    "updated_at": datetime.now(tz=UTC).isoformat(),
+                }
+            },
+            upsert=True,
+        )
+
+    async def clear_embedding_secret(self) -> None:
+        await self.db["embedding_secret"].delete_one({"_id": "embedding_api_key"})
+
+    # ------------------------------------------------------------------
     # Message Store (channel_messages collection)
     # ------------------------------------------------------------------
 

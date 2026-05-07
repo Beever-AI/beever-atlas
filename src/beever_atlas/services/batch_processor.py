@@ -39,12 +39,20 @@ _provider_limiters: dict[str, AsyncLimiter] = {}
 
 
 async def _get_limiter(provider: str) -> AsyncLimiter:
-    """Return the AsyncLimiter for *provider*, creating it once from settings."""
+    """Return the AsyncLimiter for *provider*, creating it once from settings.
+
+    Provider keys: ``"gemini"`` (chat / extraction), ``"embedding"`` (the
+    provider-agnostic embedding shim). The legacy key ``"jina"`` is mapped
+    to ``"embedding"`` for one release so out-of-tree callers keep working.
+    """
+    # Legacy alias — remove once external callers update.
+    if provider == "jina":
+        provider = "embedding"
     if provider not in _provider_limiters:
         async with _limiter_lock:
             if provider not in _provider_limiters:
                 cfg = get_settings()
-                rpm = cfg.gemini_rpm if provider == "gemini" else cfg.jina_rpm
+                rpm = cfg.gemini_rpm if provider == "gemini" else cfg.embedding_rpm
                 _provider_limiters[provider] = AsyncLimiter(rpm, 60)
     return _provider_limiters[provider]
 
@@ -568,7 +576,7 @@ class BatchProcessor:
                         _stage_start = time.monotonic()
                         _batch_wall_start = time.monotonic()
                         _limiter_wait_gemini = 0.0
-                        _limiter_wait_jina = 0.0
+                        _limiter_wait_embedding = 0.0
                         _evt_count = 0
                         async for _event in runner.run_async(
                             user_id="system",
@@ -590,8 +598,8 @@ class BatchProcessor:
                                 # preprocessor/persister are local-only, no quota needed.
                                 if author == "embedder":
                                     _lim_t0 = time.monotonic()
-                                    await (await _get_limiter("jina")).acquire()
-                                    _limiter_wait_jina += time.monotonic() - _lim_t0
+                                    await (await _get_limiter("embedding")).acquire()
+                                    _limiter_wait_embedding += time.monotonic() - _lim_t0
                                 elif author not in ("preprocessor", "persister"):
                                     _lim_t0 = time.monotonic()
                                     await (await _get_limiter("gemini")).acquire()
@@ -1157,18 +1165,18 @@ class BatchProcessor:
                             batch_stage_timings["limiter_wait_s_gemini"] = round(
                                 _limiter_wait_gemini, 3
                             )
-                        if _limiter_wait_jina > 0:
-                            batch_stage_timings["limiter_wait_s_jina"] = round(
-                                _limiter_wait_jina, 3
+                        if _limiter_wait_embedding > 0:
+                            batch_stage_timings["limiter_wait_s_embedding"] = round(
+                                _limiter_wait_embedding, 3
                             )
                         logger.debug(
                             "BatchProcessor: D2 timing batch=%d job_id=%s wall=%.2fs "
-                            "limiter_gemini=%.3fs limiter_jina=%.3fs",
+                            "limiter_gemini=%.3fs limiter_embedding=%.3fs",
                             batch_index,
                             sync_job_id,
                             batch_stage_timings["batch_wall_clock_s"],
                             _limiter_wait_gemini,
-                            _limiter_wait_jina,
+                            _limiter_wait_embedding,
                         )
                         # Final progress flush after pipeline completes
                         await stores.mongodb.update_batch_stage(

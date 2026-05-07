@@ -20,7 +20,7 @@ def _reset_limiters() -> None:
     bp_module._provider_limiters.clear()
 
 
-def _make_settings(gemini_rpm: int = 300, jina_rpm: int = 500) -> MagicMock:
+def _make_settings(gemini_rpm: int = 300, embedding_rpm: int = 500) -> MagicMock:
     s = MagicMock()
     s.sync_batch_size = 1
     s.batch_max_prompt_tokens = 0
@@ -32,7 +32,10 @@ def _make_settings(gemini_rpm: int = 300, jina_rpm: int = 500) -> MagicMock:
     s.language_detection_enabled = False
     s.llm_outage_breaker_threshold = 10
     s.gemini_rpm = gemini_rpm
-    s.jina_rpm = jina_rpm
+    s.embedding_rpm = embedding_rpm
+    # Legacy alias retained for one release; production code reads
+    # ``embedding_rpm`` after the bridge runs.
+    s.jina_rpm = embedding_rpm
     return s
 
 
@@ -120,16 +123,30 @@ async def test_get_limiter_gemini_rpm():
 
 
 @pytest.mark.asyncio
-async def test_get_limiter_jina_rpm():
-    """_get_limiter('jina') creates AsyncLimiter with jina_rpm from settings."""
+async def test_get_limiter_embedding_rpm():
+    """_get_limiter('embedding') creates AsyncLimiter with embedding_rpm from settings."""
     _reset_limiters()
-    settings = _make_settings(jina_rpm=250)
+    settings = _make_settings(embedding_rpm=250)
 
     with patch("beever_atlas.services.batch_processor.get_settings", return_value=settings):
-        limiter = await _get_limiter("jina")
+        limiter = await _get_limiter("embedding")
 
     assert limiter.max_rate == 250
     assert limiter.time_period == 60
+
+
+@pytest.mark.asyncio
+async def test_get_limiter_jina_alias_resolves_to_embedding():
+    """The legacy ``jina`` provider key resolves to the embedding limiter."""
+    _reset_limiters()
+    settings = _make_settings(embedding_rpm=250)
+
+    with patch("beever_atlas.services.batch_processor.get_settings", return_value=settings):
+        embedding_limiter = await _get_limiter("embedding")
+        jina_limiter = await _get_limiter("jina")
+
+    # Same cached instance — alias collapses into the canonical key.
+    assert embedding_limiter is jina_limiter
 
 
 @pytest.mark.asyncio

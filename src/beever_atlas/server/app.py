@@ -42,6 +42,7 @@ from beever_atlas.api.wiki import router as wiki_router
 from beever_atlas.api.config import router as config_router
 from beever_atlas.api.policies import router as policies_router
 from beever_atlas.api.models import router as models_router
+from beever_atlas.api.embedding_settings import router as embedding_settings_router
 from beever_atlas.api.dev import router as dev_router
 from beever_atlas.api.loader_token import router as loader_token_router
 from beever_atlas.api.loaders import router as loader_router
@@ -158,6 +159,38 @@ async def lifespan(app: FastAPI):
     await stores.startup()
     init_stores(stores)
     init_llm_provider(settings)
+
+    # PR-E: hydrate the DB-stored encrypted API key into the runtime so the
+    # embedding shim can use it without round-tripping to MongoDB on every
+    # call. Runs BEFORE the dim-guard probe so the probe uses the same key
+    # the actual ingestion path will use. Best-effort — a missing master
+    # key surfaces only when an operator tries to USE a UI-saved key.
+    try:
+        from beever_atlas.api.embedding_settings import _decrypt_db_key
+        from beever_atlas.llm.embeddings import set_runtime_db_api_key
+
+        db_key = await _decrypt_db_key()
+        set_runtime_db_api_key(db_key)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "lifespan: could not hydrate DB-stored embedding key (non-fatal)",
+            exc_info=True,
+        )
+
+    # PR-C: probe the embedding provider once + refuse to boot when the
+    # configured dimension disagrees with what's already stored in
+    # Weaviate. Override is `EMBEDDING_DIM_GUARD=false`.
+    try:
+        from beever_atlas.llm.provider import run_embedding_dim_guard
+
+        await run_embedding_dim_guard(settings)
+    except Exception:
+        # ``EmbeddingDimensionMismatch`` propagates and aborts startup;
+        # other exceptions (Weaviate unavailable, MongoDB not yet seeded)
+        # are converted to a WARN inside ``probe_and_validate``. If we got
+        # here, the guard decided it's fatal — re-raise to fail the
+        # FastAPI startup loud and clear.
+        raise
     await _migrate_env_connection(stores, settings)
 
     # Derive the file-proxy / media-proxy host allowlist from active
@@ -570,6 +603,7 @@ app.include_router(stats_router, dependencies=_auth)
 app.include_router(topics_router, dependencies=_auth)
 app.include_router(policies_router, dependencies=_auth)
 app.include_router(models_router, dependencies=_auth)
+app.include_router(embedding_settings_router, dependencies=_auth)
 # Dev router: only mounted in development; its own endpoints require admin token.
 if _settings.beever_env == "development":
     app.include_router(dev_router)

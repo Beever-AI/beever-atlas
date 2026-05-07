@@ -1,4 +1,4 @@
-.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures
+.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures reembed-all reembed-resume reembed-dry-run
 
 install:
 	uv sync --extra dev
@@ -51,3 +51,16 @@ demo-regenerate-fixtures:
 clean:
 	find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 	rm -rf web/dist bot/dist .pytest_cache .ruff_cache
+
+# Re-embed every Weaviate AtomicFact + Neo4j Entity.name_vector under the
+# currently configured EMBEDDING_PROVIDER / EMBEDDING_MODEL. Required when
+# switching providers if the dimension changes.
+# See docs/runbooks/embedding-migration.md for the full operator playbook.
+reembed-all:
+	uv run python -m scripts.reembed_facts
+
+reembed-resume:
+	uv run python -m scripts.reembed_facts --resume
+
+reembed-dry-run:
+	uv run python -m scripts.reembed_facts --dry-run

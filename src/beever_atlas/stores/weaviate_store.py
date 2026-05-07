@@ -564,6 +564,66 @@ class WeaviateStore:
 
         return await asyncio.to_thread(_count)
 
+    async def iter_atomic_fact_ids_and_text(self) -> "list[tuple[str, str]]":
+        """Return ``[(weaviate_uuid, memory_text), ...]`` for every atomic
+        fact, materialised eagerly into memory.
+
+        Reserved for the re-embed migration job (PR-C). Walks the whole
+        collection via Weaviate v4's ``collection.iterator()`` and filters
+        ``tier == "atomic"`` client-side because ``iterator()`` does not
+        accept a ``filters=`` kwarg in weaviate-client v4. ``memory_text``
+        is the only field we need at re-embed time — the existing tags /
+        metadata stay attached to the row when we update only the vector.
+
+        Materialising fits Atlas's documented design constraint: re-embed is
+        operator-triggered against installations of typically ~5k–50k facts.
+        For larger installs, swap in a chunked iterator + restart the run.
+
+        Tier handling: rows whose ``tier`` property is missing, ``None``, or
+        anything other than the literal string ``"atomic"`` are SKIPPED.
+        We do NOT default missing-tier rows into ``"atomic"`` — that would
+        silently re-embed cluster / summary tier vectors with a
+        text-matching atomic embedding the next time we ran a migration,
+        corrupting their semantics.
+        """
+
+        def _walk() -> list[tuple[str, str]]:
+            collection = self._collection()
+            out: list[tuple[str, str]] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=False,
+            ):
+                props = getattr(obj, "properties", {}) or {}
+                # Strict allow-list: only re-embed rows explicitly marked
+                # as atomic. Missing / falsy tier ⇒ skip (see docstring).
+                if props.get("tier") != "atomic":
+                    continue
+                memory_text = props.get("memory_text") or ""
+                if not memory_text:
+                    continue
+                out.append((str(obj.uuid), memory_text))
+            return out
+
+        return await asyncio.to_thread(_walk)
+
+    async def update_fact_vector(self, weaviate_uuid: str, vector: list[float]) -> None:
+        """Replace the vector on an existing AtomicFact row in place.
+
+        Used by the re-embed migration to swap vectors under a new model
+        without regenerating UUIDs (which would invalidate Neo4j-side
+        ``EpisodicLink.weaviate_fact_id`` foreign keys).
+        """
+        from uuid import UUID
+
+        def _update() -> None:
+            collection = self._collection()
+            collection.data.update(
+                uuid=UUID(weaviate_uuid),
+                vector=vector,
+            )
+
+        await asyncio.to_thread(_update)
+
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all objects for a channel (facts, clusters, summaries).
 

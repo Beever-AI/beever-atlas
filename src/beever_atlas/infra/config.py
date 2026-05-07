@@ -2,7 +2,7 @@
 
 import logging
 from functools import lru_cache
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
@@ -110,7 +110,31 @@ class Settings(BaseSettings):
     max_facts_per_message: int = Field(default=2)
     sync_batch_timeout_seconds: int = Field(default=600)
 
-    # Jina embeddings
+    # ── Embedding (provider-pluggable via LiteLLM) ────────────────────────
+    # Defaults preserve the legacy Jina-v4 @ 2048d behaviour bit-for-bit so
+    # existing installations keep working without a .env edit. Set
+    # EMBEDDING_PROVIDER + EMBEDDING_MODEL + EMBEDDING_DIMENSIONS to switch
+    # providers (OpenAI / Cohere / Voyage / Gemini / Ollama / etc).
+    # Switching on a populated install requires `make reembed-all` first
+    # (the boot-time dim guard refuses to start otherwise).
+    embedding_provider: str = Field(default="jina_ai")
+    embedding_model: str = Field(default="jina-embeddings-v4")
+    embedding_dimensions: int = Field(default=2048)
+    embedding_rpm: int = Field(default=500)
+    embedding_api_base: str = Field(default="")
+    embedding_api_key: str = Field(default="")
+    embedding_task: str = Field(default="text-matching")
+    # Boot-time dimension guard — refuses to start when configured dim
+    # disagrees with the dim already persisted to Weaviate. Set false to
+    # bypass (loud WARN per boot, no abort).
+    embedding_dim_guard: bool = Field(default=True)
+    # In-flight LiteLLM batches during a re-embed migration job.
+    embedding_reembed_concurrency: int = Field(default=4, ge=1, le=16)
+
+    # ── Legacy Jina aliases (DEPRECATED — see Embedding block above) ──────
+    # Loaded for one minor release; an init-time bridge copies these into the
+    # generic embedding_* fields when the new ones are unset, with a
+    # one-shot deprecation warning per field. Removed in v0.3.
     jina_api_url: str = Field(default="https://api.jina.ai/v1/embeddings")
     jina_model: str = Field(default="jina-embeddings-v4")
     jina_dimensions: int = Field(default=2048)
@@ -595,6 +619,76 @@ class Settings(BaseSettings):
     def neo4j_password(self) -> str:
         parts = self.neo4j_auth.split("/", 1)
         return parts[1] if len(parts) > 1 else ""
+
+    # Set of legacy fields that have already emitted a deprecation warning
+    # this process. Populated by ``_bridge_legacy_jina_aliases`` so the
+    # warning fires exactly once per ``(field, env-var)`` rather than on
+    # every Settings re-instantiation in tests.
+    _DEPRECATED_LEGACY_WARNED: "ClassVar[set[str]]" = set()
+
+    @model_validator(mode="after")
+    def _bridge_legacy_jina_aliases(self) -> "Settings":
+        """Copy legacy ``JINA_*`` env values into the generic ``embedding_*``
+        fields when the new env vars are unset.
+
+        Detection:
+          We can't tell from field values alone whether ``embedding_model``
+          equals its default because the operator set it to that, or because
+          it fell through. So we check ``os.environ`` directly for the
+          ``EMBEDDING_*`` form. If it's absent AND the legacy ``JINA_*`` form
+          is present, the bridge copies + warns once.
+
+        Warning policy:
+          One WARN line per ``(legacy_var → new_var)`` pair per process.
+          Tests that re-instantiate Settings won't spam the log.
+
+        Removed in v0.3 — at which point the legacy fields can also be
+        deleted from this Settings class and `.env.example`.
+        """
+        import os
+
+        bridges = (
+            ("EMBEDDING_API_BASE", "JINA_API_URL", "embedding_api_base", "jina_api_url"),
+            ("EMBEDDING_MODEL", "JINA_MODEL", "embedding_model", "jina_model"),
+            ("EMBEDDING_DIMENSIONS", "JINA_DIMENSIONS", "embedding_dimensions", "jina_dimensions"),
+            ("EMBEDDING_RPM", "JINA_RPM", "embedding_rpm", "jina_rpm"),
+        )
+
+        for new_env, legacy_env, new_attr, legacy_attr in bridges:
+            new_in_env = new_env in os.environ
+            legacy_in_env = legacy_env in os.environ
+
+            # Only bridge when the new field is still at its class default —
+            # protects explicit constructor kwargs from being clobbered (test
+            # setups, programmatic overrides). Operators using only env vars
+            # always hit this branch because the new field defaulted in.
+            new_default = Settings.model_fields[new_attr].default
+            new_at_default = getattr(self, new_attr) == new_default
+
+            if not new_in_env and legacy_in_env and new_at_default:
+                legacy_value = getattr(self, legacy_attr)
+                setattr(self, new_attr, legacy_value)
+                marker = f"{legacy_env}->{new_env}"
+                if marker not in Settings._DEPRECATED_LEGACY_WARNED:
+                    Settings._DEPRECATED_LEGACY_WARNED.add(marker)
+                    logger.warning(
+                        "config: %s is deprecated, mapped → %s=%r "
+                        "(remove from .env in v0.3)",
+                        legacy_env,
+                        new_env,
+                        legacy_value,
+                    )
+            elif new_in_env and legacy_in_env:
+                marker = f"{legacy_env}+{new_env}"
+                if marker not in Settings._DEPRECATED_LEGACY_WARNED:
+                    Settings._DEPRECATED_LEGACY_WARNED.add(marker)
+                    logger.warning(
+                        "config: both %s (deprecated) and %s set — using %s",
+                        legacy_env,
+                        new_env,
+                        new_env,
+                    )
+        return self
 
     @model_validator(mode="after")
     def _validate_production(self) -> "Settings":

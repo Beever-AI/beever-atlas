@@ -667,3 +667,63 @@ export interface SyncHistoryEntry {
   started_at: string | null;
   completed_at: string | null;
 }
+
+// --- Embedding settings (PR-E / PR-F) ---
+
+export type EmbeddingProvider =
+  | "jina_ai"
+  | "openai"
+  | "cohere"
+  | "voyage"
+  | "gemini"
+  | "mistral"
+  | "ollama"
+  | "bedrock"
+  | "vertex_ai";
+
+export interface EmbeddingSettings {
+  provider: EmbeddingProvider;
+  model: string;
+  dimensions: number;
+  rpm: number;
+  api_base: string;
+  task: string;
+  has_api_key: boolean;
+  api_key_masked: string;
+  source: "db" | "env" | "default";
+  dim_guard_enabled: boolean;
+  last_probe_at: string | null;
+  last_probe_ok: boolean | null;
+  last_probe_error: string | null;
+}
+
+export interface EmbeddingUpdateRequest {
+  provider?: string;
+  model?: string;
+  dimensions?: number;
+  rpm?: number;
+  api_base?: string;
+  task?: string;
+  api_key?: string;
+  confirm_migration?: boolean;
+}
+
+export interface EmbeddingProbeResult {
+  ok: boolean;
+  dimensions: number | null;
+  latency_ms: number | null;
+  provider: string;
+  model: string;
+  error: string | null;
+}
+
+export interface EmbeddingMigrationStatus {
+  running: boolean;
+  job_id: string | null;
+  stage: string | null;
+  processed: number | null;
+  total: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}

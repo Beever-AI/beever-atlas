@@ -7,6 +7,7 @@ import { FileImportWizard } from "@/components/settings/FileImportWizard";
 import { ManageChannelsDialog } from "@/components/settings/ManageChannelsDialog";
 import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
 import { AgentModelSettings } from "@/components/settings/AgentModelSettings";
+import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
 import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
@@ -151,8 +152,11 @@ export function SettingsPage() {
           {tab === "channels" && <SyncDefaultsSection />}
 
         {tab === "models" && (
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <AgentModelSettings />
+          <div className="space-y-5">
+            <EmbeddingSettings />
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <AgentModelSettings />
+            </div>
           </div>
         )}
       </div>

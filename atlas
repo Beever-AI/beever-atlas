@@ -317,7 +317,70 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
   step "1/4" "Required LLM keys"
   hint "These power extraction, search, and answers. You can skip and add later."
   prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
-  prompt_external_key "JINA_API_KEY"   "Jina v4 embeddings" "https://jina.ai/api-dashboard/"
+  prompt_external_key "JINA_API_KEY"   "Jina v4 embeddings (default provider)" "https://jina.ai/api-dashboard/"
+
+  # Optional: route embedding through a different provider via LiteLLM.
+  # The default Jina v4 path needs no extra config; everything below only
+  # fires when the operator explicitly opts into a different provider.
+  if confirm "N" "Use a different embedding provider (OpenAI / Cohere / Voyage / Gemini / Ollama)?"; then
+    hint "Picks: openai · cohere · voyage · gemini · mistral · ollama"
+    printf "    ${C_DIM}Provider:${C_RESET} "
+    emb_provider=""
+    read -r emb_provider || true
+    emb_provider=$(echo "${emb_provider:-jina_ai}" | tr '[:upper:]' '[:lower:]')
+    case "$emb_provider" in
+      openai)
+        replace_env_value "EMBEDDING_PROVIDER"   "openai"
+        replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-large"
+        replace_env_value "EMBEDDING_DIMENSIONS" "3072"
+        prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
+        ok "EMBEDDING_PROVIDER=openai · text-embedding-3-large @ 3072d"
+        ;;
+      cohere)
+        replace_env_value "EMBEDDING_PROVIDER"   "cohere"
+        replace_env_value "EMBEDDING_MODEL"      "embed-multilingual-v3.0"
+        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+        prompt_external_key "COHERE_API_KEY" "Cohere" "https://dashboard.cohere.com/api-keys"
+        ok "EMBEDDING_PROVIDER=cohere · embed-multilingual-v3.0 @ 1024d"
+        ;;
+      voyage)
+        replace_env_value "EMBEDDING_PROVIDER"   "voyage"
+        replace_env_value "EMBEDDING_MODEL"      "voyage-3-large"
+        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+        prompt_external_key "VOYAGE_API_KEY" "Voyage AI" "https://dash.voyageai.com/"
+        ok "EMBEDDING_PROVIDER=voyage · voyage-3-large @ 1024d"
+        ;;
+      gemini)
+        replace_env_value "EMBEDDING_PROVIDER"   "gemini"
+        replace_env_value "EMBEDDING_MODEL"      "text-embedding-004"
+        replace_env_value "EMBEDDING_DIMENSIONS" "768"
+        # GOOGLE_API_KEY (already prompted above) bridges into GEMINI_API_KEY
+        # for LiteLLM's embedding route.
+        ok "EMBEDDING_PROVIDER=gemini · text-embedding-004 @ 768d (reuses GOOGLE_API_KEY)"
+        ;;
+      mistral)
+        replace_env_value "EMBEDDING_PROVIDER"   "mistral"
+        replace_env_value "EMBEDDING_MODEL"      "mistral-embed"
+        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+        prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
+        ok "EMBEDDING_PROVIDER=mistral · mistral-embed @ 1024d"
+        ;;
+      ollama)
+        replace_env_value "EMBEDDING_PROVIDER"   "ollama"
+        replace_env_value "EMBEDDING_MODEL"      "nomic-embed-text"
+        replace_env_value "EMBEDDING_DIMENSIONS" "768"
+        replace_env_value "EMBEDDING_API_BASE"   "http://localhost:11434"
+        ok "EMBEDDING_PROVIDER=ollama · nomic-embed-text @ 768d (local, no key needed)"
+        warn "Heads-up: Ollama embeddings are English-leaning. Switch to a multilingual model for non-English channels."
+        ;;
+      jina_ai|jina|"")
+        ok "kept default Jina v4 (jina_ai/jina-embeddings-v4 @ 2048d)"
+        ;;
+      *)
+        warn "Unknown provider '${emb_provider}' — left default Jina path. Edit EMBEDDING_PROVIDER in .env to change."
+        ;;
+    esac
+  fi
 fi
 
 # ---------------------------------------------------------------------
@@ -421,7 +484,10 @@ fi
 # "Finalizing secrets" so auto-gen logic sees the correct filled state.
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" = "true" ]; then
-  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY; do
+  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY \
+                       EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS \
+                       EMBEDDING_API_KEY OPENAI_API_KEY COHERE_API_KEY \
+                       VOYAGE_API_KEY MISTRAL_API_KEY; do
     _preseed_val="${!_preseed_key:-}" 2>/dev/null || _preseed_val=""
     if [ -n "$_preseed_val" ]; then
       replace_env_value "$_preseed_key" "$_preseed_val"
