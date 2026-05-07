@@ -32,6 +32,15 @@ jobs:
       BEEVER_ADMIN_TOKEN: ci_admin_token_test
       CREDENTIAL_MASTER_KEY: ci_credential_master_key_32bytes!!
       BEEVER_ENV: development
+      # Smoke verifies that the container boots + health endpoint responds.
+      # The boot-time embedding-provider probe (added with the LiteLLM
+      # embedding feature) requires a real ``JINA_API_KEY`` (or a key for
+      # whichever ``EMBEDDING_PROVIDER`` is configured), which CI does NOT
+      # have. Disable the dim guard so the smoke test continues to test
+      # what it's supposed to: container plumbing. Production installs MUST
+      # leave this on — it's the safety net against silently corrupting
+      # hybrid search by mixing dimensions.
+      EMBEDDING_DIM_GUARD: "false"
 
     steps:
       - name: Checkout
