@@ -144,10 +144,7 @@ class TestEmbeddingSettings:
             s = Settings()
 
         assert s.embedding_model == "jina-embeddings-v4"
-        assert any(
-            "JINA_MODEL" in rec.message and "using" in rec.message
-            for rec in caplog.records
-        )
+        assert any("JINA_MODEL" in rec.message and "using" in rec.message for rec in caplog.records)
 
     def test_deprecation_warning_fires_once_per_process(self, monkeypatch, caplog):
         """``_DEPRECATED_LEGACY_WARNED`` keeps the WARN to one fire per pair."""

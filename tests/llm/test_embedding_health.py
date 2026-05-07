@@ -117,7 +117,11 @@ async def test_probe_dim_disagrees_with_configured_aborts(monkeypatch):
 @pytest.mark.asyncio
 async def test_dim_mismatch_with_populated_weaviate_aborts(monkeypatch):
     """Configured 3072 vs persisted 2048 + 12,847 facts → fatal."""
-    cfg = _settings(embedding_dimensions=3072, embedding_model="text-embedding-3-large", embedding_provider="openai")
+    cfg = _settings(
+        embedding_dimensions=3072,
+        embedding_model="text-embedding-3-large",
+        embedding_provider="openai",
+    )
     stores = _stores(
         persisted_meta={
             "provider": "jina_ai",
@@ -143,7 +147,11 @@ async def test_dim_mismatch_with_populated_weaviate_aborts(monkeypatch):
 @pytest.mark.asyncio
 async def test_dim_mismatch_on_empty_weaviate_is_allowed(monkeypatch):
     """Empty Weaviate → mismatch is OK, meta gets updated."""
-    cfg = _settings(embedding_dimensions=3072, embedding_model="text-embedding-3-large", embedding_provider="openai")
+    cfg = _settings(
+        embedding_dimensions=3072,
+        embedding_model="text-embedding-3-large",
+        embedding_provider="openai",
+    )
     stores = _stores(
         persisted_meta={
             "provider": "jina_ai",
@@ -193,16 +201,17 @@ async def test_dim_guard_off_warns_and_continues(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="beever_atlas.llm.embedding_health"):
         await probe_and_validate(cfg, stores)
 
-    assert any(
-        "DIM_GUARD" in rec.message or "12,847" in rec.message
-        for rec in caplog.records
-    )
+    assert any("DIM_GUARD" in rec.message or "12,847" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
 async def test_weaviate_unreachable_skips_count_check(monkeypatch):
     """Weaviate ``count_facts`` raising → guard logs WARN + boots."""
-    cfg = _settings(embedding_dimensions=3072, embedding_model="text-embedding-3-large", embedding_provider="openai")
+    cfg = _settings(
+        embedding_dimensions=3072,
+        embedding_model="text-embedding-3-large",
+        embedding_provider="openai",
+    )
 
     from types import SimpleNamespace
 
@@ -217,9 +226,7 @@ async def test_weaviate_unreachable_skips_count_check(monkeypatch):
         set_embedding_meta=AsyncMock(),
     )
 
-    weaviate = SimpleNamespace(
-        count_facts=AsyncMock(side_effect=ConnectionError("weaviate down"))
-    )
+    weaviate = SimpleNamespace(count_facts=AsyncMock(side_effect=ConnectionError("weaviate down")))
     stores = SimpleNamespace(mongodb=mongodb, weaviate=weaviate)
 
     async def fake_probe(_settings):

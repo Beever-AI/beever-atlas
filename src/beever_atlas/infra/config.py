@@ -672,8 +672,7 @@ class Settings(BaseSettings):
                 if marker not in Settings._DEPRECATED_LEGACY_WARNED:
                     Settings._DEPRECATED_LEGACY_WARNED.add(marker)
                     logger.warning(
-                        "config: %s is deprecated, mapped → %s=%r "
-                        "(remove from .env in v0.3)",
+                        "config: %s is deprecated, mapped → %s=%r (remove from .env in v0.3)",
                         legacy_env,
                         new_env,
                         legacy_value,

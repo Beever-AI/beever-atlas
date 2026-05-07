@@ -140,13 +140,12 @@ async def _decrypt_db_key() -> str | None:
     except RuntimeError as exc:
         # Master key missing or invalid — fail closed.
         raise HTTPException(
-            status_code=503, detail={"error": "credential_encryptor_unavailable", "message": str(exc)}
+            status_code=503,
+            detail={"error": "credential_encryptor_unavailable", "message": str(exc)},
         ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("embedding_settings: failed to decrypt stored key")
-        raise HTTPException(
-            status_code=503, detail={"error": "credential_decrypt_failed"}
-        ) from exc
+        raise HTTPException(status_code=503, detail={"error": "credential_decrypt_failed"}) from exc
 
 
 async def _resolve_effective_settings() -> tuple[Any, str, str]:
@@ -462,9 +461,7 @@ async def start_migration(req: MigrateRequest) -> MigrateResponse:
 
     existing = _active_migration.get("task")
     if existing is not None and not existing.done():
-        return MigrateResponse(
-            job_id=_active_migration["job_id"], status="running_existing"
-        )
+        return MigrateResponse(job_id=_active_migration["job_id"], status="running_existing")
 
     job_id = str(uuid.uuid4())
     _active_migration["job_id"] = job_id

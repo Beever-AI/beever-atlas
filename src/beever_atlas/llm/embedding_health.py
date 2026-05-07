@@ -126,8 +126,7 @@ async def _safe_set_meta(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "embedding_health: failed to persist embedding_meta "
-            "(non-fatal): %s",
+            "embedding_health: failed to persist embedding_meta (non-fatal): %s",
             exc,
         )
 
@@ -164,8 +163,7 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
             return health
         raise EmbeddingDimensionMismatch(
             "Embedding probe failed: %s. Cannot validate provider configuration. "
-            "Fix credentials/network or set EMBEDDING_DIM_GUARD=false to bypass."
-            % health.error
+            "Fix credentials/network or set EMBEDDING_DIM_GUARD=false to bypass." % health.error
         )
 
     # Probe succeeded with some dimension. Compare against config.
