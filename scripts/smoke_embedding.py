@@ -151,7 +151,7 @@ def step_get_config() -> dict | None:
     _ok(
         "response shape ok",
         f"provider={body['provider']} model={body['model']} dim={body['dimensions']} "
-        f"source={body['source']} has_api_key={body['has_api_key']}",
+        f"source={body['source']}",
     )
     # Plaintext-leak check: response must not contain a long string that looks
     # like an unmasked API key (heuristic: 30+ chars without ellipsis).
@@ -275,11 +275,11 @@ def step_get_after_save() -> None:
         return
     masked = body.get("api_key_masked", "")
     if body.get("has_api_key") and len(masked) <= 12 and "..." in masked:
-        _ok("api_key_masked still masked", f"value={masked!r}")
+        _ok("api_key_masked still masked")
     elif not body.get("has_api_key"):
         _ok("no api key configured (nothing to mask)")
     else:
-        _fail("api_key_masked unexpected shape", f"value={masked!r}")
+        _fail("api_key_masked unexpected shape")
 
 
 # ─── Entry ─────────────────────────────────────────────────────────────
