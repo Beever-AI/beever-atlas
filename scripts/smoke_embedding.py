@@ -121,18 +121,19 @@ def step_health() -> None:
     _section(1, "Backend health")
     status, body = _request("GET", "/api/health")
     if status == 200 and isinstance(body, dict) and body.get("status") == "healthy":
-        _ok("backend reports healthy", f"components={list((body.get('components') or {}).keys())}")
+        component_keys = list((body.get("components") or {}).keys())
+        _ok("backend reports healthy", f"component_count={len(component_keys)}")
     elif status == 200 and isinstance(body, dict):
-        _fail("backend NOT healthy", f"status={body.get('status')!r}")
+        _fail("backend NOT healthy", f"reported_status={body.get('status')!r}")
     else:
-        _fail("/api/health did not respond", f"status={status} body={str(body)[:120]}")
+        _fail("/api/health did not respond", f"http_status={status}")
 
 
 def step_get_config() -> dict | None:
     _section(2, "GET /api/settings/embedding")
     status, body = _request("GET", "/api/settings/embedding")
     if status != 200 or not isinstance(body, dict):
-        _fail("GET failed", f"status={status} body={str(body)[:120]}")
+        _fail("GET failed", f"http_status={status}")
         return None
     needed = (
         "provider",
@@ -148,6 +149,10 @@ def step_get_config() -> dict | None:
     if missing:
         _fail("response missing fields", f"missing={missing}")
         return None
+    # Print only non-sensitive structural fields. ``has_api_key`` /
+    # ``api_key_masked`` are derived from the encrypted secret and CodeQL
+    # taint-tracks them; we hold the value in ``body`` for downstream
+    # logic but do NOT include them in human-readable output.
     _ok(
         "response shape ok",
         f"provider={body['provider']} model={body['model']} dim={body['dimensions']} "
@@ -162,7 +167,10 @@ def step_get_config() -> dict | None:
         if len(s) >= 30 and "..." not in s and (s.startswith("sk-") or s.startswith("jina_"))
     ]
     if suspicious_keys:
-        _fail("possible plaintext key leaked", f"sample={suspicious_keys[0][:30]}…")
+        # Do NOT print the suspicious string itself (would defeat the test);
+        # just count occurrences so the operator knows to inspect the body
+        # via curl manually.
+        _fail("possible plaintext key leaked", f"matches={len(suspicious_keys)}")
     else:
         _ok("no plaintext key in response")
     return body
@@ -195,7 +203,10 @@ def step_test_connection(current: dict | None) -> None:
             f"probed={body.get('dimensions')} configured={current.get('dimensions')}",
         )
     else:
-        _fail("probe failed", f"error={body.get('error')!r}")
+        # Provider error strings can occasionally echo our request — print
+        # only a short prefix and the error type, never the full payload.
+        err = str(body.get("error") or "")[:80]
+        _fail("probe failed", f"error_prefix={err!r}")
 
 
 def step_migration_status() -> None:
@@ -232,7 +243,7 @@ def step_search() -> None:
             "(unexpected: step 4 should have already flagged this)",
         )
     elif status == 503:
-        _fail("search returned 503 — embedding service unavailable", str(body)[:120])
+        _fail("search returned 503 — embedding service unavailable")
     elif status == 500:
         # 500 here means the embedding succeeded but the downstream
         # ``pseudo_hybrid_search`` call failed — typically the Weaviate
@@ -244,7 +255,7 @@ def step_search() -> None:
             "expected when Weaviate has no facts in the empty-channel slice",
         )
     else:
-        _fail("unexpected response", f"status={status} body={str(body)[:120]}")
+        _fail("unexpected response", f"http_status={status}")
 
 
 def step_idempotent_save(current: dict | None) -> None:
@@ -264,22 +275,38 @@ def step_idempotent_save(current: dict | None) -> None:
     if status == 200 and isinstance(body, dict) and body.get("dimensions") == current["dimensions"]:
         _ok("PUT round-trip ok (cache should have been busted server-side)")
     else:
-        _fail("PUT failed or returned unexpected dim", f"status={status} body={str(body)[:120]}")
+        echoed_dim = body.get("dimensions") if isinstance(body, dict) else None
+        _fail(
+            "PUT failed or returned unexpected dim",
+            f"http_status={status} echoed_dim={echoed_dim} expected={current['dimensions']}",
+        )
 
 
 def step_get_after_save() -> None:
     _section(7, "GET /api/settings/embedding  (re-fetch confirms masking still in effect)")
     status, body = _request("GET", "/api/settings/embedding")
     if status != 200 or not isinstance(body, dict):
-        _fail("GET failed", f"status={status}")
+        _fail("GET failed", f"http_status={status}")
         return
     masked = body.get("api_key_masked", "")
-    if body.get("has_api_key") and len(masked) <= 12 and "..." in masked:
-        _ok("api_key_masked still masked")
-    elif not body.get("has_api_key"):
+    has_key = bool(body.get("has_api_key"))
+    # NEVER print the masked value itself — even though it's already
+    # truncated server-side, CodeQL taint-tracks it from the encrypted
+    # secret. Print only structural shape: length + presence of ellipsis
+    # (both ints/bools — non-leaking by construction).
+    has_ellipsis = "..." in masked
+    if has_key and len(masked) <= 12 and has_ellipsis:
+        _ok(
+            "api_key_masked still masked",
+            f"len={len(masked)} contains_ellipsis={has_ellipsis}",
+        )
+    elif not has_key:
         _ok("no api key configured (nothing to mask)")
     else:
-        _fail("api_key_masked unexpected shape")
+        _fail(
+            "api_key_masked unexpected shape",
+            f"len={len(masked)} contains_ellipsis={has_ellipsis}",
+        )
 
 
 # ─── Entry ─────────────────────────────────────────────────────────────
