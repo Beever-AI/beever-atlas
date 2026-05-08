@@ -307,6 +307,25 @@ class ExtractionWorker:
             ok, fail = result
             counters["succeeded"] += ok
             counters["failed"] += fail
+
+        # Re-derive the user-facing sync_jobs row's progress from the
+        # extraction-status counts on channel_messages. The decoupled
+        # worker uses a synthetic sync_job_id so BatchProcessor's
+        # ``update_sync_progress`` calls land on a row that nobody
+        # reads — without this refresh, ``processed_messages`` stays
+        # at 0 and ``current_stage`` stays empty for the entire run.
+        # Done once per tick (not per batch) to bound mongo write load.
+        for ch_id in by_channel.keys():
+            try:
+                await stores_ref.mongodb.refresh_sync_progress_for_channel(ch_id)
+            except Exception:
+                # Progress refresh is best-effort observability — never
+                # let a transient mongo blip break the worker tick.
+                logger.exception(
+                    "ExtractionWorker: refresh_sync_progress_for_channel raised channel=%s",
+                    ch_id,
+                )
+
         logger.info(
             "ExtractionWorker: tick complete claimed=%d succeeded=%d failed=%d channels=%d",
             counters["claimed"],

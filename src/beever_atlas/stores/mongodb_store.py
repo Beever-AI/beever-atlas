@@ -286,6 +286,64 @@ class MongoDBStore:
 
         await self._sync_jobs.update_one({"id": job_id}, ops)
 
+    async def refresh_sync_progress_for_channel(self, channel_id: str) -> None:
+        """Patch the latest ``sync_jobs`` row's progress fields from the
+        ``channel_messages.extraction_status`` source of truth.
+
+        The decoupled-mode ``ExtractionWorker`` doesn't have a direct
+        update path to ``sync_jobs`` — it synthesises a per-tick
+        ``worker:<channel>:<ts>`` id and feeds the BatchProcessor with
+        that, so ``BatchProcessor.update_sync_progress`` writes go to
+        a synthetic id that nobody reads. The user-facing sync_jobs
+        row therefore stays at ``processed_messages=0`` /
+        ``current_stage=""`` for the entire run, even when extraction is
+        actively producing facts.
+
+        This helper is the bridge: it aggregates counts from the
+        durable ``channel_messages`` collection (the actual source of
+        truth) and patches the most recent sync row for the channel.
+        Idempotent — safe to call after every worker batch.
+        """
+        pipeline = [
+            {"$match": {"channel_id": channel_id}},
+            {"$group": {"_id": "$extraction_status", "count": {"$sum": 1}}},
+        ]
+        counts: dict[str, int] = {}
+        async for doc in self._channel_messages.aggregate(pipeline):
+            status = doc.get("_id") or "unknown"
+            counts[str(status)] = int(doc.get("count") or 0)
+
+        done = counts.get("done", 0)
+        extracting = counts.get("extracting", 0)
+        pending = counts.get("pending", 0)
+        failed = counts.get("failed", 0)
+
+        if extracting > 0:
+            stage = f"Extracting — {extracting} in flight"
+        elif pending > 0:
+            stage = f"Queued — {pending} pending"
+        elif failed > 0 and done == 0:
+            stage = f"Extraction failed — {failed} rows"
+        else:
+            stage = "Extraction complete"
+
+        # ``sort=[("created_at", -1)]`` picks the most-recent sync row
+        # so re-triggering a sync naturally retargets the new row.
+        # ``find_one_and_update`` (not ``update_one``) is the only motor
+        # call that supports sort — needed because we have no other way
+        # to disambiguate when multiple sync rows exist per channel.
+        await self._sync_jobs.find_one_and_update(
+            {"channel_id": channel_id, "kind": "sync"},
+            {
+                "$set": {
+                    "processed_messages": done,
+                    "current_stage": stage,
+                },
+                "$inc": {"version": 1},
+            },
+            sort=[("created_at", -1)],
+        )
+
     async def set_sync_job_totals(
         self,
         job_id: str,
