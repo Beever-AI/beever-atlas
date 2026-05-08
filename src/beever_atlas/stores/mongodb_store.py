@@ -286,6 +286,36 @@ class MongoDBStore:
 
         await self._sync_jobs.update_one({"id": job_id}, ops)
 
+    async def set_sync_job_totals(
+        self,
+        job_id: str,
+        total_messages: int,
+        parent_messages: int,
+        sync_type: str | None = None,
+    ) -> None:
+        """Patch a sync job's message totals after creation.
+
+        Used by the async sync-trigger path: the API endpoint creates a
+        placeholder job row (total_messages=0) and returns immediately
+        with the job_id, then a background task does the slow bridge
+        fetch and calls this method to fill in the real totals before
+        the pipeline starts processing.
+
+        ``sync_type`` is optional because the type may be promoted from
+        ``incremental`` to ``full`` mid-fetch (when an incremental sync
+        finds zero new messages and falls back to a full re-pull).
+        """
+        update: dict[str, Any] = {
+            "total_messages": total_messages,
+            "parent_messages": parent_messages,
+        }
+        if sync_type is not None:
+            update["sync_type"] = sync_type
+        await self._sync_jobs.update_one(
+            {"id": job_id},
+            {"$set": update, "$inc": {"version": 1}},
+        )
+
     async def update_batch_stage(
         self,
         job_id: str,

@@ -257,69 +257,145 @@ class SyncRunner:
                     owner_principal_id=owner_principal_id,
                 )
 
-        adapter = (
-            ChatBridgeAdapter(connection_id=resolved_connection_id)
-            if resolved_connection_id
-            else get_adapter()
-        )
-        try:
-            logger.info(
-                "SyncRunner: fetch start channel=%s connection_id=%s resolved_type=%s since=%s max_messages=%s",
-                channel_id,
-                resolved_connection_id,
-                resolved_type,
-                since,
-                _max_messages,
-            )
-            messages = await self._fetch_all_messages(
-                channel_id, adapter=adapter, since=since, max_messages=_max_messages
-            )
-
-            # If incremental sync found nothing, auto-fallback to full sync
-            if not messages and resolved_type == "incremental":
-                logger.info(
-                    "SyncRunner: incremental sync found no new messages for channel %s, falling back to full sync.",
-                    channel_id,
-                )
-                resolved_type = "full"
-                since = None
-                messages = await self._fetch_all_messages(
-                    channel_id, adapter=adapter, since=None, max_messages=_max_messages
-                )
-
-            if not messages:
-                logger.info(
-                    "SyncRunner: no messages for channel %s (%s sync).",
-                    channel_id,
-                    resolved_type,
-                )
-
-            # 4. Fetch thread replies for messages with reply_count > 0.
-            parent_count = len(messages)
-            messages = await self._fetch_thread_replies(channel_id, messages, adapter=adapter)
-
-            # 5. Get channel info for the human-readable name.
-            channel_info = await adapter.get_channel_info(channel_id)
-            channel_name = channel_info.name
-        finally:
-            if isinstance(adapter, ChatBridgeAdapter):
-                await adapter.close()
-
-        # 6. Create sync job in MongoDB.
+        # 3b. Create a placeholder sync job row IMMEDIATELY so the API
+        # caller can return ``job_id`` without waiting on the bridge.
+        # The bridge fetch (history pages + thread replies + channel
+        # info) typically takes 5-30s for non-trivial channels —
+        # the frontend's HTTP timeout is shorter than that and would
+        # otherwise surface a misleading "Sync failed: Request timed
+        # out" banner while the sync was, in fact, healthy.
+        #
+        # ``total_messages`` and ``parent_messages`` start at 0 and are
+        # patched by ``_fetch_then_run`` once the fetch returns the real
+        # counts. The frontend already polls /sync/status, so it sees
+        # the totals appear within a few seconds.
         job = await stores.mongodb.create_sync_job(
             channel_id=channel_id,
             sync_type=resolved_type,
-            total_messages=len(messages),
-            parent_messages=parent_count,
+            total_messages=0,
+            parent_messages=0,
             batch_size=settings.sync_batch_size,
             owner_principal_id=owner_principal_id,
             kind="sync",
         )
         job_id: str = job.id
 
-        # 7. Launch background task and track it.
+        logger.info(
+            "SyncRunner: queued %s sync for channel %s — job_id=%s; bridge fetch runs in background.",
+            resolved_type,
+            channel_id,
+            job_id,
+        )
+
+        # 4. Launch the fetch+run pipeline as a background task and
+        #    track it so concurrent ``start_sync`` calls for the same
+        #    channel can be rejected.
         task = asyncio.create_task(
-            self._run_sync(
+            self._fetch_then_run(
+                job_id=job_id,
+                channel_id=channel_id,
+                resolved_connection_id=resolved_connection_id,
+                resolved_type=resolved_type,
+                since=since,
+                max_messages=_max_messages,
+                use_batch_api=use_batch_api,
+            )
+        )
+        self._active_tasks[channel_id] = task
+
+        return job_id
+
+    async def _fetch_then_run(
+        self,
+        *,
+        job_id: str,
+        channel_id: str,
+        resolved_connection_id: str | None,
+        resolved_type: str,
+        since: datetime | str | None,
+        max_messages: int | None,
+        use_batch_api: bool,
+    ) -> None:
+        """Fetch bridge messages then run the pipeline (background task).
+
+        Split out from ``start_sync`` so the API endpoint returns the
+        ``job_id`` without blocking on the bridge — see the comment in
+        ``start_sync`` for the full rationale.
+
+        Errors here mark the job as ``failed`` so the UI surfaces a real
+        failure instead of an indefinite "running" state. The exception
+        is swallowed because this runs as an asyncio Task; re-raising
+        would land in the loop's default exception handler with a stack
+        trace but no UI signal.
+        """
+        stores = get_stores()
+        try:
+            adapter = (
+                ChatBridgeAdapter(connection_id=resolved_connection_id)
+                if resolved_connection_id
+                else get_adapter()
+            )
+            try:
+                logger.info(
+                    "SyncRunner: fetch start channel=%s connection_id=%s resolved_type=%s since=%s max_messages=%s",
+                    channel_id,
+                    resolved_connection_id,
+                    resolved_type,
+                    since,
+                    max_messages,
+                )
+                messages = await self._fetch_all_messages(
+                    channel_id, adapter=adapter, since=since, max_messages=max_messages
+                )
+
+                # If incremental sync found nothing, auto-fallback to full sync
+                if not messages and resolved_type == "incremental":
+                    logger.info(
+                        "SyncRunner: incremental sync found no new messages for channel %s, falling back to full sync.",
+                        channel_id,
+                    )
+                    resolved_type = "full"
+                    messages = await self._fetch_all_messages(
+                        channel_id, adapter=adapter, since=None, max_messages=max_messages
+                    )
+
+                if not messages:
+                    logger.info(
+                        "SyncRunner: no messages for channel %s (%s sync).",
+                        channel_id,
+                        resolved_type,
+                    )
+
+                # Fetch thread replies for messages with reply_count > 0.
+                parent_count = len(messages)
+                messages = await self._fetch_thread_replies(channel_id, messages, adapter=adapter)
+
+                # Resolve human-readable channel name.
+                channel_info = await adapter.get_channel_info(channel_id)
+                channel_name = channel_info.name
+            finally:
+                if isinstance(adapter, ChatBridgeAdapter):
+                    await adapter.close()
+
+            # Patch the placeholder job row with the actual totals + the
+            # final sync_type (which may have been promoted from
+            # ``incremental`` to ``full`` above).
+            await stores.mongodb.set_sync_job_totals(
+                job_id=job_id,
+                total_messages=len(messages),
+                parent_messages=parent_count,
+                sync_type=resolved_type,
+            )
+
+            logger.info(
+                "SyncRunner: started %s sync for channel %s — job_id=%s, %d messages to process.",
+                resolved_type,
+                channel_id,
+                job_id,
+                len(messages),
+            )
+
+            await self._run_sync(
                 job_id=job_id,
                 channel_id=channel_id,
                 channel_name=channel_name,
@@ -328,18 +404,23 @@ class SyncRunner:
                 sync_type=resolved_type,
                 use_batch_api=use_batch_api,
             )
-        )
-        self._active_tasks[channel_id] = task
-
-        logger.info(
-            "SyncRunner: started %s sync for channel %s — job_id=%s, %d messages to process.",
-            resolved_type,
-            channel_id,
-            job_id,
-            len(messages),
-        )
-
-        return job_id
+        except Exception as exc:  # noqa: BLE001 — background task: catch-all is the contract
+            logger.exception(
+                "SyncRunner._fetch_then_run failed job_id=%s channel=%s",
+                job_id,
+                channel_id,
+            )
+            try:
+                await stores.mongodb.complete_sync_job(
+                    job_id=job_id,
+                    status="failed",
+                    errors=[f"fetch_or_run_failed: {exc!s}"],
+                    failed_stage="fetch",
+                )
+            except Exception:
+                logger.exception(
+                    "SyncRunner: also failed to mark job %s as failed", job_id
+                )
 
     async def _fetch_all_messages(
         self,
