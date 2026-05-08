@@ -8,10 +8,11 @@
 #
 # What it does (in order):
 #   Prerequisites → .env bootstrap →
-#   Step 1/4  Required LLM keys      (Google Gemini, Jina)
-#   Step 2/4  Optional integrations  (Tavily, Ollama, MCP server)
-#   Step 3/4  Graph backend          (neo4j or none)
-#   Step 4/4  Auth tokens            (keep dev defaults or rotate)
+#   Step 1/5  Embedding model        (pick provider, then its key)
+#   Step 2/5  Agent LLM              (Google Gemini)
+#   Step 3/5  Graph backend          (neo4j or none)
+#   Step 4/5  Optional integrations  (Tavily, Ollama, MCP server)
+#   Step 5/5  Auth tokens            (keep dev defaults or rotate)
 #   Auto-gen secrets → docker compose up -d
 #
 # Defaults are tuned for local dev: pressing Enter through every prompt
@@ -73,8 +74,21 @@ check_port() {
 # Banner
 # ---------------------------------------------------------------------
 printf "\n"
-printf "  ${C_BOLD}Beever Atlas${C_RESET} ${C_DIM}· Setup${C_RESET}\n"
-printf "  "; rule
+printf "  ${C_CYAN}═══════════════════════════════════════════════════════════════════════════════════════════════${C_RESET}\n"
+printf "\n"
+printf "    ${C_BOLD}${C_CYAN}██████╗ ███████╗███████╗██╗   ██╗███████╗██████╗      █████╗ ████████╗██╗      █████╗ ███████╗${C_RESET}\n"
+printf "    ${C_BOLD}${C_CYAN}██╔══██╗██╔════╝██╔════╝██║   ██║██╔════╝██╔══██╗    ██╔══██╗╚══██╔══╝██║     ██╔══██╗██╔════╝${C_RESET}\n"
+printf "    ${C_BOLD}${C_CYAN}██████╔╝█████╗  █████╗  ██║   ██║█████╗  ██████╔╝    ███████║   ██║   ██║     ███████║███████╗${C_RESET}\n"
+printf "    ${C_BOLD}${C_CYAN}██╔══██╗██╔══╝  ██╔══╝  ╚██╗ ██╔╝██╔══╝  ██╔══██╗    ██╔══██║   ██║   ██║     ██╔══██║╚════██║${C_RESET}\n"
+printf "    ${C_BOLD}${C_CYAN}██████╔╝███████╗███████╗ ╚████╔╝ ███████╗██║  ██║    ██║  ██║   ██║   ███████╗██║  ██║███████║${C_RESET}\n"
+printf "    ${C_BOLD}${C_CYAN}╚═════╝ ╚══════╝╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝    ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝${C_RESET}\n"
+printf "\n"
+printf "    ${C_BOLD}Self-hosted memory + LLM Wiki for chat-based teams${C_RESET}\n"
+printf "    ${C_DIM}Slack · Discord · OpenClaw · Hermes Agents${C_RESET}\n"
+printf "\n"
+printf "  ${C_CYAN}════════════════════════════════ ${C_RESET}${C_BOLD}Local installer · ~2 minutes${C_RESET} ${C_CYAN}═════════════════════════════════${C_RESET}\n"
+printf "  ${C_DIM}Press Enter at any prompt to accept the default — safe for local.${C_RESET}\n"
+printf "\n"
 
 # ---------------------------------------------------------------------
 # 1. Argument parsing
@@ -228,6 +242,114 @@ confirm() {
   esac
 }
 
+# Arrow-key menu picker. Returns the chosen 1-based index via global $REPLY.
+#
+# Args:  default_idx_1based  item1  item2  ...
+#
+# Bindings: ↑/↓/k/j move · Home/End jump · Enter selects · Esc/q keeps default
+#
+# Falls back to a typed-number prompt (preserving prior UX) when:
+#   * stdin or stdout is not a TTY (CI, piped input, redirected output)
+#   * ``tput`` is unavailable (no ncurses)
+#   * ``ATLAS_NO_TUI=1`` is set (operator escape hatch)
+#
+# Each item is printed verbatim, so callers can embed colour escapes inline.
+# The picker hides the cursor while interactive and restores it on every exit
+# path (including SIGINT/SIGTERM) via a trap.
+pick_menu() {
+  local _pm_default="$1"; shift
+  local _pm_items=("$@")
+  local _pm_n=${#_pm_items[@]}
+
+  # Fallback: behaves like the original numbered prompt.
+  if [ ! -t 0 ] || [ ! -t 1 ] || [ "${ATLAS_NO_TUI:-}" = "1" ] || ! command -v tput >/dev/null 2>&1; then
+    local _pm_i=1
+    local _pm_item
+    for _pm_item in "${_pm_items[@]}"; do
+      printf "    ${C_BOLD}%d)${C_RESET} %s\n" "$_pm_i" "$_pm_item"
+      _pm_i=$((_pm_i + 1))
+    done
+    printf "\n    ${C_DIM}Choice [%s]:${C_RESET} " "$_pm_default"
+    local _pm_reply=""
+    read -r _pm_reply || true
+    REPLY="${_pm_reply:-$_pm_default}"
+    return 0
+  fi
+
+  local _pm_idx=$((_pm_default - 1))
+  [ "$_pm_idx" -lt 0 ] && _pm_idx=0
+  [ "$_pm_idx" -ge "$_pm_n" ] && _pm_idx=$((_pm_n - 1))
+
+  # Cursor restoration is critical — the picker hides the cursor while drawing.
+  # If the user hits Ctrl+C or the script crashes mid-loop without this trap
+  # the terminal is left without a visible cursor until ``tput cnorm`` is run
+  # manually (or the shell is reset).
+  trap 'tput cnorm 2>/dev/null' EXIT INT TERM
+  tput civis
+
+  local _pm_first=true
+  local _pm_item _pm_i
+
+  _pm_draw() {
+    if [ "$_pm_first" = "false" ]; then
+      tput cuu "$_pm_n"
+    fi
+    _pm_first=false
+    _pm_i=0
+    for _pm_item in "${_pm_items[@]}"; do
+      tput el
+      if [ "$_pm_i" -eq "$_pm_idx" ]; then
+        printf "  ${C_CYAN}▶${C_RESET} ${C_BOLD}%s${C_RESET}\n" "$_pm_item"
+      else
+        printf "    %s\n" "$_pm_item"
+      fi
+      _pm_i=$((_pm_i + 1))
+    done
+  }
+  _pm_draw
+
+  local _pm_key _pm_ext _pm_result=""
+  while [ -z "$_pm_result" ]; do
+    _pm_key=""
+    IFS= read -rsn1 _pm_key || true
+    case "$_pm_key" in
+      $'\e')  # ESC — could be a plain Esc or the start of an arrow sequence.
+        # Byte-by-byte reads: more robust than ``read -rsn2`` because some
+        # TTY emulations (expect, mosh, slow ssh) can drop the second byte
+        # if both are demanded in a single read call. ``-t 1`` (integer,
+        # not 0.5 — bash 3.2 on macOS rejects fractional timeouts with
+        # "invalid timeout specification" so the read fails open and the
+        # arrow looks like a plain Esc). 1-second cap on plain-Esc
+        # detection is below human reaction time, so harmless.
+        _pm_b1=""; _pm_b2=""
+        IFS= read -rsn1 -t 1 _pm_b1 2>/dev/null || _pm_b1=""
+        case "$_pm_b1" in
+          '['|'O')
+            IFS= read -rsn1 -t 1 _pm_b2 2>/dev/null || _pm_b2=""
+            case "$_pm_b2" in
+              A) [ "$_pm_idx" -gt 0 ] && _pm_idx=$((_pm_idx - 1)) ;;        # up
+              B) [ "$_pm_idx" -lt $((_pm_n - 1)) ] && _pm_idx=$((_pm_idx + 1)) ;; # down
+              H) _pm_idx=0 ;;                                                # home
+              F) _pm_idx=$((_pm_n - 1)) ;;                                   # end
+            esac
+            ;;
+          '') _pm_result="$_pm_default" ;;  # plain Esc
+        esac
+        ;;
+      ''|$'\n'|$'\r') _pm_result=$((_pm_idx + 1)) ;;
+      k|K)            [ "$_pm_idx" -gt 0 ] && _pm_idx=$((_pm_idx - 1)) ;;
+      j|J)            [ "$_pm_idx" -lt $((_pm_n - 1)) ] && _pm_idx=$((_pm_idx + 1)) ;;
+      q|Q)            _pm_result="$_pm_default" ;;
+    esac
+    [ -z "$_pm_result" ] && _pm_draw
+  done
+
+  tput cnorm
+  trap - EXIT INT TERM
+  REPLY="$_pm_result"
+  return 0
+}
+
 # External-provider key prompt: user pastes or presses Enter to skip.
 # Falls back to shell env var if the user presses Enter and the env var is set.
 prompt_external_key() {
@@ -311,78 +433,117 @@ if [ "$NON_INTERACTIVE" = "true" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# Step 1 · Required LLM keys (external providers, paste or skip)
+# Per-step recap collected here, printed in a "Configuration summary"
+# block right before launch so operators can verify the .env they just
+# wrote without scrolling back through the prompts.
+# ---------------------------------------------------------------------
+_atlas_summary=()
+
+# ---------------------------------------------------------------------
+# Step 1 · Embedding model — pick the provider FIRST, then prompt only
+# its API key. Avoids the old "paste two keys then choose" trap where
+# users entered a Jina key only to switch to OpenAI on the next prompt.
+#
+# Uses pick_menu (arrow-key picker) when the terminal supports it;
+# falls back to the typed-number prompt automatically otherwise.
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" != "true" ]; then
-  step "1/4" "Required LLM keys"
-  hint "These power extraction, search, and answers. You can skip and add later."
-  prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
-  prompt_external_key "JINA_API_KEY"   "Jina v4 embeddings (default provider)" "https://jina.ai/api-dashboard/"
+  step "1/5" "Embedding model"
+  hint "Each chat message becomes a vector — this powers hybrid search."
+  hint "Pick the provider you want; you can switch any time in Settings → Embedding."
+  hint "${C_DIM}↑/↓ to move · Enter to select · Esc/q to keep default${C_RESET}"
+  printf "\n"
 
-  # ── Embedding provider menu (OpenClaw-style numbered grid) ──────────
-  # The default Jina v4 path needs no extra config — pressing Enter
-  # at the prompt below keeps it. Otherwise pick a number 2-8 to switch.
-  printf "\n"
-  hint "Choose your embedding provider (default 1: Jina multilingual)"
-  printf "\n"
-  printf "    ${C_BOLD}1)${C_RESET} Jina v4              ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok  ${C_DIM}[default]${C_RESET}\n"
-  printf "    ${C_BOLD}2)${C_RESET} OpenAI 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.13/1M tok\n"
-  printf "    ${C_BOLD}3)${C_RESET} OpenAI 3-small       ${C_GREEN}multilingual${C_RESET}    ~\$0.02/1M tok  ${C_DIM}cheapest cloud${C_RESET}\n"
-  printf "    ${C_BOLD}4)${C_RESET} Voyage 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok\n"
-  printf "    ${C_BOLD}5)${C_RESET} Cohere multi-v3      ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok\n"
-  printf "    ${C_BOLD}6)${C_RESET} Gemini emb-004       ${C_GREEN}multilingual${C_RESET}    ~\$0.025/1M tok ${C_DIM}reuses GOOGLE_API_KEY${C_RESET}\n"
-  printf "    ${C_BOLD}7)${C_RESET} Mistral embed        ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok\n"
-  printf "    ${C_BOLD}8)${C_RESET} Ollama nomic         ${C_YELLOW}English-leaning${C_RESET} ${C_GREEN}FREE (local)${C_RESET}\n"
-  printf "\n"
-  printf "    ${C_DIM}Choice [1]:${C_RESET} "
-  emb_choice=""
-  read -r emb_choice || true
-  emb_choice="${emb_choice:-1}"
+  # Detect the currently-saved provider so the picker cursor lands on it
+  # and we can mark that row with a "● current" badge. Re-runs of the
+  # installer feel idempotent — Enter accepts what's already in .env.
+  emb_default=1
+  cur_emb_prov=$(grep -E '^EMBEDDING_PROVIDER=' .env 2>/dev/null | head -n1 | cut -d'=' -f2- || true)
+  cur_emb_model=$(grep -E '^EMBEDDING_MODEL=' .env 2>/dev/null | head -n1 | cut -d'=' -f2- || true)
+  case "${cur_emb_prov}/${cur_emb_model}" in
+    jina_ai/*)                       emb_default=1 ;;
+    openai/text-embedding-3-large)   emb_default=2 ;;
+    openai/text-embedding-3-small)   emb_default=3 ;;
+    voyage/*)                        emb_default=4 ;;
+    cohere/*)                        emb_default=5 ;;
+    gemini/*)                        emb_default=6 ;;
+    mistral/*)                       emb_default=7 ;;
+    ollama/*)                        emb_default=8 ;;
+  esac
+
+  emb_items=(
+    "Jina v4              ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok    ${C_DIM}strong recall${C_RESET}"
+    "OpenAI 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.13/1M tok    ${C_DIM}widest cloud option${C_RESET}"
+    "OpenAI 3-small       ${C_GREEN}multilingual${C_RESET}    ~\$0.02/1M tok    ${C_DIM}cheapest cloud${C_RESET}"
+    "Voyage 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok    ${C_DIM}strong reranker pair${C_RESET}"
+    "Cohere multi-v3      ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok"
+    "Gemini emb-001       ${C_GREEN}multilingual${C_RESET}    ~\$0.025/1M tok   ${C_DIM}reuses Step 2 GOOGLE_API_KEY${C_RESET}"
+    "Mistral embed        ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok"
+    "Ollama nomic         ${C_YELLOW}English-leaning${C_RESET} ${C_GREEN}FREE (local)${C_RESET}     ${C_DIM}no key required${C_RESET}"
+  )
+  if [ "$emb_default" -ge 1 ] && [ "$emb_default" -le ${#emb_items[@]} ]; then
+    emb_items[$((emb_default - 1))]="${emb_items[$((emb_default - 1))]}  ${C_GREEN}● current${C_RESET}"
+  fi
+
+  pick_menu "$emb_default" "${emb_items[@]}"
+  emb_choice="$REPLY"
 
   case "$emb_choice" in
     1|jina|jina_ai)
-      ok "kept default Jina v4 (jina_ai/jina-embeddings-v4 @ 2048d)"
+      replace_env_value "EMBEDDING_PROVIDER"   "jina_ai"
+      replace_env_value "EMBEDDING_MODEL"      "jina-embeddings-v4"
+      replace_env_value "EMBEDDING_DIMENSIONS" "2048"
+      ok "EMBEDDING_PROVIDER=jina_ai · jina-embeddings-v4 @ 2048d (default)"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Jina v4 · jina_ai/jina-embeddings-v4 @ 2048d")
+      prompt_external_key "JINA_API_KEY" "Jina v4 embeddings" "https://jina.ai/api-dashboard/"
       ;;
     2|openai-large|openai_large)
       replace_env_value "EMBEDDING_PROVIDER"   "openai"
       replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-large"
       replace_env_value "EMBEDDING_DIMENSIONS" "3072"
-      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
       ok "EMBEDDING_PROVIDER=openai · text-embedding-3-large @ 3072d"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   OpenAI 3-large · text-embedding-3-large @ 3072d")
+      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
       ;;
     3|openai-small|openai_small)
       replace_env_value "EMBEDDING_PROVIDER"   "openai"
       replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-small"
       replace_env_value "EMBEDDING_DIMENSIONS" "1536"
-      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
       ok "EMBEDDING_PROVIDER=openai · text-embedding-3-small @ 1536d (cheapest cloud)"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   OpenAI 3-small · text-embedding-3-small @ 1536d")
+      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
       ;;
     4|voyage)
       replace_env_value "EMBEDDING_PROVIDER"   "voyage"
       replace_env_value "EMBEDDING_MODEL"      "voyage-3-large"
       replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-      prompt_external_key "VOYAGE_API_KEY" "Voyage AI" "https://dash.voyageai.com/"
       ok "EMBEDDING_PROVIDER=voyage · voyage-3-large @ 1024d"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Voyage 3-large · voyage-3-large @ 1024d")
+      prompt_external_key "VOYAGE_API_KEY" "Voyage AI" "https://dash.voyageai.com/"
       ;;
     5|cohere)
       replace_env_value "EMBEDDING_PROVIDER"   "cohere"
       replace_env_value "EMBEDDING_MODEL"      "embed-multilingual-v3.0"
       replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-      prompt_external_key "COHERE_API_KEY" "Cohere" "https://dashboard.cohere.com/api-keys"
       ok "EMBEDDING_PROVIDER=cohere · embed-multilingual-v3.0 @ 1024d"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Cohere multi-v3 · embed-multilingual-v3.0 @ 1024d")
+      prompt_external_key "COHERE_API_KEY" "Cohere" "https://dashboard.cohere.com/api-keys"
       ;;
     6|gemini)
       replace_env_value "EMBEDDING_PROVIDER"   "gemini"
-      replace_env_value "EMBEDDING_MODEL"      "text-embedding-004"
-      replace_env_value "EMBEDDING_DIMENSIONS" "768"
-      ok "EMBEDDING_PROVIDER=gemini · text-embedding-004 @ 768d (reuses GOOGLE_API_KEY)"
+      replace_env_value "EMBEDDING_MODEL"      "gemini-embedding-001"
+      replace_env_value "EMBEDDING_DIMENSIONS" "3072"
+      ok "EMBEDDING_PROVIDER=gemini · gemini-embedding-001 @ 3072d"
+      hint "Gemini embedding reuses GOOGLE_API_KEY from Step 2 — no separate key needed."
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Gemini emb-001 · gemini-embedding-001 @ 3072d (uses GOOGLE_API_KEY)")
       ;;
     7|mistral)
       replace_env_value "EMBEDDING_PROVIDER"   "mistral"
       replace_env_value "EMBEDDING_MODEL"      "mistral-embed"
       replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-      prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
       ok "EMBEDDING_PROVIDER=mistral · mistral-embed @ 1024d"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Mistral embed · mistral-embed @ 1024d")
+      prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
       ;;
     8|ollama)
       replace_env_value "EMBEDDING_PROVIDER"   "ollama"
@@ -391,30 +552,101 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       replace_env_value "EMBEDDING_API_BASE"   "http://localhost:11434"
       ok "EMBEDDING_PROVIDER=ollama · nomic-embed-text @ 768d (local, no key)"
       warn "Heads-up: Ollama nomic-embed-text is English-leaning. Switch to a multilingual model in Settings if you have non-English channels."
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Ollama nomic · nomic-embed-text @ 768d (local)")
       ;;
     *)
-      warn "Unknown choice '${emb_choice}' — kept default Jina v4. Change later in Settings → AI Models."
+      warn "Unknown choice '${emb_choice}' — kept default Jina v4. Change later in Settings → Embedding."
+      replace_env_value "EMBEDDING_PROVIDER"   "jina_ai"
+      replace_env_value "EMBEDDING_MODEL"      "jina-embeddings-v4"
+      replace_env_value "EMBEDDING_DIMENSIONS" "2048"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Embedding   Jina v4 (fallback)")
+      prompt_external_key "JINA_API_KEY" "Jina v4 embeddings" "https://jina.ai/api-dashboard/"
       ;;
   esac
 fi
 
 # ---------------------------------------------------------------------
-# Step 2 · Optional integrations
+# Step 2 · Agent LLM (Google Gemini)
+# Powers extraction, hybrid search ranking, and answer composition.
+# Kept as its own step so the embedding key (Step 1) and the agent key
+# (here) are conceptually separate — even when the user picks Gemini
+# embedding and the same key satisfies both.
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" != "true" ]; then
-  step "2/4" "Optional integrations"
+  step "2/5" "Agent LLM"
+  hint "The agent runs fact extraction, hybrid search, and answer composition."
+  hint "Beever uses Google Gemini today — the model picker is on the roadmap."
+  prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
+  if grep -qE '^GOOGLE_API_KEY=.+' .env 2>/dev/null; then
+    _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Google Gemini · key set")
+  else
+    _atlas_summary+=("${C_YELLOW}!${C_RESET} Agent LLM   Google Gemini · key NOT set (paste later in .env)")
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# Step 3 · Graph backend (architectural decision — keep before optional
+# integrations so users see core stack choices first).
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "3/5" "Graph backend"
+  hint "Stores entity → entity relationships for graph queries."
+  hint "${C_DIM}↑/↓ to move · Enter to select · Esc/q to keep default${C_RESET}"
+  printf "\n"
+
+  gb_default=1
+  cur_gb=$(grep -E '^GRAPH_BACKEND=' .env 2>/dev/null | head -n1 | cut -d'=' -f2- || true)
+  case "$cur_gb" in
+    none) gb_default=2 ;;
+    *)    gb_default=1 ;;
+  esac
+
+  gb_items=(
+    "neo4j  ${C_DIM}recommended · powers entity graph queries${C_RESET}"
+    "none   ${C_DIM}semantic memory only · skips Neo4j entirely${C_RESET}"
+  )
+  gb_items[$((gb_default - 1))]="${gb_items[$((gb_default - 1))]}  ${C_GREEN}● current${C_RESET}"
+
+  pick_menu "$gb_default" "${gb_items[@]}"
+  case "$REPLY" in
+    2|none|n|None|NONE)
+      replace_env_value "GRAPH_BACKEND" "none"
+      ok "GRAPH_BACKEND=none"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Graph       none (semantic memory only)")
+      ;;
+    *)
+      replace_env_value "GRAPH_BACKEND" "neo4j"
+      ok "GRAPH_BACKEND=neo4j"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Graph       neo4j")
+      ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------
+# Step 4 · Optional integrations
+# ---------------------------------------------------------------------
+if [ "$NON_INTERACTIVE" != "true" ]; then
+  step "4/5" "Optional integrations"
   hint "External web search, local LLMs, and MCP for Claude Code / Cursor."
 
+  opt_parts=()
   if confirm "N" "Configure optional integrations now?"; then
     # Tavily
     prompt_external_key "TAVILY_API_KEY" "Tavily (external web search in QA)" "https://tavily.com/"
+    if grep -qE '^TAVILY_API_KEY=.+' .env 2>/dev/null; then
+      opt_parts+=("Tavily ✓")
+    else
+      opt_parts+=("Tavily skipped")
+    fi
 
     # Ollama (local LLM)
     if confirm "N" "Enable Ollama (run a local LLM instead of Gemini)?"; then
       replace_env_value "OLLAMA_ENABLED" "true"
       ok "OLLAMA_ENABLED=true · OLLAMA_API_BASE=http://localhost:11434"
+      opt_parts+=("Ollama ✓")
     else
       ok "skipped Ollama"
+      opt_parts+=("Ollama skipped")
     fi
 
     # MCP server
@@ -426,44 +658,27 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       if [ -n "$mcp_random" ]; then
         replace_env_value "BEEVER_MCP_API_KEYS" "mcp-${mcp_random}"
         ok "BEEVER_MCP_ENABLED=true · auto-generated BEEVER_MCP_API_KEYS"
+        opt_parts+=("MCP ✓")
       else
         warn "BEEVER_MCP_ENABLED=true but cannot auto-generate (no Python and no /dev/urandom) — set BEEVER_MCP_API_KEYS manually"
+        opt_parts+=("MCP partial")
       fi
     else
       ok "skipped MCP server"
+      opt_parts+=("MCP skipped")
     fi
+    _atlas_summary+=("${C_GREEN}✓${C_RESET} Optional    ${opt_parts[*]}")
   else
     ok "skipped optional integrations"
+    _atlas_summary+=("${C_DIM}—${C_RESET} Optional    skipped (Tavily / Ollama / MCP)")
   fi
 fi
 
 # ---------------------------------------------------------------------
-# Step 3 · Graph backend
+# Step 5 · Auth tokens (dev defaults vs rotate)
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" != "true" ]; then
-  step "3/4" "Graph backend"
-  hint "1) neo4j  — recommended, powers entity graph queries"
-  hint "2) none   — semantic memory only, skips Neo4j entirely"
-  printf "    ${C_DIM}Choice [1]:${C_RESET} "
-  graph_reply=""
-  read -r graph_reply || true
-  case "${graph_reply:-1}" in
-    2|none|n|None|NONE)
-      replace_env_value "GRAPH_BACKEND" "none"
-      ok "GRAPH_BACKEND=none"
-      ;;
-    *)
-      replace_env_value "GRAPH_BACKEND" "neo4j"
-      ok "GRAPH_BACKEND=neo4j"
-      ;;
-  esac
-fi
-
-# ---------------------------------------------------------------------
-# Step 4 · Auth tokens (dev defaults vs rotate)
-# ---------------------------------------------------------------------
-if [ "$NON_INTERACTIVE" != "true" ]; then
-  step "4/4" "Auth tokens"
+  step "5/5" "Auth tokens"
   hint "BEEVER_API_KEYS, BEEVER_ADMIN_TOKEN, BRIDGE_API_KEY."
   hint "Dev defaults (e.g. 'dev-key-change-me') work for local testing."
   hint "Rotate them to random secrets for any deploy."
@@ -476,6 +691,7 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
     new_bridge=$(gen_hex 24)
     if [ -z "$new_api" ] || [ -z "$new_admin" ] || [ -z "$new_bridge" ]; then
       warn "Cannot auto-generate (no Python and no /dev/urandom) — skipping rotation"
+      _atlas_summary+=("${C_YELLOW}!${C_RESET} Auth        rotation FAILED (no Python and no /dev/urandom)")
     else
       replace_env_value "BEEVER_API_KEYS"        "$new_api"
       replace_env_value "BEEVER_ADMIN_TOKEN"     "$new_admin"
@@ -486,9 +702,11 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       ok "Rotated BEEVER_ADMIN_TOKEN"
       ok "Rotated BRIDGE_API_KEY"
       ok "Mirrored VITE_* tokens to match"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Auth        rotated to fresh random secrets")
     fi
   else
     ok "kept dev-default auth tokens (fine for local)"
+    _atlas_summary+=("${C_DIM}—${C_RESET} Auth        kept dev defaults (rotate before any deploy)")
   fi
 fi
 
@@ -550,6 +768,19 @@ if ! $secrets_changed; then
 fi
 
 # ---------------------------------------------------------------------
+# Configuration summary — recap of every step's outcome so the operator
+# can verify .env one final time before docker compose builds + boots.
+# Skipped silently when the array is empty (e.g. --non-interactive).
+# ---------------------------------------------------------------------
+if [ "${#_atlas_summary[@]}" -gt 0 ]; then
+  printf "\n  ${C_BOLD}${C_CYAN}─────── Configuration summary ─────────────────────────────────${C_RESET}\n\n"
+  for _atlas_line in "${_atlas_summary[@]}"; do
+    printf "    %s\n" "$_atlas_line"
+  done
+  printf "\n"
+fi
+
+# ---------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------
 section "Launch"
@@ -600,14 +831,16 @@ if $COMPOSE_CMD up -d --build --force-recreate --remove-orphans; then
   fi
 
   printf "\n"
-  printf "  "; rule
-  printf "  ${C_BOLD}${C_GREEN}✓${C_RESET} ${C_BOLD}Beever Atlas is ready${C_RESET}\n\n"
-  printf "    ${C_DIM}Web UI  ${C_RESET}  ${C_CYAN}http://localhost:${web_port}${C_RESET}\n"
-  printf "    ${C_DIM}Backend ${C_RESET}  ${C_CYAN}http://localhost:${backend_port}${C_RESET}\n"
+  printf "  ${C_GREEN}═════════════════════════════════ ${C_RESET}${C_BOLD}${C_GREEN}✓ Beever Atlas is ready${C_RESET} ${C_GREEN}════════════════════════════════════${C_RESET}\n"
   printf "\n"
-  printf "    ${C_DIM}Tail logs  ${C_RESET}${COMPOSE_CMD} logs -f\n"
-  printf "    ${C_DIM}Stop stack ${C_RESET}${COMPOSE_CMD} down\n"
-  printf "    ${C_DIM}Edit env   ${C_RESET}\$EDITOR .env\n"
+  printf "    ${C_BOLD}Web UI${C_RESET}      ${C_CYAN}http://localhost:${web_port}${C_RESET}\n"
+  printf "    ${C_BOLD}Backend${C_RESET}     ${C_CYAN}http://localhost:${backend_port}${C_RESET}\n"
+  printf "\n"
+  printf "    ${C_DIM}Tail logs   ${COMPOSE_CMD} logs -f${C_RESET}\n"
+  printf "    ${C_DIM}Stop stack  ${COMPOSE_CMD} down${C_RESET}\n"
+  printf "    ${C_DIM}Edit env    \$EDITOR .env${C_RESET}\n"
+  printf "\n"
+  printf "  ${C_GREEN}═══════════════════════════════════════════════════════════════════════════════════════════════${C_RESET}\n"
   printf "\n"
 else
   status=$?
