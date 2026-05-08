@@ -3276,18 +3276,21 @@ class WikiCompiler:
         use_delimited = settings.wiki_compiler_v2 and page_kind not in {"analysis", "translation"}
 
         if is_ollama_model(self._model_name):
-            import litellm
             import os
+
+            from beever_atlas.services.llm_dispatch import dispatch_completion
 
             os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
             if use_delimited:
-                resp = await litellm.acompletion(
+                resp = await dispatch_completion(
+                    provider="ollama",
                     model=self._model_name,
                     messages=[{"role": "user", "content": prompt + _DELIMITED_RESPONSE_SUFFIX}],
                     temperature=temperature,
                 )
             else:
-                resp = await litellm.acompletion(
+                resp = await dispatch_completion(
+                    provider="ollama",
                     model=self._model_name,
                     messages=[
                         {"role": "user", "content": prompt + "\n\nRespond with valid JSON only."}

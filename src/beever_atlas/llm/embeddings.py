@@ -190,16 +190,19 @@ async def _aembedding_call(
     model: str,
     chunk: list[str],
     extra_kwargs: dict[str, Any],
+    provider: str = "",
 ) -> list[list[float]]:
     """One LiteLLM ``aembedding`` round trip — extracted for test patchability.
 
-    Importing ``litellm`` inside the call keeps this module import-cheap and
-    lets tests patch ``beever_atlas.llm.embeddings._aembedding_call`` cleanly
-    without monkeypatching the package-level import.
+    Routes through :func:`beever_atlas.services.llm_dispatch.dispatch_embedding`
+    so the per-provider rate-limit throttle gates the call. The ``provider``
+    kwarg is the LiteLLM prefix (``jina_ai``, ``openai``, …) — extracted by
+    the caller from the resolved ``provider/model`` model string.
     """
-    import litellm  # type: ignore[import-untyped]
+    from beever_atlas.services.llm_dispatch import dispatch_embedding
 
-    response = await litellm.aembedding(
+    response = await dispatch_embedding(
+        provider=provider or model.split("/", 1)[0],
         model=model,
         input=chunk,
         timeout=_DEFAULT_TIMEOUT_SECONDS,
@@ -330,6 +333,7 @@ async def embed_texts(
                         model=model,
                         chunk=chunk,
                         extra_kwargs=extra_kwargs,
+                        provider=cfg.embedding_provider,
                     )
             except (
                 httpx.ConnectError,

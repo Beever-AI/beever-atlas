@@ -520,4 +520,45 @@ async def wiki_narrative_health(channel_id: str = "") -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# LLMThrottle observability metrics (rate-limiting feature B2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/llm-throttle/metrics")
+async def llm_throttle_metrics() -> dict:
+    """Return per-provider live state for the LLM token-bucket throttle.
+
+    Snapshot shape::
+
+        {
+          "providers": [
+            {
+              "provider": "gemini",
+              "rpm_limit": 10,
+              "tpm_limit": 250000,
+              "rpm_used_60s": 4,
+              "tpm_used_60s": 120000,
+              "blocked_calls_60s": 2,
+              "recent_429s_60s": 0,
+              "in_cooldown": false,
+            },
+            ...
+          ]
+        }
+
+    Per-process — in multi-replica deploys each worker reports its own
+    slice. Best-effort: a missing throttle returns an empty list rather
+    than a 500 so the dashboard renders cleanly on cold startup.
+    """
+    try:
+        from beever_atlas.services.llm_throttle import get_llm_throttle
+
+        throttle = get_llm_throttle()
+        return {"providers": throttle.metrics_snapshot()}
+    except Exception as exc:  # noqa: BLE001 — never crash an observability endpoint
+        logger.warning("llm-throttle metrics: snapshot failed: %s", exc)
+        return {"providers": []}
+
+
 __all__ = ["router"]
