@@ -103,9 +103,13 @@ KNOWN_EMBEDDING_MODELS: dict[str, EmbeddingModelSpec] = {
         "local": False,
         "accepts_task": True,
     },
-    # Gemini text-embedding-004 — 768 dims default.
-    "gemini/text-embedding-004": {
-        "dim": 768,
+    # Gemini gemini-embedding-001 — GA replacement for the deprecated
+    # text-embedding-004 (which v1beta no longer hosts and returns 404 on
+    # ``embedContent``). 3072 dims by default; supports Matryoshka
+    # truncation via ``outputDimensionality`` (128/256/.../3072) but we
+    # ship the natural dim so users don't get silent dim drift.
+    "gemini/gemini-embedding-001": {
+        "dim": 3072,
         "cost_per_m": 0.025,
         "multilingual": True,
         "local": False,

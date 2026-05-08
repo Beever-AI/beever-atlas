@@ -667,8 +667,9 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
             1024-dim, ~$0.10 / 1M tokens. ``input_type`` parameter for retrieval vs.
             classification.
           </Section>
-          <Section title="Gemini text-embedding-004">
-            768-dim, $0.025 / 1M tokens. Cheapest cloud option; multilingual.
+          <Section title="Gemini gemini-embedding-001">
+            3072-dim default (Matryoshka-truncatable), ~$0.025 / 1M tokens.
+            Reuses your Google AI Studio key; multilingual.
           </Section>
           <Section title="Ollama (local)">
             ``nomic-embed-text`` 768d / ``mxbai-embed-large`` 1024d — free, local. Quality

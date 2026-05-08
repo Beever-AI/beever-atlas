@@ -85,7 +85,7 @@ Cost ballpark for the providers Atlas currently knows about (per 1M tokens):
 | `openai/text-embedding-3-small` | $0.02 | none |
 | `voyage/voyage-3-large` | $0.18 | 200M free |
 | `cohere/embed-english-v3.0` | $0.10 | none |
-| `gemini/text-embedding-004` | $0.025 | (rate-limit only) |
+| `gemini/gemini-embedding-001` | $0.025 | (rate-limit only) |
 | `ollama/*` | $0.00 (local) | n/a |
 
 #### C. Bypass the guard (NOT recommended)

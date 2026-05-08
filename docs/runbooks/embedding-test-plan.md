@@ -81,7 +81,7 @@
   - Tile gets primary border + check icon.
   - Pills update to `Multilingual ✓ · $0.025 / 1M · Cloud`.
   - **Inline amber warning banner** appears below the tile grid:
-    > "Heads up — switching from `jina_ai/jina-embeddings-v4` to `gemini/text-embedding-004` will require re-embedding all stored facts. Search will degrade to keyword-only (BM25) for ~5–15 min while the migration runs. Sync is paused during the window. Cost is shown on Save Changes — typically < $1 for OSS-scale data."
+    > "Heads up — switching from `jina_ai/jina-embeddings-v4` to `gemini/gemini-embedding-001` will require re-embedding all stored facts. Search will degrade to keyword-only (BM25) for ~5–15 min while the migration runs. Sync is paused during the window. Cost is shown on Save Changes — typically < $1 for OSS-scale data."
   - Save Changes button enabled.
 - **PASS**: Warning appears immediately; banner copy is accurate.
 

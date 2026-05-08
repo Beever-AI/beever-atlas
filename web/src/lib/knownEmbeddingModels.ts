@@ -85,7 +85,7 @@ export const PROVIDER_DEFAULT_MODEL: Partial<Record<EmbeddingProvider, string>> 
   openai: "text-embedding-3-large",
   cohere: "embed-multilingual-v3.0",
   voyage: "voyage-3-large",
-  gemini: "text-embedding-004",
+  gemini: "gemini-embedding-001",
   mistral: "mistral-embed",
   ollama: "nomic-embed-text",
   // bedrock + vertex_ai have no entry in the known-models table; tile is muted
@@ -99,7 +99,7 @@ export const KNOWN_EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
   "voyage/voyage-3-large": { dim: 1024, cost_per_m: 0.18, multilingual: true, local: false },
   "cohere/embed-english-v3.0": { dim: 1024, cost_per_m: 0.10, multilingual: false, local: false },
   "cohere/embed-multilingual-v3.0": { dim: 1024, cost_per_m: 0.10, multilingual: true, local: false },
-  "gemini/text-embedding-004": { dim: 768, cost_per_m: 0.025, multilingual: true, local: false },
+  "gemini/gemini-embedding-001": { dim: 3072, cost_per_m: 0.025, multilingual: true, local: false },
   "mistral/mistral-embed": { dim: 1024, cost_per_m: 0.10, multilingual: true, local: false },
   "ollama/nomic-embed-text": { dim: 768, cost_per_m: 0.0, multilingual: false, local: true },
   "ollama/mxbai-embed-large": { dim: 1024, cost_per_m: 0.0, multilingual: false, local: true },
