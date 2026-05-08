@@ -1117,6 +1117,83 @@ class MongoDBStore:
                 counts[status] = int(row.get("n", 0))
         return counts
 
+    async def count_channel_messages_failure_subtypes(
+        self,
+        channel_id: str,
+        max_retries: int,
+        now: datetime | None = None,
+    ) -> dict[str, int]:
+        """Split ``failed`` rows into ``retrying`` vs ``abandoned``.
+
+        Phase 3 / Task 4.2.4 — the legacy ``failed`` count conflates two
+        very different states: rows the worker will retry shortly (still
+        below ``max_retries`` AND ``next_attempt_at`` in the near future)
+        versus rows the worker has given up on (``attempt_count >=
+        max_retries``). The UI surfaces these as distinct chips so an
+        operator knows whether to wait or to act.
+
+        Returns ``{"retrying": int, "abandoned": int}``. The legacy
+        ``failed`` field on the response equals ``retrying + abandoned``.
+        """
+        ref_now = now or datetime.now(tz=UTC)
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "channel_id": channel_id,
+                    "extraction_status": "failed",
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "abandoned": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gte": [
+                                        {"$ifNull": ["$attempt_count", 0]},
+                                        max_retries,
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                    "retrying": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {
+                                            "$lt": [
+                                                {"$ifNull": ["$attempt_count", 0]},
+                                                max_retries,
+                                            ]
+                                        },
+                                        {
+                                            "$gt": [
+                                                {"$ifNull": ["$next_attempt_at", ref_now]},
+                                                ref_now,
+                                            ]
+                                        },
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                }
+            },
+        ]
+        out: dict[str, int] = {"retrying": 0, "abandoned": 0}
+        async for row in self._channel_messages.aggregate(pipeline):
+            out["retrying"] = int(row.get("retrying", 0) or 0)
+            out["abandoned"] = int(row.get("abandoned", 0) or 0)
+            break
+        return out
+
     async def find_channel_message_by_message_id(
         self,
         channel_id: str,

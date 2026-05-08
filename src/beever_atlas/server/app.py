@@ -373,6 +373,7 @@ async def lifespan(app: FastAPI):
 
         from beever_atlas.services.auto_overview_subscriber import (
             AutoOverviewSubscriber,
+            init_auto_overview_subscriber,
         )
         from beever_atlas.services.extraction_worker import (
             get_extraction_worker as _get_extraction_worker_aov,
@@ -403,6 +404,7 @@ async def lifespan(app: FastAPI):
         _aov_worker = _get_extraction_worker_aov()
         if _aov_worker is not None:
             _auto_overview = AutoOverviewSubscriber()
+            init_auto_overview_subscriber(_auto_overview)
 
             def _on_extraction_done_aov(
                 channel_id: str, fact_ids: list[str]

@@ -370,3 +370,45 @@ class AutoOverviewSubscriber:
                     channel_id,
                 )
             raise
+
+    # ------------------------------------------------------------------
+    # Read-only inspection (used by /sync/status to surface the
+    # ``overview_wiki`` phase as ``in_flight``)
+    # ------------------------------------------------------------------
+
+    def is_inflight(self, channel_id: str) -> bool:
+        """Return True iff an overview build is currently active for ``channel_id``.
+
+        Phase 3 / Task 4.2.2 — the ``/sync/status`` endpoint composes the
+        ``overview_wiki`` phase. ``state="in_flight"`` is the right
+        signal when the auto-generator is currently running but the
+        overview row is not yet persisted; without this getter the API
+        would always read ``pending`` until the row appears, blinking
+        the UI through a wrong state for the duration of the build.
+        """
+        return channel_id in self._inflight
+
+
+# ----------------------------------------------------------------------
+# Module-level singleton (registered by the lifespan hook in server/app.py)
+# ----------------------------------------------------------------------
+
+_subscriber_instance: AutoOverviewSubscriber | None = None
+
+
+def init_auto_overview_subscriber(subscriber: AutoOverviewSubscriber) -> None:
+    """Register the process-wide :class:`AutoOverviewSubscriber` instance.
+
+    Called by ``server/app.py`` lifespan after constructing the subscriber.
+    Lets read-side callers (the ``/sync/status`` endpoint, future admin
+    tools) inspect in-flight state without threading a reference through
+    every constructor.
+    """
+    global _subscriber_instance
+    _subscriber_instance = subscriber
+
+
+def get_auto_overview_subscriber() -> AutoOverviewSubscriber | None:
+    """Return the registered :class:`AutoOverviewSubscriber`, or None
+    before startup completes."""
+    return _subscriber_instance

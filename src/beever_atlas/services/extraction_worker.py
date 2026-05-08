@@ -395,6 +395,16 @@ class ExtractionWorker:
         """
         return list(self._tick_samples)
 
+    def tick_samples_for_eta(self) -> list[tuple[float, int]]:
+        """Return ``(monotonic_ts, succeeded)`` pairs for the ETA calculator.
+
+        Phase 3 / Task 4.1.2 — the smoothed ETA only counts successful
+        claims toward throughput; failed rows will be retried and don't
+        represent forward progress. The full triple lives behind
+        :meth:`tick_samples_snapshot` for any caller that needs both.
+        """
+        return [(ts, succ) for (ts, succ, _fail) in self._tick_samples]
+
     def _record_failure(self, *, message_id: str, channel_id: str, error_class: str) -> None:
         """Record a per-row failure for the admin endpoint's recent_failures.
 
