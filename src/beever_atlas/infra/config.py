@@ -542,6 +542,22 @@ class Settings(BaseSettings):
     # flag is OFF.
     wiki_drift_ab: bool = Field(default=False, alias="WIKI_DRIFT_AB")
 
+    # WikiMaintainer per-page debounce window (seconds).
+    # On every ``ExtractionWorker.on_extraction_done`` event the maintainer
+    # routes facts to affected pages and accumulates them into an in-memory
+    # dirty-set, then schedules ONE flush task that sleeps this many seconds
+    # before draining + issuing per-page LLM rewrites. A burst of N events
+    # touching the same page within the window collapses to a single rewrite
+    # (carrying every event's facts). Default 60s — see design D3 in
+    # ``openspec/changes/sync-pipeline-feedback-and-auto-wiki/design.md``.
+    # Set to 0 to flush immediately (useful in unit tests). The dirty-set is
+    # in-memory only; if the worker process crashes mid-window, pending
+    # rewrites are lost and the next extraction event re-routes the affected
+    # pages to a fresh dirty-set (worst-case loss = one window).
+    wiki_maintainer_debounce_seconds: int = Field(
+        default=60, alias="WIKI_MAINTAINER_DEBOUNCE_SECONDS"
+    )
+
     # Per-(channel, page) rate-limit window for the drift comparator.
     # The maintainer skips a comparator invocation when the same
     # ``(channel_id, page_id)`` was last compared less than this many

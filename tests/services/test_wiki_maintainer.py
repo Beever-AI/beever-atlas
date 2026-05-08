@@ -213,11 +213,16 @@ async def test_on_extraction_done_manual_marks_pages_dirty() -> None:
 
 @pytest.mark.asyncio
 async def test_on_extraction_done_auto_applies_rewrites() -> None:
-    """Spec scenario: ``WIKI_MAINTENANCE_MODE=auto``."""
+    """Spec scenario: ``WIKI_MAINTENANCE_MODE=auto``.
+
+    Uses ``debounce_seconds=0`` to flush inline so the synchronous
+    ``rewritten`` counter reflects the per-page work. The debounce
+    mechanics are exercised in ``test_wiki_maintainer_debounce.py``.
+    """
     page_store = AsyncMock()
     page_store.get_page = AsyncMock(return_value=None)  # first-touch path
     page_store.save_page = AsyncMock()
-    maintainer = WikiMaintainer(page_store=page_store)
+    maintainer = WikiMaintainer(page_store=page_store, debounce_seconds=0)
 
     async def _stub_load(*args, **kwargs):
         return [{"id": "f1", "cluster_id": "auth", "entity_tags": []}]
@@ -249,13 +254,14 @@ async def test_on_extraction_done_auto_isolates_per_page_failures() -> None:
     """A bad page rewrite must not stop other affected pages from updating.
 
     Mirrors the ExtractionWorker subscriber-isolation contract — this
-    is the receiving end of that pipeline.
+    is the receiving end of that pipeline. ``debounce_seconds=0`` flushes
+    inline so the synchronous counters reflect the per-page outcomes.
     """
     page_store = AsyncMock()
     page_store.get_page = AsyncMock(return_value=None)
     save_results: list[Any] = [RuntimeError("flaky"), None]
     page_store.save_page = AsyncMock(side_effect=save_results)
-    maintainer = WikiMaintainer(page_store=page_store)
+    maintainer = WikiMaintainer(page_store=page_store, debounce_seconds=0)
 
     async def _stub_load(*args, **kwargs):
         return [
@@ -970,7 +976,11 @@ async def test_resolve_first_touch_title_falls_back_to_slug(monkeypatch) -> None
 @pytest.mark.asyncio
 async def test_on_consolidation_complete_with_fact_ids_routes_in_auto(_fake_stores) -> None:
     """Spec scenario: consolidation produces fact_ids → maintainer fires
-    for affected pages only (auto mode)."""
+    for affected pages only (auto mode).
+
+    Uses ``debounce_seconds=0`` so save_page calls happen inline; the
+    debounced flush mechanics are tested separately.
+    """
     _fake_stores.weaviate._ids = {
         "f10": _FakeAtomicFact(
             "f10", cluster_id="auth", entity_tags=["alice"], fact_type="decision"
@@ -980,7 +990,7 @@ async def test_on_consolidation_complete_with_fact_ids_routes_in_auto(_fake_stor
     page_store = AsyncMock()
     page_store.get_page = AsyncMock(return_value=None)
     page_store.save_page = AsyncMock()
-    maintainer = WikiMaintainer(page_store=page_store)
+    maintainer = WikiMaintainer(page_store=page_store, debounce_seconds=0)
 
     async def _stub_llm(prompt: str) -> str:
         return '{"affected_sections": [{"id": "overview", "title": "Overview", "content_md": "x"}]}'
