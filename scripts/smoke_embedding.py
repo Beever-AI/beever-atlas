@@ -81,16 +81,32 @@ passed = 0
 failed = 0
 
 
+def _redact(text: str) -> str:
+    """Defense-in-depth: ensure the bearer token never appears in stdout.
+
+    CodeQL flags the print helpers as "clear-text logging of sensitive
+    information" because ``API_KEY`` (loaded from a ``*_KEY`` env var)
+    is taint-tracked into every string that flows through them. Even
+    though response bodies don't echo the request header, redacting
+    here lets CodeQL prove no leak path exists.
+    """
+    if not text or not API_KEY:
+        return text
+    return text.replace(API_KEY, "***REDACTED***")
+
+
 def _ok(label: str, detail: str = "") -> None:
     global passed
     passed += 1
-    print(f"  ✓ {label}{('  ' + detail) if detail else ''}")
+    safe = _redact(f"  ✓ {label}{('  ' + detail) if detail else ''}")
+    print(safe)
 
 
 def _fail(label: str, detail: str = "") -> None:
     global failed
     failed += 1
-    print(f"  ✗ {label}{('  ' + detail) if detail else ''}")
+    safe = _redact(f"  ✗ {label}{('  ' + detail) if detail else ''}")
+    print(safe)
 
 
 def _section(num: int, title: str) -> None:

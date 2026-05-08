@@ -87,6 +87,20 @@ def app_and_client(monkeypatch):
     ):
         monkeypatch.delenv(var, raising=False)
 
+    # CI runners do NOT have a CREDENTIAL_MASTER_KEY in their env. The
+    # encrypted-API-key path requires one. Inject a deterministic 32-byte
+    # test key (different value than the well-known dev placeholder so the
+    # production-mode validator doesn't kick) so the encrypt/decrypt
+    # round-trip works inside these tests.
+    monkeypatch.setenv(
+        "CREDENTIAL_MASTER_KEY",
+        "ab" * 32,  # 64 hex chars / 32 bytes
+    )
+    # Settings is lru-cached; ensure the new master key is picked up.
+    from beever_atlas.infra.config import get_settings as _gs
+
+    _gs.cache_clear()
+
     app = FastAPI()
     app.include_router(ep.router)
     return app, TestClient(app)

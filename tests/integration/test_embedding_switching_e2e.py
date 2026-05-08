@@ -162,6 +162,13 @@ def _isolate_env(monkeypatch):
         "JINA_RPM",
     ):
         monkeypatch.delenv(var, raising=False)
+    # Inject a deterministic CREDENTIAL_MASTER_KEY for encrypted-key tests.
+    # CI runners don't have one set; without this, ``encrypt_credentials``
+    # raises and the API-key encryption scenario returns 503.
+    monkeypatch.setenv("CREDENTIAL_MASTER_KEY", "ab" * 32)
+    from beever_atlas.infra.config import get_settings as _gs
+
+    _gs.cache_clear()
     Settings._DEPRECATED_LEGACY_WARNED.clear()
 
 
