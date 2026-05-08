@@ -358,6 +358,85 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logging.getLogger(__name__).warning("WikiMaintainer init failed (non-fatal): %s", exc)
 
+    # ``sync-pipeline-feedback-and-auto-wiki`` Phase 2 — auto-build the
+    # channel-overview wiki on first sync. Independent of
+    # ``WIKI_MAINTENANCE_MODE`` so the "No Wiki Yet" forever-state is
+    # gone regardless of whether the operator chose auto/manual
+    # maintenance. The fresh-install vs upgrade default is decided here:
+    # when ``AUTO_OVERVIEW_WIKI`` is NOT explicitly set in the
+    # environment AND any pre-existing overview row exists, the runtime
+    # default flips to False so a long-running install does not surprise
+    # the operator with an auto-rebuild on the first post-upgrade sync.
+    try:
+        import os as _os
+        import asyncio as _asyncio_aov
+
+        from beever_atlas.services.auto_overview_subscriber import (
+            AutoOverviewSubscriber,
+        )
+        from beever_atlas.services.extraction_worker import (
+            get_extraction_worker as _get_extraction_worker_aov,
+        )
+
+        # Fresh-install vs upgrade auto-detect. Honour an explicit
+        # operator override (env var present, regardless of value).
+        if "AUTO_OVERVIEW_WIKI" not in _os.environ:
+            try:
+                existing = await stores.mongodb.db["wiki_pages"].count_documents(
+                    {"page_type": "overview"}
+                )
+                if existing > 0:
+                    settings.auto_overview_wiki = False
+                    logging.getLogger(__name__).info(
+                        "AutoOverview: detected %d existing overview wiki rows — "
+                        "defaulting AUTO_OVERVIEW_WIKI=false (set the env var "
+                        "explicitly to override)",
+                        existing,
+                    )
+            except Exception:  # noqa: BLE001 — non-fatal; default stays True
+                logging.getLogger(__name__).warning(
+                    "AutoOverview: failed to count existing wiki_pages — "
+                    "leaving AUTO_OVERVIEW_WIKI default unchanged",
+                    exc_info=True,
+                )
+
+        _aov_worker = _get_extraction_worker_aov()
+        if _aov_worker is not None:
+            _auto_overview = AutoOverviewSubscriber()
+
+            def _on_extraction_done_aov(
+                channel_id: str, fact_ids: list[str]
+            ) -> None:
+                # Fire-and-forget — never block the worker batch loop on
+                # the overview LLM build (can take 30-60s). The
+                # subscriber's own ``on_extraction_done`` swallows
+                # generation errors, but a top-level failure (import
+                # error, etc.) is logged here.
+                task = _asyncio_aov.create_task(
+                    _auto_overview.on_extraction_done(channel_id, fact_ids)
+                )
+
+                def _log_exc(t: _asyncio_aov.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logging.getLogger(__name__).warning(
+                            "auto_overview_subscriber fan-out task raised "
+                            "channel=%s: %s",
+                            channel_id,
+                            exc,
+                            exc_info=exc,
+                        )
+
+                task.add_done_callback(_log_exc)
+
+            _aov_worker.subscribe_extraction_done(_on_extraction_done_aov)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "AutoOverviewSubscriber init failed (non-fatal): %s", exc
+        )
+
     # Wire consolidation to ExtractionWorker.on_extraction_done so that
     # topic_clusters and channel_summary are built after actual facts land
     # in Weaviate (not at sync-return time when facts=0).

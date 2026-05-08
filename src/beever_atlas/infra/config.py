@@ -529,6 +529,20 @@ class Settings(BaseSettings):
         default=10, alias="WIKI_AUTO_INITIAL_BUILD_THRESHOLD"
     )
 
+    # ``sync-pipeline-feedback-and-auto-wiki`` Phase 2.
+    # Auto-build the channel-overview wiki page once the first extraction
+    # batch wave finishes for a channel. The subscriber lives in
+    # ``services/auto_overview_subscriber.py`` and runs INDEPENDENTLY of
+    # ``WIKI_MAINTENANCE_MODE`` so the "Channel Wiki" tab no longer shows
+    # "No Wiki Yet" forever on a fresh sync regardless of maintainer mode.
+    # Default True for fresh installs; the lifespan auto-detects upgrades
+    # (existing rows in ``wiki_pages`` with ``page_type=overview``) and
+    # flips this OFF so existing operators are not surprised by an
+    # auto-build on the first post-upgrade sync. The operator override
+    # ``AUTO_OVERVIEW_WIKI=true|false`` always wins. Read fresh on every
+    # event so a runtime flip takes effect on the very next sync.
+    auto_overview_wiki: bool = Field(default=True, alias="AUTO_OVERVIEW_WIKI")
+
     # Wiki page-voice drift A/B comparator.
     # When True, every successful ``WikiMaintainer.apply_update`` ALSO
     # schedules a fire-and-forget ``compare_apply_update_vs_regenerate``
