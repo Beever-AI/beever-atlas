@@ -16,6 +16,7 @@ import { useEmbeddingSettings } from "@/hooks/useEmbeddingSettings";
 import {
   PROVIDER_DEFAULT_MODEL,
   PROVIDER_KEY_ENV,
+  PROVIDER_KEY_URLS,
   PROVIDER_LABELS,
   SUPPORTED_PROVIDERS,
   estimateMigrationCost,
@@ -417,12 +418,24 @@ export function EmbeddingSettings() {
         {/* Step 2 · API key — promoted above the model/dim knobs because
             it's the field most operators actually need to fill. */}
         <div className="space-y-1.5">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-            <KeyRound className="w-3 h-3" />
-            Step 2 · API Key
-            <span className="ml-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/70">
-              env fallback: {PROVIDER_KEY_ENV[draft.provider]}
-            </span>
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <KeyRound className="w-3 h-3" />
+              Step 2 · API Key
+              <span className="ml-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/70">
+                env fallback: {PROVIDER_KEY_ENV[draft.provider]}
+              </span>
+            </div>
+            {PROVIDER_KEY_URLS[draft.provider] && (
+              <a
+                href={PROVIDER_KEY_URLS[draft.provider]!}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-medium normal-case tracking-normal text-primary hover:underline inline-flex items-center gap-0.5"
+              >
+                Get a key for {PROVIDER_LABELS[draft.provider]} ↗
+              </a>
+            )}
           </div>
           {!replaceKey && config.has_api_key && (
             <div className="flex items-center gap-2">

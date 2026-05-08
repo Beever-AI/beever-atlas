@@ -50,6 +50,21 @@ export const PROVIDER_KEY_ENV: Record<EmbeddingProvider, string> = {
   vertex_ai: "GOOGLE_APPLICATION_CREDENTIALS",
 };
 
+// Where to obtain the API key for each provider. ``null`` ⇒ no link
+// (Ollama is local, no key; Bedrock/Vertex use shared cloud creds).
+export const PROVIDER_KEY_URLS: Record<EmbeddingProvider, string | null> = {
+  jina_ai: "https://jina.ai/api-dashboard/",
+  openai: "https://platform.openai.com/api-keys",
+  cohere: "https://dashboard.cohere.com/api-keys",
+  voyage: "https://dash.voyageai.com/",
+  gemini: "https://aistudio.google.com/apikey",
+  mistral: "https://console.mistral.ai/api-keys",
+  ollama: null,
+  bedrock: "https://console.aws.amazon.com/iam/home#/security_credentials",
+  vertex_ai:
+    "https://cloud.google.com/iam/docs/keys-create-delete#creating",
+};
+
 // One-line pitch per provider, surfaced in the tile + help drawer.
 export const PROVIDER_DESCRIPTIONS: Record<EmbeddingProvider, string> = {
   jina_ai: "Strong multilingual recall. Default for OSS installs.",
