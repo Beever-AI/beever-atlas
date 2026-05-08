@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from beever_atlas.adapters.base import NormalizedMessage
 from beever_atlas.services.batch_processor import BatchProcessor
+from beever_atlas.services.pipeline_events import get_pipeline_events
 
 if TYPE_CHECKING:
     from beever_atlas.services.circuit_breaker import CircuitBreaker
@@ -170,6 +171,12 @@ class ExtractionWorker:
         # window we summarise — a tick is at most every ``_TICK_SECONDS``,
         # so 10 min ≈ 20 entries).
         self._tick_records: list[tuple[float, int, int, int]] = []
+        # Phase 0 / Task 1.2 — separate, capped ring used by the smoothed
+        # ETA calculator (Phase 3). Holds ``(monotonic_ts, succeeded,
+        # failed)`` for the most recent 60 ticks. Distinct from
+        # ``_tick_records`` (which uses a 60-min wall-clock cutoff for
+        # claim-rate maths) so the ETA window can be tuned independently.
+        self._tick_samples: list[tuple[float, int, int]] = []
         # Most recent failed-row records (capped at 10) for the admin
         # endpoint's ``recent_failures`` field. Each entry is
         # ``{message_id, channel_id, error_class, ts}``.
@@ -247,6 +254,17 @@ class ExtractionWorker:
         for doc in claimed:
             by_channel.setdefault(doc.get("channel_id", ""), []).append(doc)
         counters["channels"] = len(by_channel)
+
+        # Phase 0 / Task 1.3 — pipeline event: queue fetch for each channel.
+        try:
+            for ch_id, docs in by_channel.items():
+                get_pipeline_events().record(
+                    channel_id=ch_id,
+                    stage="fetch",
+                    label=f"Claimed {len(docs)} pending rows",
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
         async def _process_channel(ch_id: str, docs: list[dict[str, Any]]) -> tuple[int, int]:
             assert self._semaphore is not None
@@ -355,6 +373,27 @@ class ExtractionWorker:
         )
         cutoff = now - 60 * 60  # 60 minutes
         self._tick_records = [r for r in self._tick_records if r[0] >= cutoff]
+        # Phase 0 / Task 1.2 — separate, count-bounded ring for the
+        # smoothed-ETA calculator (Phase 3). 60 samples gives the EWMA
+        # enough history to absorb a single retry burst without thrashing.
+        self._tick_samples.append(
+            (
+                now,
+                counters.get("succeeded", 0),
+                counters.get("failed", 0),
+            )
+        )
+        if len(self._tick_samples) > 60:
+            self._tick_samples = self._tick_samples[-60:]
+
+    def tick_samples_snapshot(self) -> list[tuple[float, int, int]]:
+        """Return a copy of the recent tick samples for the ETA calculator.
+
+        Each entry is ``(monotonic_ts, succeeded, failed)``. Most-recent
+        last (append order). Returned as a fresh list so the caller can
+        safely iterate without holding any lock against the worker.
+        """
+        return list(self._tick_samples)
 
     def _record_failure(self, *, message_id: str, channel_id: str, error_class: str) -> None:
         """Record a per-row failure for the admin endpoint's recent_failures.
@@ -489,24 +528,81 @@ class ExtractionWorker:
 
         duration_ms = int((time.monotonic() - started) * 1000)
         if result.errors:
-            err_summary = "; ".join(
-                str(e.get("error") or "unknown")[:100] for e in result.errors[:3]
-            )
-            await self._finalize_failed(
-                stores,
-                keys_with_attempts,
-                error=f"batch_errors={len(result.errors)}: {err_summary}",
-            )
-            failed_count = len(valid_keys)
+            # Phase 1.1 / Task 2.1.3 — per-sub-batch attribution (decision
+            # D1). Walk the BatchBreakdowns and partition ``valid_keys``
+            # into the rows that belong to a succeeding sub-batch versus
+            # those that belong to a failing sub-batch. Sub-batch
+            # granularity is the unit at which the LLM call succeeds or
+            # fails, so this is the finest split that doesn't require
+            # per-row provenance tracking inside BatchProcessor.
+            succeeded_keys: list[tuple[str, str, str]] = []
+            failed_keys: list[tuple[str, str, str]] = []
+            bd_errors: list[str] = []
+            breakdowns = list(getattr(result, "batch_breakdowns", None) or [])
+            for bd in breakdowns:
+                bd_keys = list(getattr(bd, "keys", None) or [])
+                if getattr(bd, "error", None) is None:
+                    succeeded_keys.extend(bd_keys)
+                else:
+                    failed_keys.extend(bd_keys)
+                    bd_errors.append(str(getattr(bd, "error", "unknown"))[:100])
+
+            # Edge case: no breakdown carried any keys (older format or a
+            # deep error path). Fall through to the legacy all-or-nothing
+            # behavior so we don't drop rows into limbo. The stale-recovery
+            # sweep is the safety net beyond that.
+            if not succeeded_keys and not failed_keys:
+                err_summary = "; ".join(
+                    str(e.get("error") or "unknown")[:100] for e in result.errors[:3]
+                )
+                await self._finalize_failed(
+                    stores,
+                    keys_with_attempts,
+                    error=f"batch_errors={len(result.errors)}: {err_summary}",
+                )
+                failed_count = len(valid_keys)
+                logger.warning(
+                    "ExtractionWorker: extraction_batch_complete "
+                    "channel=%s rows=%d duration_ms=%d status=failed errors=%d "
+                    "(legacy all-or-nothing path — breakdowns missing keys)",
+                    channel_id,
+                    failed_count,
+                    duration_ms,
+                    len(result.errors),
+                )
+                return 0, failed_count
+
+            if succeeded_keys:
+                await stores.mongodb.finalize_extraction_status_bulk(
+                    keys=succeeded_keys, new_status="done"
+                )
+            if failed_keys:
+                attempt_count_of = {k: a for k, a in keys_with_attempts}
+                fail_pairs = [(k, attempt_count_of.get(k, 0)) for k in failed_keys]
+                err_summary = "; ".join(bd_errors[:3]) if bd_errors else "unknown"
+                await self._finalize_failed(
+                    stores,
+                    fail_pairs,
+                    error=f"sub_batch_errors={len(failed_keys)}: {err_summary}",
+                )
+
+            # Notify subscribers with whatever fact_ids the succeeding
+            # sub-batches produced — partial success still has signal.
+            if succeeded_keys:
+                fact_ids: list[str] = list(getattr(result, "fact_ids", None) or [])
+                await self._emit_extraction_done(channel_id, fact_ids)
+
             logger.warning(
-                "ExtractionWorker: extraction_batch_complete "
-                "channel=%s rows=%d duration_ms=%d status=failed errors=%d",
+                "ExtractionWorker: extraction_batch_complete channel=%s rows=%d "
+                "succeeded=%d failed=%d duration_ms=%d sub_batch_errors=%d",
                 channel_id,
-                failed_count,
+                len(valid_keys),
+                len(succeeded_keys),
+                len(failed_keys),
                 duration_ms,
                 len(result.errors),
             )
-            return 0, failed_count
+            return len(succeeded_keys), len(failed_keys)
 
         # Success path: bulk-mark done, then notify subscribers.
         modified = await stores.mongodb.finalize_extraction_status_bulk(

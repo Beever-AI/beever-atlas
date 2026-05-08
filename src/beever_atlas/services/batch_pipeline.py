@@ -33,7 +33,7 @@ from beever_atlas.agents.runner import create_runner, create_session, get_sessio
 from beever_atlas.infra.config import get_settings
 from beever_atlas.llm import get_llm_provider
 from beever_atlas.models.sync_policy import IngestionConfig
-from beever_atlas.services.batch_processor import BatchBreakdown
+from beever_atlas.services.batch_processor import BatchBreakdown, _keys_for_batch
 from beever_atlas.services.gemini_batch import BatchRequest, GeminiBatchClient
 from beever_atlas.services.json_recovery import (
     recover_entities_from_truncated,
@@ -240,7 +240,10 @@ class BatchPipelineRunner:
 
         activity_log: list[dict[str, Any]] = []
         stage_timings: dict[str, float] = {}
-        breakdown = BatchBreakdown(batch_num=batch_num)
+        # Populate per-sub-batch keys up-front so any early-return / error
+        # path still carries provenance for the worker's per-sub-batch
+        # attribution (decision D1).
+        breakdown = BatchBreakdown(batch_num=batch_num, keys=_keys_for_batch(messages))
 
         # ── Helpers ────────────────────────────────────────────────────────
 
@@ -865,7 +868,9 @@ class BatchPipelineRunner:
             )
 
         if max_retries < 1:
-            breakdown = BatchBreakdown(batch_num=batch_num)
+            breakdown = BatchBreakdown(
+                batch_num=batch_num, keys=_keys_for_batch(messages)
+            )
             breakdown.error = "attempt 1 failed, no retries configured"
             return breakdown
 
@@ -904,7 +909,9 @@ class BatchPipelineRunner:
             )
 
         if max_retries < 2:
-            breakdown = BatchBreakdown(batch_num=batch_num)
+            breakdown = BatchBreakdown(
+                batch_num=batch_num, keys=_keys_for_batch(messages)
+            )
             breakdown.error = "attempts 1-2 failed, max_retries=1"
             return breakdown
 
@@ -943,7 +950,10 @@ class BatchPipelineRunner:
                     ingestion_config=ingestion_config,
                 )
                 # Merge the two halves
-                merged = BatchBreakdown(batch_num=batch_num)
+                merged = BatchBreakdown(
+                    batch_num=batch_num,
+                    keys=list(breakdown_a.keys) + list(breakdown_b.keys),
+                )
                 merged.facts_count = breakdown_a.facts_count + breakdown_b.facts_count
                 merged.entities_count = breakdown_a.entities_count + breakdown_b.entities_count
                 merged.relationships_count = (
@@ -974,6 +984,8 @@ class BatchPipelineRunner:
             sync_job_id,
             batch_num,
         )
-        breakdown = BatchBreakdown(batch_num=batch_num)
+        breakdown = BatchBreakdown(
+            batch_num=batch_num, keys=_keys_for_batch(messages)
+        )
         breakdown.error = f"all {max_retries + 1} attempts failed"
         return breakdown

@@ -28,6 +28,7 @@ from beever_atlas.agents.runner import create_runner, create_session
 from beever_atlas.infra.config import get_settings
 from beever_atlas.stores import get_stores
 from beever_atlas.llm import get_llm_provider
+from beever_atlas.services.pipeline_events import get_pipeline_events
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,47 @@ def _is_truncation_error(exc: Exception) -> bool:
     return any(marker in msg for marker in ("json_invalid", "max_tokens", "unexpected eof"))
 
 
+def _source_id_of(msg: Any) -> str:
+    """Best-effort extraction of source_id from a NormalizedMessage or dict.
+
+    Mirrors the worker's reverse mapping in ``extraction_worker.py``: pull
+    a stable source identifier from ``platform`` (NormalizedMessage) or
+    ``source_id``/``platform`` (dict). Returns empty string when neither
+    is present so the (source_id, channel_id, message_id) triple still
+    matches the worker's claimed-doc keys.
+    """
+    if isinstance(msg, dict):
+        return str(msg.get("source_id") or msg.get("platform") or "")
+    return str(getattr(msg, "platform", "") or getattr(msg, "source_id", "") or "")
+
+
+def _keys_for_batch(batch: list[Any]) -> list[tuple[str, str, str]]:
+    """Build the per-sub-batch ``(source_id, channel_id, message_id)`` keys.
+
+    Used to populate ``BatchBreakdown.keys`` so the ExtractionWorker can
+    attribute success or failure per sub-batch (decision D1).
+    """
+    keys: list[tuple[str, str, str]] = []
+    for m in batch:
+        if isinstance(m, dict):
+            keys.append(
+                (
+                    _source_id_of(m),
+                    str(m.get("channel_id") or ""),
+                    str(m.get("message_id") or ""),
+                )
+            )
+        else:
+            keys.append(
+                (
+                    _source_id_of(m),
+                    str(getattr(m, "channel_id", "") or ""),
+                    str(getattr(m, "message_id", "") or ""),
+                )
+            )
+    return keys
+
+
 def _is_resumable(exc: Exception) -> bool:
     """Return True if ``exc`` should trigger checkpoint-aware retry.
 
@@ -212,6 +254,12 @@ class BatchBreakdown:
     facts_stored: int = 0
     facts_failed: int = 0
     facts_pending: int = 0
+    # Per-sub-batch (source_id, channel_id, message_id) keys — populated as
+    # the batch runs so ExtractionWorker can attribute success/failure
+    # per sub-batch instead of per-tick. Empty list when the batch is
+    # constructed without source messages (e.g. an early failure path).
+    # See decision D1 in design.md.
+    keys: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -365,6 +413,29 @@ class BatchProcessor:
                     channel_id,
                     len(batch),
                 )
+                # Phase 0 / Task 1.1 — sub-batch start observability event.
+                # No logic change; the event lands in the pipeline_events
+                # ring so the API can surface a "recent_events" feed without
+                # a new transport.
+                logger.info(
+                    "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=start messages=%d",
+                    channel_id,
+                    batch_index,
+                    "batch",
+                    len(batch),
+                )
+                try:
+                    get_pipeline_events().record(
+                        channel_id=channel_id,
+                        stage="subbatch",
+                        label=f"Batch {batch_index}/{max_batches} started ({len(batch)} messages)",
+                    )
+                except Exception:  # noqa: BLE001 — observability must never break the worker
+                    logger.debug(
+                        "BatchProcessor: pipeline_events.record start failed batch=%d",
+                        batch_index,
+                        exc_info=True,
+                    )
                 await stores.mongodb.update_sync_progress(
                     job_id=sync_job_id,
                     processed=0,
@@ -390,6 +461,11 @@ class BatchProcessor:
                         known_entities=known_entities_snapshot,
                         ingestion_config=ingestion_config,
                     )
+                    # Always carry the sub-batch keys so the worker can attribute
+                    # success/failure per sub-batch even when the batch path runs
+                    # through the BatchPipelineRunner.
+                    if not breakdown.keys:
+                        breakdown.keys = _keys_for_batch(batch)
                     await stores.mongodb.update_sync_progress(
                         job_id=sync_job_id,
                         processed=0,
@@ -943,6 +1019,15 @@ class BatchProcessor:
                                                     "elapsed": elapsed,
                                                 }
                                             )
+                                            # Phase 0 / Task 1.3 — pipeline event hook
+                                            try:
+                                                get_pipeline_events().record(
+                                                    channel_id=channel_id,
+                                                    stage="preprocess",
+                                                    label=" · ".join(summary_parts),
+                                                )
+                                            except Exception:  # noqa: BLE001
+                                                pass
 
                                     # ── Fact extraction output ─────────────────
                                     if (
@@ -993,6 +1078,18 @@ class BatchProcessor:
                                                     "elapsed": elapsed,
                                                 }
                                             )
+                                            # Phase 0 / Task 1.3 — pipeline event hook
+                                            try:
+                                                get_pipeline_events().record(
+                                                    channel_id=channel_id,
+                                                    stage="extract",
+                                                    label=(
+                                                        f"Extracted {len(facts_list)} facts "
+                                                        f"(avg quality {avg_quality:.2f})"
+                                                    ),
+                                                )
+                                            except Exception:  # noqa: BLE001
+                                                pass
 
                                     # ── Entity extraction output ───────────────
                                     if (
@@ -1065,6 +1162,15 @@ class BatchProcessor:
                                                     "elapsed": elapsed,
                                                 }
                                             )
+                                            # Phase 0 / Task 1.3 — pipeline event hook
+                                            try:
+                                                get_pipeline_events().record(
+                                                    channel_id=channel_id,
+                                                    stage="embed",
+                                                    label=f"Embedded {count} facts",
+                                                )
+                                            except Exception:  # noqa: BLE001
+                                                pass
 
                                     # ── Validator output ───────────────────────
                                     if (
@@ -1133,6 +1239,18 @@ class BatchProcessor:
                                                     "elapsed": elapsed,
                                                 }
                                             )
+                                            # Phase 0 / Task 1.3 — pipeline event hook
+                                            try:
+                                                get_pipeline_events().record(
+                                                    channel_id=channel_id,
+                                                    stage="persist",
+                                                    label=(
+                                                        f"Saved {wv_count} facts, "
+                                                        f"{neo_count} entities, {rel_count} rels"
+                                                    ),
+                                                )
+                                            except Exception:  # noqa: BLE001
+                                                pass
 
                             # Throttle MongoDB updates — only write on stage changes or every 5 events
                             _evt_count += 1
@@ -1377,6 +1495,7 @@ class BatchProcessor:
                         for r in rels_list[:5]
                     ],
                     duration_seconds=round(batch_duration, 2),
+                    keys=_keys_for_batch(batch),
                 )
                 entities_persisted = persist_result.get("entity_count", 0) > 0
 
@@ -1422,6 +1541,31 @@ class BatchProcessor:
                     batch_facts,
                     batch_entities,
                 )
+                # Phase 0 / Task 1.1 — sub-batch end observability event.
+                logger.info(
+                    "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=end "
+                    "facts=%d entities=%d",
+                    channel_id,
+                    batch_index,
+                    "batch",
+                    batch_facts,
+                    batch_entities,
+                )
+                try:
+                    get_pipeline_events().record(
+                        channel_id=channel_id,
+                        stage="subbatch",
+                        label=(
+                            f"Batch {batch_index}/{max_batches} done — "
+                            f"{batch_facts} facts, {batch_entities} entities"
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "BatchProcessor: pipeline_events.record end failed batch=%d",
+                        batch_index,
+                        exc_info=True,
+                    )
                 batch_weaviate_ids: list[str] = list(persist_result.get("weaviate_ids") or [])
                 return breakdown, batch_stage_timings, entities_persisted, batch_weaviate_ids
 
@@ -1460,7 +1604,11 @@ class BatchProcessor:
                         sync_job_id,
                         err_text,
                     )
-                failed_breakdown = BatchBreakdown(batch_num=batch_index, error=err_text)
+                failed_breakdown = BatchBreakdown(
+                    batch_num=batch_index,
+                    error=err_text,
+                    keys=_keys_for_batch(batch),
+                )
                 result.errors.append({"batch_num": batch_index, "error": err_text})
                 result.batch_breakdowns.append(failed_breakdown)
             else:
