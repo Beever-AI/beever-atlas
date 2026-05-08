@@ -43,11 +43,11 @@ def test_429_halves_effective_rate() -> None:
         clock = FakeClock(start=1000.0)
         t = LLMThrottle(clock=clock)
 
-        # Force the bucket to materialize before reporting 429.
-        bucket = t._get_or_create_bucket("gemini")
-        assert bucket.effective_limits(clock.now) == (10, 1000)
-
+        # report_429's defensive path materializes the bucket synchronously
+        # when it does not yet exist — ``_get_or_create_bucket`` is async
+        # now (race-safe) so the sync test path goes through report_429.
         t.report_429("gemini")
+        bucket = t._buckets["gemini"]
 
         # Inside the cooldown window: limits halved.
         rpm, tpm = bucket.effective_limits(clock.now)
@@ -76,9 +76,9 @@ def test_overlapping_429s_do_not_stack() -> None:
     try:
         clock = FakeClock(start=1000.0)
         t = LLMThrottle(clock=clock)
-        bucket = t._get_or_create_bucket("gemini")
 
         t.report_429("gemini")
+        bucket = t._buckets["gemini"]
         first_end = bucket._cooldown_until
         assert first_end == pytest.approx(1060.0)
 
@@ -101,8 +101,8 @@ def test_cooldown_seconds_env_override() -> None:
     try:
         clock = FakeClock(start=500.0)
         t = LLMThrottle(clock=clock)
-        bucket = t._get_or_create_bucket("gemini")
         t.report_429("gemini")
+        bucket = t._buckets["gemini"]
         assert bucket._cooldown_until == pytest.approx(510.0)
     finally:
         os.environ.pop("LLM_BACKOFF_COOLDOWN_SECONDS", None)

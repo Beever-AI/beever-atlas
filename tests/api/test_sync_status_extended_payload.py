@@ -236,6 +236,50 @@ async def test_mixed_retrying_state_reports_split_counts(
 
 
 @pytest.mark.asyncio
+async def test_wiki_maintenance_phase_surfaces_done_and_total(
+    client: AsyncClient, mock_stores, monkeypatch
+) -> None:
+    """When the WikiMaintainer singleton has rolling activity, the
+    ``wiki_maintenance`` phase entry must carry ``done`` / ``total``
+    fields derived from its apply/mark-dirty counters — instead of
+    leaving them undefined and forcing the UI to render the unknown
+    "Wiki being built" placeholder.
+    """
+    import beever_atlas.services.wiki_maintainer as wm_mod
+
+    job = _make_job(status="running")
+    _wire_mongo(
+        mock_stores,
+        counts={"pending": 5, "extracting": 1, "done": 12, "failed": 0},
+        failure_split={"retrying": 0, "abandoned": 0},
+        overview_exists=False,
+        job=job,
+    )
+
+    # Stub a maintainer with the metrics-snapshot shape the helper reads.
+    fake_snapshot = {
+        "apply_update_count_60min": 7,
+        "mark_dirty_count_5min": 3,
+    }
+    fake_maintainer = SimpleNamespace(
+        _in_memory_metrics_snapshot=lambda: fake_snapshot,
+    )
+    saved = wm_mod._maintainer_instance
+    wm_mod._maintainer_instance = fake_maintainer  # type: ignore[assignment]
+    try:
+        resp = await client.get("/api/channels/C_WIKI/sync/status")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        wiki_phase = next(p for p in body["phases"] if p["name"] == "wiki_maintenance")
+        # 7 already rewritten this rolling hour.
+        assert wiki_phase["done"] == 7
+        # 3 still dirty + 7 rewritten = 10 total.
+        assert wiki_phase["total"] == 10
+    finally:
+        wm_mod._maintainer_instance = saved
+
+
+@pytest.mark.asyncio
 async def test_smoothed_eta_surfaces_when_worker_has_samples(
     client: AsyncClient, mock_stores, monkeypatch
 ) -> None:

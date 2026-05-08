@@ -19,6 +19,21 @@ Reactive backoff: when the dispatch layer observes a 429 it calls
 fill-rate for ``LLM_BACKOFF_COOLDOWN_SECONDS`` (default 60s). Coalesces
 overlapping 429s by resetting the cooldown end-time rather than
 extending it — multiple bursts collapse into one recovery period.
+
+KNOWN GAP: this throttle wraps ``litellm.acompletion`` and
+``litellm.aembedding`` only. The Google GenAI SDK calls (used by the
+ADK ingestion agents and the wiki maintainer — e.g.
+``client.aio.models.generate_content`` in
+``services/wiki_maintainer.py``, ``wiki/compiler.py``,
+``agents/ingestion/csv_mapper.py``, ``agents/query/decomposer.py``,
+``api/ask.py``, and several call sites in ``services/media_extractors.py``
+/ ``services/media_processor.py``) bypass this throttle and are gated
+by the legacy ``batch_processor._get_limiter`` aiolimiter and the
+circuit breaker. A follow-up commit should either (a) wrap every
+``client.aio.models.generate_content`` site, or (b) install the
+throttle as an ADK-layer interceptor on ``LlmAgent``. Until then,
+both gates run in parallel and operators tuning one should also tune
+the other.
 """
 
 from __future__ import annotations
@@ -157,7 +172,7 @@ class LLMThrottle:
         """
         provider_key = (provider or "unknown").strip().lower()
         est_tokens = max(1, int(est_tokens))
-        bucket = self._get_or_create_bucket(provider_key)
+        bucket = await self._get_or_create_bucket(provider_key)
 
         # Hot loop: re-evaluate the window on each iteration; sleep the
         # smallest amount that could free capacity so we wake exactly when
@@ -219,9 +234,22 @@ class LLMThrottle:
         ``now + cooldown_seconds`` rather than added to the existing
         end, so a burst of 429s in the same window produces a single
         recovery period that resets each time a new 429 arrives.
+
+        Stays synchronous: callers in :mod:`llm_dispatch` already hold
+        an :meth:`acquire` context which guarantees the bucket exists;
+        the unlocked fallback below is kept only as a defensive guard
+        for direct ``report_429`` callers (e.g. tests).
         """
         provider_key = (provider or "unknown").strip().lower()
-        bucket = self._get_or_create_bucket(provider_key)
+        bucket = self._buckets.get(provider_key)
+        if bucket is None:
+            # Defensive path — should never trigger in production because
+            # ``acquire`` runs before ``report_429`` and creates the
+            # bucket. Cooldown writes are idempotent (same end-time) so
+            # an unlocked create is safe.
+            rpm, tpm = _resolve_limits(provider_key)
+            bucket = _Bucket(provider_key, rpm, tpm)
+            self._buckets[provider_key] = bucket
         now = self._clock()
         bucket._cooldown_until = now + self._cooldown_seconds
         self._recent_429s.append((now, provider_key))
@@ -268,30 +296,52 @@ class LLMThrottle:
     # Internals
     # ------------------------------------------------------------------
 
-    def _get_or_create_bucket(self, provider_key: str) -> _Bucket:
+    async def _get_or_create_bucket(self, provider_key: str) -> _Bucket:
+        """Return the per-provider bucket, creating it on first touch.
+
+        Double-checked locking on ``_buckets_lock`` so two coroutines
+        racing on the first call for the same provider converge on a
+        single bucket — without the lock, both would build a fresh
+        ``_Bucket`` and the loser's writes would clobber the winner's
+        sliding-window state, effectively doubling the configured
+        rate limit. The fast path (bucket already exists) skips the
+        lock entirely.
+        """
         bucket = self._buckets.get(provider_key)
         if bucket is not None:
             return bucket
-        rpm, tpm = _resolve_limits(provider_key)
-        bucket = _Bucket(provider_key, rpm, tpm)
-        self._buckets[provider_key] = bucket
-        if not bucket._logged:
-            if provider_key in _DEFAULTS:
-                logger.info(
-                    "LLMThrottle: provider=%s rpm=%d tpm=%d (resolved limits)",
-                    provider_key,
-                    bucket.rpm_limit,
-                    bucket.tpm_limit,
-                )
-            else:
-                logger.warning(
-                    "LLMThrottle: unknown provider=%s — using fallback rpm=%d tpm=%d",
-                    provider_key,
-                    bucket.rpm_limit,
-                    bucket.tpm_limit,
-                )
-            bucket._logged = True
-        return bucket
+        if self._buckets_lock is None:
+            # Lazy: ``asyncio.Lock`` requires a running loop on older
+            # Python releases; the throttle module is imported by sync
+            # code at startup, so defer construction until first await.
+            self._buckets_lock = asyncio.Lock()
+        async with self._buckets_lock:
+            bucket = self._buckets.get(provider_key)
+            if bucket is not None:
+                return bucket
+            rpm, tpm = _resolve_limits(provider_key)
+            bucket = _Bucket(provider_key, rpm, tpm)
+            self._buckets[provider_key] = bucket
+            # One-shot logging fires inside the lock so it runs exactly
+            # once per provider regardless of which coroutine wins the
+            # race.
+            if not bucket._logged:
+                if provider_key in _DEFAULTS:
+                    logger.info(
+                        "LLMThrottle: provider=%s rpm=%d tpm=%d (resolved limits)",
+                        provider_key,
+                        bucket.rpm_limit,
+                        bucket.tpm_limit,
+                    )
+                else:
+                    logger.warning(
+                        "LLMThrottle: unknown provider=%s — using fallback rpm=%d tpm=%d",
+                        provider_key,
+                        bucket.rpm_limit,
+                        bucket.tpm_limit,
+                    )
+                bucket._logged = True
+            return bucket
 
     def __repr__(self) -> str:  # pragma: no cover — debug aid
         return f"<LLMThrottle providers={list(self._buckets.keys())}>"
@@ -355,8 +405,17 @@ def _compute_wait(
     events = list(bucket._events)
     if not events:
         # No events but we couldn't enter — limit must be ≤ 0 or
-        # est_tokens > tpm_limit. Sleep the full window as a guard so we
-        # don't busy-loop.
+        # est_tokens > tpm_limit. The oversized-request case would
+        # otherwise busy-sleep one window forever (no event ever ages
+        # out to free capacity), so raise instead and let the caller
+        # split the request. Misconfiguration (limit ≤ 0) still falls
+        # through to the safe-guard sleep — operators expect the
+        # provider to drain naturally once they fix the override.
+        if est_tokens > tpm_limit:
+            raise ValueError(
+                f"est_tokens={est_tokens} exceeds tpm_limit={tpm_limit} for "
+                f"provider={bucket.provider}; caller must split the request"
+            )
         return _WINDOW_SECONDS
 
     rpm_used = len(events)

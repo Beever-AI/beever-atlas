@@ -243,7 +243,8 @@ async def get_sync_status(
     counts = await _safe_counts(stores, channel_id)
     failure_split = await _safe_failure_split(stores, channel_id)
     overview_state = await _safe_overview_state(stores, channel_id)
-    phases = _compose_phases(job, counts, overview_state)
+    maintenance_progress = _safe_wiki_maintenance_progress()
+    phases = _compose_phases(job, counts, overview_state, maintenance_progress)
     recent_events = _compose_recent_events(channel_id)
     smoothed_eta = _compute_smoothed_eta(counts)
 
@@ -380,10 +381,46 @@ async def _safe_overview_state(stores: Any, channel_id: str) -> dict[str, Any]:
     return out
 
 
+def _safe_wiki_maintenance_progress() -> dict[str, int] | None:
+    """Best-effort read of the WikiMaintainer's rolling rewrite counters.
+
+    Returns ``{"done": apply_60min, "dirty": mark_dirty_60min}`` when the
+    maintainer singleton is registered, else ``None``. Counters are
+    process-global (not channel-scoped) — the maintainer does not bucket
+    its rolling lists by channel, so the fraction reported here is a
+    rough proxy for "is the maintainer still working" rather than
+    a precise per-channel completion ratio. The frontend gracefully
+    handles ``None`` for these fields. Reuses the same source as the
+    ``/api/admin/wiki-maintainer/metrics`` endpoint.
+    """
+    try:
+        from beever_atlas.services.wiki_maintainer import get_wiki_maintainer
+
+        maintainer = get_wiki_maintainer()
+        if maintainer is None:
+            return None
+        snapshot = maintainer._in_memory_metrics_snapshot()
+        return {
+            "done": int(snapshot.get("apply_update_count_60min", 0) or 0),
+            # ``mark_dirty_count_5min`` is the only mark-dirty rolling slice
+            # exposed today; pair it with the 60-min apply count as a rough
+            # "remaining + completed" total. Better approximation than
+            # leaving the bar empty.
+            "dirty": int(snapshot.get("mark_dirty_count_5min", 0) or 0),
+        }
+    except Exception:  # noqa: BLE001 — observability is best-effort
+        logger.debug(
+            "Sync API: wiki_maintenance progress lookup raised — defaulting to None",
+            exc_info=True,
+        )
+        return None
+
+
 def _compose_phases(
     job: Any,
     counts: dict[str, int],
     overview_state: dict[str, Any],
+    maintenance_progress: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the four-entry ``phases`` array.
 
@@ -450,17 +487,30 @@ def _compose_phases(
     # Phase 3: wiki_maintenance. Treated as in_flight while extraction
     # is still producing facts (the maintainer is debounced behind
     # extraction events) and as done once extraction has settled.
-    # ``done`` / ``total`` are intentionally omitted here — surfacing
-    # entity-page counts requires a Neo4j round-trip the status
-    # endpoint shouldn't take on the hot path; the UI falls back to
-    # the existing ExtractionWorkerPanel for that detail.
+    # ``done`` / ``total`` come from the WikiMaintainer's rolling
+    # apply/mark-dirty counters when the singleton is registered. The
+    # counters are process-global (not channel-scoped), so the fraction
+    # is a rough proxy for "the maintainer is making progress" rather
+    # than a precise per-channel ratio. The frontend gracefully omits
+    # the fraction when these fields are missing.
     if total == 0:
         maintenance_state = "pending"
     elif pending + extracting > 0:
         maintenance_state = "in_flight"
     else:
         maintenance_state = "done"
-    phases.append({"name": "wiki_maintenance", "state": maintenance_state})
+    maintenance_entry: dict[str, Any] = {
+        "name": "wiki_maintenance",
+        "state": maintenance_state,
+    }
+    if maintenance_progress is not None:
+        done_count = maintenance_progress.get("done", 0)
+        dirty_count = maintenance_progress.get("dirty", 0)
+        maintenance_entry["done"] = done_count
+        # ``total`` = pages still dirty + pages already rewritten this
+        # rolling window — gives the UI a "rewrote X of Y" fraction.
+        maintenance_entry["total"] = done_count + dirty_count
+    phases.append(maintenance_entry)
 
     # Phase 4: overview_wiki. State decided by ``_safe_overview_state``.
     phases.append({"name": "overview_wiki", "state": str(overview_state.get("state", "pending"))})

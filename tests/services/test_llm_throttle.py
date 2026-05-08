@@ -168,3 +168,53 @@ async def test_metrics_snapshot_shape(short_window: float) -> None:
     finally:
         os.environ.pop("LLM_RPM_OVERRIDE_GEMINI", None)
         os.environ.pop("LLM_TPM_OVERRIDE_GEMINI", None)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_touch_creates_single_bucket(
+    short_window: float,
+) -> None:
+    """Two coroutines acquiring the same fresh provider concurrently
+    must converge on a single shared bucket — no clobber, no 2x limit.
+
+    Without the double-checked lock in ``_get_or_create_bucket``, both
+    racers would build a fresh ``_Bucket`` and the loser's writes would
+    overwrite the winner's sliding-window state, effectively doubling
+    the configured rate limit on the cold start.
+    """
+    throttle = LLMThrottle()
+
+    async def _acq() -> None:
+        async with throttle.acquire(provider="brand_new_provider", est_tokens=1):
+            pass
+
+    await asyncio.gather(_acq(), _acq(), _acq(), _acq())
+
+    # Exactly one bucket exists for the provider.
+    assert "brand_new_provider" in throttle._buckets
+    bucket = throttle._buckets["brand_new_provider"]
+    # All four events landed in the same bucket — no clobber.
+    assert len(bucket._events) == 4
+
+
+@pytest.mark.asyncio
+async def test_oversized_request_raises_rather_than_hangs(
+    short_window: float,
+) -> None:
+    """A single est_tokens that exceeds TPM must raise — not block forever.
+
+    Without the guard in ``_compute_wait``, the worker would sleep the
+    full window indefinitely (no event ever ages out to free capacity)
+    and the caller could never make progress.
+    """
+    throttle = LLMThrottle()
+    # Force a tiny TPM via override so the est_tokens easily exceeds it.
+    os.environ["LLM_RPM_OVERRIDE_GEMINI"] = "100"
+    os.environ["LLM_TPM_OVERRIDE_GEMINI"] = "1000"
+    try:
+        with pytest.raises(ValueError, match="exceeds tpm_limit"):
+            async with throttle.acquire(provider="gemini", est_tokens=5000):
+                pass
+    finally:
+        os.environ.pop("LLM_RPM_OVERRIDE_GEMINI", None)
+        os.environ.pop("LLM_TPM_OVERRIDE_GEMINI", None)
