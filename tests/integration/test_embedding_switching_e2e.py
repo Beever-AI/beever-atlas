@@ -27,7 +27,6 @@ Scenarios covered:
 
 from __future__ import annotations
 
-import asyncio
 import base64
 from types import SimpleNamespace
 from typing import Any
@@ -38,10 +37,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from beever_atlas.api import embedding_settings as ep
-from beever_atlas.api import sync as sync_module
 from beever_atlas.infra.config import Settings
-from beever_atlas.llm import embedding_runtime as rt
 from beever_atlas.llm import embedding_health as health_mod
+from beever_atlas.llm import embedding_runtime as rt
 from beever_atlas.llm import embeddings as emb
 
 

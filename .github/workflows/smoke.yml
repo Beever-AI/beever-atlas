@@ -50,7 +50,13 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Create .env from example
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          # CI has no provider API key, so the boot-time embedding probe
+          # fails with AUTH_MISSING_API_KEY and the dim guard refuses to
+          # start. Override in .env (Docker Compose reads .env, not the
+          # workflow-level env block).
+          sed -i 's/^EMBEDDING_DIM_GUARD=.*/EMBEDDING_DIM_GUARD=false/' .env
 
       - name: Start services
         run: docker compose up -d --build
