@@ -75,6 +75,11 @@ export function EmbeddingSettings() {
   const [migrationStatus, setMigrationStatus] = useState<EmbeddingMigrationStatus | null>(null);
   const [confirmMigrationOpen, setConfirmMigrationOpen] = useState(false);
   const [factCountForCost, setFactCountForCost] = useState<number | null>(null);
+  // UX: most users pick a tile + paste a key. Hide the technical knobs
+  // (model name, dimensions, rpm, api_base) behind an Advanced disclosure
+  // and the env-only providers behind a "Show advanced providers" toggle.
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const [showAdvancedProviders, setShowAdvancedProviders] = useState(false);
 
   useEffect(() => {
     if (config && !draft) setDraft(draftFromConfig(config));
@@ -340,13 +345,26 @@ export function EmbeddingSettings() {
           )}
         </div>
 
-        {/* Provider tile grid (replaces the previous dropdown) */}
+        {/* Provider tile grid — primary action. Shows 7 ready-to-use
+            providers by default. Bedrock + Vertex AI are env-only with no
+            UI presets, so they're hidden behind a toggle. */}
         <div>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            Choose provider
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Step 1 · Choose provider
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvancedProviders((v) => !v)}
+              className="text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              {showAdvancedProviders ? "Hide advanced providers" : "Show advanced providers"}
+            </button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {SUPPORTED_PROVIDERS.map((p) => (
+            {SUPPORTED_PROVIDERS.filter((p) =>
+              showAdvancedProviders ? true : p !== "bedrock" && p !== "vertex_ai",
+            ).map((p) => (
               <ProviderTile
                 key={p}
                 provider={p}
@@ -396,78 +414,14 @@ export function EmbeddingSettings() {
           );
         })()}
 
-        {/* Model + dimensions row */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Model</span>
-            <input
-              list={`emb-models-${draft.provider}`}
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={draft.model}
-              onChange={(e) => handleModel(e.target.value)}
-              placeholder="e.g. text-embedding-3-large"
-            />
-            <datalist id={`emb-models-${draft.provider}`}>
-              {modelsForProvider(draft.provider).map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">
-              Dimensions{" "}
-              {currentSpec && (
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                  · auto
-                </span>
-              )}
-            </span>
-            <input
-              type="number"
-              min={1}
-              max={8192}
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={draft.dimensions}
-              onChange={(e) =>
-                setDraft({ ...draft, dimensions: Number(e.target.value) || 0 })
-              }
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">RPM</span>
-            <input
-              type="number"
-              min={1}
-              max={10000}
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={draft.rpm}
-              onChange={(e) => setDraft({ ...draft, rpm: Number(e.target.value) || 0 })}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5 md:col-span-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              API Base (optional override)
-            </span>
-            <input
-              type="url"
-              placeholder="leave blank for provider default"
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={draft.api_base}
-              onChange={(e) => setDraft({ ...draft, api_base: e.target.value })}
-            />
-          </label>
-        </div>
-
-        {/* API key */}
+        {/* Step 2 · API key — promoted above the model/dim knobs because
+            it's the field most operators actually need to fill. */}
         <div className="space-y-1.5">
-          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
             <KeyRound className="w-3 h-3" />
-            API Key
-            <span className="text-muted-foreground/60">
-              · provider env: {PROVIDER_KEY_ENV[draft.provider]}
+            Step 2 · API Key
+            <span className="ml-1 text-[11px] font-normal normal-case tracking-normal text-muted-foreground/70">
+              env fallback: {PROVIDER_KEY_ENV[draft.provider]}
             </span>
           </div>
           {!replaceKey && config.has_api_key && (
@@ -510,6 +464,92 @@ export function EmbeddingSettings() {
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Step 3 · Advanced — collapsed by default. Most users never
+            touch these; we auto-fill model/dim from the picked tile. */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFields((v) => !v)}
+            className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 hover:text-foreground"
+          >
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform ${
+                showAdvancedFields ? "" : "-rotate-90"
+              }`}
+            />
+            Advanced — model name, dimensions, RPM, base URL
+          </button>
+          {showAdvancedFields && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Model
+                </span>
+                <input
+                  list={`emb-models-${draft.provider}`}
+                  className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  value={draft.model}
+                  onChange={(e) => handleModel(e.target.value)}
+                  placeholder="e.g. text-embedding-3-large"
+                />
+                <datalist id={`emb-models-${draft.provider}`}>
+                  {modelsForProvider(draft.provider).map((m) => (
+                    <option key={m} value={m} />
+                  ))}
+                </datalist>
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Dimensions{" "}
+                  {currentSpec && (
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                      · auto
+                    </span>
+                  )}
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8192}
+                  className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  value={draft.dimensions}
+                  onChange={(e) =>
+                    setDraft({ ...draft, dimensions: Number(e.target.value) || 0 })
+                  }
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">RPM</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10000}
+                  className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  value={draft.rpm}
+                  onChange={(e) =>
+                    setDraft({ ...draft, rpm: Number(e.target.value) || 0 })
+                  }
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5 md:col-span-2">
+                <span className="text-xs font-medium text-muted-foreground">
+                  API Base (optional override)
+                </span>
+                <input
+                  type="url"
+                  placeholder="leave blank for provider default"
+                  className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  value={draft.api_base}
+                  onChange={(e) => setDraft({ ...draft, api_base: e.target.value })}
+                />
+              </label>
             </div>
           )}
         </div>

@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Plus, MonitorSmartphone, Settings2, FileText, Plug, Cpu } from "lucide-react";
+import {
+  Plus,
+  MonitorSmartphone,
+  Settings2,
+  FileText,
+  Plug,
+  Cpu,
+  Layers,
+} from "lucide-react";
 import { useConnections, useDeleteConnection } from "@/hooks/useConnections";
 import { PlatformCard } from "@/components/settings/PlatformCard";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
@@ -12,7 +20,7 @@ import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 type PickerOption = Platform | "file";
-type SettingsTab = "integrations" | "channels" | "models";
+type SettingsTab = "integrations" | "channels" | "embedding" | "agents";
 
 function SlackIcon({ className }: { className?: string }) {
   return (
@@ -49,7 +57,18 @@ const PLATFORM_OPTIONS: { value: PickerOption; label: string; description: strin
 const TABS: { value: SettingsTab; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { value: "integrations", label: "Integrations", description: "Connected platforms and data sources", Icon: Plug },
   { value: "channels", label: "Channels", description: "Default sync behavior for new channels", Icon: Settings2 },
-  { value: "models", label: "AI Models", description: "Per-agent model assignments and presets", Icon: Cpu },
+  {
+    value: "embedding",
+    label: "Embedding",
+    description: "Vector model that powers semantic search and entity matching",
+    Icon: Layers,
+  },
+  {
+    value: "agents",
+    label: "Agent Models",
+    description: "Per-agent LLM assignments and quick presets",
+    Icon: Cpu,
+  },
 ];
 
 export function SettingsPage() {
@@ -151,12 +170,11 @@ export function SettingsPage() {
 
           {tab === "channels" && <SyncDefaultsSection />}
 
-        {tab === "models" && (
-          <div className="space-y-5">
-            <EmbeddingSettings />
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <AgentModelSettings />
-            </div>
+        {tab === "embedding" && <EmbeddingSettings />}
+
+        {tab === "agents" && (
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <AgentModelSettings />
           </div>
         )}
       </div>
