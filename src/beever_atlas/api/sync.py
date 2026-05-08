@@ -48,6 +48,27 @@ async def trigger_sync(
     await assert_channel_access(principal, channel_id)
     logger.info("Sync API: trigger requested for channel=%s sync_type=%s", channel_id, sync_type)
 
+    # Reject syncs during an active embedding-provider migration. New
+    # facts ingested mid-migration would land with empty vectors (the
+    # pipeline's defensive fallback), forcing a manual back-fill later.
+    # Better to fail-fast and tell the operator to retry once the
+    # migration completes.
+    from beever_atlas.llm.embedding_runtime import is_migration_in_progress
+
+    if await is_migration_in_progress():
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "embedding_migration_in_progress",
+                "message": (
+                    "Sync is paused while an embedding migration runs. "
+                    "Newly ingested facts would lack vectors. Retry "
+                    "once the migration completes — see "
+                    "/api/settings/embedding/migrate/status."
+                ),
+            },
+        )
+
     # Resolve effective policy for cooldown and default sync_type
     stores = get_stores()
     try:

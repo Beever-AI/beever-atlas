@@ -74,7 +74,9 @@ async def _reembed_weaviate_facts(stores, *, concurrency: int, resume_from: int 
     total = len(rows)
     if resume_from > 0:
         rows = rows[resume_from:]
-        logger.info("reembed: resuming from row %d (skipping %d already done)", resume_from, resume_from)
+        logger.info(
+            "reembed: resuming from row %d (skipping %d already done)", resume_from, resume_from
+        )
 
     sem = asyncio.Semaphore(concurrency)
 
@@ -148,6 +150,10 @@ async def main() -> None:
     args = parser.parse_args()
 
     from beever_atlas.infra.config import get_settings
+    from beever_atlas.llm.embedding_runtime import (
+        reset_migration_context,
+        set_migration_context,
+    )
     from beever_atlas.llm.embeddings import initialize_embedding_runtime
     from beever_atlas.stores import StoreClients, init_stores
 
@@ -157,6 +163,11 @@ async def main() -> None:
     stores = StoreClients.from_settings(settings)
     init_stores(stores)
     await stores.startup()
+
+    # Mark this asyncio task as the migration job so its own embed_texts
+    # calls bypass the migration-mode gate (which would otherwise refuse
+    # to embed during the very migration that's about to run).
+    _migration_token = set_migration_context(True)
 
     try:
         # Snapshot current counts upfront so the cost-preview line is
@@ -212,6 +223,7 @@ async def main() -> None:
             settings.embedding_dimensions,
         )
     finally:
+        reset_migration_context(_migration_token)
         await stores.shutdown()
 
 

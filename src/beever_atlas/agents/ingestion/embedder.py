@@ -90,7 +90,37 @@ class EmbedderAgent(BaseAgent):
         # The shim handles chunking (100 / batch), retries, and the rate
         # limiter. Per-chunk telemetry already flows through ``embed_log``
         # so this agent only logs start / done.
-        vectors = await embed_texts(texts)
+        from beever_atlas.llm.embedding_runtime import EmbeddingMigrationInProgress
+
+        try:
+            vectors = await embed_texts(texts)
+        except EmbeddingMigrationInProgress:
+            # The re-embed migration is in flight. We must NOT call the
+            # new model on these facts because the result would be a
+            # mixed-dim collection. Skip vectors for this batch — the
+            # persister tolerates ``text_vector=[]`` and will produce
+            # rows that the next sync (after migration completes) can
+            # patch up via the back-fill flow.
+            logger.warning(
+                "EmbedderAgent: migration in progress — emitting empty "
+                "vectors for batch=%s job_id=%s channel=%s facts=%d. "
+                "Re-run sync after migration completes to back-fill.",
+                batch_num,
+                sync_job_id,
+                channel_id,
+                len(texts),
+            )
+            empty: list[dict[str, Any]] = []
+            for fact in facts:
+                enriched = dict(fact)
+                enriched["text_vector"] = []
+                empty.append(enriched)
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                actions=EventActions(state_delta={"embedded_facts": empty}),
+            )
+            return
 
         embedded: list[dict[str, Any]] = []
         for fact, vector in zip(facts, vectors, strict=True):

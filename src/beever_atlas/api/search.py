@@ -65,10 +65,24 @@ async def search_facts(
         # Compute query embedding via the shared shim. Routes through
         # ``llm.embeddings.embed_texts`` so the provider is whatever
         # ``EMBEDDING_PROVIDER`` resolves to.
+        from beever_atlas.llm.embedding_runtime import EmbeddingMigrationInProgress
         from beever_atlas.llm.embeddings import embed_texts
 
         vectors = await embed_texts([body.query])
         query_vector = vectors[0]
+    except EmbeddingMigrationInProgress as exc:
+        logger.info("Search: embedding migration in progress — returning 503")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "embedding_migration_in_progress",
+                "message": (
+                    "Embedding migration is running. Semantic search is "
+                    "temporarily unavailable; keyword search continues to work. "
+                    "Check /api/settings/embedding/migrate/status for progress."
+                ),
+            },
+        ) from exc
     except Exception as exc:
         logger.warning("Search: embedding computation failed: %s", exc)
         raise HTTPException(status_code=503, detail="Embedding service unavailable") from exc

@@ -319,68 +319,83 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
   prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
   prompt_external_key "JINA_API_KEY"   "Jina v4 embeddings (default provider)" "https://jina.ai/api-dashboard/"
 
-  # Optional: route embedding through a different provider via LiteLLM.
-  # The default Jina v4 path needs no extra config; everything below only
-  # fires when the operator explicitly opts into a different provider.
-  if confirm "N" "Use a different embedding provider (OpenAI / Cohere / Voyage / Gemini / Ollama)?"; then
-    hint "Picks: openai · cohere · voyage · gemini · mistral · ollama"
-    printf "    ${C_DIM}Provider:${C_RESET} "
-    emb_provider=""
-    read -r emb_provider || true
-    emb_provider=$(echo "${emb_provider:-jina_ai}" | tr '[:upper:]' '[:lower:]')
-    case "$emb_provider" in
-      openai)
-        replace_env_value "EMBEDDING_PROVIDER"   "openai"
-        replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-large"
-        replace_env_value "EMBEDDING_DIMENSIONS" "3072"
-        prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
-        ok "EMBEDDING_PROVIDER=openai · text-embedding-3-large @ 3072d"
-        ;;
-      cohere)
-        replace_env_value "EMBEDDING_PROVIDER"   "cohere"
-        replace_env_value "EMBEDDING_MODEL"      "embed-multilingual-v3.0"
-        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-        prompt_external_key "COHERE_API_KEY" "Cohere" "https://dashboard.cohere.com/api-keys"
-        ok "EMBEDDING_PROVIDER=cohere · embed-multilingual-v3.0 @ 1024d"
-        ;;
-      voyage)
-        replace_env_value "EMBEDDING_PROVIDER"   "voyage"
-        replace_env_value "EMBEDDING_MODEL"      "voyage-3-large"
-        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-        prompt_external_key "VOYAGE_API_KEY" "Voyage AI" "https://dash.voyageai.com/"
-        ok "EMBEDDING_PROVIDER=voyage · voyage-3-large @ 1024d"
-        ;;
-      gemini)
-        replace_env_value "EMBEDDING_PROVIDER"   "gemini"
-        replace_env_value "EMBEDDING_MODEL"      "text-embedding-004"
-        replace_env_value "EMBEDDING_DIMENSIONS" "768"
-        # GOOGLE_API_KEY (already prompted above) bridges into GEMINI_API_KEY
-        # for LiteLLM's embedding route.
-        ok "EMBEDDING_PROVIDER=gemini · text-embedding-004 @ 768d (reuses GOOGLE_API_KEY)"
-        ;;
-      mistral)
-        replace_env_value "EMBEDDING_PROVIDER"   "mistral"
-        replace_env_value "EMBEDDING_MODEL"      "mistral-embed"
-        replace_env_value "EMBEDDING_DIMENSIONS" "1024"
-        prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
-        ok "EMBEDDING_PROVIDER=mistral · mistral-embed @ 1024d"
-        ;;
-      ollama)
-        replace_env_value "EMBEDDING_PROVIDER"   "ollama"
-        replace_env_value "EMBEDDING_MODEL"      "nomic-embed-text"
-        replace_env_value "EMBEDDING_DIMENSIONS" "768"
-        replace_env_value "EMBEDDING_API_BASE"   "http://localhost:11434"
-        ok "EMBEDDING_PROVIDER=ollama · nomic-embed-text @ 768d (local, no key needed)"
-        warn "Heads-up: Ollama embeddings are English-leaning. Switch to a multilingual model for non-English channels."
-        ;;
-      jina_ai|jina|"")
-        ok "kept default Jina v4 (jina_ai/jina-embeddings-v4 @ 2048d)"
-        ;;
-      *)
-        warn "Unknown provider '${emb_provider}' — left default Jina path. Edit EMBEDDING_PROVIDER in .env to change."
-        ;;
-    esac
-  fi
+  # ── Embedding provider menu (OpenClaw-style numbered grid) ──────────
+  # The default Jina v4 path needs no extra config — pressing Enter
+  # at the prompt below keeps it. Otherwise pick a number 2-8 to switch.
+  printf "\n"
+  hint "Choose your embedding provider (default 1: Jina multilingual)"
+  printf "\n"
+  printf "    ${C_BOLD}1)${C_RESET} Jina v4              ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok  ${C_DIM}[default]${C_RESET}\n"
+  printf "    ${C_BOLD}2)${C_RESET} OpenAI 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.13/1M tok\n"
+  printf "    ${C_BOLD}3)${C_RESET} OpenAI 3-small       ${C_GREEN}multilingual${C_RESET}    ~\$0.02/1M tok  ${C_DIM}cheapest cloud${C_RESET}\n"
+  printf "    ${C_BOLD}4)${C_RESET} Voyage 3-large       ${C_GREEN}multilingual${C_RESET}    ~\$0.18/1M tok\n"
+  printf "    ${C_BOLD}5)${C_RESET} Cohere multi-v3      ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok\n"
+  printf "    ${C_BOLD}6)${C_RESET} Gemini emb-004       ${C_GREEN}multilingual${C_RESET}    ~\$0.025/1M tok ${C_DIM}reuses GOOGLE_API_KEY${C_RESET}\n"
+  printf "    ${C_BOLD}7)${C_RESET} Mistral embed        ${C_GREEN}multilingual${C_RESET}    ~\$0.10/1M tok\n"
+  printf "    ${C_BOLD}8)${C_RESET} Ollama nomic         ${C_YELLOW}English-leaning${C_RESET} ${C_GREEN}FREE (local)${C_RESET}\n"
+  printf "\n"
+  printf "    ${C_DIM}Choice [1]:${C_RESET} "
+  emb_choice=""
+  read -r emb_choice || true
+  emb_choice="${emb_choice:-1}"
+
+  case "$emb_choice" in
+    1|jina|jina_ai)
+      ok "kept default Jina v4 (jina_ai/jina-embeddings-v4 @ 2048d)"
+      ;;
+    2|openai-large|openai_large)
+      replace_env_value "EMBEDDING_PROVIDER"   "openai"
+      replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-large"
+      replace_env_value "EMBEDDING_DIMENSIONS" "3072"
+      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
+      ok "EMBEDDING_PROVIDER=openai · text-embedding-3-large @ 3072d"
+      ;;
+    3|openai-small|openai_small)
+      replace_env_value "EMBEDDING_PROVIDER"   "openai"
+      replace_env_value "EMBEDDING_MODEL"      "text-embedding-3-small"
+      replace_env_value "EMBEDDING_DIMENSIONS" "1536"
+      prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
+      ok "EMBEDDING_PROVIDER=openai · text-embedding-3-small @ 1536d (cheapest cloud)"
+      ;;
+    4|voyage)
+      replace_env_value "EMBEDDING_PROVIDER"   "voyage"
+      replace_env_value "EMBEDDING_MODEL"      "voyage-3-large"
+      replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+      prompt_external_key "VOYAGE_API_KEY" "Voyage AI" "https://dash.voyageai.com/"
+      ok "EMBEDDING_PROVIDER=voyage · voyage-3-large @ 1024d"
+      ;;
+    5|cohere)
+      replace_env_value "EMBEDDING_PROVIDER"   "cohere"
+      replace_env_value "EMBEDDING_MODEL"      "embed-multilingual-v3.0"
+      replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+      prompt_external_key "COHERE_API_KEY" "Cohere" "https://dashboard.cohere.com/api-keys"
+      ok "EMBEDDING_PROVIDER=cohere · embed-multilingual-v3.0 @ 1024d"
+      ;;
+    6|gemini)
+      replace_env_value "EMBEDDING_PROVIDER"   "gemini"
+      replace_env_value "EMBEDDING_MODEL"      "text-embedding-004"
+      replace_env_value "EMBEDDING_DIMENSIONS" "768"
+      ok "EMBEDDING_PROVIDER=gemini · text-embedding-004 @ 768d (reuses GOOGLE_API_KEY)"
+      ;;
+    7|mistral)
+      replace_env_value "EMBEDDING_PROVIDER"   "mistral"
+      replace_env_value "EMBEDDING_MODEL"      "mistral-embed"
+      replace_env_value "EMBEDDING_DIMENSIONS" "1024"
+      prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
+      ok "EMBEDDING_PROVIDER=mistral · mistral-embed @ 1024d"
+      ;;
+    8|ollama)
+      replace_env_value "EMBEDDING_PROVIDER"   "ollama"
+      replace_env_value "EMBEDDING_MODEL"      "nomic-embed-text"
+      replace_env_value "EMBEDDING_DIMENSIONS" "768"
+      replace_env_value "EMBEDDING_API_BASE"   "http://localhost:11434"
+      ok "EMBEDDING_PROVIDER=ollama · nomic-embed-text @ 768d (local, no key)"
+      warn "Heads-up: Ollama nomic-embed-text is English-leaning. Switch to a multilingual model in Settings if you have non-English channels."
+      ;;
+    *)
+      warn "Unknown choice '${emb_choice}' — kept default Jina v4. Change later in Settings → AI Models."
+      ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------

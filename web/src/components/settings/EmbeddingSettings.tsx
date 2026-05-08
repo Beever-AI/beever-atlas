@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEmbeddingSettings } from "@/hooks/useEmbeddingSettings";
 import {
+  PROVIDER_DEFAULT_MODEL,
   PROVIDER_KEY_ENV,
   PROVIDER_LABELS,
   SUPPORTED_PROVIDERS,
@@ -22,6 +23,7 @@ import {
   lookupModel,
   modelsForProvider,
 } from "@/lib/knownEmbeddingModels";
+import { ProviderTile } from "./ProviderTile";
 import type {
   EmbeddingMigrationStatus,
   EmbeddingProbeResult,
@@ -114,9 +116,11 @@ export function EmbeddingSettings() {
 
   function handleProvider(value: string) {
     if (!draft) return;
-    // Auto-pick the first known model for the provider when switching.
-    const modelsForNew = modelsForProvider(value);
-    const nextModel = modelsForNew[0] ?? "";
+    // Prefer the curated default model for the provider; otherwise fall
+    // back to the first model in the known-models table.
+    const preferred = PROVIDER_DEFAULT_MODEL[value as keyof typeof PROVIDER_DEFAULT_MODEL];
+    const fallbackList = modelsForProvider(value);
+    const nextModel = preferred ?? fallbackList[0] ?? "";
     const nextSpec = nextModel ? lookupModel(value, nextModel) : null;
     setDraft({
       ...draft,
@@ -241,24 +245,49 @@ export function EmbeddingSettings() {
         <div className="text-xs text-destructive bg-destructive/10 px-4 py-2">{error}</div>
       )}
 
-      {/* Migration banner — shown when a job is running OR a dim-changing
-          save was attempted and confirmation is required. */}
-      {migrationStatus?.running && (
-        <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-3">
-          <Loader2 className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400" />
-          <div className="text-xs flex-1">
-            <div className="font-medium text-amber-700 dark:text-amber-300">
-              Re-embedding in progress
-            </div>
-            <div className="text-amber-600/80 dark:text-amber-400/80">
-              {migrationStatus.stage ?? "starting"}
-              {migrationStatus.processed != null && migrationStatus.total != null && (
-                <> — {migrationStatus.processed.toLocaleString()} / {migrationStatus.total.toLocaleString()} rows</>
+      {/* Migration banner — shown when a job is running. Includes a live
+          progress bar + ETA. The activity-feed surface in the dashboard
+          gets the same stage_output entries from the reembed_state doc. */}
+      {migrationStatus?.running && (() => {
+        const processed = migrationStatus.processed ?? 0;
+        const total = migrationStatus.total ?? 0;
+        const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+        // ETA: rough proportional projection — assume linear progress from
+        // the start of the run. Hides when we have no progress yet.
+        const startedAt = migrationStatus.started_at
+          ? Date.parse(migrationStatus.started_at)
+          : null;
+        const elapsedSec = startedAt ? (Date.now() - startedAt) / 1000 : 0;
+        const etaMin =
+          processed > 0 && total > processed
+            ? Math.max(1, Math.round(((total - processed) / processed) * elapsedSec / 60))
+            : null;
+        return (
+          <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/30 flex items-start gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 mt-0.5" />
+            <div className="text-xs flex-1 space-y-1.5">
+              <div className="font-medium text-amber-700 dark:text-amber-300 flex items-center justify-between gap-2">
+                <span>Re-embedding in progress · {migrationStatus.stage ?? "starting"}</span>
+                <span className="text-amber-600/80 dark:text-amber-400/80 font-mono">
+                  {pct}%{etaMin != null ? ` · ETA ${etaMin}m` : ""}
+                </span>
+              </div>
+              {total > 0 && (
+                <div className="h-1.5 rounded-full bg-amber-500/20 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500 transition-all duration-500"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
               )}
+              <div className="text-amber-600/80 dark:text-amber-400/80">
+                {processed.toLocaleString()} / {total.toLocaleString()} rows ·
+                Search degraded to keyword-only · Sync paused
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {dimMismatchPersisted && !migrationStatus?.running && (
         <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/30 flex items-start gap-3">
@@ -311,23 +340,64 @@ export function EmbeddingSettings() {
           )}
         </div>
 
-        {/* Provider + model */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Provider</span>
-            <select
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={draft.provider}
-              onChange={(e) => handleProvider(e.target.value)}
-            >
-              {SUPPORTED_PROVIDERS.map((p) => (
-                <option key={p} value={p}>
-                  {PROVIDER_LABELS[p]}
-                </option>
-              ))}
-            </select>
-          </label>
+        {/* Provider tile grid (replaces the previous dropdown) */}
+        <div>
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            Choose provider
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {SUPPORTED_PROVIDERS.map((p) => (
+              <ProviderTile
+                key={p}
+                provider={p}
+                selected={draft.provider === p}
+                onClick={() => handleProvider(p)}
+              />
+            ))}
+          </div>
+        </div>
 
+        {/* Pre-switch inline warning — fires the moment the operator picks
+            a provider/dim different from what's saved AND search would
+            require a re-embed migration. Set expectations BEFORE Save. */}
+        {(() => {
+          const dimChanged = draft.dimensions !== config.dimensions;
+          const providerChanged = draft.provider !== config.provider;
+          const hasSavedConfig = config.source !== "default" || config.last_probe_at;
+          const showPreSwitchWarning =
+            (providerChanged || dimChanged) &&
+            hasSavedConfig &&
+            !migrationStatus?.running;
+          if (!showPreSwitchWarning) return null;
+          const warnSpec = lookupModel(draft.provider, draft.model);
+          return (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300 flex gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <div className="font-medium">
+                  Heads up — switching from{" "}
+                  <span className="font-mono">
+                    {config.provider}/{config.model}
+                  </span>{" "}
+                  to{" "}
+                  <span className="font-mono">
+                    {draft.provider}/{draft.model}
+                  </span>{" "}
+                  will require re-embedding all stored facts.
+                </div>
+                <div>
+                  Search will degrade to keyword-only (BM25) for ~5–15 min while
+                  the migration runs. Sync is paused during the window. Cost is
+                  shown on Save Changes — typically &lt; $1 for OSS-scale data
+                  {warnSpec?.local ? " (free for local providers)" : ""}.
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Model + dimensions row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">Model</span>
             <input

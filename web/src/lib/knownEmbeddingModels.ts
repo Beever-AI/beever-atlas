@@ -50,6 +50,32 @@ export const PROVIDER_KEY_ENV: Record<EmbeddingProvider, string> = {
   vertex_ai: "GOOGLE_APPLICATION_CREDENTIALS",
 };
 
+// One-line pitch per provider, surfaced in the tile + help drawer.
+export const PROVIDER_DESCRIPTIONS: Record<EmbeddingProvider, string> = {
+  jina_ai: "Strong multilingual recall. Default for OSS installs.",
+  openai: "Most popular cloud option, multilingual, dimension-resizable.",
+  cohere: "Multilingual variant available. Honors `input_type=`.",
+  voyage: "Strong multilingual + reranker pairing. Honors `task=`.",
+  gemini: "Cheapest cloud multilingual. Reuses your Google API key.",
+  mistral: "Hosted by Mistral. Single embedding endpoint.",
+  ollama: "Local, free. nomic-embed-text is English-leaning.",
+  bedrock: "AWS-hosted. Requires AWS credentials; not in known-models table yet.",
+  vertex_ai: "Google Vertex AI. Requires GOOGLE_APPLICATION_CREDENTIALS.",
+};
+
+// Default model per provider — the first model in `KNOWN_EMBEDDING_MODELS`
+// for that provider. Tile click auto-fills these into the form.
+export const PROVIDER_DEFAULT_MODEL: Partial<Record<EmbeddingProvider, string>> = {
+  jina_ai: "jina-embeddings-v4",
+  openai: "text-embedding-3-large",
+  cohere: "embed-multilingual-v3.0",
+  voyage: "voyage-3-large",
+  gemini: "text-embedding-004",
+  mistral: "mistral-embed",
+  ollama: "nomic-embed-text",
+  // bedrock + vertex_ai have no entry in the known-models table; tile is muted
+};
+
 export const KNOWN_EMBEDDING_MODELS: Record<string, EmbeddingModelSpec> = {
   "jina_ai/jina-embeddings-v4": { dim: 2048, cost_per_m: 0.18, multilingual: true, local: false },
   "jina_ai/jina-embeddings-v3": { dim: 1024, cost_per_m: 0.18, multilingual: true, local: false },

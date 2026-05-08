@@ -231,6 +231,13 @@ async def embed_texts(
 ) -> list[list[float]]:
     """Embed `texts` and return one vector per input, in input order.
 
+    Production callers should pass ``settings=None`` so the shim picks up
+    UI-driven overrides via :func:`embedding_runtime.get_effective_embedding_settings`.
+    The migration job calls this same function with the
+    :func:`embedding_runtime.set_migration_context` contextvar set, which
+    bypasses the migration gate so it can re-embed the existing data
+    without tripping its own block.
+
     Args:
         texts: Inputs to embed. Empty list returns ``[]`` without making a
             request.
@@ -238,10 +245,15 @@ async def embed_texts(
             ``settings.embedding_task`` (``"text-matching"`` for Jina). The
             kwarg is dropped automatically for providers that don't honour
             it (see ``known_embedding_models.model_accepts_task``).
-        settings: Override Settings — primarily for tests. Production
-            callers should pass ``None`` and rely on ``get_settings()``.
+        settings: Override Settings — primarily for tests, the boot-time
+            probe, and the Test Connection endpoint. Production callers
+            should pass ``None``.
 
     Raises:
+        EmbeddingMigrationInProgress: a re-embed migration is in flight
+            and the caller is NOT the migration job. Callers should
+            degrade (BM25 fallback for queries, empty-vectors for
+            ingestion).
         EmbeddingProviderError: configured provider prefix is unknown.
         EmbeddingResponseError: provider returned a different number of
             vectors than texts in a chunk.
@@ -252,7 +264,39 @@ async def embed_texts(
     if not texts:
         return []
 
-    cfg = settings or get_settings()
+    # Resolve effective config. Live overlay (env + DB) when in production;
+    # explicit ``settings=`` kwarg wins for tests/probe.
+    if settings is not None:
+        cfg = settings
+    else:
+        from beever_atlas.llm.embedding_runtime import (
+            EmbeddingMigrationInProgress,
+            get_effective_embedding_settings,
+            in_migration_context,
+            is_migration_in_progress,
+        )
+
+        # Migration gate — bypassed only by the re-embed script itself.
+        if not in_migration_context() and await is_migration_in_progress():
+            raise EmbeddingMigrationInProgress(
+                "Embedding migration is running; switch to BM25 fallback or retry after completion."
+            )
+
+        eff = await get_effective_embedding_settings()
+        # Build a one-off Settings view with the live overrides applied.
+        cfg = get_settings().model_copy(
+            update={
+                "embedding_provider": eff.provider,
+                "embedding_model": eff.model,
+                "embedding_dimensions": eff.dimensions,
+                "embedding_rpm": eff.rpm,
+                "embedding_api_base": eff.api_base,
+                "embedding_api_key": eff.api_key,
+                "embedding_task": eff.task,
+                "embedding_dim_guard": eff.dim_guard_enabled,
+            }
+        )
+
     if not _runtime_initialised:
         # Defensive — covers test paths that import the shim before app boot.
         initialize_embedding_runtime(cfg)
@@ -379,4 +423,5 @@ __all__ = [
     "EmbeddingResponseError",
     "embed_texts",
     "initialize_embedding_runtime",
+    "set_runtime_db_api_key",
 ]

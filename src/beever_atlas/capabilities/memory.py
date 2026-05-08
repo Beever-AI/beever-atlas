@@ -35,8 +35,10 @@ logger = logging.getLogger(__name__)
 async def _embed_query(text: str) -> list[float]:
     """Compute an embedding for a query string via the shared shim.
 
-    Single embedding code path for the whole codebase. Raises on provider
-    error — callers should catch and fall back to BM25 if needed.
+    Raises :class:`EmbeddingMigrationInProgress` while a re-embed is
+    running — callers wrap this in ``try/except Exception`` and fall back
+    to BM25-only search (the existing fallback path catches both
+    migration-in-progress and any other provider error uniformly).
     """
     from beever_atlas.llm.embeddings import embed_texts
 

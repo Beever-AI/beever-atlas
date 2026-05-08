@@ -384,6 +384,18 @@ async def update_embedding_settings(req: UpdateEmbeddingRequest) -> EmbeddingSet
     # Persist encrypted API key separately.
     if req.api_key is not None:
         await _persist_api_key(req.api_key)
+        # Also seed the in-process runtime key so the very next embed
+        # call uses it without waiting for the next cache miss.
+        from beever_atlas.llm.embeddings import set_runtime_db_api_key
+
+        set_runtime_db_api_key(req.api_key or None)
+
+    # Bust the live-config cache so the next embed_texts() picks up the
+    # new settings without restart or 5-second TTL wait. Layer 3 of the
+    # provider-pluggable embedding feature.
+    from beever_atlas.llm.embedding_runtime import bust_embedding_settings_cache
+
+    bust_embedding_settings_cache()
 
     return await get_embedding_settings()
 
