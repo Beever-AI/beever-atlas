@@ -172,6 +172,8 @@ def mock_stores():
     fake.mongodb.list_synced_channel_ids = AsyncMock(return_value=[])
     fake.mongodb.get_channel_display_name = AsyncMock(return_value=None)
     fake.mongodb.get_channel_sync_state = AsyncMock(return_value=None)
+    fake.mongodb.get_channel_messages = AsyncMock(return_value=[])
+    fake.mongodb.get_sync_status = AsyncMock(return_value=None)
 
     stores_mod._stores = fake
     # Issue #36 — set the readiness event so barrier-aware code under test

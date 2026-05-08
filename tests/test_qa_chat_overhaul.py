@@ -307,14 +307,22 @@ class TestAgentModeConfig:
         assert "Beever Atlas" in prompt
         assert "Do not disclose" in prompt
 
-    def test_retrieval_pipeline_in_prompt(self):
-        from beever_atlas.agents.query.prompts import build_qa_system_prompt
+    def test_retrieval_pipeline_in_prompt(self, monkeypatch):
+        from beever_atlas.infra import config
 
-        prompt = build_qa_system_prompt()
-        assert "Required Retrieval Pipeline" in prompt
-        assert "Step 1" in prompt
-        assert "Step 5" in prompt
-        assert "ALWAYS" in prompt
+        monkeypatch.setenv("QA_RICH_OUTPUT", "false")
+        monkeypatch.setenv("QA_NEW_PROMPT", "false")
+        config.get_settings.cache_clear()
+        try:
+            from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
+            prompt = build_qa_system_prompt()
+            assert "Required Retrieval Pipeline" in prompt
+            assert "Step 1" in prompt
+            assert "Step 5" in prompt
+            assert "ALWAYS" in prompt
+        finally:
+            config.get_settings.cache_clear()
 
     def test_citation_format_in_prompt(self):
         """Prompt must instruct the model how to cite, in either regime.
@@ -359,13 +367,21 @@ class TestAgentModeConfig:
         assert "2 tool calls" in prompt2
         assert "8 tool calls" in prompt8
 
-    def test_query_type_tool_map(self):
-        from beever_atlas.agents.query.prompts import build_qa_system_prompt
+    def test_query_type_tool_map(self, monkeypatch):
+        from beever_atlas.infra import config
 
-        prompt = build_qa_system_prompt()
-        assert "who is X" in prompt
-        assert "search_relationships" in prompt
-        assert "find_experts" in prompt
+        monkeypatch.setenv("QA_RICH_OUTPUT", "false")
+        monkeypatch.setenv("QA_NEW_PROMPT", "false")
+        config.get_settings.cache_clear()
+        try:
+            from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
+            prompt = build_qa_system_prompt()
+            assert "who is X" in prompt
+            assert "search_relationships" in prompt
+            assert "find_experts" in prompt
+        finally:
+            config.get_settings.cache_clear()
 
 
 # ── Test 16.6: Channel resolver ──────────────────────────────────────────────

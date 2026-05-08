@@ -80,7 +80,7 @@ async def test_chunking_250_inputs_yields_three_calls(monkeypatch):
     """250 inputs → 3 chunks of size [100, 100, 50], vectors returned in order."""
     captured_chunks: list[list[str]] = []
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured_chunks.append(list(chunk))
         return [_vec() for _ in chunk]
 
@@ -102,7 +102,7 @@ async def test_chunking_250_inputs_yields_three_calls(monkeypatch):
 async def test_vector_ordering_preserved(monkeypatch):
     """Each input's vector is at the right index after chunking."""
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         # Encode the input index in the first dim for assertion.
         return [[float(int(t.split("-")[1])), 0.0, 0.0] for t in chunk]
 
@@ -119,7 +119,7 @@ async def test_retry_on_429_then_success(monkeypatch):
     """429 once → backoff → succeed; vectors returned from the second call."""
     calls = {"n": 0}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             req = httpx.Request("POST", "https://example.invalid/embeddings")
@@ -145,7 +145,7 @@ async def test_retry_budget_exhausted_raises(monkeypatch):
     """Four consecutive 503s → raise after the third retry attempt."""
     calls = {"n": 0}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         calls["n"] += 1
         req = httpx.Request("POST", "https://example.invalid/embeddings")
         resp = httpx.Response(503, request=req)
@@ -168,7 +168,7 @@ async def test_retry_budget_exhausted_raises(monkeypatch):
 async def test_response_length_mismatch_raises(monkeypatch):
     """Provider returns fewer vectors than inputs → raise rather than truncate."""
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         return [_vec()]  # always 1 vector regardless of chunk size
 
     monkeypatch.setattr(emb, "_aembedding_call", fake_call)
@@ -201,7 +201,7 @@ async def test_empty_input_returns_empty_without_calling_provider(monkeypatch):
 async def test_task_kwarg_passed_for_jina(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured.update(extra_kwargs)
         captured["model"] = model
         return [_vec() for _ in chunk]
@@ -217,7 +217,7 @@ async def test_task_kwarg_passed_for_jina(monkeypatch):
 async def test_task_kwarg_dropped_for_openai(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured.update(extra_kwargs)
         captured["model"] = model
         return [_vec() for _ in chunk]
@@ -261,7 +261,7 @@ def test_jina_key_bridge_seeds_target_when_unset(monkeypatch):
 async def test_dimensions_kwarg_forwarded(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured.update(extra_kwargs)
         return [_vec() for _ in chunk]
 
@@ -276,7 +276,7 @@ async def test_dimensions_kwarg_forwarded(monkeypatch):
 async def test_api_base_forwarded_when_set(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured.update(extra_kwargs)
         return [_vec() for _ in chunk]
 
@@ -291,7 +291,7 @@ async def test_api_base_forwarded_when_set(monkeypatch):
 async def test_api_base_omitted_when_blank(monkeypatch):
     captured: dict[str, Any] = {}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         captured.update(extra_kwargs)
         return [_vec() for _ in chunk]
 

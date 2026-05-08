@@ -223,7 +223,7 @@ async def test_embed_texts_bypasses_gate_with_contextvar(monkeypatch):
     monkeypatch.setattr("beever_atlas.stores.get_stores", lambda: stores)
     rt.bust_embedding_settings_cache()
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         return [[0.0] * 3072 for _ in chunk]
 
     monkeypatch.setattr(emb, "_aembedding_call", fake_call)
@@ -250,7 +250,7 @@ async def test_embed_texts_settings_kwarg_bypasses_gate(monkeypatch):
     monkeypatch.setattr("beever_atlas.stores.get_stores", lambda: stores)
     rt.bust_embedding_settings_cache()
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **kwargs):
         return [[0.0] * 4 for _ in chunk]
 
     monkeypatch.setattr(emb, "_aembedding_call", fake_call)
