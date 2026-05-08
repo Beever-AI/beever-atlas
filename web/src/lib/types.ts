@@ -212,6 +212,51 @@ export interface ActivityEntry {
   batch_idx?: number;
 }
 
+/** One of the four pipeline phases surfaced by ``/sync/status`` (PR-3 —
+ *  sync-pipeline-feedback-and-auto-wiki). The frontend renders one row
+ *  per phase in the phased progress card. */
+export type PhaseName =
+  | "fetched"
+  | "extracting"
+  | "wiki_maintenance"
+  | "overview_wiki";
+
+/** Per-phase lifecycle state. ``skipped`` covers the feature-flag-off
+ *  path (e.g. AUTO_OVERVIEW_WIKI=false) and the empty-channel path. */
+export type PhaseState =
+  | "pending"
+  | "in_flight"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export interface Phase {
+  name: PhaseName;
+  state: PhaseState;
+  /** Number of items completed for this phase (e.g. messages fetched,
+   *  facts extracted, pages refreshed). Optional — phases like
+   *  ``overview_wiki`` are boolean-shaped and omit it. */
+  done?: number;
+  /** Total items expected for this phase. Optional — same caveat as
+   *  ``done``. */
+  total?: number;
+  duration_ms?: number;
+  /** Last human-readable label emitted while this phase was active.
+   *  Used by the activity feed when ``recent_events`` is not yet
+   *  populated. */
+  last_event_label?: string;
+}
+
+export interface RecentEvent {
+  /** ISO timestamp (UTC) when the event was emitted by the worker. */
+  ts: string;
+  /** Pipeline stage tag — one of ``fetch``, ``preprocess``,
+   *  ``extract_facts``, ``extract_entities``, ``embed``, ``validate``,
+   *  ``persist``, ``wiki_maintenance``, ``overview_wiki``, ... */
+  stage: string;
+  label: string;
+}
+
 export interface SyncStatusResponse {
   state: "idle" | "syncing" | "error";
   job_id?: string;
@@ -235,6 +280,20 @@ export interface SyncStatusResponse {
   errors?: string[];
   started_at?: string | null;
   completed_at?: string | null;
+  /** PR-3 — phased progress feedback. When present, the new
+   *  ``PhasedProgressCard`` replaces the legacy decoupled-mode widget.
+   *  Absent on responses from older backends — the legacy
+   *  ``ExtractionWorkerPanel`` is the fallback. */
+  phases?: Phase[];
+  /** Last ~10 pipeline events from the worker's in-memory ring buffer. */
+  recent_events?: RecentEvent[];
+  /** EWMA-smoothed seconds-remaining estimate. ``null`` until enough
+   *  samples (>=3) accumulate; ``undefined`` on legacy backends. */
+  smoothed_eta_seconds?: number | null;
+  /** Failed rows still inside their backoff window — will be retried. */
+  retrying?: number;
+  /** Failed rows past ``max_retries`` — will NOT be retried. */
+  abandoned?: number;
 }
 
 export interface BatchResultEntry {

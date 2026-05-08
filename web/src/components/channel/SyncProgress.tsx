@@ -6,6 +6,8 @@ import type { SyncState } from "@/hooks/useSync";
 import type { BatchResultEntry } from "@/lib/types";
 import { ActivityLog } from "./PipelineActivity";
 import { ExtractionWorkerPanel } from "./ExtractionWorkerPanel";
+import { PhasedProgressCard } from "./PhasedProgressCard";
+import { ActivityFeed } from "./ActivityFeed";
 
 function BatchResults({ results }: { results: BatchResultEntry[] }) {
   if (results.length === 0) {
@@ -186,6 +188,33 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
     (syncState.total_batches ?? 0) > 0 ||
     (syncState.batch_results?.length ?? 0) > 0;
   const isDecoupledMode = !isFailed && extractionInProgress && !hasInlineBatches;
+
+  // PR-3 — phased progress rendering. The new payload supersedes the
+  // legacy decoupled-mode panel whenever ``phases`` is present (and
+  // non-empty). Old backends that don't ship the field fall through
+  // to the existing ``ExtractionWorkerPanel`` rendering below.
+  const phases = syncState.phases ?? [];
+  if (isDecoupledMode && channelId && phases.length > 0) {
+    return (
+      <div className="border-b border-border bg-background px-4 sm:px-6 py-3 space-y-3">
+        <PhasedProgressCard
+          phases={phases}
+          smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
+          retrying={syncState.retrying}
+          abandoned={syncState.abandoned}
+          channelId={channelId}
+        />
+        {(syncState.recent_events?.length ?? 0) > 0 && (
+          <ActivityFeed
+            events={syncState.recent_events ?? []}
+            collapsible
+            defaultOpen={false}
+            title="Recent activity"
+          />
+        )}
+      </div>
+    );
+  }
 
   if (isDecoupledMode && channelId && extraction.status) {
     return (

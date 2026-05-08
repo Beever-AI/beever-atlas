@@ -1019,6 +1019,75 @@ export function WikiTab() {
   // 404: wiki has never been generated for this language — show a targeted empty state
   if (!wiki && isNotFound && !isRefreshing) {
     const supported = langConfig?.supported_languages ?? [targetLang];
+    // ── PR-3 — phase-aware empty-state copy ─────────────────────────
+    // The new ``/sync/status`` payload threads phases through
+    // ``SyncState`` (see useSync.ts). When the auto-overview pipeline
+    // is mid-flight we replace the static "No Wiki Yet" copy with a
+    // dynamic message reflecting WHAT is currently happening, so the
+    // user doesn't see a misleading "ready to generate" CTA while the
+    // backend is already generating it.
+    const phases = syncState?.phases ?? [];
+    const overviewPhase = phases.find((p) => p.name === "overview_wiki");
+    const wikiMaintPhase = phases.find((p) => p.name === "wiki_maintenance");
+    const overviewState = overviewPhase?.state;
+    const wikiMaintDone = wikiMaintPhase?.done ?? 0;
+
+    // ``in_flight`` — auto-overview wiki is being generated right now.
+    // Hide the manual Generate button (redundant) and the "Sync now"
+    // CTA (sync already happened) — render a spinner-only state.
+    if (overviewState === "in_flight") {
+      return (
+        <PipelineEmptyState
+          icon={BookOpen}
+          title="Generating overview wiki…"
+          description={
+            overviewPhase?.last_event_label ??
+            "Beever Atlas is auto-generating the overview wiki for this channel."
+          }
+          steps={[
+            { label: "Sync channel", icon: FolderSync, done: true, active: false },
+            { label: "Build memories", icon: Sparkles, done: true, active: false },
+            { label: "Generate wiki", icon: BookOpen, done: false, active: true },
+          ]}
+        />
+      );
+    }
+
+    // ``pending`` AND ``wiki_maintenance.done > 0`` — entity pages
+    // exist, the overview is still queued. Surface the maintenance
+    // progress AND keep the Generate button visible so the user can
+    // publish before extraction completes if they want.
+    if (overviewState === "pending" && wikiMaintDone > 0) {
+      return (
+        <PipelineEmptyState
+          icon={BookOpen}
+          title="Wiki being built"
+          description={`${wikiMaintDone} entity page${
+            wikiMaintDone === 1 ? "" : "s"
+          } refreshed — overview wiki queued.`}
+          steps={[
+            { label: "Sync channel", icon: FolderSync, done: true, active: false },
+            { label: "Build memories", icon: Sparkles, done: true, active: false },
+            { label: "Generate wiki", icon: BookOpen, done: false, active: true },
+          ]}
+        >
+          <WikiRegenerateButton
+            currentLang={targetLang}
+            supportedLanguages={supported}
+            isRefreshing={isRefreshing}
+            onRegenerate={() => handleRegenerateInLang(targetLang)}
+            onRegenerateInLang={handleSwitchLang}
+            label="Generate"
+            size="lg"
+          />
+        </PipelineEmptyState>
+      );
+    }
+
+    // Default path — ``pending`` (no maintenance yet), ``skipped``
+    // (feature flag off), or no phases at all (legacy backend).
+    // Original behaviour: show the Sync / Generate CTA depending on
+    // whether the channel has any memories.
     const steps = [
       { label: "Sync channel", icon: FolderSync, done: !isNoMemory, active: isNoMemory },
       { label: "Build memories", icon: Sparkles, done: !isNoMemory, active: false },

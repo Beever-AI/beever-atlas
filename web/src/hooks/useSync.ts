@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api, ApiError } from "@/lib/api";
 import { dedupeErrors, formatDedupedErrors } from "@/lib/dedupeErrors";
-import type { BatchResultEntry, SyncResponse, SyncStatusResponse } from "@/lib/types";
+import type {
+  BatchResultEntry,
+  Phase,
+  RecentEvent,
+  SyncResponse,
+  SyncStatusResponse,
+} from "@/lib/types";
 
 export interface SyncState {
   state: "idle" | "syncing" | "error";
@@ -26,6 +32,14 @@ export interface SyncState {
   /** Deduped errors with per-message counts. PR-B: replaces wall-of-errors
    * with a single row per unique message. */
   dedupedErrors?: import("@/lib/dedupeErrors").DedupedError[];
+  /** PR-3 — phased progress payload threaded through from
+   *  ``/sync/status``. When present the renderer prefers the
+   *  ``PhasedProgressCard`` over the legacy decoupled-mode widget. */
+  phases?: Phase[];
+  recent_events?: RecentEvent[];
+  smoothed_eta_seconds?: number | null;
+  retrying?: number;
+  abandoned?: number;
 }
 
 export interface UseSyncReturn {
@@ -81,6 +95,12 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
         batch_job_elapsed_seconds: status.batch_job_elapsed_seconds,
         errors: status.errors,
         dedupedErrors,
+        // PR-3 — phased progress fields (optional on legacy backends).
+        phases: status.phases,
+        recent_events: status.recent_events,
+        smoothed_eta_seconds: status.smoothed_eta_seconds,
+        retrying: status.retrying,
+        abandoned: status.abandoned,
       });
       setError(backendError);
       setIsSyncing(status.state === "syncing");
