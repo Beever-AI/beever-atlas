@@ -60,6 +60,44 @@ class PlannedFolder:
     rationale: str = ""
 
 
+# wiki-redesign-gap-fill / Group 5 — split heuristic thresholds (per design D4).
+_SPLIT_FACT_THRESHOLD = 50
+_SPLIT_INBOUND_EDGE_THRESHOLD = 35
+_SPLIT_DEPTH_CAP = 3
+
+
+def _compute_split_candidates(
+    *,
+    clusters: list[dict[str, Any]],
+    fact_graph: list[tuple[str, str]] | None,
+) -> list[str]:
+    """Return the slug list of clusters that crossed a split threshold.
+
+    Conservative — defaults to no split when signals are absent. Caller
+    decides whether to auto-execute (channel policy ``wiki.auto_split_topics``)
+    or surface as a proposal in the structure-planner UI.
+    """
+    if not clusters:
+        return []
+    inbound: dict[str, int] = {}
+    for src, dst in fact_graph or []:
+        if dst:
+            inbound[dst] = inbound.get(dst, 0) + 1
+    candidates: list[str] = []
+    for c in clusters:
+        slug = c.get("id") or c.get("slug")
+        if not slug:
+            continue
+        # Reject candidates that already look like sub-topics — depth cap.
+        if c.get("depth", 0) >= _SPLIT_DEPTH_CAP - 1:
+            continue
+        fact_count = int(c.get("fact_count") or c.get("member_count") or 0)
+        in_edges = inbound.get(slug, 0)
+        if fact_count >= _SPLIT_FACT_THRESHOLD or in_edges >= _SPLIT_INBOUND_EDGE_THRESHOLD:
+            candidates.append(slug)
+    return candidates
+
+
 @dataclass
 class PlannedStructure:
     """Structure planner output — a flat list of folders + leaves at root.
@@ -79,6 +117,12 @@ class PlannedStructure:
     """Set to a non-None reason code when the planner failed and
     returned a flat structure as a fallback. Used by callers (the
     builder) for telemetry without parsing log lines."""
+    split_candidates: list[str] = field(default_factory=list)
+    """wiki-redesign-gap-fill / Group 5 — cluster slugs whose fact density /
+    inbound-edge count crosses the threshold for sub-topic splitting.
+    Default behavior: surface as a proposal in the structure planner UI.
+    When ``wiki.auto_split_topics=true`` is set in channel policy, the
+    Builder auto-creates Sub-topic pages with parent_id = topic.page_id."""
 
     @classmethod
     def flat(cls, cluster_slugs: list[str], *, reason: str | None = None) -> PlannedStructure:
@@ -226,6 +270,14 @@ class WikiStructurePlanner:
                 exc.detail,
             )
             return PlannedStructure.flat(sorted(cluster_slug_set), reason=exc.reason)
+
+        # wiki-redesign-gap-fill / Group 5 — surface split candidates so
+        # the Builder (when channel policy allows auto-split) or the
+        # operator UI can act on them. Threshold per design D4:
+        # ≥35 inbound edges OR ≥50 facts in a cluster.
+        plan.split_candidates = _compute_split_candidates(
+            clusters=clusters, fact_graph=fact_graph
+        )
 
         return plan
 

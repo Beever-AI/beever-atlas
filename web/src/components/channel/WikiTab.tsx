@@ -31,6 +31,7 @@ import { TopicPage } from "@/components/wiki/TopicPage";
 import { GenericPage } from "@/components/wiki/GenericPage";
 import { FaqPage } from "@/components/wiki/FaqPage";
 import { WikiRegenerateButton } from "@/components/channel/WikiRegenerateButton";
+import { CurationDropdown } from "@/components/wiki/CurationControls";
 import { Button } from "@/components/ui/button";
 import { api, authFetch, API_BASE } from "@/lib/api";
 import type { WikiPage, WikiPageNode } from "@/lib/types";
@@ -1241,7 +1242,17 @@ export function WikiTab() {
       (activePage.page_type === "fixed" && activePage.slug === "overview");
     pageContent = isOverviewPage ? renderedPage : (
       <div className="relative">
-        <div className="absolute right-0 top-0 z-10">
+        <div className="absolute right-0 top-0 z-10 flex items-center gap-2">
+          {channelId && (
+            <CurationDropdown
+              channelId={channelId}
+              slug={activePage.slug}
+              curationMode={
+                (activePage.curation_mode as "auto" | "manual" | "frozen") ?? "auto"
+              }
+              targetLang={displayedLang}
+            />
+          )}
           <button
             type="button"
             title="Download this page as Markdown"

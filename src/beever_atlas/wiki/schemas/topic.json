@@ -29,6 +29,35 @@
       "type": "array",
       "items": { "type": "string" },
       "default": []
+    },
+    "key_systems": {
+      "type": "array",
+      "description": "wiki-redesign-gap-fill / Group 6 — non-people entities (system, service, product, tool) that drive this topic, with channel-context definitions.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "definition": { "type": "string" },
+          "role": { "type": "string" }
+        },
+        "required": ["name"]
+      },
+      "default": []
+    },
+    "cross_references": {
+      "type": "array",
+      "description": "Related Topic / People / Glossary page titles emitted as [[Title]] wikilinks for the cross-reference resolver.",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "parent_context": {
+      "type": "string",
+      "description": "Sub-topic only — short paragraph anchoring this page to its parent topic (with [[Parent Title]] wikilink). Empty for top-level topics."
+    },
+    "subtopic_scope": {
+      "type": "string",
+      "description": "Sub-topic only — explicit statement of what this sub-topic covers vs. siblings. Empty for top-level topics."
     }
   }
 }

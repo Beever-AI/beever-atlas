@@ -438,6 +438,15 @@ async def refresh_wiki(
             "treated as ``mode=reorganize``."
         ),
     ),
+    force: bool = Query(
+        default=False,
+        description=(
+            "When true, bypass the build-input hash skip (wiki-redesign-gap-fill "
+            "task 3.6). Use this when a prompt edit landed but the corpus "
+            "is unchanged — without ``force=true`` the Builder would reuse "
+            "the prior cache."
+        ),
+    ),
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Trigger async wiki generation for a channel.
@@ -505,6 +514,11 @@ async def refresh_wiki(
         target_lang=lang,
     )
 
+    # Rebuild wipes the cache, so the build-input hash check finds nothing
+    # to compare against — force_recompile is implied. For update +
+    # reorganize, the operator must opt-in via ``force=true``.
+    force_recompile = force or (effective_mode == "rebuild")
+
     background_tasks.add_task(
         _run_generation,
         builder,
@@ -513,12 +527,14 @@ async def refresh_wiki(
         lang,
         force_restructure,
         wipe_before_run,
+        force_recompile,
     )
     return {
         "status": "started",
         "channel_id": channel_id,
         "mode": effective_mode,
         "restructure": force_restructure,
+        "force_recompile": force_recompile,
     }
 
 
@@ -529,6 +545,7 @@ async def _run_generation(
     target_lang: str = "en",
     force_restructure: bool = False,
     wipe_before_run: bool = False,
+    force_recompile: bool = False,
 ) -> None:
     try:
         # Wipe is performed HERE (inside the background task) rather than
@@ -558,6 +575,7 @@ async def _run_generation(
             channel_id,
             target_lang=target_lang,
             force_restructure=force_restructure,
+            force_recompile=force_recompile,
         )
     except Exception as exc:
         logger.error("Wiki generation failed channel=%s: %s", channel_id, exc, exc_info=True)

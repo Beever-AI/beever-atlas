@@ -94,6 +94,14 @@ export interface WikiPage {
     visual?: { kind: string; content: unknown } | null;
     citation_coverage?: number;
   }>;
+  /** wiki-redesign-gap-fill / Group 4 — operator-controlled rewrite
+   *  cadence. ``auto`` (default) = maintainer rewrites on every burst.
+   *  ``manual`` = pages mark dirty but only flush on operator click.
+   *  ``frozen`` = maintainer + Builder both skip. */
+  curation_mode?: "auto" | "manual" | "frozen";
+  /** True when the maintainer has marked the page dirty pending a
+   *  rewrite. Used to compute the "Apply Pending Updates (N)" badge. */
+  is_dirty?: boolean;
 }
 
 /** One entry in the adaptive page module plan. The ``data`` payload
