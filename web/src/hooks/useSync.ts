@@ -43,6 +43,10 @@ export interface SyncState {
   abandoned?: number;
   /** unified-llm-wiki-graph-redesign — parse-failure banner state. */
   parse_failure_state?: ParseFailureState;
+  /** ISO timestamp of when the current sync job started — used by
+   *  SyncProgressV2 to compute elapsed-time stamps in the activity feed
+   *  (e.g. "0:42", "1:14") instead of noisy relative time ("30s ago"). */
+  started_at?: string | null;
 }
 
 export interface UseSyncReturn {
@@ -52,16 +56,60 @@ export interface UseSyncReturn {
   error: string | null;
 }
 
+/** Derive the active pipeline phase from the API response.
+ *  Used to (a) pick the next poll interval and (b) by the dedup guard. */
+function derivePhase(
+  status: SyncStatusResponse,
+): "syncing" | "extracting" | "building" | "done" | "error" {
+  if (status.state === "error") return "error";
+  const phases = status.phases ?? [];
+  const byName = (name: string) => phases.find((p) => p.name === name);
+  if (byName("fetched")?.state === "in_flight" || status.state === "syncing") {
+    return "syncing";
+  }
+  if (byName("extracting")?.state === "in_flight") return "extracting";
+  if (
+    byName("wiki_maintenance")?.state === "in_flight" ||
+    byName("overview_wiki")?.state === "in_flight"
+  ) {
+    return "building";
+  }
+  return "done";
+}
+
+/** Cheap fingerprint over the fields whose changes warrant a re-render.
+ *  Avoids ``JSON.stringify`` to keep this O(N) in event count. */
+function fingerprintStatus(status: SyncStatusResponse): string {
+  const phaseStates = (status.phases ?? []).map((p) => `${p.name}:${p.state}`).join(",");
+  const evCount = (status.recent_events ?? []).length;
+  const lastEvTs = (status.recent_events ?? [])[0]?.ts ?? "";
+  const parseFails = status.parse_failure_state?.count_last_10_min ?? 0;
+  return [
+    status.state,
+    status.processed_messages ?? -1,
+    status.total_messages ?? -1,
+    phaseStates,
+    evCount,
+    lastEvTs,
+    parseFails,
+  ].join("|");
+}
+
 export function useSync(channelId: string, connectionId?: string | null): UseSyncReturn {
   const [syncState, setSyncState] = useState<SyncState>({ state: "idle" });
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // setTimeout chain instead of setInterval so the next poll can pick a
+  // phase-appropriate delay (2s during extract, 3s during build, stop on done).
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fingerprint of the most-recent response — skip setSyncState when
+  // identical to avoid re-render thrash on each poll tick.
+  const lastFingerprintRef = useRef<string>("");
 
   const stopPolling = useCallback(() => {
-    if (intervalRef.current !== null) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (timeoutRef.current !== null) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
   }, []);
 
@@ -81,36 +129,46 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
         status.state === "error"
           ? formatDedupedErrors(dedupedErrors) || "Sync failed"
           : null;
-      setSyncState({
-        state: status.state,
-        job_id: status.job_id,
-        total_messages: status.total_messages,
-        parent_messages: status.parent_messages,
-        processed_messages: status.processed_messages,
-        current_batch: status.current_batch,
-        total_batches: status.total_batches,
-        batches_completed: status.batches_completed,
-        current_stage: status.current_stage,
-        stage_timings: status.stage_timings,
-        stage_details: status.stage_details,
-        batch_results: status.batch_results,
-        batch_job_state: status.batch_job_state,
-        batch_job_elapsed_seconds: status.batch_job_elapsed_seconds,
-        errors: status.errors,
-        dedupedErrors,
-        // PR-3 — phased progress fields (optional on legacy backends).
-        phases: status.phases,
-        recent_events: status.recent_events,
-        smoothed_eta_seconds: status.smoothed_eta_seconds,
-        retrying: status.retrying,
-        abandoned: status.abandoned,
-        parse_failure_state: status.parse_failure_state,
-      });
-      setError(backendError);
-      setIsSyncing(status.state === "syncing");
-      if (status.state !== "syncing") {
-        stopPolling();
+      // Dedup guard — skip the React re-render when nothing material
+      // changed since the last poll. Eliminates the flicker that was
+      // surfacing during the SyncMonitor live updates.
+      const fp = fingerprintStatus(status);
+      if (fp !== lastFingerprintRef.current) {
+        lastFingerprintRef.current = fp;
+        setSyncState({
+          state: status.state,
+          job_id: status.job_id,
+          total_messages: status.total_messages,
+          parent_messages: status.parent_messages,
+          processed_messages: status.processed_messages,
+          current_batch: status.current_batch,
+          total_batches: status.total_batches,
+          batches_completed: status.batches_completed,
+          current_stage: status.current_stage,
+          stage_timings: status.stage_timings,
+          stage_details: status.stage_details,
+          batch_results: status.batch_results,
+          batch_job_state: status.batch_job_state,
+          batch_job_elapsed_seconds: status.batch_job_elapsed_seconds,
+          errors: status.errors,
+          dedupedErrors,
+          // PR-3 — phased progress fields (optional on legacy backends).
+          phases: status.phases,
+          recent_events: status.recent_events,
+          smoothed_eta_seconds: status.smoothed_eta_seconds,
+          retrying: status.retrying,
+          abandoned: status.abandoned,
+          parse_failure_state: status.parse_failure_state,
+          // sync-monitor-redesign — surface started_at so the activity
+          // feed can compute elapsed-time stamps.
+          started_at: status.started_at,
+        });
+        setError(backendError);
       }
+      // isSyncing reflects active fetch only — extraction can still be
+      // flushing after state flips to ``idle``, but the SyncMonitor
+      // detects that via the phase waterfall.
+      setIsSyncing(status.state === "syncing");
       return status;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to fetch sync status";
@@ -124,9 +182,24 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
 
   const startPolling = useCallback(() => {
     stopPolling();
-    // Poll immediately, then every 2 seconds
-    void pollStatus();
-    intervalRef.current = setInterval(pollStatus, 2000);
+    // Phase-aware adaptive cadence — setTimeout chain so each tick picks
+    // its own delay based on the response's active phase.
+    //   syncing / extracting: 2s
+    //   building wiki:        3s
+    //   done:                 stop (the next user action triggers a fresh poll)
+    //   error:                stop
+    const tick = async () => {
+      const status = await pollStatus();
+      if (!status) return;
+      const phase = derivePhase(status);
+      if (phase === "done" || phase === "error") {
+        // Still let the activity feed receive the last frame; no further polls.
+        return;
+      }
+      const delay = phase === "building" ? 3000 : 2000;
+      timeoutRef.current = setTimeout(() => void tick(), delay);
+    };
+    void tick();
   }, [pollStatus, stopPolling]);
 
   const triggerSync = useCallback(async () => {

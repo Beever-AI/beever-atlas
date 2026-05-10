@@ -8,7 +8,7 @@ import { ActivityLog } from "./PipelineActivity";
 import { ExtractionWorkerPanel } from "./ExtractionWorkerPanel";
 import { PhasedProgressCard } from "./PhasedProgressCard";
 import { ActivityFeed } from "./ActivityFeed";
-import { SyncMonitor } from "./SyncMonitor";
+import { SyncProgressV2 } from "./SyncProgressV2";
 
 function BatchResults({ results }: { results: BatchResultEntry[] }) {
   if (results.length === 0) {
@@ -213,20 +213,26 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
         (e) => e.event_type && e.event_type !== "legacy",
       );
     if (hasStructuredEvents) {
-      // wiki-redesign-gap-fill — single unified progress card.
-      // The SyncMonitor's header now carries phase pill + progress bar +
-      // ETA, so the legacy PhasedProgressCard is intentionally dropped to
-      // avoid two redundant progress UIs stacked during sync.
+      // sync-monitor-redesign — single phase-aware progress card.
+      // SyncProgressV2 renders PipelineStepper + ProgressHeader +
+      // ActivityStream in one vertical layout. The active-phase
+      // derivation comes from the API's ``phases`` waterfall (not from
+      // ``state`` alone), so the header never says "Sync complete" while
+      // extraction is still in flight.
       return (
         <div className="border-b border-border bg-background px-4 sm:px-6 py-3">
-          <SyncMonitor
+          <SyncProgressV2
             channelId={channelId}
+            phases={phases}
+            state={syncState.state}
             events={syncState.recent_events ?? []}
             smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
             parseFailureState={syncState.parse_failure_state ?? null}
             totalMessages={syncState.total_messages}
             processedMessages={syncState.processed_messages}
-            isSyncing={isSyncing}
+            startedAt={syncState.started_at ?? null}
+            retrying={syncState.retrying}
+            abandoned={syncState.abandoned}
           />
         </div>
       );

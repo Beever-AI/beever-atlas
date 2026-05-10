@@ -1089,6 +1089,12 @@ export function WikiTab() {
     // (feature flag off), or no phases at all (legacy backend).
     // Original behaviour: show the Sync / Generate CTA depending on
     // whether the channel has any memories.
+    //
+    // sync-monitor-redesign — hide the Generate CTA while any pipeline
+    // phase is ``in_flight``. The SyncProgressV2 card above already
+    // tells the user the wiki is being built; showing a "Generate"
+    // button at the same time teases an action they can't usefully take.
+    const isPipelineInFlight = phases.some((p) => p.state === "in_flight");
     const steps = [
       { label: "Sync channel", icon: FolderSync, done: !isNoMemory, active: isNoMemory },
       { label: "Build memories", icon: Sparkles, done: !isNoMemory, active: false },
@@ -1097,22 +1103,42 @@ export function WikiTab() {
     return (
       <PipelineEmptyState
         icon={BookOpen}
-        title={isNoMemory ? "Build your channel wiki" : wikiT(targetLang, "noWikiYet")}
+        title={
+          isPipelineInFlight
+            ? "Pipeline in progress"
+            : isNoMemory
+              ? "Build your channel wiki"
+              : wikiT(targetLang, "noWikiYet")
+        }
         description={
-          isNoMemory
-            ? "Turn conversations into a structured wiki with topics, decisions, and references."
-            : wikiT(targetLang, "noWikiEmptySubtitle")
+          isPipelineInFlight
+            ? "The activity stream above shows what's happening live."
+            : isNoMemory
+              ? "Turn conversations into a structured wiki with topics, decisions, and references."
+              : wikiT(targetLang, "noWikiEmptySubtitle")
         }
         steps={steps}
-        primaryActionLabel={isNoMemory ? "Sync Channel Now" : undefined}
-        onPrimaryAction={isNoMemory && triggerSync ? () => void triggerSync() : undefined}
+        primaryActionLabel={
+          !isPipelineInFlight && isNoMemory ? "Sync Channel Now" : undefined
+        }
+        onPrimaryAction={
+          !isPipelineInFlight && isNoMemory && triggerSync
+            ? () => void triggerSync()
+            : undefined
+        }
         primaryActionDisabled={!triggerSync || !!isSyncing}
         primaryActionLoading={!!isSyncing}
-        secondaryActionLabel={isNoMemory ? "View sync history" : undefined}
-        onSecondaryAction={isNoMemory ? () => navigate(`/channels/${channelId}/sync-history`) : undefined}
+        secondaryActionLabel={
+          !isPipelineInFlight && isNoMemory ? "View sync history" : undefined
+        }
+        onSecondaryAction={
+          !isPipelineInFlight && isNoMemory
+            ? () => navigate(`/channels/${channelId}/sync-history`)
+            : undefined
+        }
         secondaryActionVariant="link"
       >
-        {isNoMemory ? (
+        {isPipelineInFlight || isNoMemory ? (
           <></>
         ) : (
           <WikiRegenerateButton
