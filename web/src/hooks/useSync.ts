@@ -3,6 +3,7 @@ import { api, ApiError } from "@/lib/api";
 import { dedupeErrors, formatDedupedErrors } from "@/lib/dedupeErrors";
 import type {
   BatchResultEntry,
+  ParseFailureState,
   Phase,
   RecentEvent,
   SyncResponse,
@@ -40,6 +41,8 @@ export interface SyncState {
   smoothed_eta_seconds?: number | null;
   retrying?: number;
   abandoned?: number;
+  /** unified-llm-wiki-graph-redesign — parse-failure banner state. */
+  parse_failure_state?: ParseFailureState;
 }
 
 export interface UseSyncReturn {
@@ -101,6 +104,7 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
         smoothed_eta_seconds: status.smoothed_eta_seconds,
         retrying: status.retrying,
         abandoned: status.abandoned,
+        parse_failure_state: status.parse_failure_state,
       });
       setError(backendError);
       setIsSyncing(status.state === "syncing");

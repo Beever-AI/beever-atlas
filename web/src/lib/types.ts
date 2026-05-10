@@ -255,6 +255,19 @@ export interface RecentEvent {
    *  ``persist``, ``wiki_maintenance``, ``overview_wiki``, ... */
   stage: string;
   label: string;
+  /** unified-llm-wiki-graph-redesign — structured event taxonomy slot.
+   *  ``message_processing`` / ``agent_state`` / ``wiki_update`` /
+   *  ``cost_summary`` / ``parse_failure`` / ``legacy``. */
+  event_type?: string;
+  /** Event-type-specific structured data the SyncMonitor consumes.
+   *  Always optional; legacy emitters omit it. */
+  payload?: Record<string, unknown> | null;
+}
+
+export interface ParseFailureState {
+  count_last_10_min: number;
+  threshold: number;
+  should_show_banner: boolean;
 }
 
 export interface SyncStatusResponse {
@@ -294,6 +307,10 @@ export interface SyncStatusResponse {
   retrying?: number;
   /** Failed rows past ``max_retries`` — will NOT be retried. */
   abandoned?: number;
+  /** unified-llm-wiki-graph-redesign — wiki-side parse-failure state
+   *  feeding the WikiTab banner + SyncMonitor footer. ``undefined``
+   *  on legacy backends. */
+  parse_failure_state?: ParseFailureState;
 }
 
 export interface BatchResultEntry {

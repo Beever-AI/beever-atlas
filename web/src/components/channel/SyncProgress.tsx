@@ -8,6 +8,7 @@ import { ActivityLog } from "./PipelineActivity";
 import { ExtractionWorkerPanel } from "./ExtractionWorkerPanel";
 import { PhasedProgressCard } from "./PhasedProgressCard";
 import { ActivityFeed } from "./ActivityFeed";
+import { SyncMonitor } from "./SyncMonitor";
 
 function BatchResults({ results }: { results: BatchResultEntry[] }) {
   if (results.length === 0) {
@@ -195,6 +196,37 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
   // to the existing ``ExtractionWorkerPanel`` rendering below.
   const phases = syncState.phases ?? [];
   if (isDecoupledMode && channelId && phases.length > 0) {
+    // unified-llm-wiki-graph-redesign — when the backend ships the
+    // structured event taxonomy (event_type field on recent_events),
+    // render the verbose three-pane SyncMonitor instead of the legacy
+    // PhasedProgressCard + ActivityFeed combo. Detection is forgiving:
+    // any recent_events row with a non-legacy event_type signals the
+    // new backend. Falls back gracefully otherwise.
+    const hasStructuredEvents = (syncState.recent_events ?? []).some(
+      (e) => e.event_type && e.event_type !== "legacy",
+    );
+    if (hasStructuredEvents) {
+      return (
+        <div className="border-b border-border bg-background px-4 sm:px-6 py-3 space-y-3">
+          <SyncMonitor
+            channelId={channelId}
+            events={syncState.recent_events ?? []}
+            smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
+            parseFailureState={syncState.parse_failure_state ?? null}
+            totalMessages={syncState.total_messages}
+            processedMessages={syncState.processed_messages}
+            isSyncing={isSyncing}
+          />
+          <PhasedProgressCard
+            phases={phases}
+            smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
+            retrying={syncState.retrying}
+            abandoned={syncState.abandoned}
+            channelId={channelId}
+          />
+        </div>
+      );
+    }
     return (
       <div className="border-b border-border bg-background px-4 sm:px-6 py-3 space-y-3">
         <PhasedProgressCard
