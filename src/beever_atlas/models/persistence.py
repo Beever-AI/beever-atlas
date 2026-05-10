@@ -227,48 +227,6 @@ class IdempotencyKeyRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class WikiEdge(BaseModel):
-    """Typed edge between two wiki pages, persisted to ``wiki_edges``.
-
-    Introduced by ``unified-llm-wiki-graph-redesign``. The collection
-    is denormalized (one row per directed edge) so backedge queries
-    use an index instead of a collection scan. Cross-channel-ready:
-    ``channel_id_to`` may differ from ``channel_id_from``, but v1 API
-    surfaces filter to within-channel edges only.
-    """
-
-    channel_id_from: str
-    page_id_from: str
-    edge_kind: str
-    """v1 surfaced kinds: ``references``, ``subtopic_of``, ``cites``,
-    ``mentions``. Reserved (schema-supported, not surfaced in v1):
-    ``decided_in``, ``owned_by``, ``depends_on``, ``successor_of``,
-    ``same_as``."""
-
-    channel_id_to: str
-    page_id_to: str
-    source_section_id: str | None = None
-    """When the edge originates from a specific page section (e.g.,
-    a citation or inline mention), the section id is recorded here so
-    UI can render the edge's anchor inside the source page."""
-
-    source_fact_id: str | None = None
-    """When the edge is a ``cites`` edge, the fact id this edge
-    grounds. Lets the agent retrieval tier-1 pull the citation chain
-    without re-running the resolver."""
-
-    weight: float = 1.0
-    """Edge strength, 0.0–1.0. Reserved for future ranking; v1 always
-    1.0 unless the resolver had multiple match candidates."""
-
-    confidence: float = 1.0
-    """Edge confidence. Used by reserved ``same_as`` cross-channel
-    entity resolution in v2; v1 always 1.0."""
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-
-
 class WikiPageSection(BaseModel):
     """One section within a wiki page.
 

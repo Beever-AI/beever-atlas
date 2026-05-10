@@ -662,7 +662,6 @@ class WikiMaintainer:
         page_store: WikiPageStore,
         llm_provider: Any | None = None,
         graph_store: Any | None = None,
-        edge_store: Any | None = None,
         *,
         debounce_seconds: float | None = None,
         mode: str | None = None,
@@ -678,15 +677,6 @@ class WikiMaintainer:
         # backends are tolerated (cross-links resolve and persist to
         # Mongo regardless; the graph upsert no-ops via a hasattr check).
         self._graph_store = graph_store
-        # ``edge_store`` is the typed-edge index introduced by
-        # ``unified-llm-wiki-graph-redesign``. Mongo-backed denormalized
-        # edge collection that backs ``get_neighbors`` / ``find_path``
-        # / ``get_subgraph`` queries without scanning the page collection.
-        # When None, the maintainer dual-writes only the embedded
-        # ``cross_links`` field (legacy behavior). When set, every
-        # cross-link resolution also upserts typed edges (kind=references)
-        # so backedge queries are O(log n).
-        self._edge_store = edge_store
         # Per-(channel, page) timestamps of the most recent drift comparator
         # invocation. Trimmed of entries older than 5 min on each insert so
         # this never grows unbounded — the rate limiter only needs the most
@@ -1402,74 +1392,7 @@ class WikiMaintainer:
 
         page.cross_links = resolved
         page.cross_links_broken = broken
-
-        # ``unified-llm-wiki-graph-redesign`` — also persist resolved
-        # cross-links into the typed-edge index so backedge queries
-        # ("what links to me") use an index instead of a collection scan.
-        # Best-effort: a Mongo write hiccup must not stall the page save.
-        await self._dual_write_edges_for_page(page, resolved)
-
         return resolved, broken
-
-    async def _dual_write_edges_for_page(
-        self,
-        page: "WikiPage",
-        resolved: dict[str, str],
-    ) -> None:
-        """Replace this page's outbound edges in the typed-edge index.
-
-        Strategy: delete-then-insert. The maintainer always rewrites a
-        page's full set of outbound edges (we don't know which old edges
-        to keep), so the simplest correct approach is to clear the
-        outbound rows for this page and reinsert the resolved set.
-        Cross-link edges are kind=``references`` in v1; subtopic_of
-        edges (Folder → Topic → Sub-topic) are written separately when
-        ``parent_id`` chains are persisted.
-
-        No-op when ``self._edge_store`` is unset (legacy deployments
-        without the redesign rollout).
-        """
-        if self._edge_store is None:
-            return
-        try:
-            from beever_atlas.models.persistence import WikiEdge
-
-            # Delete prior outbound edges of kind=references for this page
-            # before reinserting. Subtopic / cites / mentions edges are
-            # written by other code paths and are NOT touched here.
-            collection = getattr(self._edge_store, "_collection", None)
-            if collection is not None:
-                await collection.delete_many(
-                    {
-                        "channel_id_from": page.channel_id,
-                        "page_id_from": page.page_id,
-                        "edge_kind": "references",
-                    }
-                )
-            # Reinsert resolved edges as the canonical outbound set.
-            self_slug = page.slug or page.page_id.replace(":", "-")
-            edges: list[WikiEdge] = []
-            for _title, slug in resolved.items():
-                if not slug or slug == self_slug or slug == page.page_id:
-                    continue
-                edges.append(
-                    WikiEdge(
-                        channel_id_from=page.channel_id,
-                        page_id_from=page.page_id,
-                        edge_kind="references",
-                        channel_id_to=page.channel_id,
-                        page_id_to=slug,
-                        weight=1.0,
-                    )
-                )
-            if edges:
-                await self._edge_store.upsert_many(edges)
-        except Exception:  # noqa: BLE001 — never let edge index fail page save
-            logger.exception(
-                "event=wiki_edge_dual_write_failed channel_id=%s page_id=%s",
-                page.channel_id,
-                page.page_id,
-            )
 
     async def _upsert_wiki_graph(
         self,

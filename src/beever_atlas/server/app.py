@@ -240,16 +240,9 @@ async def lifespan(app: FastAPI):
             init_wiki_maintainer,
         )
         from beever_atlas.wiki.page_store import WikiPageStore
-        from beever_atlas.wiki.edge_store import WikiEdgeStore
 
         page_store = WikiPageStore(db=stores.mongodb.db)
         await page_store.ensure_indexes()
-        # ``unified-llm-wiki-graph-redesign`` — the typed-edge index
-        # collection. Indexes are created idempotently on startup so a
-        # fresh deploy gets the right shape; existing deploys add new
-        # indexes without re-creating the unique compound index.
-        edge_store = WikiEdgeStore(db=stores.mongodb.db)
-        await edge_store.ensure_indexes()
         # Pass the Neo4j-backed graph store to the maintainer so the
         # ``wiki-llm-native-redesign`` cross-link upsert path can write
         # ``WikiPage`` nodes + ``REFERENCES`` edges. NullGraphStore /
@@ -259,7 +252,6 @@ async def lifespan(app: FastAPI):
         maintainer = WikiMaintainer(
             page_store=page_store,
             graph_store=stores.graph,
-            edge_store=edge_store,
         )
         init_wiki_maintainer(maintainer)
 
