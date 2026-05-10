@@ -292,6 +292,27 @@ def _is_page_pinned(page: "WikiPage") -> bool:
     return bool(state.get("pinned"))
 
 
+def _resolve_curation_mode(page: "WikiPage") -> str:
+    """Return the page's effective curation mode.
+
+    Introduced by ``unified-llm-wiki-graph-redesign``:
+      * ``auto`` — maintainer marks dirty AND applies LLM patches.
+      * ``manual`` — maintainer marks dirty but skips patch; operator
+        triggers via "Apply Pending Updates".
+      * ``frozen`` — maintainer skips entirely.
+
+    Defensive: legacy rows without ``curation_mode`` default to
+    ``auto``. Legacy ``pin_state.pinned=True`` is treated as ``manual``
+    so existing operator pins still skip auto-rewrites.
+    """
+    mode = getattr(page, "curation_mode", None)
+    if mode in {"auto", "manual", "frozen"}:
+        return str(mode)
+    if _is_page_pinned(page):
+        return "manual"
+    return "auto"
+
+
 # ---------------------------------------------------------------------------
 # wiki-llm-native-redesign — `[[wikilink]]` parser + resolver
 # ---------------------------------------------------------------------------
@@ -1154,6 +1175,42 @@ class WikiMaintainer:
         truly_new = [fid for fid in new_fact_ids if fid not in already_seen]
         if not truly_new:
             return False
+
+        # ``unified-llm-wiki-graph-redesign`` — honor per-page curation
+        # mode before invoking the LLM. ``manual`` pages stay dirty
+        # until an operator explicitly triggers the rewrite; ``frozen``
+        # pages skip even mark-dirty. Legacy ``pin_state.pinned=True``
+        # rows are treated as ``manual`` so existing operator pins
+        # don't suddenly start auto-rewriting.
+        if page is not None:
+            mode = _resolve_curation_mode(page)
+            if mode == "frozen":
+                logger.info(
+                    "event=wiki_maintainer_apply_update_skipped_frozen channel_id=%s page_id=%s",
+                    channel_id,
+                    page_id,
+                )
+                return False
+            if mode == "manual":
+                # Mark dirty so the operator's "Apply Pending Updates"
+                # button has work to do, but do NOT invoke the LLM
+                # automatically. Best-effort mark-dirty.
+                try:
+                    await self._page_store.mark_dirty(
+                        channel_id, [page_id], target_lang=target_lang
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "event=wiki_maintainer_manual_mark_dirty_failed channel=%s page=%s",
+                        channel_id,
+                        page_id,
+                    )
+                logger.info(
+                    "event=wiki_maintainer_apply_update_deferred_manual channel_id=%s page_id=%s",
+                    channel_id,
+                    page_id,
+                )
+                return False
 
         # Load full fact records for the prompt. ``fetch_by_ids`` is the
         # cheap path (one Weaviate object lookup per id); even when

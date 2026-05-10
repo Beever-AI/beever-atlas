@@ -224,7 +224,8 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 2. **Activity chart** — ```chart bar chart showing contribution level per person
 3. **Overview** — 1-2 sentences describing the contributor landscape in this channel (AFTER the diagram and chart)
 4. **Contributors table** — GFM table with columns: Name, Role/Expertise, Topics Active In, Key Contributions, Decisions Made
-5. **Collaboration patterns** — bullet points on notable collaboration patterns, expertise clusters, and knowledge areas
+5. **Profiles** — for each top contributor (max 8), a `### <Name>` sub-section containing FOUR labelled bullets: **Owns** (systems/projects/docs they own), **Decides** (decisions they have made), **Contributes** (artifacts/RFCs/contributions), **Topic activity** (per-topic counts as a one-line list, e.g. "GPU Procurement: 12 · AI Solutions: 3 · Confidential Containers: 1"). Each bullet should answer the reader's question "what does this person OWN, DECIDE, and CONTRIBUTE?" — not "what facts mention them". If a person has nothing in a category, omit that bullet (do not pad). Wikilink topic names with `[[Topic Title]]` so navigation lands on the right Topic page.
+6. **Collaboration patterns** — bullet points on notable collaboration patterns, expertise clusters, and knowledge areas
 
 ## Writing style
 - Describe what each person DOES and KNOWS — not what they "shared" or "posted". Write "Thomas Chong drives architecture decisions for Beever Atlas [1]" — NOT "Thomas Chong shared several messages about architecture [1]".
@@ -415,8 +416,9 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Content structure (follow this order strictly)
 1. **Relationship diagram** — if 5+ terms exist, include a ```mermaid diagram showing how terms relate to each other (which terms are used together, which are sub-concepts of others). THIS MUST BE THE VERY FIRST CONTENT ELEMENT (skip if fewer than 5 terms — start with Introduction instead).
 2. **Introduction** — 1 sentence: "Key terms, acronyms, and concepts used in this channel."
-3. **Terms table** — GFM table with columns: Term, Definition, First Mentioned By, Related Topics. Sort alphabetically. In the "First Mentioned By" column, write "—" when the source is unknown; NEVER write placeholder markers like `(Implicit)`, `(Inferred)`, `(Unknown)`, `(N/A)`, or any parenthesized guess.
-4. **Category breakdown** — if terms naturally group into categories (e.g., technical terms, process terms, domain terms), add a brief categorized list after the table
+3. **Terms table** — GFM table with columns: Term, Definition, First Mentioned By, Related Topics. Sort alphabetically. In the "First Mentioned By" column, write "—" when the source is unknown; NEVER write placeholder markers like `(Implicit)`, `(Inferred)`, `(Unknown)`, `(N/A)`, or any parenthesized guess. The Related Topics column MUST contain wikilinks: `[[Topic Title]]` for each related topic so navigation lands on the right Topic page.
+4. **Term details** — for each significant non-people entity (max 12; products, systems, services, concepts), a `### <Term>` sub-section. Each contains: a 1–2 sentence channel-context definition (NOT a generic Wikipedia gloss), a "Used in" line listing the Topic pages where the term shows up as `[[Topic Title]]` wikilinks, and an optional "See also" line with cross-references to other glossary terms. This section absorbs the per-entity profile work the deprecated `entity:<thing>` page kind used to do — channel readers and agents land here for "what is X in this channel".
+5. **Category breakdown** — if terms naturally group into categories (e.g., technical terms, process terms, domain terms), add a brief categorized list after the table
 
 ## Writing style
 - Define each term in the context of THIS CHANNEL, not as a generic dictionary entry. Bad: "Neo4j is a graph database management system." Good: "Neo4j is used as the primary knowledge graph store for Beever Atlas, storing entity relationships extracted from channel conversations."
