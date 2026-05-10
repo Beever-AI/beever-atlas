@@ -371,6 +371,33 @@ class AutoOverviewSubscriber:
                 )
             raise
 
+        # ``unified-llm-wiki-graph-redesign`` D8 — drain the maintainer's
+        # deferred dirty-set now that the Builder has created pages for
+        # this channel. Dirty entries the maintainer queued during first
+        # sync (gated on first-sync detection) can finally apply. Any
+        # subsequent extraction events flow normally.
+        # Best-effort: a maintainer flush hiccup must not block the
+        # subscriber's success path.
+        try:
+            from beever_atlas.services.wiki_maintainer import get_wiki_maintainer
+
+            maintainer = get_wiki_maintainer()
+            if maintainer is not None and hasattr(maintainer, "_flush_dirty"):
+                drained = await maintainer._flush_dirty(target_lang=language)
+                if drained:
+                    logger.info(
+                        "AutoOverviewSubscriber: drained %d deferred maintainer "
+                        "rewrites after first-sync Builder run channel=%s",
+                        drained,
+                        channel_id,
+                    )
+        except Exception:  # noqa: BLE001 — drain is best-effort
+            logger.debug(
+                "AutoOverviewSubscriber: post-Builder maintainer drain failed channel=%s",
+                channel_id,
+                exc_info=True,
+            )
+
     # ------------------------------------------------------------------
     # Read-only inspection (used by /sync/status to surface the
     # ``overview_wiki`` phase as ``in_flight``)

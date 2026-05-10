@@ -214,3 +214,77 @@ def test_event_payload_round_trips_through_recent_for() -> None:
     evt = events[0]
     assert evt.event_type == EVENT_TYPE_WIKI_UPDATE
     assert evt.payload == {"page_id": "topic:x", "facts_integrated": 3}
+
+
+# ---------------------------------------------------------------------------
+# First-sync gate — design D8 from unified-llm-wiki-graph-redesign
+# ---------------------------------------------------------------------------
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_flush_defers_when_channel_has_no_pages() -> None:
+    """During first sync the maintainer's flush must defer per-channel
+    when no wiki pages exist yet — the Builder owns first-sync page
+    creation. The deferred dirty-set persists for the next flush."""
+
+    class _EmptyPageStore:
+        async def list_pages(self, channel_id: str, target_lang: str = "en") -> list:
+            # Real list (not Mock) — empty signals "Builder hasn't run".
+            return []
+
+    maintainer = WikiMaintainer(page_store=_EmptyPageStore())  # type: ignore[arg-type]
+    # Pre-populate the dirty-set as if multiple extraction events
+    # already routed facts to this channel during first sync.
+    async with maintainer._get_dirty_lock():
+        maintainer._dirty[("C1", "topic:gpu-procurement")] = {"f1", "f2"}
+        maintainer._dirty[("C1", "people")] = {"f1"}
+
+    rewritten = await maintainer._flush_dirty()
+
+    assert rewritten == 0, "flush must defer when no pages exist for the channel"
+    # The dirty-set MUST NOT be empty — entries are deferred for the
+    # next flush after the Builder has created pages.
+    async with maintainer._get_dirty_lock():
+        assert len(maintainer._dirty) == 2
+        assert maintainer._dirty[("C1", "topic:gpu-procurement")] == {"f1", "f2"}
+        assert maintainer._dirty[("C1", "people")] == {"f1"}
+
+
+@pytest.mark.asyncio
+async def test_flush_proceeds_when_channel_has_pages() -> None:
+    """Once the Builder has run (one or more pages exist), the flush
+    proceeds normally and patches affected pages."""
+
+    fake_page = WikiPage(
+        channel_id="C1",
+        page_id="topic:gpu-procurement",
+        title="GPU Procurement",
+    )
+
+    rewrite_calls: list[tuple[str, str]] = []
+
+    class _PopulatedPageStore:
+        async def list_pages(self, channel_id: str, target_lang: str = "en") -> list:
+            return [fake_page]
+
+    maintainer = WikiMaintainer(page_store=_PopulatedPageStore())  # type: ignore[arg-type]
+
+    async def _stub_rewrite(channel_id, page_id, fact_ids, *, target_lang="en"):
+        rewrite_calls.append((channel_id, page_id))
+        return True
+
+    maintainer._rewrite_page = _stub_rewrite  # type: ignore[method-assign]
+
+    async with maintainer._get_dirty_lock():
+        maintainer._dirty[("C1", "topic:gpu-procurement")] = {"f1", "f2"}
+
+    rewritten = await maintainer._flush_dirty()
+
+    assert rewritten == 1, "flush must proceed when channel has pages"
+    assert rewrite_calls == [("C1", "topic:gpu-procurement")]
+    # Dirty-set drained.
+    async with maintainer._get_dirty_lock():
+        assert len(maintainer._dirty) == 0

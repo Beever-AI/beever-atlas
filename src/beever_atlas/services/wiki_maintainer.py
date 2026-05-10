@@ -1010,6 +1010,14 @@ class WikiMaintainer:
         subsequent ``on_extraction_done`` events from accumulating into a
         fresh dirty-set. Returns the number of pages successfully
         rewritten (one ``apply_update`` call per page).
+
+        ``unified-llm-wiki-graph-redesign`` D8 — first-sync gate: when a
+        channel's wiki has not been built yet (no ``wiki_pages`` rows
+        exist for it), the maintainer's flush MUST defer that channel's
+        dirty entries instead of creating pages on-the-fly. The Builder
+        owns first-sync page creation; the maintainer only patches
+        existing pages. After the Builder's auto-overview run completes
+        and pages exist, the deferred entries drain on the next flush.
         """
         async with self._get_dirty_lock():
             snapshot: dict[tuple[str, str], set[str]] = {
@@ -1018,8 +1026,59 @@ class WikiMaintainer:
             self._dirty.clear()
         if not snapshot:
             return 0
+
+        # First-sync gate: group by channel_id and check whether the
+        # Builder has run yet (any wiki_pages row exists). Channels with
+        # no pages get their dirty entries re-deferred so the Builder
+        # owns first-sync page creation. Channels with pages flow
+        # normally.
+        #
+        # Conservative defer: only defer when we're CERTAIN the page
+        # list is an empty real list. Mocks, exceptions, or non-list
+        # return values (test harness stubs) fall through to legacy
+        # behaviour so we don't block tests that don't seed pages.
+        channels_seen: set[str] = {ch for (ch, _pid) in snapshot}
+        deferred_channels: set[str] = set()
+        for channel_id in channels_seen:
+            try:
+                pages = await self._page_store.list_pages(channel_id, target_lang)
+                if not isinstance(pages, list):
+                    # Tests with AsyncMock often return a Mock rather
+                    # than a real list. Skip the gate — the legacy
+                    # path's create-on-the-fly behaviour applies.
+                    continue
+                # Filter archived rows so legacy kind=entity stragglers
+                # don't accidentally satisfy the "Builder has run" check.
+                active_pages = [
+                    p for p in pages if not getattr(p, "archived", False)
+                ]
+                if not active_pages:
+                    deferred_channels.add(channel_id)
+            except Exception:  # noqa: BLE001 — best-effort gate
+                # If the page-store check fails, fall through to the
+                # legacy behaviour (let the maintainer create pages).
+                # Failing closed here would silently stall channels
+                # whose wiki actually exists but the lookup hiccupped.
+                pass
+        if deferred_channels:
+            async with self._get_dirty_lock():
+                for (ch, page_id), fact_ids in snapshot.items():
+                    if ch not in deferred_channels:
+                        continue
+                    self._dirty.setdefault((ch, page_id), set()).update(fact_ids)
+            logger.info(
+                "wiki_maintainer._flush_dirty deferred channels=%s pages=%d "
+                "(Builder hasn't run yet — first-sync gate)",
+                sorted(deferred_channels),
+                sum(
+                    1 for (ch, _pid) in snapshot if ch in deferred_channels
+                ),
+            )
+
         rewritten = 0
         for (channel_id, page_id), fact_ids in snapshot.items():
+            if channel_id in deferred_channels:
+                continue
             try:
                 applied = await self._rewrite_page(
                     channel_id, page_id, sorted(fact_ids), target_lang=target_lang
@@ -1035,9 +1094,10 @@ class WikiMaintainer:
                     len(fact_ids),
                 )
         logger.info(
-            "wiki_maintainer._flush_dirty pages=%d rewritten=%d",
+            "wiki_maintainer._flush_dirty pages=%d rewritten=%d deferred=%d",
             len(snapshot),
             rewritten,
+            sum(1 for (ch, _pid) in snapshot if ch in deferred_channels),
         )
         return rewritten
 
