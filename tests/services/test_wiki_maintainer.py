@@ -102,6 +102,9 @@ def test_plan_updates_routes_cluster_to_topic_page() -> None:
 
 
 def test_plan_updates_routes_entity_tags_to_entity_pages() -> None:
+    """``unified-llm-wiki-graph-redesign``: entity_tags route to the
+    canonical ``people`` + ``glossary`` pages (single canonical pages
+    each), NOT to per-entity ``entity:<slug>`` rows."""
     m = _make_maintainer()
     plan = m.plan_updates(
         [
@@ -113,7 +116,7 @@ def test_plan_updates_routes_entity_tags_to_entity_pages() -> None:
             }
         ]
     )
-    assert plan == {"entity:alice": ["f1"], "entity:bob": ["f1"]}
+    assert plan == {"people": ["f1"], "glossary": ["f1"]}
 
 
 def test_plan_updates_routes_decision_to_decisions_page() -> None:
@@ -130,7 +133,8 @@ def test_plan_updates_routes_decision_to_decisions_page() -> None:
     )
     assert plan == {
         "topic:auth": ["f1"],
-        "entity:alice": ["f1"],
+        "people": ["f1"],
+        "glossary": ["f1"],
         "decisions": ["f1"],
     }
 
@@ -200,7 +204,10 @@ async def test_on_extraction_done_manual_marks_pages_dirty() -> None:
 
     maintainer._load_facts = _stub_load  # type: ignore[method-assign]
     counters = await maintainer.on_extraction_done("C1", ["f1"], mode="manual")
-    assert counters["affected_pages"] == 3  # topic, entity, decisions
+    # Redesign routing: topic + people + glossary + decisions.
+    # Entity-tagged facts route to canonical people + glossary pages
+    # (one each), not to per-entity ``entity:<slug>`` rows.
+    assert counters["affected_pages"] == 4
     page_store.mark_dirty.assert_awaited_once()
     # apply_update was NOT called in manual mode.
     page_store.save_page.assert_not_awaited()
@@ -283,7 +290,9 @@ async def test_on_extraction_done_auto_isolates_per_page_failures() -> None:
     maintainer._invoke_apply_update_llm = _stub_llm  # type: ignore[method-assign]
     counters = await maintainer.on_extraction_done("C1", ["f1"], mode="auto")
     # At least one page rewrote successfully; the other was logged.
-    assert counters["affected_pages"] == 2  # topic + entity
+    # Redesign routing: topic + people + glossary (no role page since
+    # fact_type=observation isn't a role).
+    assert counters["affected_pages"] == 3
     assert counters["rewritten"] >= 1
 
 
@@ -997,11 +1006,13 @@ async def test_on_consolidation_complete_with_fact_ids_routes_in_auto(_fake_stor
 
     maintainer._invoke_apply_update_llm = _stub_llm  # type: ignore[method-assign]
     counters = await maintainer.on_consolidation_complete("C1", ["f10", "f11"], mode="auto")
-    # f10 routes to topic:auth + entity:alice + decisions = 3 pages.
-    # f11 routes to topic:ops = 1 page. Total affected: 4.
-    assert counters["affected_pages"] == 4
-    # save_page called once per affected page (4 pages).
-    assert page_store.save_page.await_count == 4
+    # Redesign routing:
+    #   f10 → topic:auth + people + glossary + decisions = 4 pages.
+    #   f11 → topic:ops (no entity_tags, no role) = 1 page.
+    # Total affected: 5 pages.
+    assert counters["affected_pages"] == 5
+    # save_page called once per affected page.
+    assert page_store.save_page.await_count == 5
 
 
 @pytest.mark.asyncio

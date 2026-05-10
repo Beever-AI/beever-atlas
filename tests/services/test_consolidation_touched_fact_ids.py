@@ -226,10 +226,14 @@ async def test_manual_mode_marks_pages_dirty_via_consolidation_hook(monkeypatch)
     # args[0] = channel_id, args[1] = page_ids list
     assert args[0] == "C1"
     page_ids = args[1]
-    # plan_updates routes one fact with cluster=auth + entity=alice to
-    # both ``topic:auth`` and ``entity:alice``.
+    # plan_updates routes one fact with cluster=auth + entity_tags=[alice]
+    # to ``topic:auth`` plus the canonical ``people`` and ``glossary``
+    # pages — the kind=entity page set is dead in the redesign, so
+    # ``entity:alice`` is no longer a valid target.
     assert "topic:auth" in page_ids
-    assert "entity:alice" in page_ids
+    assert "people" in page_ids
+    assert "glossary" in page_ids
+    assert not any(p.startswith("entity:") for p in page_ids)
 
 
 # ---------------------------------------------------------------------------

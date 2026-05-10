@@ -1,15 +1,12 @@
 """Redesign coverage — unified-llm-wiki-graph-redesign.
 
-Verifies the three behavioral guarantees the user explicitly called out:
+Verifies the behavioral guarantees the user explicitly called out:
 
-  1. ``WIKI_MAINTAINER_KILL_ENTITY_PAGES=True`` removes ``entity:<slug>``
-     page targets from ``plan_updates`` and routes entity-tagged facts
-     to the canonical ``people`` + ``glossary`` pages instead.
+  1. ``plan_updates`` routes entity-tagged facts to the canonical
+     ``people`` + ``glossary`` pages and produces NO ``entity:<slug>``
+     page targets — the kind=entity page set is dead.
 
-  2. ``WIKI_MAINTAINER_KILL_ENTITY_PAGES=False`` (default) preserves
-     legacy routing — backward compat invariant.
-
-  3. Curation modes (``auto`` / ``manual`` / ``frozen``) are honored by
+  2. Curation modes (``auto`` / ``manual`` / ``frozen``) are honored by
      ``apply_update``: frozen pages are skipped entirely; manual pages
      are marked dirty without being patched.
 
@@ -18,8 +15,6 @@ covers the operator-visible failure-mode surface from Group 6.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from beever_atlas.services.pipeline_events import (
     EVENT_TYPE_PARSE_FAILURE,
@@ -34,7 +29,7 @@ from beever_atlas.models.persistence import WikiPage
 
 
 # ---------------------------------------------------------------------------
-# plan_updates routing — kill-entity flag
+# plan_updates routing — entity intent absorbed into people + glossary
 # ---------------------------------------------------------------------------
 
 
@@ -60,42 +55,11 @@ def _facts_with_entity_tags() -> list[dict]:
     ]
 
 
-def test_kill_entity_flag_off_legacy_routing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Backward-compat: with the kill flag False (default), routing
-    produces ``entity:<slug>`` targets exactly like before the redesign."""
-    monkeypatch.delenv("WIKI_MAINTAINER_KILL_ENTITY_PAGES", raising=False)
-
+def test_routing_never_produces_entity_pages() -> None:
+    """The redesign routing absorbs entity intent into the canonical
+    ``people`` and ``glossary`` pages — NO ``entity:<slug>`` page is
+    ever produced, regardless of how many entity_tags a fact carries."""
     plan = _maintainer().plan_updates(_facts_with_entity_tags())
-
-    # Legacy routing emits one page target per entity tag.
-    assert "entity:jacky-chan" in plan
-    assert "entity:rtx-pro-4000" in plan
-    assert "entity:whisper" in plan
-    # Topic + role pages still present.
-    assert "topic:gpu-procurement" in plan
-    assert "topic:ai-solutions" in plan
-    assert "decisions" in plan
-    # NO people / glossary canonical-page targets in legacy mode.
-    assert "people" not in plan
-    assert "glossary" not in plan
-
-
-def test_kill_entity_flag_on_routes_to_people_glossary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redesign: with the kill flag True, entity-tagged facts route to
-    BOTH the canonical ``people`` and ``glossary`` pages (single
-    canonical pages absorb the per-entity intent). NO ``entity:<slug>``
-    page is produced."""
-    monkeypatch.setenv("WIKI_MAINTAINER_KILL_ENTITY_PAGES", "true")
-    # Settings are cached; force-reload via a fresh import path.
-    from beever_atlas.infra import config as _cfg
-
-    _cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
-
-    try:
-        plan = _maintainer().plan_updates(_facts_with_entity_tags())
-    finally:
-        # Clean up cache so other tests aren't affected.
-        _cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
 
     # Topic + role routing preserved.
     assert "topic:gpu-procurement" in plan
@@ -107,11 +71,28 @@ def test_kill_entity_flag_on_routes_to_people_glossary(monkeypatch: pytest.Monke
     # Crucially: NO entity:<slug> rows produced.
     entity_keys = [k for k in plan if k.startswith("entity:")]
     assert entity_keys == [], (
-        f"kill flag should suppress entity:<slug> routing, got: {entity_keys}"
+        f"redesign routing must never emit entity:<slug>, got: {entity_keys}"
     )
     # Each people/glossary page receives both fact ids.
     assert set(plan["people"]) == {"f1", "f2"}
     assert set(plan["glossary"]) == {"f1", "f2"}
+
+
+def test_routing_no_entity_tags_skips_people_and_glossary() -> None:
+    """Facts without entity_tags do NOT route to people / glossary —
+    the canonical pages are only touched when an entity is mentioned."""
+    facts = [
+        {"id": "f1", "cluster_id": "topic-only", "fact_type": ""},
+        {"id": "f2", "cluster_id": "another", "fact_type": "question"},
+    ]
+    plan = _maintainer().plan_updates(facts)
+    assert "topic:topic-only" in plan
+    assert "topic:another" in plan
+    assert "faq" in plan  # fact_type=question role page
+    assert "people" not in plan
+    assert "glossary" not in plan
+    # And still no entity:<slug> rows.
+    assert not any(k.startswith("entity:") for k in plan)
 
 
 # ---------------------------------------------------------------------------

@@ -742,25 +742,21 @@ class WikiMaintainer:
     def plan_updates(self, facts: list[dict[str, Any]]) -> dict[str, list[str]]:
         """Group fact ids by the page_id they affect.
 
-        Two routing modes, gated by the
-        ``WIKI_MAINTAINER_KILL_ENTITY_PAGES`` setting introduced by
-        ``unified-llm-wiki-graph-redesign``:
+        Routing rules (deterministic, no LLM call):
+          * ``fact.cluster_id`` → ``topic:<safe-cluster-id>``
+          * if any ``fact.entity_tags`` are present → BOTH ``people``
+            AND ``glossary`` (single canonical pages absorb the
+            per-entity intent; the per-kind prompts decide which
+            entries — people vs non-people — surface in each page)
+          * ``fact.fact_type=="decision"`` → ``decisions``
+          * ``fact.fact_type=="question"`` → ``faq``
+          * ``fact.fact_type=="action_item"`` → ``action-items``
 
-        * **Legacy** (``False``, default during rollout):
-          - ``fact.cluster_id`` → ``topic:<safe-cluster-id>``
-          - each ``fact.entity_tags[i]`` → ``entity:<name>``
-          - ``fact.fact_type=="decision"`` → ``decisions``
-          - ``fact.fact_type=="question"`` → ``faq``
-          - ``fact.fact_type=="action_item"`` → ``action-items``
-
-        * **Redesign** (``True``):
-          - ``fact.cluster_id`` → ``topic:<safe-cluster-id>``
-          - if any ``fact.entity_tags`` are present → BOTH ``people``
-            AND ``glossary`` (single canonical pages absorb entity
-            intent; per-kind prompts filter what each page surfaces)
-          - role pages as above
-          - NO ``entity:<slug>`` routing — the kind=entity page set is
-            killed.
+        ``unified-llm-wiki-graph-redesign``: this is the redesign
+        routing. The legacy ``entity:<slug>`` page kind is dead — the
+        maintainer NEVER emits per-entity page targets, regardless of
+        configuration. People & Glossary pages absorb the per-entity
+        intent.
 
         Same input always yields the same routing — invariant under
         retry. Empty entity_tags / cluster_id are tolerated; the fact
@@ -783,14 +779,6 @@ class WikiMaintainer:
             if fact_id not in existing:
                 existing.append(fact_id)
 
-        kill_entity = False
-        try:
-            from beever_atlas.infra.config import get_settings
-
-            kill_entity = bool(get_settings().wiki_maintainer_kill_entity_pages)
-        except Exception:  # noqa: BLE001 — settings unavailable in some test paths
-            kill_entity = False
-
         for fact in facts:
             fact_id = str(fact.get("id") or fact.get("fact_id") or "")
             if not fact_id:
@@ -799,21 +787,12 @@ class WikiMaintainer:
             if cluster_id:
                 _add(_slug_for_topic(str(cluster_id)), fact_id)
             entity_tags = fact.get("entity_tags", []) or []
-            if kill_entity:
-                # Redesign routing: any entity-tagged fact contributes
-                # to BOTH the canonical People & Experts page and the
-                # canonical Glossary page. The per-kind prompts decide
-                # which entries (people vs non-people) actually surface
-                # in each page. Two pages instead of N entity pages —
-                # same fact event, bounded LLM fan-out.
-                if entity_tags:
-                    _add("people", fact_id)
-                    _add("glossary", fact_id)
-            else:
-                for entity in entity_tags:
-                    entity_slug = _slug_for_entity(str(entity))
-                    if entity_slug:
-                        _add(entity_slug, fact_id)
+            if entity_tags:
+                # Two pages instead of N entity pages — same fact
+                # event, bounded LLM fan-out. The per-kind prompts in
+                # ``wiki/prompts.py`` filter what each page surfaces.
+                _add("people", fact_id)
+                _add("glossary", fact_id)
             fact_type = str(fact.get("fact_type") or "")
             role_slug = _slug_for_fact_type(fact_type)
             if role_slug:
