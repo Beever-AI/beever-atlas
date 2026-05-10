@@ -143,6 +143,52 @@ async def get_wiki_page(
     return page
 
 
+@router.get("/entity-pages")
+async def list_entity_pages(
+    channel_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
+    """Debug view: list raw ``kind=entity`` wiki pages for a channel.
+
+    The wiki maintainer writes one entity page per noun-phrase mentioned in
+    extracted facts, but the curated Channel Wiki sidebar only renders the
+    structure planner's topic / folder / decisions pages. Without this
+    endpoint there is no UI surface for the entity-page output, so operators
+    cannot evaluate whether the maintainer's per-fact LLM spend is producing
+    something worth keeping.
+    """
+    await assert_channel_access(principal, channel_id)
+    cache = _get_cache()
+    await cache._ensure_db()
+    lang = await _resolve_target_lang(channel_id, target_lang)
+
+    from beever_atlas.wiki.page_store import WikiPageStore
+
+    page_store = WikiPageStore(db=cache._db)
+    pages = await page_store.list_pages_by_kind(
+        channel_id=channel_id,
+        kind="entity",
+        target_lang=lang,
+        scope="all",
+    )
+    return {
+        "channel_id": channel_id,
+        "target_lang": lang,
+        "count": len(pages),
+        "pages": [
+            {
+                "page_id": p.page_id,
+                "title": p.title or p.page_id,
+                "slug": p.slug,
+                "fact_count": len(p.last_facts_seen or []),
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in pages
+        ],
+    }
+
+
 @router.get("/structure")
 async def get_wiki_structure(
     channel_id: str,

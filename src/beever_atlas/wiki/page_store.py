@@ -194,6 +194,23 @@ class WikiPageStore:
                 unique=True,
                 name="wiki_redirects_compound_unique",
             )
+        # ``unified-llm-wiki-graph-redesign`` indexes:
+        # ``parent_id`` for multi-level Topic hierarchy traversal — the
+        # WikiTab sidebar resolves children of a folder via this index.
+        # Sparse because root-level pages have parent_id=null.
+        await self._collection.create_index(
+            [("channel_id", 1), ("target_lang", 1), ("parent_id", 1)],
+            sparse=True,
+            name="wiki_pages_parent_id",
+        )
+        # ``archived`` for cleanup-phase queries. Sparse because almost
+        # every page has archived=false; only legacy entity-page rows
+        # set archived=true after the migration tags them.
+        await self._collection.create_index(
+            [("channel_id", 1), ("archived", 1)],
+            sparse=True,
+            name="wiki_pages_archived",
+        )
 
     # ------------------------------------------------------------------
     # Public API

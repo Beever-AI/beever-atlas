@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -227,6 +227,48 @@ class IdempotencyKeyRecord(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class WikiEdge(BaseModel):
+    """Typed edge between two wiki pages, persisted to ``wiki_edges``.
+
+    Introduced by ``unified-llm-wiki-graph-redesign``. The collection
+    is denormalized (one row per directed edge) so backedge queries
+    use an index instead of a collection scan. Cross-channel-ready:
+    ``channel_id_to`` may differ from ``channel_id_from``, but v1 API
+    surfaces filter to within-channel edges only.
+    """
+
+    channel_id_from: str
+    page_id_from: str
+    edge_kind: str
+    """v1 surfaced kinds: ``references``, ``subtopic_of``, ``cites``,
+    ``mentions``. Reserved (schema-supported, not surfaced in v1):
+    ``decided_in``, ``owned_by``, ``depends_on``, ``successor_of``,
+    ``same_as``."""
+
+    channel_id_to: str
+    page_id_to: str
+    source_section_id: str | None = None
+    """When the edge originates from a specific page section (e.g.,
+    a citation or inline mention), the section id is recorded here so
+    UI can render the edge's anchor inside the source page."""
+
+    source_fact_id: str | None = None
+    """When the edge is a ``cites`` edge, the fact id this edge
+    grounds. Lets the agent retrieval tier-1 pull the citation chain
+    without re-running the resolver."""
+
+    weight: float = 1.0
+    """Edge strength, 0.0–1.0. Reserved for future ranking; v1 always
+    1.0 unless the resolver had multiple match candidates."""
+
+    confidence: float = 1.0
+    """Edge confidence. Used by reserved ``same_as`` cross-channel
+    entity resolution in v2; v1 always 1.0."""
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+
+
 class WikiPageSection(BaseModel):
     """One section within a wiki page.
 
@@ -433,6 +475,59 @@ class WikiPage(BaseModel):
     citation/parse gates and the page falls back to module-only
     rendering. See ``openspec/changes/wiki-narrative-articles/`` for
     the schema + citation discipline rules."""
+
+    # ---- unified-llm-wiki-graph-redesign fields --------------------------
+    # The redesign collapses the parallel entity-page pipeline into a
+    # single graph-shaped Channel Wiki. The fields below give pages the
+    # metadata the new builder + maintainer + agent retrieval layers need
+    # without a schema migration. Defaults preserve legacy behavior so
+    # existing rows keep working under the transition feature flags.
+    archetype: str | None = None
+    """Optional adaptive-rendering hint. Examples: ``project``, ``system``,
+    ``decision-log-entry``, ``sub-topic``, ``folder``. Used by the
+    compiler to pick rendering templates and by the structure planner
+    to inform sub-topic splits. ``None`` falls through to ``kind``-driven
+    rendering."""
+
+    page_embedding: list[float] | None = None
+    """Cosine-comparable embedding vector of the prose body. Used by
+    tier-1 wiki-first agent retrieval. Refreshed when ``content_hash``
+    changes; ``None`` means embedding generation has not run for this
+    page yet (legacy rows pre-redesign)."""
+
+    content_hash: str = ""
+    """SHA-256 of the page's prose body. Used to detect content
+    staleness on tier-1 retrieval (mismatch = downgrade to tier-3) and
+    to gate ``page_embedding`` refresh (skip when hash matches prior).
+    Empty string for legacy rows; first patch / Builder run populates."""
+
+    kind_schema_hash: str | None = None
+    """SHA-256 of the canonical ``kind_schema`` payload (the structured
+    input data that produced this page) used by the Builder's
+    recompile-skip optimisation. When the new build's hash matches the
+    stored hash, the LLM compile call is skipped and the prior prose
+    is reused. ``None`` means recompile-skip is disabled for this page
+    (forces a real compile next run)."""
+
+    curation_mode: Literal["auto", "manual", "frozen"] = "auto"
+    """Per-page maintenance contract. ``auto``: maintainer marks dirty
+    AND applies LLM patches. ``manual``: maintainer marks dirty but
+    operator must explicitly trigger the rewrite. ``frozen``: maintainer
+    skips the page entirely. Authoritative for new pages; legacy
+    ``pin_state.pinned`` and ``pin_state.hidden`` remain readable for
+    backward compatibility but are not consulted on new pages once the
+    redesign rolls out."""
+
+    quality_metrics: dict[str, Any] | None = None
+    """Snapshot of per-page graph quality counters: orphan-edge count,
+    broken-link count, last-rewrite-cost. Surfaced in the Wiki Health
+    admin view. ``None`` means metrics have not been computed for this
+    page yet."""
+
+    archived: bool = False
+    """Set to ``True`` for legacy ``kind=entity`` rows during the cleanup
+    phase of the redesign. Archived rows are excluded from human-facing
+    listings and MCP tool results; retained 30 days then dropped."""
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))

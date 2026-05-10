@@ -22,6 +22,7 @@ import { ProfilePage } from "@/pages/ProfilePage";
 import { NotFound } from "@/pages/NotFound";
 import { PushSources } from "@/pages/admin/PushSources";
 import { WikiDrift } from "@/pages/admin/WikiDrift";
+import { EntityPages } from "@/pages/admin/EntityPages";
 import { AskSessionsProvider } from "@/contexts/AskSessionsContext";
 import { TierBrowser } from "@/components/memories/TierBrowser";
 import { WikiTab } from "@/components/channel/WikiTab";
@@ -105,6 +106,10 @@ function AppShell() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin/sources" element={<PushSources />} />
               <Route path="/admin/wiki-drift" element={<WikiDrift />} />
+              <Route
+                path="/admin/entity-pages/:channelId"
+                element={<EntityPages />}
+              />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
