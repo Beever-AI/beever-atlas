@@ -83,6 +83,19 @@ class WikiConfig(BaseModel):
     # explicit values: ``"auto"`` (maintainer fires on every extraction batch)
     # and ``"manual"`` (pages are marked dirty; user clicks Maintain Wiki).
     maintenance_mode: str | None = None
+    # wiki-redesign-gap-fill / Group 8 — adaptive page-kind overrides.
+    # ``force_kinds`` instantiates a kind even if its predicate returned
+    # False; ``suppress_kinds`` blocks a kind even if its predicate (or
+    # required-flag) returned True. Values are kind names from
+    # ``wiki/kinds.py:KIND_REGISTRY`` (e.g., ``"projects"``,
+    # ``"architecture"``, ``"open-questions"``, ``"timeline"``,
+    # ``"stakeholders"``).
+    force_kinds: list[str] | None = None
+    suppress_kinds: list[str] | None = None
+    # Auto-execute Topic split proposals (default off — operator approves
+    # via the structure-planner UI). When True, the Builder creates
+    # sub-topics for split candidates without operator gating.
+    auto_split_topics: bool | None = None
 
 
 class ChannelPolicy(BaseModel):

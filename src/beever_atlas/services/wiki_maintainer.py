@@ -133,6 +133,19 @@ def _derive_kind_from_page_id(page_id: str) -> str:
         return "faq"
     if page_id == "action-items":
         return "action_items"
+    # wiki-redesign-gap-fill / Group 7+8 — adaptive kinds. Their page_ids
+    # are the kind name itself (e.g., ``projects``, ``architecture``) so
+    # the suppression gate at ``_apply_update_inner`` can correctly
+    # identify them as adaptive (not-required) and drop placeholder
+    # creation for pages the Builder hasn't instantiated yet.
+    if page_id in (
+        "projects",
+        "architecture",
+        "open-questions",
+        "timeline",
+        "stakeholders",
+    ):
+        return page_id
     return "topic"
 
 
@@ -1209,6 +1222,44 @@ class WikiMaintainer:
         ``last_facts_seen``) or the LLM call failed (in which case the
         page is left unchanged and a structured error is logged).
         """
+        # wiki-redesign-gap-fill / Group 1 — wrap apply_update in try/finally
+        # so every return path emits agent_state(done) for the maintainer.
+        # Without this, a frozen / manual / no-new-facts early-return would
+        # leave SyncMonitor's LED stuck on "running".
+        from beever_atlas.services.pipeline_events import (
+            emit_agent_state as _emit_agent_state_local,
+        )
+
+        _maint_started_at = time.monotonic()
+        _emit_agent_state_local(
+            channel_id, "wiki_maintainer", "running", batch_id=page_id
+        )
+        try:
+            return await self._apply_update_inner(
+                channel_id, page_id, new_fact_ids, target_lang=target_lang
+            )
+        finally:
+            _emit_agent_state_local(
+                channel_id,
+                "wiki_maintainer",
+                "done",
+                batch_id=page_id,
+                elapsed_ms=int((time.monotonic() - _maint_started_at) * 1000),
+            )
+
+    async def _apply_update_inner(
+        self,
+        channel_id: str,
+        page_id: str,
+        new_fact_ids: list[str],
+        *,
+        target_lang: str = "en",
+    ) -> bool:
+        """Inner body of :meth:`apply_update`.
+
+        Split out so the surrounding ``apply_update`` wrapper can emit
+        ``agent_state(running/done)`` events around every return path.
+        """
         page = await self._page_store.get_page(channel_id, page_id, target_lang=target_lang)
         already_seen = set(page.last_facts_seen) if page else set()
         truly_new = [fid for fid in new_fact_ids if fid not in already_seen]
@@ -1269,6 +1320,27 @@ class WikiMaintainer:
             return False
 
         if page is None:
+            # wiki-redesign-gap-fill / Group 8 — silent drop for routes to
+            # adaptive page kinds that haven't been instantiated yet. The
+            # Builder owns initial creation of adaptive pages (predicate-gated);
+            # the Maintainer's job is to keep existing pages fresh, not to
+            # spawn new pages for kinds the channel doesn't qualify for.
+            try:
+                from beever_atlas.wiki.kinds import KIND_REGISTRY
+
+                _candidate_kind = _derive_kind_from_page_id(page_id)
+                _spec = KIND_REGISTRY.get(_candidate_kind)
+                if _spec is not None and not _spec.is_required:
+                    logger.info(
+                        "event=wiki_maintainer_skip_adaptive_route "
+                        "channel_id=%s page_id=%s kind=%s",
+                        channel_id,
+                        page_id,
+                        _candidate_kind,
+                    )
+                    return False
+            except Exception:  # noqa: BLE001 — never destabilise apply_update
+                pass
             page = WikiPage(
                 channel_id=channel_id,
                 target_lang=target_lang,
@@ -1386,6 +1458,17 @@ class WikiMaintainer:
         if use_kind_dispatch:
             page.kind = dispatch_kind
             page.kind_schema = new_kind_schema  # may be None on 2x validation failure
+            # wiki-redesign-gap-fill / Group 3 — persist the canonical
+            # schema hash so the Builder's recompile-skip can detect
+            # unchanged inputs on the next regenerate. Best-effort.
+            try:
+                from beever_atlas.wiki.hashing import compute_kind_schema_hash
+
+                page.kind_schema_hash = compute_kind_schema_hash(
+                    dispatch_kind, new_kind_schema
+                )
+            except Exception:  # noqa: BLE001
+                page.kind_schema_hash = None
         # title, slug, page_voice_seed are intentionally NOT touched here —
         # the LLM contract returns ONLY affected sections, and the merge
         # path only rewrites sections by id. Voice preservation is a

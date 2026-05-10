@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -147,16 +148,17 @@ async def get_wiki_page(
 async def list_entity_pages(
     channel_id: str,
     target_lang: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
     principal: Principal = Depends(require_user),
 ) -> dict:
     """Debug view: list raw ``kind=entity`` wiki pages for a channel.
 
-    The wiki maintainer writes one entity page per noun-phrase mentioned in
-    extracted facts, but the curated Channel Wiki sidebar only renders the
-    structure planner's topic / folder / decisions pages. Without this
-    endpoint there is no UI surface for the entity-page output, so operators
-    cannot evaluate whether the maintainer's per-fact LLM spend is producing
-    something worth keeping.
+    Post wiki-redesign-gap-fill the per-entity page set is being cleaned up:
+    the archive script flips ``archived=true`` on legacy rows. This endpoint
+    filters those out by default so operators see the post-cleanup surface.
+    Pass ``?include_archived=true`` to inspect archived rows during the
+    retention window. The default response includes ``archived_count`` so
+    operators can confirm the archive script ran.
     """
     await assert_channel_access(principal, channel_id)
     cache = _get_cache()
@@ -171,17 +173,31 @@ async def list_entity_pages(
         kind="entity",
         target_lang=lang,
         scope="all",
+        include_archived=include_archived,
     )
+    archived_count = 0
+    if not include_archived:
+        all_pages = await page_store.list_pages_by_kind(
+            channel_id=channel_id,
+            kind="entity",
+            target_lang=lang,
+            scope="all",
+            include_archived=True,
+        )
+        archived_count = sum(1 for p in all_pages if getattr(p, "archived", False))
     return {
         "channel_id": channel_id,
         "target_lang": lang,
         "count": len(pages),
+        "archived_count": archived_count,
+        "include_archived": include_archived,
         "pages": [
             {
                 "page_id": p.page_id,
                 "title": p.title or p.page_id,
                 "slug": p.slug,
                 "fact_count": len(p.last_facts_seen or []),
+                "archived": bool(getattr(p, "archived", False)),
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
             for p in pages
@@ -678,6 +694,17 @@ class _MergeBody(BaseModel):
     source_slug: str = Field(min_length=1, max_length=256)
 
 
+class _CurationBody(BaseModel):
+    """PATCH /pages/{slug}/curation body.
+
+    The ``Literal`` type makes Pydantic reject any other value with a 422
+    before the handler runs. The endpoint also re-checks at runtime as
+    defense-in-depth so the page-store layer never sees a bad value.
+    """
+
+    curation_mode: Literal["auto", "manual", "frozen"] = Field(default="auto")
+
+
 def _slugify_title(title: str) -> str:
     """Thin wrapper over the shared ``beever_atlas.wiki.slugify.slugify``.
 
@@ -770,6 +797,113 @@ async def hide_wiki_page(
     if updated is None:
         raise HTTPException(status_code=404, detail=f"No wiki page slug={slug!r}")
     return updated.model_dump(mode="json")
+
+
+@router.patch("/pages/{slug}/curation")
+async def update_curation_mode(
+    channel_id: str,
+    slug: str,
+    body: _CurationBody,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
+    """Set per-page curation mode to auto / manual / frozen.
+
+    Curation is metadata, not content — ``version`` is NOT bumped, only
+    ``updated_at``. The maintainer reads ``curation_mode`` on every
+    ``apply_update`` to decide whether to skip the LLM call (frozen),
+    mark dirty without rewriting (manual), or rewrite normally (auto).
+    """
+    if body.curation_mode not in {"auto", "manual", "frozen"}:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"curation_mode must be one of 'auto'|'manual'|'frozen', "
+                f"got {body.curation_mode!r}"
+            ),
+        )
+    await assert_channel_access(principal, channel_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    store = await _load_page_store()
+    updated = await store.update_curation_mode(
+        channel_id, slug, body.curation_mode, target_lang=lang
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"No wiki page slug={slug!r}")
+    return {
+        "slug": updated.slug,
+        "curation_mode": updated.curation_mode,
+        "updated_at": (
+            updated.updated_at.isoformat() if updated.updated_at else None
+        ),
+    }
+
+
+@router.post("/apply-pending-updates")
+async def apply_pending_updates(
+    channel_id: str,
+    target_lang: str | None = Query(default=None),
+    principal: Principal = Depends(require_user),
+) -> dict:
+    """Flush manual-mode pages with pending dirty facts.
+
+    Walks every ``curation_mode="manual" AND is_dirty=true`` page in the
+    channel and triggers a maintainer rewrite. Pages flush one-at-a-time
+    via the existing maintainer pacing primitives — no rate-limit storm.
+    Auto-mode dirty pages are NOT flushed by this endpoint; they ride
+    the normal debounce path.
+
+    Mirrors :meth:`WikiMaintainer.maintain_now` but scoped to manual-mode
+    dirty pages only — the maintainer's per-page gate normally short-circuits
+    on ``curation_mode="manual"``, so the operator-triggered flush
+    temporarily bumps each page to ``auto`` for the duration of its rewrite
+    and restores ``manual`` afterwards via try/finally so failure mid-flight
+    cannot leave a page in auto state.
+    """
+    await assert_channel_access(principal, channel_id)
+    lang = await _resolve_target_lang(channel_id, target_lang)
+    store = await _load_page_store()
+    manual_dirty = await store.list_manual_dirty_pages(channel_id, target_lang=lang)
+    if not manual_dirty:
+        return {"flushed": 0, "pages": []}
+
+    from beever_atlas.services.wiki_maintainer import get_wiki_maintainer
+
+    maintainer = get_wiki_maintainer()
+    if maintainer is None:
+        raise HTTPException(
+            status_code=503,
+            detail="WikiMaintainer is not initialised — restart the worker.",
+        )
+
+    # The maintainer doesn't track which facts triggered the dirty flag,
+    # so we compute new_fact_ids the same way ``maintain_now`` does:
+    # load every fact for the channel and diff against
+    # ``page.last_facts_seen``. This matches the well-tested production
+    # debounce path.
+    channel_facts = await maintainer._load_facts(channel_id, None)  # noqa: SLF001
+    all_fact_ids = {str(f.get("id") or "") for f in channel_facts}
+    flushed: list[str] = []
+    for page in manual_dirty:
+        already_seen = set(page.last_facts_seen)
+        new_fact_ids = sorted(fid for fid in all_fact_ids if fid and fid not in already_seen)
+        try:
+            await store.update_curation_mode(
+                channel_id, page.slug, "auto", target_lang=lang
+            )
+            applied = await maintainer.apply_update(
+                channel_id,
+                page.page_id,
+                new_fact_ids,
+                target_lang=lang,
+            )
+            if applied:
+                flushed.append(page.page_id)
+        finally:
+            await store.update_curation_mode(
+                channel_id, page.slug, "manual", target_lang=lang
+            )
+    return {"flushed": len(flushed), "pages": flushed}
 
 
 @router.post("/pages/{slug}/split", status_code=201)

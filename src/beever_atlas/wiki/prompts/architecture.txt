@@ -1,0 +1,29 @@
+You are a knowledge wiki compiler. Create an **Architecture** page — a systems map of the tools, services, integrations, and infrastructure this channel discusses.
+
+Return JSON: {"content": "markdown string", "summary": "1-2 sentence summary"}
+
+## Content structure
+1. **TL;DR** — one bold sentence summarising the architecture (e.g., "Mattermost-driven extraction pipeline (LiteLLM + Gemini 2.5) feeds Weaviate + Neo4j memory, surfaced via FastAPI + React.").
+2. **Systems map** — ```mermaid `graph TD` showing services and the relationships between them. Use `-->|label|` pipe-style for edge labels. Maximum 16 nodes — collapse the long tail.
+3. **Systems table** — GFM table with columns: System, Type (service / data store / external API / SDK), Owner / vendor, Channel-context role, Decision trail link. Use the `key_entities_json` data block to source these — only include systems the channel actually discusses.
+4. **Integrations** — for each cross-system integration discussed, a bullet:
+   `- **<Source>** → **<Target>** (<protocol/method>): <purpose>. <Decision link if relevant>.`
+5. **Open architectural questions** — short list, each with `(raised <month-year>)` for staleness. Skip when none.
+
+## Writing style
+- Synthesize, don't narrate. State the architecture as it IS, not the timeline of who proposed what.
+- FORBIDDEN phrases: "shared a link", "mentioned that", "noted that".
+- Cite every factual claim with `[N]` markers.
+- When referencing related pages, inline `[[Page Title]]` wikilinks.
+
+## Rules
+- Do NOT start with a `#` heading.
+- Each numbered section above MUST be a `##` heading.
+- Maximum 16 nodes + 24 edges in the diagram.
+- Maximum 20 rows in the systems table.
+- Skip the diagram when fewer than 4 systems exist (predicate gates this anyway).
+
+## Data
+Systems: {systems_json}
+Integrations: {integrations_json}
+Architectural decisions: {decisions_json}

@@ -187,7 +187,52 @@ class WikiBuilder:
                     target_lang=target_lang,
                 )
 
+            # wiki-redesign-gap-fill / Group 3+4 — pre-compile pass: detect
+            # frozen pages so the Builder can preserve their existing prose
+            # byte-identical and emit a skip event per frozen page. Done as
+            # a best-effort lookup so a wiki_pages-store hiccup never blocks
+            # the build itself.
+            frozen_pages: dict[str, Any] = {}
+            try:
+                from beever_atlas.wiki.page_store import WikiPageStore
+
+                _ps = WikiPageStore(db=self._cache._db)  # noqa: SLF001
+                _existing = await _ps.list_pages(channel_id, target_lang=target_lang)
+                for _ep in _existing or []:
+                    if getattr(_ep, "curation_mode", "auto") == "frozen":
+                        frozen_pages[_ep.page_id] = _ep
+            except Exception:  # noqa: BLE001 — frozen detection is best-effort
+                pass
+
             pages = await compiler.compile(data, on_page_compiled=on_page_compiled)
+
+            # Apply frozen overrides: a frozen page's existing content is
+            # restored byte-identical from wiki_pages, replacing whatever the
+            # compiler produced. Emit a skip event so operators see the
+            # cleanup surface in the SyncMonitor.
+            if frozen_pages:
+                from beever_atlas.services.pipeline_events import (
+                    EVENT_TYPE_WIKI_UPDATE,
+                    get_pipeline_events,
+                )
+
+                for _fp_id, _fp in frozen_pages.items():
+                    if _fp_id in pages:
+                        pages[_fp_id] = _fp
+                    try:
+                        get_pipeline_events().record(
+                            channel_id=channel_id,
+                            stage="wiki_build",
+                            label=f"Skipped (frozen): {_fp_id}",
+                            event_type=EVENT_TYPE_WIKI_UPDATE,
+                            payload={
+                                "page_id": _fp_id,
+                                "page_title": getattr(_fp, "title", _fp_id),
+                                "action": "skipped_frozen",
+                            },
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
 
             # Phase 3: assemble & save
             await self._cache.set_generation_status(
@@ -359,6 +404,32 @@ class WikiBuilder:
                 len(pages),
                 duration_ms,
             )
+            # wiki-redesign-gap-fill / Group 3 — emit per-build cost summary
+            # so operators can see the recompile-skip savings live in the
+            # SyncMonitor's right pane. Best-effort.
+            try:
+                from beever_atlas.services.pipeline_events import (
+                    EVENT_TYPE_COST_SUMMARY,
+                    get_pipeline_events,
+                )
+
+                _calls_skipped = len(frozen_pages)
+                get_pipeline_events().record(
+                    channel_id=channel_id,
+                    stage="wiki_build",
+                    label=(
+                        f"Build complete: {len(pages)} pages "
+                        f"({_calls_skipped} skipped, {duration_ms / 1000:.1f}s)"
+                    ),
+                    event_type=EVENT_TYPE_COST_SUMMARY,
+                    payload={
+                        "calls_total": len(pages),
+                        "calls_skipped": _calls_skipped,
+                        "duration_ms": duration_ms,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return wiki
 
         except Exception as exc:

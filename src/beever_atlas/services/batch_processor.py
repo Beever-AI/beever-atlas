@@ -436,6 +436,62 @@ class BatchProcessor:
                         batch_index,
                         exc_info=True,
                     )
+                # wiki-redesign-gap-fill / Group 1 — emit message_processing
+                # events so SyncMonitor's left pane (Message Stream) shows
+                # the messages currently going through ingestion. Best-effort
+                # emit; preview is bounded to 200 chars by emit_message_processing.
+                from beever_atlas.services.pipeline_events import (
+                    emit_agent_state as _emit_agent_state,
+                )
+                from beever_atlas.services.pipeline_events import (
+                    emit_message_processing as _emit_message_processing,
+                )
+
+                _batch_id = f"{sync_job_id}:{batch_index}"
+                for _msg in batch:
+                    try:
+                        _msg_id = (
+                            getattr(_msg, "message_id", None)
+                            or (_msg.get("message_id") if isinstance(_msg, dict) else None)
+                            or ""
+                        )
+                        _msg_text = (
+                            getattr(_msg, "content", None)
+                            or (_msg.get("content") if isinstance(_msg, dict) else None)
+                            or ""
+                        )
+                        _msg_author = (
+                            getattr(_msg, "author", None)
+                            or (_msg.get("author") if isinstance(_msg, dict) else None)
+                            or ""
+                        )
+                        _msg_ts = getattr(_msg, "timestamp", None) or (
+                            _msg.get("timestamp") if isinstance(_msg, dict) else None
+                        )
+                        _emit_message_processing(
+                            channel_id,
+                            message_id=str(_msg_id),
+                            text_preview=str(_msg_text),
+                            author=str(_msg_author),
+                            ts=_msg_ts if hasattr(_msg_ts, "isoformat") else None,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Emit agent_state(running) for every ingestion agent at
+                # batch start so SyncMonitor's Agent Activity pane lights
+                # up. Each agent's `done` event is emitted at its output
+                # detection site below.
+                for _agent in (
+                    "fact_extractor",
+                    "entity_extractor",
+                    "coreference_resolver",
+                    "embedder",
+                    "persister",
+                    "wiki_maintainer",
+                ):
+                    _emit_agent_state(
+                        channel_id, _agent, "running", batch_id=_batch_id
+                    )
                 await stores.mongodb.update_sync_progress(
                     job_id=sync_job_id,
                     processed=0,
@@ -1090,6 +1146,14 @@ class BatchProcessor:
                                                 )
                                             except Exception:  # noqa: BLE001
                                                 pass
+                                            # Group 1 — agent_state(done)
+                                            _emit_agent_state(
+                                                channel_id,
+                                                "fact_extractor",
+                                                "done",
+                                                batch_id=_batch_id,
+                                                elapsed_ms=int(elapsed * 1000),
+                                            )
 
                                     # ── Entity extraction output ───────────────
                                     if (
@@ -1141,6 +1205,24 @@ class BatchProcessor:
                                                     "elapsed": elapsed,
                                                 }
                                             )
+                                            # Group 1 — agent_state(done) for
+                                            # entity_extractor + coreference
+                                            # resolver (the latter runs as part
+                                            # of entity extraction).
+                                            _emit_agent_state(
+                                                channel_id,
+                                                "entity_extractor",
+                                                "done",
+                                                batch_id=_batch_id,
+                                                elapsed_ms=int(elapsed * 1000),
+                                            )
+                                            _emit_agent_state(
+                                                channel_id,
+                                                "coreference_resolver",
+                                                "done",
+                                                batch_id=_batch_id,
+                                                elapsed_ms=int(elapsed * 1000),
+                                            )
 
                                     # ── Embedder output ────────────────────────
                                     if (
@@ -1171,6 +1253,14 @@ class BatchProcessor:
                                                 )
                                             except Exception:  # noqa: BLE001
                                                 pass
+                                            # Group 1 — agent_state(done)
+                                            _emit_agent_state(
+                                                channel_id,
+                                                "embedder",
+                                                "done",
+                                                batch_id=_batch_id,
+                                                elapsed_ms=int(elapsed * 1000),
+                                            )
 
                                     # ── Validator output ───────────────────────
                                     if (
@@ -1238,6 +1328,14 @@ class BatchProcessor:
                                                     },
                                                     "elapsed": elapsed,
                                                 }
+                                            )
+                                            # Group 1 — agent_state(done)
+                                            _emit_agent_state(
+                                                channel_id,
+                                                "persister",
+                                                "done",
+                                                batch_id=_batch_id,
+                                                elapsed_ms=int(elapsed * 1000),
                                             )
                                             # Phase 0 / Task 1.3 — pipeline event hook
                                             try:

@@ -166,3 +166,71 @@ def get_pipeline_events() -> PipelineEventBuffer:
     if _buffer_singleton is None:
         _buffer_singleton = PipelineEventBuffer()
     return _buffer_singleton
+
+
+def emit_agent_state(
+    channel_id: str,
+    agent: str,
+    state: str,
+    *,
+    batch_id: str | None = None,
+    elapsed_ms: int | None = None,
+    error_class: str | None = None,
+) -> None:
+    """Best-effort ``agent_state`` event emit for SyncMonitor LEDs.
+
+    Wraps the ring-buffer write in a defensive try/except so an event-buffer
+    hiccup never crashes the agent. ``state`` is ``running`` / ``done`` /
+    ``failed`` per design D1.
+    """
+    try:
+        payload: dict[str, Any] = {"agent": agent, "state": state}
+        if batch_id is not None:
+            payload["batch_id"] = batch_id
+        if elapsed_ms is not None:
+            payload["elapsed_ms"] = elapsed_ms
+        if error_class is not None:
+            payload["error_class"] = error_class
+        label = f"{agent} {state}"
+        if elapsed_ms is not None:
+            label = f"{label} ({elapsed_ms}ms)"
+        get_pipeline_events().record(
+            channel_id=channel_id,
+            stage="agent",
+            label=label,
+            event_type=EVENT_TYPE_AGENT_STATE,
+            payload=payload,
+        )
+    except Exception:  # noqa: BLE001 — observability must never break the agent
+        pass
+
+
+def emit_message_processing(
+    channel_id: str,
+    *,
+    message_id: str,
+    text_preview: str,
+    author: str,
+    ts: datetime | None = None,
+) -> None:
+    """Best-effort ``message_processing`` event emit for SyncMonitor stream.
+
+    ``text_preview`` is truncated to 200 chars per design D1 to bound the
+    SSE payload size.
+    """
+    try:
+        preview = (text_preview or "")[:200]
+        get_pipeline_events().record(
+            channel_id=channel_id,
+            stage="message",
+            label=f"Processing {message_id[:32]}",
+            event_type=EVENT_TYPE_MESSAGE_PROCESSING,
+            payload={
+                "message_id": message_id,
+                "text_preview": preview,
+                "author": author,
+                "ts": ts.isoformat() if ts else None,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
