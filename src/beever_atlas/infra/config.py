@@ -572,6 +572,19 @@ class Settings(BaseSettings):
         default=60, alias="WIKI_MAINTAINER_DEBOUNCE_SECONDS"
     )
 
+    # ``unified-llm-wiki-graph-redesign`` — when True, the maintainer's
+    # ``plan_updates`` routing replaces ``entity:<slug>`` page targets
+    # with the canonical ``people`` and ``glossary`` pages. Default
+    # False during rollout so legacy behavior stays byte-identical;
+    # production flips to True after the new page kinds (people-and-
+    # experts + glossary) are in place and the wiki maintainer's per-
+    # kind prompts have absorbed the entity-page intent. The legacy
+    # ``entity:<slug>`` routing path stays in code until Phase 10
+    # cleanup; this flag gates which routing wins.
+    wiki_maintainer_kill_entity_pages: bool = Field(
+        default=False, alias="WIKI_MAINTAINER_KILL_ENTITY_PAGES"
+    )
+
     # Per-(channel, page) rate-limit window for the drift comparator.
     # The maintainer skips a comparator invocation when the same
     # ``(channel_id, page_id)`` was last compared less than this many

@@ -662,6 +662,7 @@ class WikiMaintainer:
         page_store: WikiPageStore,
         llm_provider: Any | None = None,
         graph_store: Any | None = None,
+        edge_store: Any | None = None,
         *,
         debounce_seconds: float | None = None,
         mode: str | None = None,
@@ -677,6 +678,15 @@ class WikiMaintainer:
         # backends are tolerated (cross-links resolve and persist to
         # Mongo regardless; the graph upsert no-ops via a hasattr check).
         self._graph_store = graph_store
+        # ``edge_store`` is the typed-edge index introduced by
+        # ``unified-llm-wiki-graph-redesign``. Mongo-backed denormalized
+        # edge collection that backs ``get_neighbors`` / ``find_path``
+        # / ``get_subgraph`` queries without scanning the page collection.
+        # When None, the maintainer dual-writes only the embedded
+        # ``cross_links`` field (legacy behavior). When set, every
+        # cross-link resolution also upserts typed edges (kind=references)
+        # so backedge queries are O(log n).
+        self._edge_store = edge_store
         # Per-(channel, page) timestamps of the most recent drift comparator
         # invocation. Trimmed of entries older than 5 min on each insert so
         # this never grows unbounded — the rate limiter only needs the most
@@ -721,12 +731,25 @@ class WikiMaintainer:
     def plan_updates(self, facts: list[dict[str, Any]]) -> dict[str, list[str]]:
         """Group fact ids by the page_id they affect.
 
-        Routing rules (deterministic):
-          * ``fact.cluster_id`` → topic page (``topic:<safe-cluster-id>``)
-          * each ``fact.entity_tags[i]`` → entity page (``entity:<name>``)
-          * ``fact.fact_type=="decision"`` → ``decisions`` page
-          * ``fact.fact_type=="question"`` → ``faq`` page
-          * ``fact.fact_type=="action_item"`` → ``action-items`` page
+        Two routing modes, gated by the
+        ``WIKI_MAINTAINER_KILL_ENTITY_PAGES`` setting introduced by
+        ``unified-llm-wiki-graph-redesign``:
+
+        * **Legacy** (``False``, default during rollout):
+          - ``fact.cluster_id`` → ``topic:<safe-cluster-id>``
+          - each ``fact.entity_tags[i]`` → ``entity:<name>``
+          - ``fact.fact_type=="decision"`` → ``decisions``
+          - ``fact.fact_type=="question"`` → ``faq``
+          - ``fact.fact_type=="action_item"`` → ``action-items``
+
+        * **Redesign** (``True``):
+          - ``fact.cluster_id`` → ``topic:<safe-cluster-id>``
+          - if any ``fact.entity_tags`` are present → BOTH ``people``
+            AND ``glossary`` (single canonical pages absorb entity
+            intent; per-kind prompts filter what each page surfaces)
+          - role pages as above
+          - NO ``entity:<slug>`` routing — the kind=entity page set is
+            killed.
 
         Same input always yields the same routing — invariant under
         retry. Empty entity_tags / cluster_id are tolerated; the fact
@@ -740,7 +763,22 @@ class WikiMaintainer:
         def _add(page_id: str, fact_id: str) -> None:
             if not page_id or not fact_id:
                 return
-            plan.setdefault(page_id, []).append(fact_id)
+            existing = plan.setdefault(page_id, [])
+            # Avoid duplicate fact ids when the same fact lands on the
+            # same page via multiple routing rules (e.g., cluster +
+            # role) — an entity-tagged fact contributing to both
+            # people + glossary should NOT inflate either list with the
+            # same fact id twice.
+            if fact_id not in existing:
+                existing.append(fact_id)
+
+        kill_entity = False
+        try:
+            from beever_atlas.infra.config import get_settings
+
+            kill_entity = bool(get_settings().wiki_maintainer_kill_entity_pages)
+        except Exception:  # noqa: BLE001 — settings unavailable in some test paths
+            kill_entity = False
 
         for fact in facts:
             fact_id = str(fact.get("id") or fact.get("fact_id") or "")
@@ -749,10 +787,22 @@ class WikiMaintainer:
             cluster_id = fact.get("cluster_id")
             if cluster_id:
                 _add(_slug_for_topic(str(cluster_id)), fact_id)
-            for entity in fact.get("entity_tags", []) or []:
-                entity_slug = _slug_for_entity(str(entity))
-                if entity_slug:
-                    _add(entity_slug, fact_id)
+            entity_tags = fact.get("entity_tags", []) or []
+            if kill_entity:
+                # Redesign routing: any entity-tagged fact contributes
+                # to BOTH the canonical People & Experts page and the
+                # canonical Glossary page. The per-kind prompts decide
+                # which entries (people vs non-people) actually surface
+                # in each page. Two pages instead of N entity pages —
+                # same fact event, bounded LLM fan-out.
+                if entity_tags:
+                    _add("people", fact_id)
+                    _add("glossary", fact_id)
+            else:
+                for entity in entity_tags:
+                    entity_slug = _slug_for_entity(str(entity))
+                    if entity_slug:
+                        _add(entity_slug, fact_id)
             fact_type = str(fact.get("fact_type") or "")
             role_slug = _slug_for_fact_type(fact_type)
             if role_slug:
@@ -1352,7 +1402,74 @@ class WikiMaintainer:
 
         page.cross_links = resolved
         page.cross_links_broken = broken
+
+        # ``unified-llm-wiki-graph-redesign`` — also persist resolved
+        # cross-links into the typed-edge index so backedge queries
+        # ("what links to me") use an index instead of a collection scan.
+        # Best-effort: a Mongo write hiccup must not stall the page save.
+        await self._dual_write_edges_for_page(page, resolved)
+
         return resolved, broken
+
+    async def _dual_write_edges_for_page(
+        self,
+        page: "WikiPage",
+        resolved: dict[str, str],
+    ) -> None:
+        """Replace this page's outbound edges in the typed-edge index.
+
+        Strategy: delete-then-insert. The maintainer always rewrites a
+        page's full set of outbound edges (we don't know which old edges
+        to keep), so the simplest correct approach is to clear the
+        outbound rows for this page and reinsert the resolved set.
+        Cross-link edges are kind=``references`` in v1; subtopic_of
+        edges (Folder → Topic → Sub-topic) are written separately when
+        ``parent_id`` chains are persisted.
+
+        No-op when ``self._edge_store`` is unset (legacy deployments
+        without the redesign rollout).
+        """
+        if self._edge_store is None:
+            return
+        try:
+            from beever_atlas.models.persistence import WikiEdge
+
+            # Delete prior outbound edges of kind=references for this page
+            # before reinserting. Subtopic / cites / mentions edges are
+            # written by other code paths and are NOT touched here.
+            collection = getattr(self._edge_store, "_collection", None)
+            if collection is not None:
+                await collection.delete_many(
+                    {
+                        "channel_id_from": page.channel_id,
+                        "page_id_from": page.page_id,
+                        "edge_kind": "references",
+                    }
+                )
+            # Reinsert resolved edges as the canonical outbound set.
+            self_slug = page.slug or page.page_id.replace(":", "-")
+            edges: list[WikiEdge] = []
+            for _title, slug in resolved.items():
+                if not slug or slug == self_slug or slug == page.page_id:
+                    continue
+                edges.append(
+                    WikiEdge(
+                        channel_id_from=page.channel_id,
+                        page_id_from=page.page_id,
+                        edge_kind="references",
+                        channel_id_to=page.channel_id,
+                        page_id_to=slug,
+                        weight=1.0,
+                    )
+                )
+            if edges:
+                await self._edge_store.upsert_many(edges)
+        except Exception:  # noqa: BLE001 — never let edge index fail page save
+            logger.exception(
+                "event=wiki_edge_dual_write_failed channel_id=%s page_id=%s",
+                page.channel_id,
+                page.page_id,
+            )
 
     async def _upsert_wiki_graph(
         self,

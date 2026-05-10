@@ -259,6 +259,7 @@ async def lifespan(app: FastAPI):
         maintainer = WikiMaintainer(
             page_store=page_store,
             graph_store=stores.graph,
+            edge_store=edge_store,
         )
         init_wiki_maintainer(maintainer)
 
