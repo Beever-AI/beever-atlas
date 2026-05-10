@@ -196,15 +196,22 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
   // to the existing ``ExtractionWorkerPanel`` rendering below.
   const phases = syncState.phases ?? [];
   if (isDecoupledMode && channelId && phases.length > 0) {
-    // unified-llm-wiki-graph-redesign — when the backend ships the
-    // structured event taxonomy (event_type field on recent_events),
-    // render the verbose three-pane SyncMonitor instead of the legacy
-    // PhasedProgressCard + ActivityFeed combo. Detection is forgiving:
-    // any recent_events row with a non-legacy event_type signals the
-    // new backend. Falls back gracefully otherwise.
-    const hasStructuredEvents = (syncState.recent_events ?? []).some(
-      (e) => e.event_type && e.event_type !== "legacy",
-    );
+    // unified-llm-wiki-graph-redesign — detect the modern backend so we
+    // render SyncMonitor instead of the legacy PhasedProgressCard.
+    // Detection is forgiving and works even during the first few
+    // seconds of a sync (before any structured event has fired):
+    //   1. The presence of ``parse_failure_state`` proves the backend
+    //      shipped the redesign taxonomy (added in the same change).
+    //   2. Any recent_events row with a non-legacy event_type also
+    //      qualifies. Either signal is enough.
+    // This eliminates the early-window flash of PhasedProgressCard
+    // that occurs before the first agent_state event lands.
+    const hasModernBackend = syncState.parse_failure_state !== undefined;
+    const hasStructuredEvents =
+      hasModernBackend ||
+      (syncState.recent_events ?? []).some(
+        (e) => e.event_type && e.event_type !== "legacy",
+      );
     if (hasStructuredEvents) {
       // wiki-redesign-gap-fill — single unified progress card.
       // The SyncMonitor's header now carries phase pill + progress bar +
