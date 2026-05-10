@@ -149,27 +149,104 @@ export function SyncMonitor({
   const showParseFailureBanner =
     parseFailureState?.should_show_banner ?? false;
 
+  // Derive a human-readable current-phase label from the newest events.
+  // The phase pill replaces the legacy PhasedProgressCard's role —
+  // operators get one clear "what's happening right now" string.
+  const currentPhase = useMemo<string>(() => {
+    if (!isSyncing) return "Sync complete";
+    const runningAgents: string[] = [];
+    for (const evt of events) {
+      if (evt.event_type !== "agent_state") continue;
+      const agent = String(evt.payload?.agent ?? "");
+      const state = String(evt.payload?.state ?? "");
+      if (state === "running" && !runningAgents.includes(agent)) {
+        runningAgents.push(agent);
+      }
+    }
+    if (runningAgents.length === 0) return "Fetching messages…";
+    // Map agent key → friendly phase name.
+    const phaseLabels: Record<string, string> = {
+      fact_extractor: "Extracting facts",
+      entity_extractor: "Extracting entities",
+      coreference_resolver: "Resolving references",
+      embedder: "Generating embeddings",
+      persister: "Saving to memory",
+      wiki_maintainer: "Updating wiki pages",
+    };
+    // Prefer the "highest" agent in the pipeline (wiki_maintainer > persister > ... > fact_extractor)
+    const order = [
+      "wiki_maintainer",
+      "persister",
+      "embedder",
+      "coreference_resolver",
+      "entity_extractor",
+      "fact_extractor",
+    ];
+    for (const agent of order) {
+      if (runningAgents.includes(agent)) return phaseLabels[agent] ?? agent;
+    }
+    return "Processing…";
+  }, [events, isSyncing]);
+
+  // Percentage progress for the slim header progress bar.
+  const pct = useMemo<number>(() => {
+    const total = totalMessages ?? 0;
+    const processed = processedMessages ?? 0;
+    if (total <= 0) return 0;
+    return Math.min(100, Math.round((processed / total) * 100));
+  }, [totalMessages, processedMessages]);
+
   return (
     <div
       className="rounded-lg border border-border bg-card overflow-hidden"
       data-testid={`sync-monitor-${channelId}`}
     >
-      {/* Header strip */}
-      <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
-        {isSyncing ? (
-          <Loader2 size={14} className="animate-spin text-primary" />
-        ) : (
-          <CheckCircle2 size={14} className="text-emerald-500" />
+      {/* Header strip — combines status, phase, count, ETA, and progress bar
+          so the legacy PhasedProgressCard isn't needed. */}
+      <div className="border-b border-border bg-muted/30 px-3 py-2.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isSyncing ? (
+            <Loader2 size={14} className="animate-spin text-primary" />
+          ) : (
+            <CheckCircle2 size={14} className="text-emerald-500" />
+          )}
+          <span className="text-sm font-medium text-foreground">
+            {isSyncing ? "Syncing channel" : "Sync complete"}
+          </span>
+          {isSyncing && (
+            <span
+              className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20"
+              data-testid="sync-phase-pill"
+            >
+              {currentPhase}
+            </span>
+          )}
+          <span className="text-xs text-muted-foreground ml-auto">
+            <span className="font-medium text-foreground">{processedMessages ?? 0}</span>
+            <span className="mx-1 text-muted-foreground/60">/</span>
+            <span>{totalMessages ?? 0} messages</span>
+            {pct > 0 && (
+              <span className="ml-2 text-muted-foreground/70">· {pct}%</span>
+            )}
+            {isSyncing && smoothedEtaSeconds != null && smoothedEtaSeconds >= 0 && (
+              <span className="ml-2 text-muted-foreground/70">
+                · ETA {fmtEta(smoothedEtaSeconds)}
+              </span>
+            )}
+          </span>
+        </div>
+        {/* Slim progress bar */}
+        {totalMessages != null && totalMessages > 0 && (
+          <div className="mt-2 h-1 rounded-full bg-muted/60 overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-500 ease-out",
+                isSyncing ? "bg-primary" : "bg-emerald-500",
+              )}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
         )}
-        <span className="text-sm font-medium text-foreground">
-          {isSyncing ? "Syncing channel" : "Sync complete"}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {processedMessages ?? 0} / {totalMessages ?? 0} messages
-        </span>
-        <span className="ml-auto text-xs text-muted-foreground">
-          ETA: {fmtEta(smoothedEtaSeconds ?? null)}
-        </span>
       </div>
 
       {/* Optional parse-failure banner */}

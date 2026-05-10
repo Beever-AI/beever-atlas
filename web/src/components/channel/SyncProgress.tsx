@@ -206,8 +206,12 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
       (e) => e.event_type && e.event_type !== "legacy",
     );
     if (hasStructuredEvents) {
+      // wiki-redesign-gap-fill — single unified progress card.
+      // The SyncMonitor's header now carries phase pill + progress bar +
+      // ETA, so the legacy PhasedProgressCard is intentionally dropped to
+      // avoid two redundant progress UIs stacked during sync.
       return (
-        <div className="border-b border-border bg-background px-4 sm:px-6 py-3 space-y-3">
+        <div className="border-b border-border bg-background px-4 sm:px-6 py-3">
           <SyncMonitor
             channelId={channelId}
             events={syncState.recent_events ?? []}
@@ -216,13 +220,6 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
             totalMessages={syncState.total_messages}
             processedMessages={syncState.processed_messages}
             isSyncing={isSyncing}
-          />
-          <PhasedProgressCard
-            phases={phases}
-            smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
-            retrying={syncState.retrying}
-            abandoned={syncState.abandoned}
-            channelId={channelId}
           />
         </div>
       );
