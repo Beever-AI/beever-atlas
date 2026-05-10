@@ -10,7 +10,7 @@ import { PhasedProgressCard } from "./PhasedProgressCard";
 import { ActivityFeed } from "./ActivityFeed";
 import { SyncProgressV2 } from "./SyncProgressV2";
 
-function BatchResults({ results }: { results: BatchResultEntry[] }) {
+export function BatchResults({ results }: { results: BatchResultEntry[] }) {
   if (results.length === 0) {
     return (
       <div className="text-[11px] text-muted-foreground/60 py-2">
@@ -226,6 +226,8 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
             phases={phases}
             state={syncState.state}
             events={syncState.recent_events ?? []}
+            stageDetails={syncState.stage_details}
+            batchResults={syncState.batch_results}
             smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
             parseFailureState={syncState.parse_failure_state ?? null}
             totalMessages={syncState.total_messages}

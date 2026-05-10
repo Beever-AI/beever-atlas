@@ -1,51 +1,62 @@
 /**
- * SyncProgressV2 — single-card pipeline-aware progress monitor.
+ * SyncProgressV2 — phase-aware single-card monitor with tabbed body.
  *
- * Replaces the three-pane SyncMonitor + legacy PhasedProgressCard combo
- * with one vertical card:
+ * Layout:
  *
- *   ┌───────────────────────────────────────────────────────────┐
- *   │ (●) Fetch ──── (●) Extract ──── (○) Wiki ──── (○) Done    │  PipelineStepper
- *   ├───────────────────────────────────────────────────────────┤
- *   │ (spinner) Extracting facts   142 / 711  20%  ETA ~3 min   │  ProgressHeader
- *   │ [============>                                          ] │
- *   ├───────────────────────────────────────────────────────────┤
- *   │ ACTIVITY                                                  │  ActivityStream
- *   │ 0:42  fact_extractor running  batch 7   gemini-flash      │
- *   │ 0:41  entity_extractor done  batch 6  1.2s                │
- *   │ ...                                                       │
- *   ├───────────────────────────────────────────────────────────┤
- *   │ Throughput: 12 msg/min  |  Parse failures (10m): 0        │
- *   └───────────────────────────────────────────────────────────┘
+ *   ┌────────────────────────────────────────────────────────────┐
+ *   │ (●)─Fetch ── (●)─Extract ── (○)─Wiki ── (○)─Done           │  PipelineStepper
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ (spinner) Extracting facts    142/711 · 20%   ETA ~3 min   │  ProgressHeader
+ *   │ [============>                                            ] │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ [Pipeline Activity] [Batch Results]            View history│  Tabs + history link
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ Step 1/6 — Preprocessing messages                          │
+ *   │ [📥] PREPROCESSOR  Batch 2                            0ms │  rich step cards
+ *   │ Retained 12 messages · 2 media · 12 coref · 4 threads...   │  via ActivityLog
+ *   │ ...                                                        │
+ *   │ Step 2/6 — Extracting facts (LLM)                          │
+ *   │ [🧠] FACT EXTRACTOR  Batch 2  gemini-2.5-flash      1.5s │
+ *   │ Extracted 20 facts (avg quality 0.91)                      │
+ *   │ ...                                                        │
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │ Throughput: 12 msg/min · Elapsed 4:32 · LLM ~$0.04         │  footer
+ *   └────────────────────────────────────────────────────────────┘
  *
- * Phase logic is the waterfall in design D1 — never trusts ``state``
- * alone, so the header reads "Extracting facts" while ``state===idle``
- * but ``phases.extracting===in_flight``. This kills the
- * "Sync complete at 28%" bug.
+ * Phase derivation, dedup, and adaptive polling are unchanged. This is
+ * the BODY redesign — the rich per-step rendering comes from the
+ * existing ``ActivityLog`` component in PipelineActivity.tsx, which
+ * reads ``stage_details.activity_log`` directly. The new event taxonomy
+ * (agent_state, wiki_update, cost_summary, parse_failure) flows into a
+ * compact "Live Events" stream beneath the rich log so all backends are
+ * covered.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
-  Activity,
   CheckCircle2,
+  ExternalLink,
   FileText,
   Loader2,
-  MessageSquare,
   Sparkles,
-  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
+  ActivityEntry,
+  BatchResultEntry,
   ParseFailureState,
   Phase,
   PhaseName,
   RecentEvent,
 } from "@/lib/types";
+import { ActivityLog } from "./PipelineActivity";
+import { BatchResults } from "./SyncProgress";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Phase model
+// Phase model (unchanged from prior version)
 // ─────────────────────────────────────────────────────────────────────────
 
 type ActivePhase = "syncing" | "extracting" | "building" | "done" | "error";
@@ -55,6 +66,12 @@ interface SyncProgressV2Props {
   phases: Phase[];
   state: "idle" | "syncing" | "error";
   events: RecentEvent[];
+  stageDetails?: {
+    activity_log?: ActivityEntry[];
+    batch_stages?: Record<string, string>;
+    [key: string]: unknown;
+  };
+  batchResults?: BatchResultEntry[];
   smoothedEtaSeconds?: number | null;
   parseFailureState?: ParseFailureState | null;
   totalMessages?: number;
@@ -77,7 +94,6 @@ function deriveActivePhase(
 ): ActivePhase {
   if (state === "error") return "error";
   const byName = (n: PhaseName) => phases.find((p) => p.name === n);
-  // Any failed phase => error
   if (phases.some((p) => p.state === "failed")) return "error";
   if (byName("fetched")?.state === "in_flight" || state === "syncing") {
     return "syncing";
@@ -101,7 +117,7 @@ const PHASE_LABELS: Record<ActivePhase, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// Utility — elapsed-time formatter and event helpers
+// Utility helpers
 // ─────────────────────────────────────────────────────────────────────────
 
 function fmtElapsed(fromIso: string | null | undefined, toMs: number): string {
@@ -117,12 +133,6 @@ function fmtElapsed(fromIso: string | null | undefined, toMs: number): string {
   }
 }
 
-function fmtDurationMs(ms: number | undefined): string {
-  if (ms == null) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
 function fmtEta(seconds: number | null | undefined): string {
   if (seconds == null || seconds < 0) return "Calculating…";
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -133,17 +143,8 @@ function fmtEta(seconds: number | null | undefined): string {
   return `~${h}h ${m}m`;
 }
 
-const AGENT_LABELS: Record<string, string> = {
-  fact_extractor: "fact_extractor",
-  entity_extractor: "entity_extractor",
-  coreference_resolver: "coref_resolver",
-  embedder: "embedder",
-  persister: "persister",
-  wiki_maintainer: "wiki_maintainer",
-};
-
 // ─────────────────────────────────────────────────────────────────────────
-// PipelineStepper — 4 dots + connectors
+// PipelineStepper (unchanged)
 // ─────────────────────────────────────────────────────────────────────────
 
 interface StepperDotProps {
@@ -159,7 +160,8 @@ function StepperDot({ state, label, isLast }: StepperDotProps) {
         <div
           className={cn(
             "w-2.5 h-2.5 rounded-full transition-colors duration-300 shrink-0",
-            state === "active" && "bg-primary ring-2 ring-primary/30 animate-pulse",
+            state === "active" &&
+              "bg-primary ring-2 ring-primary/30 animate-pulse",
             state === "done" && "bg-emerald-500",
             state === "failed" && "bg-red-500",
             state === "pending" && "bg-muted-foreground/30",
@@ -181,7 +183,9 @@ function StepperDot({ state, label, isLast }: StepperDotProps) {
         <div
           className={cn(
             "flex-1 h-px transition-colors duration-300 min-w-[20px]",
-            state === "done" ? "bg-emerald-500/40" : "bg-muted-foreground/20",
+            state === "done"
+              ? "bg-emerald-500/40"
+              : "bg-muted-foreground/20",
           )}
         />
       )}
@@ -196,11 +200,12 @@ function PipelineStepper({
   phases: Phase[];
   activePhase: ActivePhase;
 }) {
-  const dotState = (name: PhaseName): "pending" | "active" | "done" | "failed" => {
+  const dotState = (
+    name: PhaseName,
+  ): "pending" | "active" | "done" | "failed" => {
     const p = phases.find((ph) => ph.name === name);
     if (p?.state === "done" || p?.state === "skipped") return "done";
     if (p?.state === "failed") return "failed";
-    // Map active phase to stepper position.
     if (
       (activePhase === "syncing" && name === "fetched") ||
       (activePhase === "extracting" && name === "extracting") ||
@@ -228,7 +233,7 @@ function PipelineStepper({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// ProgressHeader — active-phase label + count + ETA + progress bar
+// ProgressHeader (unchanged)
 // ─────────────────────────────────────────────────────────────────────────
 
 function ProgressHeader({
@@ -246,7 +251,6 @@ function ProgressHeader({
   startedAt?: string | null;
   phases: Phase[];
 }) {
-  // Choose icon by phase.
   const Icon =
     activePhase === "done"
       ? CheckCircle2
@@ -260,14 +264,15 @@ function ProgressHeader({
         ? "text-red-500"
         : "text-primary animate-spin";
 
-  // Progress numerator/denominator depends on phase. During building,
-  // use wiki_maintenance phase's done/total when available — that's the
-  // bottleneck operators want to track.
   const wikiPhase = phases.find((p) => p.name === "wiki_maintenance");
   const useWikiNumbers =
     activePhase === "building" && (wikiPhase?.total ?? 0) > 0;
-  const done = useWikiNumbers ? wikiPhase?.done ?? 0 : processedMessages ?? 0;
-  const total = useWikiNumbers ? wikiPhase?.total ?? 0 : totalMessages ?? 0;
+  const done = useWikiNumbers
+    ? (wikiPhase?.done ?? 0)
+    : (processedMessages ?? 0);
+  const total = useWikiNumbers
+    ? (wikiPhase?.total ?? 0)
+    : (totalMessages ?? 0);
   const unit = useWikiNumbers ? "pages" : "messages";
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
@@ -324,270 +329,230 @@ function ProgressHeader({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// ActivityStream — single chronological feed with per-event-type rows
+// CostSummaryBadge — aggregate LLM cost from cost_summary events
 // ─────────────────────────────────────────────────────────────────────────
 
-interface ActivityRowProps {
-  event: RecentEvent;
-  startedAt?: string | null;
-}
-
-function ActivityRow({ event, startedAt }: ActivityRowProps) {
-  const elapsed = useMemo(() => {
-    try {
-      const evtMs = new Date(event.ts).getTime();
-      return fmtElapsed(startedAt, evtMs);
-    } catch {
-      return "—";
+function CostSummaryBadge({ events }: { events: RecentEvent[] }) {
+  const summary = useMemo(() => {
+    let totalCalls = 0;
+    let skippedCalls = 0;
+    let durationMs = 0;
+    for (const evt of events) {
+      if (evt.event_type !== "cost_summary") continue;
+      const p = evt.payload ?? {};
+      totalCalls += Number(p.calls_total ?? 0);
+      skippedCalls += Number(p.calls_skipped ?? 0);
+      durationMs += Number(p.duration_ms ?? 0);
     }
-  }, [event.ts, startedAt]);
+    return { totalCalls, skippedCalls, durationMs };
+  }, [events]);
 
-  const type = event.event_type ?? "legacy";
-  const payload = event.payload ?? {};
+  if (summary.totalCalls === 0 && summary.skippedCalls === 0) return null;
 
-  if (type === "agent_state") {
-    const agent = String(payload.agent ?? "");
-    const state = String(payload.state ?? "");
-    const batchId = String(payload.batch_id ?? "");
-    const elapsedMs =
-      typeof payload.elapsed_ms === "number"
-        ? (payload.elapsed_ms as number)
-        : undefined;
-
-    const isRunning = state === "running";
-    const isFailed = state === "failed";
-
-    const borderColor = isFailed
-      ? "border-red-400"
-      : isRunning
-        ? "border-primary"
-        : "border-emerald-400";
-    const StateIcon = isFailed ? XCircle : isRunning ? Activity : CheckCircle2;
-    const stateIconClass = isFailed
-      ? "text-red-500"
-      : isRunning
-        ? "text-primary animate-pulse"
-        : "text-emerald-500";
-
-    return (
-      <li
-        className={cn(
-          "border-l-2 pl-2 py-1 text-xs",
-          borderColor,
-          "animate-in fade-in slide-in-from-top-1 duration-200",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-            {elapsed}
-          </span>
-          <StateIcon size={11} className={cn("shrink-0", stateIconClass)} />
-          <span className="font-medium text-foreground/85">
-            {AGENT_LABELS[agent] ?? agent}
-          </span>
-          <span className="text-muted-foreground/70">{state}</span>
-          {batchId && (
-            <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/40 px-1 rounded">
-              batch {batchId.split(":").slice(-1)[0]}
-            </span>
-          )}
-          {elapsedMs != null && (
-            <span className="ml-auto text-[10px] font-mono text-muted-foreground">
-              {fmtDurationMs(elapsedMs)}
-            </span>
-          )}
-        </div>
-      </li>
-    );
-  }
-
-  if (type === "wiki_update") {
-    const pageTitle = String(payload.page_title ?? payload.page_id ?? event.label);
-    const facts = Number(payload.facts_integrated ?? 0);
-    const version = payload.version;
-    const action = String(payload.action ?? "patched");
-    const isSkipped = action === "skipped_frozen";
-    return (
-      <li
-        className={cn(
-          "border-l-2 pl-2 py-1 text-xs",
-          isSkipped ? "border-amber-400" : "border-violet-400",
-          "animate-in fade-in slide-in-from-top-1 duration-200",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-            {elapsed}
-          </span>
-          <FileText
-            size={11}
-            className={cn(
-              "shrink-0",
-              isSkipped ? "text-amber-500" : "text-violet-500",
-            )}
-          />
-          <span className="font-medium text-foreground/85 truncate">
-            {isSkipped ? "Skipped (frozen)" : "Updated"} "{pageTitle}"
-          </span>
-          {facts > 0 && (
-            <span className="text-muted-foreground/70">
-              +{facts} fact{facts === 1 ? "" : "s"}
-            </span>
-          )}
-          {version != null && (
-            <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/40 px-1 rounded">
-              v{String(version)}
-            </span>
-          )}
-        </div>
-      </li>
-    );
-  }
-
-  if (type === "cost_summary") {
-    const callsTotal = Number(payload.calls_total ?? 0);
-    const callsSkipped = Number(payload.calls_skipped ?? 0);
-    const durationMs =
-      typeof payload.duration_ms === "number"
-        ? (payload.duration_ms as number)
-        : 0;
-    return (
-      <li
-        className={cn(
-          "border-l-2 pl-2 py-1 text-xs border-amber-400",
-          "animate-in fade-in slide-in-from-top-1 duration-200",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-            {elapsed}
-          </span>
-          <Sparkles size={11} className="shrink-0 text-amber-500" />
-          <span className="font-medium text-foreground/85">
-            Wiki build · {callsTotal} LLM call{callsTotal === 1 ? "" : "s"}
-            {callsSkipped > 0 && (
-              <span className="text-muted-foreground/70">
-                {" "}({callsSkipped} cached)
-              </span>
-            )}
-          </span>
-          {durationMs > 0 && (
-            <span className="ml-auto text-[10px] font-mono text-muted-foreground">
-              {fmtDurationMs(durationMs)}
-            </span>
-          )}
-        </div>
-      </li>
-    );
-  }
-
-  if (type === "parse_failure") {
-    const pageId = String(payload.page_id ?? "");
-    const rawLen = Number(payload.raw_len ?? 0);
-    return (
-      <li
-        className={cn(
-          "border-l-2 pl-2 py-1 text-xs border-red-400",
-          "animate-in fade-in slide-in-from-top-1 duration-200",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-            {elapsed}
-          </span>
-          <AlertCircle size={11} className="shrink-0 text-red-500" />
-          <span className="font-medium text-foreground/85">
-            Parse failure · {pageId}
-          </span>
-          {rawLen > 0 && (
-            <span className="text-muted-foreground/70">{rawLen} chars</span>
-          )}
-        </div>
-      </li>
-    );
-  }
-
-  if (type === "message_processing") {
-    const preview = String(payload.text_preview ?? event.label).slice(0, 80);
-    const author = String(payload.author ?? "");
-    return (
-      <li
-        className={cn(
-          "border-l-2 pl-2 py-1 text-xs border-sky-400/70",
-          "animate-in fade-in slide-in-from-top-1 duration-200",
-        )}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-            {elapsed}
-          </span>
-          <MessageSquare size={11} className="shrink-0 text-sky-500" />
-          <span className="text-foreground/80 truncate">
-            {author && (
-              <span className="text-muted-foreground">@{author}: </span>
-            )}
-            {preview}
-          </span>
-        </div>
-      </li>
-    );
-  }
-
-  // Legacy fallback — plain label.
   return (
-    <li className="border-l-2 pl-2 py-1 text-xs border-muted-foreground/30 animate-in fade-in slide-in-from-top-1 duration-200">
-      <div className="flex items-center gap-1.5">
-        <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9 shrink-0">
-          {elapsed}
-        </span>
-        <span className="text-[10px] text-muted-foreground uppercase">
-          {event.stage}
-        </span>
-        <span className="text-foreground/75 truncate">{event.label}</span>
-      </div>
-    </li>
+    <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+      <Sparkles size={11} className="text-amber-500" />
+      <span>
+        Builder: <span className="font-medium text-foreground">{summary.totalCalls}</span> LLM call
+        {summary.totalCalls === 1 ? "" : "s"}
+        {summary.skippedCalls > 0 && (
+          <span className="text-muted-foreground/70">
+            {" "}
+            ({summary.skippedCalls} cached)
+          </span>
+        )}
+      </span>
+    </span>
   );
 }
 
-function ActivityStream({
+// ─────────────────────────────────────────────────────────────────────────
+// Tabs
+// ─────────────────────────────────────────────────────────────────────────
+
+type TabId = "activity" | "batches";
+
+function Tabs({
+  active,
+  onChange,
+  batchCount,
+  channelId,
+}: {
+  active: TabId;
+  onChange: (t: TabId) => void;
+  batchCount: number;
+  channelId: string;
+}) {
+  return (
+    <div className="flex items-center gap-1 border-b border-border bg-card px-2 py-1">
+      <button
+        type="button"
+        onClick={() => onChange("activity")}
+        className={cn(
+          "px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide rounded transition-colors",
+          active === "activity"
+            ? "text-primary bg-primary/10"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+        )}
+      >
+        Pipeline Activity
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("batches")}
+        className={cn(
+          "inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide rounded transition-colors",
+          active === "batches"
+            ? "text-primary bg-primary/10"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+        )}
+      >
+        Batch Results
+        {batchCount > 0 && (
+          <span className="text-[10px] font-mono bg-muted/60 px-1 rounded">
+            {batchCount}
+          </span>
+        )}
+      </button>
+      <Link
+        to={`/channels/${channelId}/sync-history`}
+        className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        title="See historical sync runs"
+      >
+        Sync history <ExternalLink size={10} />
+      </Link>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LiveEventsRow — compact row for the new event_type taxonomy
+// (when stage_details.activity_log is empty — modern backends without
+// the legacy stage_output emitters still produce these.)
+// ─────────────────────────────────────────────────────────────────────────
+
+function LiveEventsList({
   events,
   startedAt,
-  maxRows = 12,
+  maxRows = 8,
 }: {
   events: RecentEvent[];
   startedAt?: string | null;
   maxRows?: number;
 }) {
-  // Newest first — backend already returns newest-first per ``recent_for``.
-  const visible = useMemo(() => events.slice(0, maxRows), [events, maxRows]);
+  const visible = useMemo(
+    () =>
+      events
+        .filter(
+          (e) =>
+            e.event_type === "wiki_update" ||
+            e.event_type === "cost_summary" ||
+            e.event_type === "parse_failure",
+        )
+        .slice(0, maxRows),
+    [events, maxRows],
+  );
+
+  if (visible.length === 0) return null;
 
   return (
-    <div className="bg-card px-3 py-2">
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">
-          Activity
-        </div>
-        {events.length > maxRows && (
-          <div className="text-[10px] text-muted-foreground/70">
-            Showing {maxRows} of {events.length}
-          </div>
-        )}
+    <div className="border-t border-border/50 px-3 py-2 bg-muted/10">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1.5">
+        Wiki & cost events
       </div>
-      {visible.length === 0 ? (
-        <div className="text-xs text-muted-foreground/60 italic py-3">
-          Waiting for the first event…
-        </div>
-      ) : (
-        <ul className="space-y-0.5 max-h-[280px] overflow-y-auto">
-          {visible.map((evt, idx) => (
-            <ActivityRow
+      <ul className="space-y-1">
+        {visible.map((evt, idx) => {
+          const elapsed = (() => {
+            try {
+              return fmtElapsed(startedAt, new Date(evt.ts).getTime());
+            } catch {
+              return "—";
+            }
+          })();
+          const payload = evt.payload ?? {};
+          if (evt.event_type === "wiki_update") {
+            const action = String(payload.action ?? "patched");
+            const isSkipped = action === "skipped_frozen";
+            const pageTitle = String(
+              payload.page_title ?? payload.page_id ?? evt.label,
+            );
+            const facts = Number(payload.facts_integrated ?? 0);
+            const version = payload.version;
+            return (
+              <li
+                key={`${evt.ts}-${idx}`}
+                className={cn(
+                  "flex items-center gap-1.5 text-[11px] border-l-2 pl-2",
+                  isSkipped ? "border-amber-400" : "border-violet-400",
+                )}
+              >
+                <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9">
+                  {elapsed}
+                </span>
+                <FileText
+                  size={11}
+                  className={cn(
+                    isSkipped ? "text-amber-500" : "text-violet-500",
+                  )}
+                />
+                <span className="text-foreground/85 truncate">
+                  {isSkipped ? "Skipped (frozen)" : "Updated"} "{pageTitle}"
+                </span>
+                {facts > 0 && (
+                  <span className="text-muted-foreground/70">
+                    +{facts} fact{facts === 1 ? "" : "s"}
+                  </span>
+                )}
+                {version != null && (
+                  <span className="text-[9px] font-mono bg-muted/40 px-1 rounded text-muted-foreground/70">
+                    v{String(version)}
+                  </span>
+                )}
+              </li>
+            );
+          }
+          if (evt.event_type === "cost_summary") {
+            const callsTotal = Number(payload.calls_total ?? 0);
+            const callsSkipped = Number(payload.calls_skipped ?? 0);
+            return (
+              <li
+                key={`${evt.ts}-${idx}`}
+                className="flex items-center gap-1.5 text-[11px] border-l-2 pl-2 border-amber-400"
+              >
+                <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9">
+                  {elapsed}
+                </span>
+                <Sparkles size={11} className="text-amber-500" />
+                <span className="text-foreground/85">
+                  Wiki build · {callsTotal} call{callsTotal === 1 ? "" : "s"}
+                  {callsSkipped > 0 && (
+                    <span className="text-muted-foreground/70">
+                      {" "}
+                      ({callsSkipped} cached)
+                    </span>
+                  )}
+                </span>
+              </li>
+            );
+          }
+          // parse_failure
+          const pageId = String(payload.page_id ?? "");
+          return (
+            <li
               key={`${evt.ts}-${idx}`}
-              event={evt}
-              startedAt={startedAt}
-            />
-          ))}
-        </ul>
-      )}
+              className="flex items-center gap-1.5 text-[11px] border-l-2 pl-2 border-red-400"
+            >
+              <span className="font-mono text-[10px] text-muted-foreground tabular-nums w-9">
+                {elapsed}
+              </span>
+              <AlertCircle size={11} className="text-red-500" />
+              <span className="text-foreground/85">
+                Parse failure · {pageId}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -601,12 +566,15 @@ export function SyncProgressV2({
   phases,
   state,
   events,
+  stageDetails,
+  batchResults,
   smoothedEtaSeconds,
   parseFailureState,
   totalMessages,
   processedMessages,
   startedAt,
 }: SyncProgressV2Props) {
+  const [activeTab, setActiveTab] = useState<TabId>("activity");
   const activePhase = useMemo(
     () => deriveActivePhase(state, phases),
     [state, phases],
@@ -626,6 +594,13 @@ export function SyncProgressV2({
   }, [events]);
 
   const showParseBanner = parseFailureState?.should_show_banner ?? false;
+  const batchCount = batchResults?.length ?? 0;
+
+  // Cumulative elapsed time from started_at.
+  const elapsedHeader = useMemo(
+    () => (startedAt ? fmtElapsed(startedAt, Date.now()) : null),
+    [startedAt],
+  );
 
   return (
     <div
@@ -657,14 +632,34 @@ export function SyncProgressV2({
           </div>
         </div>
       )}
-      <ActivityStream events={events} startedAt={startedAt} />
-      <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+      <Tabs
+        active={activeTab}
+        onChange={setActiveTab}
+        batchCount={batchCount}
+        channelId={channelId}
+      />
+      <div className="px-3 py-2 bg-card max-h-[480px] overflow-y-auto">
+        {activeTab === "activity" ? (
+          <ActivityLog details={stageDetails} />
+        ) : (
+          <BatchResults results={batchResults ?? []} />
+        )}
+      </div>
+      <LiveEventsList events={events} startedAt={startedAt} />
+      <div className="flex items-center flex-wrap gap-3 border-t border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
         <span>
           Throughput:{" "}
           <span className="font-medium text-foreground">{throughput}</span>{" "}
           msg/min
         </span>
-        <span>
+        {elapsedHeader && (
+          <span>
+            Elapsed:{" "}
+            <span className="font-medium text-foreground">{elapsedHeader}</span>
+          </span>
+        )}
+        <CostSummaryBadge events={events} />
+        <span className="ml-auto">
           Parse failures (10m):{" "}
           <span
             className={cn(
