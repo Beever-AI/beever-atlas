@@ -16,9 +16,33 @@ emitters without threading a reference through every constructor.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
+from typing import Any
+
+
+# Event-type taxonomy (``unified-llm-wiki-graph-redesign``):
+#
+#   * ``message_processing`` — one message currently being processed by
+#     ingestion. Payload: ``{message_id, text_preview, author, ts}``.
+#   * ``agent_state`` — one ingestion agent transition. Payload:
+#     ``{agent, state, batch_id?, elapsed_ms?}``.
+#   * ``wiki_update`` — one wiki page write. Payload:
+#     ``{page_id, action, facts_integrated?, elapsed_ms?}``.
+#   * ``cost_summary`` — per-build / per-flush cost. Payload:
+#     ``{calls_total, calls_skipped?, input_tokens, output_tokens, usd}``.
+#   * ``parse_failure`` — LLM response parse failure. Payload:
+#     ``{page_id, raw_len}``.
+#
+# Legacy callers that only emit ``stage`` + ``label`` keep working
+# unchanged — ``payload`` defaults to ``None`` and the existing
+# ``recent_events`` API skips it when serialising.
+EVENT_TYPE_MESSAGE_PROCESSING = "message_processing"
+EVENT_TYPE_AGENT_STATE = "agent_state"
+EVENT_TYPE_WIKI_UPDATE = "wiki_update"
+EVENT_TYPE_COST_SUMMARY = "cost_summary"
+EVENT_TYPE_PARSE_FAILURE = "parse_failure"
 
 
 @dataclass(frozen=True)
@@ -28,22 +52,35 @@ class Event:
     ts: datetime
     stage: str
     label: str
+    event_type: str = "legacy"
+    payload: dict[str, Any] | None = field(default=None)
 
 
 class PipelineEventBuffer:
     """Channel-keyed ring buffer of recent pipeline events.
 
-    Each channel keeps the most recent 100 events. Older entries are
+    Each channel keeps the most recent 200 events. Older entries are
     dropped silently (deque maxlen). Reads return most-recent-first so
     the UI can render a chronological activity feed without resorting
     on the client.
+
+    The redesign extends the buffer with structured event types
+    (``message_processing``, ``agent_state``, ``wiki_update``,
+    ``cost_summary``, ``parse_failure``) so the SyncMonitor's three
+    panes can subscribe to the same buffer instead of running their
+    own counters.
     """
 
-    _MAX_PER_CHANNEL: int = 100
+    _MAX_PER_CHANNEL: int = 200
 
     def __init__(self) -> None:
         self._events: dict[str, deque[Event]] = {}
         self._lock = Lock()
+        # Rolling 10-minute parse-failure counter per channel — used by
+        # the WikiTab parse-failure banner. List of monotonic-ish
+        # timestamps (we use wall-clock ts for simplicity; close enough
+        # for a 10-min rolling window).
+        self._parse_failure_ts: dict[str, deque[datetime]] = {}
 
     def record(
         self,
@@ -51,23 +88,50 @@ class PipelineEventBuffer:
         stage: str,
         label: str,
         ts: datetime | None = None,
+        event_type: str = "legacy",
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Append one event for ``channel_id``.
 
-        ``stage`` is a coarse pipeline phase (``fetch`` / ``preprocess``
-        / ``extract`` / ``embed`` / ``persist`` / ``subbatch`` / ``wiki``
-        / ``overview``). ``label`` is a human-readable description that
-        the UI renders verbatim. ``ts`` defaults to ``datetime.now(UTC)``.
+        ``stage`` is a coarse pipeline phase. ``label`` is a
+        human-readable description. ``event_type`` is the structured
+        taxonomy slot (default ``legacy`` preserves old emitters).
+        ``payload`` carries event-type-specific structured data the
+        SyncMonitor consumes verbatim. ``ts`` defaults to now-UTC.
         """
         if not channel_id:
             return
-        evt = Event(ts=ts or datetime.now(tz=UTC), stage=stage, label=label)
+        evt = Event(
+            ts=ts or datetime.now(tz=UTC),
+            stage=stage,
+            label=label,
+            event_type=event_type,
+            payload=payload,
+        )
         with self._lock:
             bucket = self._events.get(channel_id)
             if bucket is None:
                 bucket = deque(maxlen=self._MAX_PER_CHANNEL)
                 self._events[channel_id] = bucket
             bucket.append(evt)
+            if event_type == EVENT_TYPE_PARSE_FAILURE:
+                fail_bucket = self._parse_failure_ts.setdefault(
+                    channel_id, deque(maxlen=200)
+                )
+                fail_bucket.append(evt.ts)
+
+    def parse_failure_count_last_10_min(self, channel_id: str) -> int:
+        """Count parse-failure events for the channel in the last 10 min.
+
+        Used by the WikiTab banner: when count ≥3, render the failure
+        banner with Retry / Dismiss / Details actions.
+        """
+        with self._lock:
+            bucket = self._parse_failure_ts.get(channel_id)
+            if not bucket:
+                return 0
+            cutoff = datetime.now(tz=UTC).timestamp() - 600.0
+            return sum(1 for ts in bucket if ts.timestamp() >= cutoff)
 
     def recent_for(self, channel_id: str, limit: int = 10) -> list[Event]:
         """Return up to ``limit`` events for ``channel_id``, newest first."""

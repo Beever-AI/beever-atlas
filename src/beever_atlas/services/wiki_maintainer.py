@@ -1300,6 +1300,27 @@ class WikiMaintainer:
             self._record_apply_update_failure(
                 channel_id, page_id, ValueError("no_affected_sections")
             )
+            # ``unified-llm-wiki-graph-redesign`` — emit a structured
+            # parse_failure event so the WikiTab banner counter sees
+            # this as a recoverable failure mode. Best-effort.
+            try:
+                from beever_atlas.services.pipeline_events import (
+                    EVENT_TYPE_PARSE_FAILURE,
+                    get_pipeline_events,
+                )
+
+                get_pipeline_events().record(
+                    channel_id=channel_id,
+                    stage="wiki_maintenance",
+                    label=f"Parse failure on {page_id}",
+                    event_type=EVENT_TYPE_PARSE_FAILURE,
+                    payload={
+                        "page_id": page_id,
+                        "raw_len": len(raw) if raw else 0,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return False
 
         # Merge in place so each updated section keeps its original
@@ -1358,6 +1379,30 @@ class WikiMaintainer:
 
         await self._page_store.save_page(page)
         self._record_apply_update_success(page_id)
+        # ``unified-llm-wiki-graph-redesign`` — emit a structured
+        # wiki_update event so the SyncMonitor's right pane (Wiki
+        # Updates) renders this page rewrite live. Best-effort.
+        try:
+            from beever_atlas.services.pipeline_events import (
+                EVENT_TYPE_WIKI_UPDATE,
+                get_pipeline_events,
+            )
+
+            get_pipeline_events().record(
+                channel_id=channel_id,
+                stage="wiki_maintenance",
+                label=f"Page '{page.title or page_id}' updated",
+                event_type=EVENT_TYPE_WIKI_UPDATE,
+                payload={
+                    "page_id": page_id,
+                    "page_title": page.title or page_id,
+                    "action": "patched",
+                    "facts_integrated": len(truly_new),
+                    "version": page.version,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
         # Persist the cross-link graph (best-effort). Runs synchronously
         # so the next ``GET /api/channels/{id}/wiki/graph`` reflects the
         # rewrite immediately, but wrapped in try/except inside

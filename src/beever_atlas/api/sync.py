@@ -247,6 +247,7 @@ async def get_sync_status(
     phases = _compose_phases(job, counts, overview_state, maintenance_progress)
     recent_events = _compose_recent_events(channel_id)
     smoothed_eta = _compute_smoothed_eta(counts)
+    parse_failure_state = _compose_parse_failure_state(channel_id)
 
     response = {
         "state": _STATUS_MAP.get(job.status, job.status),
@@ -273,6 +274,10 @@ async def get_sync_status(
         "smoothed_eta_seconds": smoothed_eta,
         "retrying": failure_split["retrying"],
         "abandoned": failure_split["abandoned"],
+        # ``unified-llm-wiki-graph-redesign`` — wiki layer signals.
+        # The frontend SyncMonitor + WikiTab parse-failure banner
+        # consume these fields. Old clients ignore unknown keys.
+        "parse_failure_state": parse_failure_state,
     }
     logger.debug(
         "Sync API: status channel=%s job_id=%s state=%s processed=%d/%d batch=%d",
@@ -519,21 +524,31 @@ def _compose_phases(
 
 
 def _compose_recent_events(channel_id: str) -> list[dict[str, Any]]:
-    """Read the most-recent 10 pipeline events for ``channel_id``.
+    """Read the most-recent pipeline events for ``channel_id``.
 
     Returns an empty list on any failure — the activity feed is
     decorative; never let a buffer hiccup take down the status
     endpoint.
+
+    The redesign extends the per-event payload with ``event_type``
+    (``message_processing``, ``agent_state``, ``wiki_update``,
+    ``cost_summary``, ``parse_failure``, or ``legacy``) and an optional
+    ``payload`` dict. The SyncMonitor frontend consumes the structured
+    fields; legacy clients can keep reading ``stage`` + ``label``.
+    Limit raised to 30 so the live monitor's panes have enough
+    backbuffer.
     """
     try:
         from beever_atlas.services.pipeline_events import get_pipeline_events
 
-        events = get_pipeline_events().recent_for(channel_id, limit=10)
+        events = get_pipeline_events().recent_for(channel_id, limit=30)
         return [
             {
                 "ts": evt.ts.isoformat(),
                 "stage": evt.stage,
                 "label": evt.label,
+                "event_type": getattr(evt, "event_type", "legacy"),
+                "payload": getattr(evt, "payload", None),
             }
             for evt in events
         ]
@@ -544,6 +559,31 @@ def _compose_recent_events(channel_id: str) -> list[dict[str, Any]]:
             exc_info=True,
         )
         return []
+
+
+def _compose_parse_failure_state(channel_id: str) -> dict[str, Any]:
+    """Compose the parse-failure banner state for the WikiTab.
+
+    Returns ``{count_last_10_min, threshold, should_show_banner}``.
+    The banner threshold is 3 (per design D7); the frontend renders the
+    Retry / Dismiss / Details actions when ``should_show_banner=True``.
+    Decorative: any error returns the safe-empty payload.
+    """
+    try:
+        from beever_atlas.services.pipeline_events import get_pipeline_events
+
+        count = get_pipeline_events().parse_failure_count_last_10_min(channel_id)
+        return {
+            "count_last_10_min": count,
+            "threshold": 3,
+            "should_show_banner": count >= 3,
+        }
+    except Exception:  # noqa: BLE001
+        return {
+            "count_last_10_min": 0,
+            "threshold": 3,
+            "should_show_banner": False,
+        }
 
 
 def _compute_smoothed_eta(counts: dict[str, int]) -> int | None:
