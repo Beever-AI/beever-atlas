@@ -467,6 +467,48 @@ class MongoDBStore:
         doc.pop("_id", None)
         return SyncJob(**doc)
 
+    async def list_recent_activity_log(
+        self,
+        channel_id: str,
+        since_iso: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Merge activity_log entries from every recent sync_job for the channel.
+
+        The decoupled ExtractionWorker writes its rich ``stage_output``
+        entries to a synthetic ``worker:<channel>:<ts>`` sync_job_id —
+        those entries don't land on the user-facing sync_job row that
+        ``/sync/status`` returns. This method walks every sync_job for
+        the channel started within the last ~10 minutes and concatenates
+        their ``stage_details.activity_log`` arrays into one chronological
+        feed for the SyncProgressV2 UI.
+
+        Args:
+            channel_id: Channel to fetch for.
+            since_iso: ISO timestamp lower bound. When None, defaults to
+                10 minutes ago so per-batch worker rows that finished long
+                before the active sync are filtered out.
+            limit: Cap on the merged result — newest-first within each
+                job, then concatenated jobs newest-first.
+        """
+        if since_iso is None:
+            since = datetime.now(tz=UTC) - timedelta(minutes=10)
+            since_iso = since.isoformat()
+        cursor = self._sync_jobs.find(
+            {
+                "channel_id": channel_id,
+                "started_at": {"$gte": since_iso},
+            },
+            {"_id": 0, "id": 1, "started_at": 1, "stage_details.activity_log": 1},
+        ).sort("started_at", -1)
+        merged: list[dict[str, Any]] = []
+        async for doc in cursor:
+            entries = (doc.get("stage_details") or {}).get("activity_log") or []
+            merged.extend(entries)
+            if len(merged) >= limit:
+                break
+        return merged[:limit]
+
     async def get_last_job_by_kind(self, channel_id: str, kind: str) -> SyncJob | None:
         """Return the most recent SyncJob of ``kind`` for *channel_id*, or None.
 

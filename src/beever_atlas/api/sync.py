@@ -249,6 +249,45 @@ async def get_sync_status(
     smoothed_eta = _compute_smoothed_eta(counts)
     parse_failure_state = _compose_parse_failure_state(channel_id)
 
+    # Merge rich activity_log entries from worker:* sync_jobs into the
+    # user-facing job's stage_details so the SyncProgressV2 UI sees them.
+    # The decoupled ExtractionWorker writes per-batch stage_output rows
+    # to a synthetic job_id; without this merge the UI's Pipeline
+    # Activity tab stays empty during the extraction phase.
+    merged_stage_details: dict[str, Any] = dict(getattr(job, "stage_details", {}) or {})
+    try:
+        if job.started_at is not None:
+            since_iso = job.started_at.isoformat()
+        else:
+            since_iso = None
+        merged_log = await stores.mongodb.list_recent_activity_log(
+            channel_id=channel_id, since_iso=since_iso, limit=200,
+        )
+        if merged_log:
+            existing = list(merged_stage_details.get("activity_log") or [])
+            # Dedup by (agent, batch_idx, message, type) — worker tee can
+            # in principle land the same entry on multiple jobs.
+            seen: set[tuple] = set()
+            combined: list[dict[str, Any]] = []
+            for entry in existing + merged_log:
+                key = (
+                    entry.get("agent"),
+                    entry.get("batch_idx"),
+                    entry.get("type"),
+                    (entry.get("message") or "")[:60],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                combined.append(entry)
+            merged_stage_details["activity_log"] = combined
+    except Exception:  # noqa: BLE001 — never break /sync/status on a merge glitch
+        logger.exception(
+            "Sync API: activity_log merge failed channel=%s job=%s",
+            channel_id,
+            job.id,
+        )
+
     response = {
         "state": _STATUS_MAP.get(job.status, job.status),
         "job_id": job.id,
@@ -260,7 +299,7 @@ async def get_sync_status(
         "batches_completed": getattr(job, "batches_completed", 0),
         "current_stage": getattr(job, "current_stage", None),
         "stage_timings": getattr(job, "stage_timings", {}),
-        "stage_details": getattr(job, "stage_details", {}),
+        "stage_details": merged_stage_details,
         "batch_results": getattr(job, "batch_results", []),
         "errors": job.errors,
         "started_at": job.started_at.isoformat() if job.started_at else None,
