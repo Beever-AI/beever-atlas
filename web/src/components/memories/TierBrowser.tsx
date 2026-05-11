@@ -121,7 +121,7 @@ export function TierBrowser() {
     setSearchParams(updated, { replace: true });
   };
 
-  const { facts, filters, setFilters, isLoading, refetch: refetchFacts } = useMemories(channelId);
+  const { facts, total: factsTotal, filters, setFilters, isLoading, refetch: refetchFacts } = useMemories(channelId);
   const { clusters, isLoading: clustersLoading, error: clustersError, refetch: refetchTopics } = useTopics(channelId);
   const { summary, isLoading: summaryLoading, error: summaryError, refetch: refetchSummary } = useChannelSummary(channelId);
   const { hasMemories, isLoading: isMemoryCountLoading, refetch: refetchMemoryCount } = useChannelMemoryCount(channelId);
@@ -278,7 +278,7 @@ export function TierBrowser() {
             sections={[
               { id: "tier0-summary", label: "Channel", icon: Layers },
               { id: "tier1-topics", label: "Topics", icon: FileText, count: clusters.length },
-              { id: "tier2-facts", label: "Atomic facts", icon: Zap, count: facts.length },
+              { id: "tier2-facts", label: "Atomic facts", icon: Zap, count: factsTotal },
             ]}
           />
         </div>
