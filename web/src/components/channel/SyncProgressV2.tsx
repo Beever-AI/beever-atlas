@@ -1104,8 +1104,18 @@ function BatchFilteredActivityLog({
     }
   }, [filteredEntries, searchTerm, selectedBatch, activityLog, batches]);
 
+  // "Up next" preview: rendered at the bottom of the activity panel
+  // when (a) viewing all batches and (b) there are pending batches —
+  // so the panel fills available vertical space with useful content
+  // instead of leaving a large empty gap during fullscreen mode.
+  const pendingBatches = batches.filter((b) => b.state === "pending");
+  const runningBatches = batches.filter((b) => b.state === "running");
+  const showUpNext = selectedBatch === "all" && pendingBatches.length > 0;
+  const allBatchesDone =
+    batches.length > 0 && batches.every((b) => b.state === "done");
+
   return (
-    <div>
+    <div className="min-h-full flex flex-col">
       {/* Header bundle: batch chips + search input.
        *  Sticky-pinned at the top of the scroll container so it stays
        *  visible during long activity-log scrolls. */}
@@ -1166,6 +1176,73 @@ function BatchFilteredActivityLog({
       ) : (
         <ActivityLog details={filteredDetails} />
       )}
+      {showUpNext && (
+        <UpNextStrip
+          pending={pendingBatches}
+          running={runningBatches}
+        />
+      )}
+      {allBatchesDone && (
+        <div className="mt-auto flex items-center justify-center gap-2 px-3 py-3 text-[11px] text-muted-foreground border-t border-border/40 bg-muted/10">
+          <Loader2 size={12} className="animate-spin text-primary/60" />
+          <span>
+            All {batches.length} batches processed — finalising wiki…
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// UpNextStrip — fills the bottom of the activity panel with placeholder
+// rows for pending/queued batches so fullscreen mode shows useful
+// context (what's coming) instead of an empty gap.
+// ──────────────────────────────────────────────────────────────────────
+function UpNextStrip({
+  pending,
+  running,
+}: {
+  pending: BatchSummary[];
+  running: BatchSummary[];
+}) {
+  // Cap visible rows to avoid runaway height. Remaining count is summarised.
+  const VISIBLE = 8;
+  const visible = pending.slice(0, VISIBLE);
+  const hiddenCount = Math.max(0, pending.length - VISIBLE);
+
+  return (
+    <div className="mt-auto border-t border-border/40 bg-muted/5 px-3 py-2.5">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10.5px] uppercase tracking-wider font-semibold text-muted-foreground/70">
+          Up next · {pending.length} pending
+          {running.length > 0 && ` · ${running.length} running`}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-1.5">
+        {visible.map((b) => (
+          <div
+            key={b.batchIdx}
+            className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-dashed border-border/40 bg-card/30 text-[11px] text-muted-foreground/80"
+          >
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 shrink-0"
+            />
+            <span className="font-medium text-foreground/70">
+              Batch {b.batchIdx}
+            </span>
+            <span className="ml-auto text-[10px] text-muted-foreground/60">
+              queued
+            </span>
+          </div>
+        ))}
+        {hiddenCount > 0 && (
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-dashed border-border/40 bg-card/20 text-[11px] text-muted-foreground/60">
+            +{hiddenCount} more
+          </div>
+        )}
+      </div>
     </div>
   );
 }

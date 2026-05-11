@@ -279,6 +279,15 @@ export function ChannelWorkspace() {
 
   const instructions = platformInstructions[channel?.platform ?? "slack"] ?? platformInstructions.slack;
 
+  // A sync is considered active when state is syncing/error OR any
+  // pipeline phase is currently in_flight. Used to (a) decide whether
+  // to render the monitor and (b) override the "Channel Not Connected"
+  // empty state — a running pipeline proves the channel is connected.
+  const pipelineActive =
+    syncState.state === "syncing" ||
+    syncState.state === "error" ||
+    (syncState.phases ?? []).some((p) => p.state === "in_flight");
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Compact channel bar: title + tabs in one layer */}
@@ -408,16 +417,16 @@ export function ChannelWorkspace() {
 
       {/* Sync progress monitor placement:
        *  - Wiki tab + EXPANDED + active sync → fullscreen monitor;
-       *    Outlet hidden because WikiTab returns null mid-pipeline.
-       *  - Wiki tab + COLLAPSED → compact strip; Outlet visible with
-       *    its empty-state placeholder beneath.
+       *    body content hidden so the monitor fills the page.
+       *  - Wiki tab + COLLAPSED → compact strip; Outlet visible below.
        *  - Non-wiki tabs → always compact; Outlet visible.
-       *  No active sync → no monitor; Outlet has full content area. */}
+       *  No active sync → no monitor; Outlet has full content area.
+       *
+       *  Note: ``pipelineActive`` also serves as a connectivity proof —
+       *  an in-flight sync implies the bot IS in the channel, so we
+       *  must NOT render "Channel Not Connected" while pipeline runs
+       *  even if ``isMember`` is still false (stale or unsynced). */}
       {(() => {
-        const pipelineActive =
-          syncState.state === "syncing" ||
-          syncState.state === "error" ||
-          (syncState.phases ?? []).some((p) => p.state === "in_flight");
         if (!id || !pipelineActive) return null;
         const fullscreen = activeTab === "wiki" && !monitorCollapsed;
         if (fullscreen) {
@@ -446,9 +455,12 @@ export function ChannelWorkspace() {
         );
       })()}
 
-      {/* Content — hidden ONLY when monitor is fullscreen (wiki tab +
-       *  expanded + active pipeline). Visible in all other cases so
-       *  the user can navigate to settings/source/etc while sync runs. */}
+      {/* Content area decision tree:
+       *  1) Channel still loading → loading spinner
+       *  2) Fullscreen monitor active → render nothing (monitor fills)
+       *  3) Member OR pipeline active → Outlet (a running sync proves
+       *     the channel is connected, so don't show the empty state)
+       *  4) Otherwise → "Channel Not Connected" hero */}
       {loadingChannel ? (
         <div className="flex items-center justify-center flex-1 min-h-0 p-6">
           <div className="flex flex-col items-center gap-3 text-muted-foreground/50">
@@ -456,12 +468,7 @@ export function ChannelWorkspace() {
             <span className="text-sm">Loading channel...</span>
           </div>
         </div>
-      ) : isMember && !(
-        activeTab === "wiki" &&
-        !monitorCollapsed &&
-        (syncState.state === "syncing" ||
-          (syncState.phases ?? []).some((p) => p.state === "in_flight"))
-      ) ? (
+      ) : (activeTab === "wiki" && !monitorCollapsed && pipelineActive) ? null : (isMember || pipelineActive) ? (
         <div className="flex-1 min-h-0 relative bg-muted/10 overflow-hidden" key={activeTab}>
           <Outlet
             context={{

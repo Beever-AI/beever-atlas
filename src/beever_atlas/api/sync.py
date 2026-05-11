@@ -556,8 +556,18 @@ def _compose_phases(
         maintenance_entry["total"] = done_count + dirty_count
     phases.append(maintenance_entry)
 
-    # Phase 4: overview_wiki. State decided by ``_safe_overview_state``.
-    phases.append({"name": "overview_wiki", "state": str(overview_state.get("state", "pending"))})
+    # Phase 4: overview_wiki. State decided by ``_safe_overview_state``,
+    # then clamped by the memory-then-wiki gate: the overview cannot
+    # legitimately be ``in_flight`` while extraction is still pending —
+    # the AutoOverviewSubscriber gates on ``pending+extracting=0`` and
+    # would bail out anyway. Without this clamp the subscriber's
+    # transient "in-flight" set during a gate-check causes the UI to
+    # flicker ``in_flight → pending`` (forward-only violation observed
+    # in scripts/test_pipeline_design.py).
+    overview_state_str = str(overview_state.get("state", "pending"))
+    if extract_state in ("pending", "in_flight") and overview_state_str == "in_flight":
+        overview_state_str = "pending"
+    phases.append({"name": "overview_wiki", "state": overview_state_str})
 
     return phases
 
