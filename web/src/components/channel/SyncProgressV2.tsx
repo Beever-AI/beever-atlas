@@ -653,6 +653,14 @@ function summariseBatches(
   activityLog: ActivityEntry[],
   totalBatches?: number,
   batchesCompleted?: number,
+  /**
+   * Set of batch_nums that the BACKEND has confirmed done (from
+   * the user-facing ``batch_results`` array). When batches complete
+   * out of order (e.g. Batch 5 finishes before Batch 1), the prior
+   * ``idx <= batchesCompleted`` heuristic mis-marked early indices
+   * as done. Now we trust this explicit set instead.
+   */
+  knownDoneBatchNums?: Set<number>,
 ): BatchSummary[] {
   const byBatch = new Map<number, BatchSummary>();
   for (const e of activityLog) {
@@ -697,14 +705,25 @@ function summariseBatches(
   // 1..batchesCompleted are definitively done — anything higher that we
   // haven't yet observed is pending.
   if (totalBatches && totalBatches > 0) {
+    // Use the explicit done-set when available; fall back to the
+    // legacy idx-based rule only when knownDoneBatchNums is missing
+    // entirely (legacy backend / pre-result-row state). The legacy
+    // rule wrongly marks batches 1..N as done when in reality the N
+    // completed batches may be {2, 5, 7} (out-of-order processing).
+    // UI testing caught this as "Batch 1 said done, then flipped to
+    // running when real preprocessor events arrived."
+    const useExplicit = knownDoneBatchNums !== undefined;
     const done = Math.max(0, batchesCompleted ?? 0);
     for (let i = 1; i <= totalBatches; i++) {
       if (byBatch.has(i)) continue;
+      const isDone = useExplicit
+        ? knownDoneBatchNums.has(i)
+        : i <= done;
       byBatch.set(i, {
         batchIdx: i,
-        state: i <= done ? "done" : "pending",
+        state: isDone ? "done" : "pending",
         stagesStarted: 0,
-        hasPersisterDone: i <= done,
+        hasPersisterDone: isDone,
         factsCount: 0,
         entitiesCount: 0,
         totalElapsedMs: 0,
@@ -1039,7 +1058,26 @@ function BatchFilteredActivityLog({
   }, []);
 
   const batches = useMemo(
-    () => summariseBatches(activityLog, totalBatches, batchesCompleted),
+    () => {
+      // Derive the set of batches that have a persister stage_output in
+      // the activity_log — those are CONFIRMED done. Pass it to
+      // ``summariseBatches`` so the chip strip doesn't fall back to the
+      // (incorrect) ``idx <= batchesCompleted`` heuristic, which marks
+      // Batch 1 as done when reality is {Batch 2, Batch 5} (out-of-order
+      // completion). UI testing surfaced this as the "Batch 1 done →
+      // running" flicker.
+      const persistedNums = new Set<number>();
+      for (const e of activityLog) {
+        if (
+          e.type === "stage_output" &&
+          e.agent === "persister" &&
+          typeof e.batch_idx === "number"
+        ) {
+          persistedNums.add(e.batch_idx);
+        }
+      }
+      return summariseBatches(activityLog, totalBatches, batchesCompleted, persistedNums);
+    },
     [activityLog, totalBatches, batchesCompleted],
   );
 
@@ -1593,7 +1631,27 @@ export function SyncProgressV2({
   // tab AND the batch-results tab share the same state source.
   const activityLog = stageDetails?.activity_log ?? [];
   const batchSummaries = useMemo(
-    () => summariseBatches(activityLog, totalBatches, batchesCompleted),
+    () => {
+      // Confirmed-done set: union of (a) persister stage_output entries
+      // in activity_log and (b) batch_nums already accumulated in the
+      // sticky results buffer. Either source proves the batch finished
+      // — and using BOTH closes the window between persister-done and
+      // batch_results-row-arrival.
+      const persistedNums = new Set<number>();
+      for (const e of activityLog) {
+        if (
+          e.type === "stage_output" &&
+          e.agent === "persister" &&
+          typeof e.batch_idx === "number"
+        ) {
+          persistedNums.add(e.batch_idx);
+        }
+      }
+      for (const bn of stickyResultsRef.current.keys()) {
+        persistedNums.add(bn);
+      }
+      return summariseBatches(activityLog, totalBatches, batchesCompleted, persistedNums);
+    },
     [activityLog, totalBatches, batchesCompleted],
   );
 
