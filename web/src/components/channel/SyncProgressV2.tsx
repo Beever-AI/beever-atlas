@@ -562,7 +562,7 @@ function MetricBadge({ label, value, detail, accent = "default" }: MetricBadgePr
   );
 }
 
-function MetricsBar({
+export function MetricsBar({
   events,
   activityLog,
   stickyResults,
@@ -819,7 +819,7 @@ export function deriveBatchResultsFromActivity(
 
 type BatchStateFilter = "all" | "done" | "running" | "pending" | "failed";
 
-function BatchTabs({
+export function BatchTabs({
   batches,
   selected,
   onSelect,
@@ -1304,7 +1304,7 @@ function BatchFilteredActivityLog({
 // rows for pending/queued batches so fullscreen mode shows useful
 // context (what's coming) instead of an empty gap.
 // ──────────────────────────────────────────────────────────────────────
-function UpNextStrip({
+export function UpNextStrip({
   pending,
   running,
 }: {
