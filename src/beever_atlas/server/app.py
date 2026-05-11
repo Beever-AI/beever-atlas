@@ -434,7 +434,19 @@ async def lifespan(app: FastAPI):
                 task.add_done_callback(_on_done_log_exc)
 
             worker.subscribe_memory_changed(_on_memory_changed)
-            worker.subscribe_memory_settled(_on_memory_settled)
+            # memory-then-wiki-pipeline-realignment (Blocker 2 fix) — only
+            # subscribe the maintainer's settle-path directly to the worker
+            # when consolidation is NOT wired (legacy mode). In decoupled
+            # mode the consolidation subscriber registered later in this
+            # lifespan invokes ``maintainer.on_memory_settled`` explicitly
+            # after ``summarize_settled`` completes, guaranteeing
+            # consolidation lands before the maintainer flush. Subscribing
+            # both here would race them in parallel via
+            # ``ExtractionWorker._emit_memory_settled``'s
+            # ``asyncio.create_task`` fan-out — the old 5s settle-debounce
+            # hack that this fix removes.
+            if not getattr(settings, "decouple_extraction", False):
+                worker.subscribe_memory_settled(_on_memory_settled)
     except Exception as exc:
         logging.getLogger(__name__).warning("WikiMaintainer init failed (non-fatal): %s", exc)
 
@@ -735,6 +747,95 @@ async def lifespan(app: FastAPI):
                     task.add_done_callback(_log_exc)
 
                 _consolidation_worker.subscribe_extraction_done(_on_extraction_done_consolidation)
+
+                # Deferred-summarization subscriber.  When
+                # CONSOLIDATION_SUMMARIZE_ON_SETTLE is true (default), the
+                # per-batch path above runs only assign_clusters_only — NO
+                # LLM. The actual cluster/channel summary LLM batch fires
+                # here exactly once per channel per sync, on memory_settled,
+                # against the post-drain stable state.
+                #
+                # Ordering invariant (Blocker 2 fix): consolidation now
+                # CHAINS into the maintainer's settle-path explicitly. The
+                # maintainer's own ``memory_settled`` subscription is
+                # deliberately NOT registered in decoupled mode (see the
+                # guard around ``worker.subscribe_memory_settled`` in the
+                # maintainer wiring above). This subscriber awaits
+                # ``summarize_settled`` to completion, then calls
+                # ``maintainer.on_memory_settled`` directly — guaranteeing
+                # the maintainer's per-page LLM rewrites read freshly
+                # written cluster/channel summaries instead of racing the
+                # old 5s settle-debounce window.
+                async def _run_summarize_settled(channel_id: str) -> None:
+                    from beever_atlas.services.pipeline_orchestrator import (
+                        summarize_settled_for_channel,
+                    )
+                    from beever_atlas.services.wiki_maintainer import (
+                        get_wiki_maintainer,
+                    )
+
+                    await summarize_settled_for_channel(channel_id)
+
+                    # Explicit chain — fire the maintainer's settle-path
+                    # AFTER consolidation has finished writing summaries.
+                    # Failures here are isolated so a maintainer error
+                    # cannot mask a successful consolidation in logs.
+                    _maintainer = get_wiki_maintainer()
+                    if _maintainer is None:
+                        return
+                    # Inline language resolution (mirrors
+                    # ``_resolve_channel_lang`` defined in the maintainer
+                    # wiring scope above; duplicated here because that
+                    # closure is not in scope from this block).
+                    _target_lang = "en"
+                    try:
+                        from beever_atlas.stores import get_stores as _gs
+
+                        _state = await _gs().mongodb.get_channel_sync_state(
+                            channel_id
+                        )
+                        if _state is not None:
+                            _primary = getattr(_state, "primary_language", None)
+                            if _primary:
+                                _target_lang = str(_primary)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if _target_lang == "en":
+                        try:
+                            _target_lang = settings.default_target_language or "en"
+                        except Exception:  # noqa: BLE001
+                            _target_lang = "en"
+                    try:
+                        await _maintainer.on_memory_settled(
+                            channel_id, target_lang=_target_lang
+                        )
+                    except Exception:  # noqa: BLE001
+                        logging.getLogger(__name__).exception(
+                            "wiki_maintainer.on_memory_settled crashed channel=%s "
+                            "(invoked from consolidation chain)",
+                            channel_id,
+                        )
+
+                def _on_memory_settled_consolidation(channel_id: str) -> None:
+                    task = _asyncio.create_task(_run_summarize_settled(channel_id))
+
+                    def _log_exc(t: _asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        exc = t.exception()
+                        if exc is not None:
+                            logging.getLogger(__name__).warning(
+                                "summarize_settled task raised channel=%s: %s",
+                                channel_id,
+                                exc,
+                                exc_info=exc,
+                            )
+
+                    task.add_done_callback(_log_exc)
+
+                _consolidation_worker.subscribe_memory_settled(
+                    _on_memory_settled_consolidation
+                )
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Consolidation-after-extraction wiring failed (non-fatal): %s", exc

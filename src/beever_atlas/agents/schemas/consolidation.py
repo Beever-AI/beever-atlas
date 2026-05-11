@@ -51,7 +51,15 @@ class GlossaryTerm(BaseModel):
 class TopicSummaryResult(BaseModel):
     """Structured LLM output for topic-level summarization."""
 
-    title: str = ""
+    title: str = Field(
+        default="",
+        description=(
+            "Short, specific title for the topic (5-10 words). "
+            "MUST be descriptive — e.g. 'GPU Selection for ASR Inference', "
+            "'CI/CD Pipeline Redesign'. Do NOT leave blank. "
+            "Do NOT use generic placeholders like 'general-discussion'."
+        ),
+    )
     """Short descriptive name, 5-10 words."""
 
     summary_text: str = ""

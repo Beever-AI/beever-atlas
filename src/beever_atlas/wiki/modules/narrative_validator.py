@@ -61,8 +61,13 @@ _ARTICLE_TYPICAL_MAX_WORDS = 3000
 _ARTICLE_LANDMARK_MAX_WORDS = 5000
 _ARTICLE_HARD_MAX_WORDS = 6000
 
-# Citation-coverage gate. Articles below this threshold are rejected.
-_CITATION_COVERAGE_GATE = 0.80
+# Citation-coverage gate thresholds, tiered by input-paragraph count.
+# Small topics (< 5 paragraphs) get a relaxed threshold because the
+# LLM sometimes omits the citations array on 1-2 paragraphs, and
+# rejecting the whole article is too aggressive for thin inputs.
+_CITATION_COVERAGE_GATE = 0.80          # > 10 paragraphs (large topics)
+_CITATION_COVERAGE_GATE_MID = 0.70     # 5-10 paragraphs
+_CITATION_COVERAGE_GATE_SMALL = 0.60   # < 5 paragraphs
 
 # Sentence boundary detection — period / question mark / exclamation
 # followed by whitespace. Conservative; captures the most common
@@ -412,12 +417,28 @@ def validate_narrative_sections(
     raw_coverage = (
         cited_input_paragraphs / total_input_paragraphs if total_input_paragraphs > 0 else 0.0
     )
-    if total_input_paragraphs > 0 and raw_coverage < _CITATION_COVERAGE_GATE:
+    if total_input_paragraphs < 5:
+        threshold = _CITATION_COVERAGE_GATE_SMALL
+        tier = "small"
+    elif total_input_paragraphs <= 10:
+        threshold = _CITATION_COVERAGE_GATE_MID
+        tier = "mid"
+    else:
+        threshold = _CITATION_COVERAGE_GATE
+        tier = "large"
+    logger.info(
+        "narrative_validator: coverage_gate threshold=%.2f tier=%s paragraphs=%d coverage=%.2f",
+        threshold,
+        tier,
+        total_input_paragraphs,
+        raw_coverage,
+    )
+    if total_input_paragraphs > 0 and raw_coverage < threshold:
         logger.info(
             "narrative_article_rejected reason=low_citation_coverage "
             "raw_coverage=%.3f gate=%.2f cited=%d total=%d",
             raw_coverage,
-            _CITATION_COVERAGE_GATE,
+            threshold,
             cited_input_paragraphs,
             total_input_paragraphs,
         )

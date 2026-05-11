@@ -20,20 +20,13 @@ fill-rate for ``LLM_BACKOFF_COOLDOWN_SECONDS`` (default 60s). Coalesces
 overlapping 429s by resetting the cooldown end-time rather than
 extending it — multiple bursts collapse into one recovery period.
 
-KNOWN GAP: this throttle wraps ``litellm.acompletion`` and
-``litellm.aembedding`` only. The Google GenAI SDK calls (used by the
-ADK ingestion agents and the wiki maintainer — e.g.
-``client.aio.models.generate_content`` in
-``services/wiki_maintainer.py``, ``wiki/compiler.py``,
-``agents/ingestion/csv_mapper.py``, ``agents/query/decomposer.py``,
-``api/ask.py``, and several call sites in ``services/media_extractors.py``
-/ ``services/media_processor.py``) bypass this throttle and are gated
-by the legacy ``batch_processor._get_limiter`` aiolimiter and the
-circuit breaker. A follow-up commit should either (a) wrap every
-``client.aio.models.generate_content`` site, or (b) install the
-throttle as an ADK-layer interceptor on ``LlmAgent``. Until then,
-both gates run in parallel and operators tuning one should also tune
-the other.
+This throttle wraps both ``litellm.acompletion`` / ``litellm.aembedding``
+(via :mod:`llm_dispatch`) and direct Google GenAI SDK calls (via
+:meth:`LLMThrottle.throttled_call`). The wiki compiler and maintainer
+use ``throttled_call`` so their ``client.aio.models.generate_content``
+fan-outs are subject to the same RPM+TPM gate. The legacy ADK ingestion
+path in ``batch_processor`` retains its ``aiolimiter`` gate; both layers
+coexist and protect different code paths.
 """
 
 from __future__ import annotations
@@ -44,15 +37,21 @@ import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar("_T")
 
 # Provider RPM/TPM defaults — public free-tier or paid-tier-1 limits as
 # documented by each vendor. Conservative on purpose; operators with
 # higher quota override per-provider via env. Sources:
-#   gemini   — Google AI Studio free tier (10 RPM / 250k TPM, gemini-2.0)
+#   gemini   — Google AI Studio / paid tier (60 RPM / 500k TPM, gemini-2.0).
+#              Raised from the free-tier floor (10 RPM) because wiki builds
+#              fan out 15-20 concurrent calls via asyncio.gather and the
+#              throttle is now the single RPM gate for both litellm and
+#              direct genai SDK paths. Operators on the free tier should set
+#              LLM_RPM_OVERRIDE_GEMINI=10 to restore the conservative limit.
 #   openai   — OpenAI tier 1 (500 RPM / 200k TPM for gpt-4o-mini)
 #   voyage   — Voyage paid tier (300 RPM / 1M TPM)
 #   cohere   — Cohere paid tier (100 RPM / 1M TPM)
@@ -61,7 +60,7 @@ logger = logging.getLogger(__name__)
 #   ollama   — local; effectively unlimited (10k RPM / 10M TPM cap acts as a
 #              safety belt rather than a real throttle).
 _DEFAULTS: dict[str, tuple[int, int]] = {
-    "gemini": (10, 250_000),
+    "gemini": (60, 500_000),
     "openai": (500, 200_000),
     "voyage": (300, 1_000_000),
     "cohere": (100, 1_000_000),
@@ -259,6 +258,43 @@ class LLMThrottle:
             self._cooldown_seconds,
         )
 
+    async def throttled_call(
+        self,
+        provider: str,
+        estimated_tokens: int,
+        fn: Callable[..., Awaitable[_T]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> _T:
+        """Wrap an arbitrary awaitable LLM call with the per-provider RPM+TPM gate.
+
+        Use this for direct Google GenAI SDK calls (``client.aio.models.generate_content``)
+        that bypass the litellm dispatch path. Semantically identical to wrapping
+        the call in ``async with self.acquire(provider, estimated_tokens):``.
+
+        If a 429 surfaces (``ResourceExhausted`` or any exception whose message
+        contains "429") ``report_429`` is called so the sliding-window backoff
+        kicks in immediately.
+
+        Example::
+
+            response = await throttle.throttled_call(
+                "gemini",
+                estimated_tokens,
+                client.aio.models.generate_content,
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+        """
+        async with self.acquire(provider, estimated_tokens):
+            try:
+                return await fn(*args, **kwargs)
+            except BaseException as exc:
+                if _is_429_exc(exc):
+                    self.report_429(provider)
+                raise
+
     def metrics_snapshot(self) -> list[dict[str, object]]:
         """Per-provider live state for the admin metrics endpoint.
 
@@ -345,6 +381,28 @@ class LLMThrottle:
 
     def __repr__(self) -> str:  # pragma: no cover — debug aid
         return f"<LLMThrottle providers={list(self._buckets.keys())}>"
+
+
+def _is_429_exc(exc: BaseException) -> bool:
+    """Detect rate-limit errors from the Google GenAI SDK and LiteLLM.
+
+    Google GenAI surfaces 429 as ``google.api_core.exceptions.ResourceExhausted``
+    (``status_code`` / ``code`` == 429). LiteLLM wraps them in
+    ``litellm.RateLimitError``. We sniff both plus the message text so this
+    helper works regardless of which SDK raised.
+    """
+    try:
+        import litellm  # type: ignore[import-untyped]
+
+        if isinstance(exc, litellm.RateLimitError):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status_code == 429:
+        return True
+    msg = str(exc).lower()
+    return "429" in msg or "rate limit" in msg or "rate_limit" in msg or "rate-limit" in msg
 
 
 def _resolve_limits(provider_key: str) -> tuple[int, int]:

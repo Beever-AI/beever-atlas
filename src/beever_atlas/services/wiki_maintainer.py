@@ -831,6 +831,27 @@ class WikiMaintainer:
         except Exception:  # noqa: BLE001 — fall back to spec default
             return 60.0
 
+    def _resolve_settle_debounce_seconds(self) -> float:
+        """Pick the debounce window for the settle-path flush.
+
+        Used exclusively by :meth:`on_memory_settled`. The settle event is
+        terminal (fires once per channel-drain), so only a tiny grace window
+        is needed — unlike the 60s mid-sync coalescing debounce.
+
+        Order of precedence: per-instance constructor override (same knob as
+        the main debounce, so tests that set debounce=0 get immediate flush
+        on both paths) → env var via
+        ``Settings.wiki_maintainer_settle_debounce_seconds`` → 5s default.
+        """
+        if self._debounce_seconds_override is not None:
+            return float(self._debounce_seconds_override)
+        try:
+            from beever_atlas.infra.config import get_settings
+
+            return float(get_settings().wiki_maintainer_settle_debounce_seconds)
+        except Exception:  # noqa: BLE001 — fall back to spec default
+            return 5.0
+
     def _get_dirty_lock(self) -> asyncio.Lock:
         """Lazily create the dirty-set lock on first awaited touch.
 
@@ -917,6 +938,12 @@ class WikiMaintainer:
         debounce window collapse to a single flush (idempotent
         scheduling via ``_ensure_flush_scheduled``).
 
+        Uses a short settle-path debounce (default 5s, configured via
+        ``WIKI_MAINTAINER_SETTLE_DEBOUNCE_SECONDS``) rather than the
+        60s mid-sync debounce — the queue has already drained so there
+        is nothing left to coalesce; the tiny window only covers a race
+        where extraction barely missed the queue-drain check.
+
         Manual mode (``WIKI_MAINTENANCE_MODE=manual``) skips the
         scheduled flush — the operator's "Maintain Wiki" button is
         the trigger via :meth:`maintain_now`.
@@ -931,7 +958,7 @@ class WikiMaintainer:
             )
             return {"scheduled": 0}
 
-        debounce = self._resolve_debounce_seconds()
+        debounce = self._resolve_settle_debounce_seconds()
         if debounce <= 0:
             # Immediate flush — preserves the legacy synchronous path
             # used by some unit tests.
@@ -2046,13 +2073,19 @@ class WikiMaintainer:
         provider = self._llm_provider or get_llm_provider()
         model_name = provider.get_model_string("wiki_maintainer")
 
+        from beever_atlas.services.llm_throttle import get_llm_throttle
+
         client = self._get_genai_client()
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             max_output_tokens=4096,
             temperature=0.2,
         )
-        response = await client.aio.models.generate_content(
+        throttle = get_llm_throttle()
+        response = await throttle.throttled_call(
+            "gemini",
+            4096,
+            client.aio.models.generate_content,
             model=model_name,
             contents=prompt,
             config=config,

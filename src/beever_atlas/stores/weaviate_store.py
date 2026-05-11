@@ -138,6 +138,11 @@ class WeaviateStore:
         ("status", DataType.TEXT),
         ("fact_type_counts_json", DataType.TEXT),
         ("worst_staleness", DataType.NUMBER),
+        # ``summary_dirty`` — freshness flag for ``ConsolidationService.
+        # _select_clusters_needing_summary``. True ↔ cluster has unseen
+        # facts since its last LLM summary. Auto-migrated to existing
+        # collections via ``_apply_schema_migration``.
+        ("summary_dirty", DataType.BOOL),
         # EntityKnowledgeCard fields
         ("entity_id", DataType.TEXT),
         ("entity_name", DataType.TEXT),
@@ -1138,6 +1143,7 @@ class WeaviateStore:
                 "staleness_score": cluster.staleness_score,
                 "status": cluster.status,
                 "fact_type_counts_json": json.dumps(cluster.fact_type_counts),
+                "summary_dirty": bool(cluster.summary_dirty),
                 # Wiki-ready enrichment fields
                 "title": cluster.title,
                 "current_state": cluster.current_state,
@@ -1213,6 +1219,10 @@ class WeaviateStore:
                         staleness_score=float(props.get("staleness_score", 0.0)),
                         status=props.get("status", "active"),
                         fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                        # Default True for legacy rows missing the property so
+                        # first-time loads still summarize. New writes always set
+                        # the field explicitly.
+                        summary_dirty=bool(props.get("summary_dirty", True)),
                         key_facts=json.loads(props.get("key_facts_json") or "[]"),
                         decisions=json.loads(props.get("decisions_json") or "[]"),
                         people=json.loads(props.get("people_json") or "[]"),
@@ -1268,6 +1278,7 @@ class WeaviateStore:
                 staleness_score=float(props.get("staleness_score", 0.0)),
                 status=props.get("status", "active"),
                 fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                summary_dirty=bool(props.get("summary_dirty", True)),
                 key_facts=json.loads(props.get("key_facts_json") or "[]"),
                 decisions=json.loads(props.get("decisions_json") or "[]"),
                 people=json.loads(props.get("people_json") or "[]"),

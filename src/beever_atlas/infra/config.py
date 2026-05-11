@@ -235,6 +235,15 @@ class Settings(BaseSettings):
     cluster_max_size: int = Field(default=100)
     consolidation_max_concurrent_llm: int = Field(default=5)
     consolidation_enabled: bool = Field(default=True)
+    # Defer cluster/channel summary LLM calls from per-batch consolidation to
+    # the ``memory_settled`` event so summaries fire exactly once per channel
+    # per sync (against the stable post-drain state) instead of once per
+    # extraction batch. Saves ~40-80s and ~$0.05 per 25-batch sync. Set to
+    # ``false`` to restore the legacy per-batch behaviour.
+    consolidation_summarize_on_settle: bool = Field(
+        default=True,
+        alias="CONSOLIDATION_SUMMARIZE_ON_SETTLE",
+    )
 
     # Citation registry — enterprise citation architecture.
     # Enabled by default: QA tool outputs flow through SourceRegistry and
@@ -613,6 +622,16 @@ class Settings(BaseSettings):
     # events without wasting the full minute waiting on nothing.
     wiki_maintainer_debounce_seconds: int = Field(
         default=60, alias="WIKI_MAINTAINER_DEBOUNCE_SECONDS"
+    )
+
+    # WikiMaintainer settle-path debounce window (seconds).
+    # Used ONLY by ``on_memory_settled`` (the terminal event that fires once
+    # per channel-drain). Unlike ``wiki_maintainer_debounce_seconds`` (60s,
+    # designed to coalesce rapid mid-sync events), this window only needs to
+    # cover a tiny grace period in case extraction barely missed the
+    # queue-drain check. Default 5s. Set to 0 for immediate flush (unit tests).
+    wiki_maintainer_settle_debounce_seconds: int = Field(
+        default=5, alias="WIKI_MAINTAINER_SETTLE_DEBOUNCE_SECONDS"
     )
 
     # Per-(channel, page) rate-limit window for the drift comparator.

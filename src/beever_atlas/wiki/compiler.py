@@ -113,6 +113,12 @@ def _apply_title_fallbacks(clusters: list) -> None:
 # Minimum number of member facts in a cluster before sub-page analysis is triggered
 TOPIC_SUBPAGE_THRESHOLD = 15
 
+# Minimum number of member facts required to actually dispatch sub-pages.
+# _analyze_topic may return needs_subpages=True for mid-size clusters, but
+# splitting clusters with fewer than this many facts costs N+1 LLM calls
+# for marginal benefit.  Raise to suppress premature splits.
+_TOPIC_SUBPAGE_MIN_FACTS = 25
+
 # Minimum number of member facts for a cluster to get its own topic page
 TOPIC_MIN_MEMORY_THRESHOLD = 3
 
@@ -2722,25 +2728,38 @@ class WikiCompiler:
 
     @staticmethod
     def _is_topic_relevant(
-        cluster, channel_themes: list[str], cluster_facts: dict
+        cluster, channel_themes: list[str], cluster_facts: dict, total_cluster_count: int = 8
     ) -> tuple[bool, str]:
         """Check if a topic cluster should get its own page.
 
         Returns (should_include, skip_reason) tuple.
+
+        Two-tier policy based on channel sparsity (total_cluster_count):
+        - Sparse channels (< 8 clusters): keep any topic with ≥3 facts,
+          regardless of tag overlap, so small channels still render all topics.
+        - Dense channels (≥ 8 clusters): keep topics with ≥3 facts AND
+          (≥5 facts OR tag overlap with channel themes).
         """
         member_count = len(cluster_facts.get(cluster.id, []))
 
-        # Check minimum memory threshold
+        # Check minimum memory threshold (both tiers)
         if member_count < TOPIC_MIN_MEMORY_THRESHOLD:
             return (
                 False,
                 f"{member_count} facts, below minimum threshold of {TOPIC_MIN_MEMORY_THRESHOLD}",
             )
 
-        # Check relevance: topic_tags must overlap with channel themes, unless popular (5+ facts)
+        # Sparse channel: any topic with ≥3 facts is kept unconditionally
+        if total_cluster_count < 8:
+            return True, ""
+
+        # Dense channel: keep if popular (≥5 facts) without needing tag overlap.
+        # Soft-concern-1 restore — only the SPARSE-channel branch was meant to
+        # relax; the dense threshold stays at the original ≥5 boundary.
         if member_count >= 5:
             return True, ""
 
+        # Dense channel, 3-4 facts: require tag overlap with channel themes
         # Normalize for comparison
         cluster_tags = {t.lower().strip() for t in (cluster.topic_tags or [])}
         theme_words = set()
@@ -3323,7 +3342,13 @@ class WikiCompiler:
                     temperature=temperature,
                 )
                 contents = prompt
-            response = await client.aio.models.generate_content(
+            from beever_atlas.services.llm_throttle import get_llm_throttle
+
+            throttle = get_llm_throttle()
+            response = await throttle.throttled_call(
+                "gemini",
+                max_tokens,
+                client.aio.models.generate_content,
                 model=self._model_name,
                 contents=contents,
                 config=config,
@@ -4300,7 +4325,12 @@ class WikiCompiler:
                     len(member_facts),
                 )
                 analysis = await self._analyze_topic(cluster, sorted_facts)
-            if analysis and analysis.get("needs_subpages") and analysis.get("subpages"):
+            if (
+                analysis
+                and analysis.get("needs_subpages")
+                and analysis.get("subpages")
+                and len(sorted_facts) >= _TOPIC_SUBPAGE_MIN_FACTS
+            ):
                 try:
                     # Generate sub-pages in parallel — same as the legacy
                     # path. Sub-page rendering itself stays on the
@@ -4553,9 +4583,40 @@ class WikiCompiler:
 
     async def _compile_decisions(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
+
+        # Augment graph decisions with facts typed as 'decision' from cluster_facts.
+        # This ensures Decisions page is non-empty even when entity_extractor misses
+        # Decision-typed graph entities on chat channels.
+        existing_decisions = list(gathered.get("decisions", []) or [])
+        _seen_decision_names: set[str] = {
+            (d.get("name") or d.get("title") or "" if isinstance(d, dict) else
+             str(getattr(d, "name", "") or getattr(d, "title", ""))).strip().lower()[:60]
+            for d in existing_decisions
+        }
+        for facts in gathered.get("cluster_facts", {}).values():
+            for f in facts:
+                ft = (getattr(f, "fact_type", "") or "").strip().lower()
+                if ft != "decision":
+                    continue
+                text = (getattr(f, "memory_text", "") or getattr(f, "text", "") or "").strip()
+                if not text:
+                    continue
+                key = text.lower()[:60]
+                if key in _seen_decision_names:
+                    continue
+                _seen_decision_names.add(key)
+                existing_decisions.append(
+                    {
+                        "name": text,
+                        "decided_by": getattr(f, "author_name", "") or "",
+                        "date": getattr(f, "message_ts", "") or "",
+                        "fact_type": "decision",
+                    }
+                )
+
         prompt = self._fmt_prompt(
             DECISIONS_PROMPT,
-            decisions_json=json.dumps(gathered["decisions"], default=str),
+            decisions_json=json.dumps(existing_decisions, default=str),
             top_decisions_json=json.dumps(channel_summary.top_decisions, default=str),
         )
         result = await self._call_llm(prompt, page_kind="decisions")
@@ -4566,7 +4627,7 @@ class WikiCompiler:
             page_type="fixed",
             content=self._postprocess_content(result.content),
             summary=result.summary,
-            memory_count=len(gathered["decisions"]),
+            memory_count=len(existing_decisions),
         )
 
     async def _compile_faq(self, gathered: dict) -> WikiPage:
@@ -4584,6 +4645,42 @@ class WikiCompiler:
                     }
                 )
                 topic_names.append(cluster.title)
+
+        # Augment with facts typed as 'question' from cluster_facts.
+        # This feeds the LLM more raw material so FAQ page renders even when
+        # topic_summarizer produces no faq_candidates (common on chat channels).
+        _seen_faq_questions: set[str] = {
+            q.strip().lower()[:80]
+            for entry in faq_by_topic
+            for q in (entry.get("questions") or [])
+            if isinstance(q, str)
+        }
+        cluster_by_id = {c.id: c for c in clusters}
+        for cluster_id, facts in gathered.get("cluster_facts", {}).items():
+            fact_questions: list[str] = []
+            for f in facts:
+                ft = (getattr(f, "fact_type", "") or "").strip().lower()
+                if ft != "question":
+                    continue
+                text = (getattr(f, "memory_text", "") or getattr(f, "text", "") or "").strip()
+                if not text:
+                    continue
+                key = text.lower()[:80]
+                if key in _seen_faq_questions:
+                    continue
+                _seen_faq_questions.add(key)
+                fact_questions.append(text)
+            if fact_questions:
+                cluster_obj = cluster_by_id.get(cluster_id)
+                topic_label = cluster_obj.title if cluster_obj else cluster_id
+                # Merge into existing entry for this topic or create a new one
+                existing_entry = next((e for e in faq_by_topic if e["topic"] == topic_label), None)
+                if existing_entry is not None:
+                    existing_entry["questions"] = list(existing_entry["questions"]) + fact_questions
+                else:
+                    faq_by_topic.append({"topic": topic_label, "questions": fact_questions})
+                    if topic_label not in topic_names:
+                        topic_names.append(topic_label)
 
         prompt = self._fmt_prompt(
             FAQ_PROMPT,
@@ -5023,9 +5120,10 @@ class WikiCompiler:
             channel_themes = [channel_themes]
         filtered_clusters: list = []
         skipped_topics: list[dict] = []
+        total_cluster_count = len(clusters)
         for c in clusters:
             should_include, skip_reason = self._is_topic_relevant(
-                c, channel_themes, gathered["cluster_facts"]
+                c, channel_themes, gathered["cluster_facts"], total_cluster_count
             )
             if should_include:
                 filtered_clusters.append(c)

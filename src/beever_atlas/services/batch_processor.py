@@ -413,333 +413,338 @@ class BatchProcessor:
             known_entities_snapshot: list[dict[str, Any]],
         ) -> tuple[BatchBreakdown, dict[str, float], bool]:
             """Run one batch. Returns (breakdown, stage_timings, entities_were_persisted)."""
-            _sem_wait_start = time.monotonic()
-            async with sem:
-                _semaphore_wait_s = time.monotonic() - _sem_wait_start
-                _semaphore_waits.append(_semaphore_wait_s)
-                _batch_idx_var.set(batch_index)
+
+            logger.info(
+                "BatchProcessor: start batch=%d/%d job_id=%s channel=%s messages=%d",
+                batch_index,
+                max_batches,
+                sync_job_id,
+                channel_id,
+                len(batch),
+            )
+            # Phase 0 / Task 1.1 — sub-batch start observability event.
+            # No logic change; the event lands in the pipeline_events
+            # ring so the API can surface a "recent_events" feed without
+            # a new transport.
+            logger.info(
+                "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=start messages=%d",
+                channel_id,
+                batch_index,
+                "batch",
+                len(batch),
+            )
+            try:
+                get_pipeline_events().record(
+                    channel_id=channel_id,
+                    stage="subbatch",
+                    label=f"Batch {batch_index}/{max_batches} started ({len(batch)} messages)",
+                )
+            except Exception:  # noqa: BLE001 — observability must never break the worker
                 logger.debug(
-                    "BatchProcessor: semaphore_acquired batch=%d job_id=%s wait_s=%.3f",
+                    "BatchProcessor: pipeline_events.record start failed batch=%d",
                     batch_index,
-                    sync_job_id,
-                    _semaphore_wait_s,
+                    exc_info=True,
                 )
-                # ── Circuit breaker: fail fast if provider is down ────────────
-                # The injected breaker replaces the old module-globals.
-                # The half-open recovery path is automatic — if the breaker is
-                # open but the cooldown has elapsed, allow() transitions to
-                # half_open and returns True, letting one probe through.
-                if not await self._breaker.allow():
-                    snapshot = self._breaker.snapshot()
-                    logger.error(
-                        "BatchProcessor: provider outage breaker tripped "
-                        "consecutive=%d threshold=%d state=%s",
-                        snapshot.consecutive_failures,
-                        snapshot.threshold,
-                        snapshot.state,
-                    )
-                    raise ProviderOutageError(
-                        f"Provider outage: {snapshot.consecutive_failures} "
-                        f"consecutive Gemini 5xx failures"
-                    )
-                # ─────────────────────────────────────────────────────────────
+            # wiki-redesign-gap-fill / Group 1 — emit message_processing
+            # events so SyncMonitor's left pane (Message Stream) shows
+            # the messages currently going through ingestion. Best-effort
+            # emit; preview is bounded to 200 chars by emit_message_processing.
+            from beever_atlas.services.pipeline_events import (
+                emit_agent_state as _emit_agent_state,
+            )
+            from beever_atlas.services.pipeline_events import (
+                emit_message_processing as _emit_message_processing,
+            )
 
-                logger.info(
-                    "BatchProcessor: start batch=%d/%d job_id=%s channel=%s messages=%d",
-                    batch_index,
-                    max_batches,
-                    sync_job_id,
-                    channel_id,
-                    len(batch),
-                )
-                # Phase 0 / Task 1.1 — sub-batch start observability event.
-                # No logic change; the event lands in the pipeline_events
-                # ring so the API can surface a "recent_events" feed without
-                # a new transport.
-                logger.info(
-                    "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=start messages=%d",
-                    channel_id,
-                    batch_index,
-                    "batch",
-                    len(batch),
-                )
+            _batch_id = f"{sync_job_id}:{batch_index}"
+            for _msg in batch:
                 try:
-                    get_pipeline_events().record(
-                        channel_id=channel_id,
-                        stage="subbatch",
-                        label=f"Batch {batch_index}/{max_batches} started ({len(batch)} messages)",
+                    _msg_id = (
+                        getattr(_msg, "message_id", None)
+                        or (_msg.get("message_id") if isinstance(_msg, dict) else None)
+                        or ""
                     )
-                except Exception:  # noqa: BLE001 — observability must never break the worker
-                    logger.debug(
-                        "BatchProcessor: pipeline_events.record start failed batch=%d",
-                        batch_index,
-                        exc_info=True,
+                    _msg_text = (
+                        getattr(_msg, "content", None)
+                        or (_msg.get("content") if isinstance(_msg, dict) else None)
+                        or ""
                     )
-                # wiki-redesign-gap-fill / Group 1 — emit message_processing
-                # events so SyncMonitor's left pane (Message Stream) shows
-                # the messages currently going through ingestion. Best-effort
-                # emit; preview is bounded to 200 chars by emit_message_processing.
-                from beever_atlas.services.pipeline_events import (
-                    emit_agent_state as _emit_agent_state,
+                    _msg_author = (
+                        getattr(_msg, "author", None)
+                        or (_msg.get("author") if isinstance(_msg, dict) else None)
+                        or ""
+                    )
+                    _msg_ts = getattr(_msg, "timestamp", None) or (
+                        _msg.get("timestamp") if isinstance(_msg, dict) else None
+                    )
+                    _emit_message_processing(
+                        channel_id,
+                        message_id=str(_msg_id),
+                        text_preview=str(_msg_text),
+                        author=str(_msg_author),
+                        ts=_msg_ts if hasattr(_msg_ts, "isoformat") else None,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            # Emit agent_state(running) for every ingestion agent at
+            # batch start so SyncMonitor's Agent Activity pane lights
+            # up. Each agent's `done` event is emitted at its output
+            # detection site below.
+            for _agent in (
+                "fact_extractor",
+                "entity_extractor",
+                "coreference_resolver",
+                "embedder",
+                "persister",
+                "wiki_maintainer",
+            ):
+                _emit_agent_state(
+                    channel_id, _agent, "running", batch_id=_batch_id
                 )
-                from beever_atlas.services.pipeline_events import (
-                    emit_message_processing as _emit_message_processing,
-                )
+            await stores.mongodb.update_sync_progress(
+                job_id=sync_job_id,
+                processed=0,
+                current_batch=batch_index,
+                total_batches=max_batches,
+            )
+            # Convert NormalizedMessage objects to plain dicts for session state.
+            messages_as_dicts: list[dict[str, Any]] = [
+                m if isinstance(m, dict) else vars(m) for m in batch
+            ]
 
-                _batch_id = f"{sync_job_id}:{batch_index}"
-                for _msg in batch:
-                    try:
-                        _msg_id = (
-                            getattr(_msg, "message_id", None)
-                            or (_msg.get("message_id") if isinstance(_msg, dict) else None)
-                            or ""
-                        )
-                        _msg_text = (
-                            getattr(_msg, "content", None)
-                            or (_msg.get("content") if isinstance(_msg, dict) else None)
-                            or ""
-                        )
-                        _msg_author = (
-                            getattr(_msg, "author", None)
-                            or (_msg.get("author") if isinstance(_msg, dict) else None)
-                            or ""
-                        )
-                        _msg_ts = getattr(_msg, "timestamp", None) or (
-                            _msg.get("timestamp") if isinstance(_msg, dict) else None
-                        )
-                        _emit_message_processing(
-                            channel_id,
-                            message_id=str(_msg_id),
-                            text_preview=str(_msg_text),
-                            author=str(_msg_author),
-                            ts=_msg_ts if hasattr(_msg_ts, "isoformat") else None,
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
-                # Emit agent_state(running) for every ingestion agent at
-                # batch start so SyncMonitor's Agent Activity pane lights
-                # up. Each agent's `done` event is emitted at its output
-                # detection site below.
-                for _agent in (
-                    "fact_extractor",
-                    "entity_extractor",
-                    "coreference_resolver",
-                    "embedder",
-                    "persister",
-                    "wiki_maintainer",
-                ):
-                    _emit_agent_state(
-                        channel_id, _agent, "running", batch_id=_batch_id
-                    )
+            if use_batch_api:
+                from beever_atlas.services.batch_pipeline import BatchPipelineRunner
+
+                pipeline_runner = BatchPipelineRunner()
+                breakdown = await pipeline_runner.process_batch_with_retry(
+                    messages=messages_as_dicts,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    sync_job_id=sync_job_id,
+                    batch_num=batch_index,
+                    max_batches=max_batches,
+                    known_entities=known_entities_snapshot,
+                    ingestion_config=ingestion_config,
+                )
+                # Always carry the sub-batch keys so the worker can attribute
+                # success/failure per sub-batch even when the batch path runs
+                # through the BatchPipelineRunner.
+                if not breakdown.keys:
+                    breakdown.keys = _keys_for_batch(batch)
                 await stores.mongodb.update_sync_progress(
                     job_id=sync_job_id,
                     processed=0,
                     current_batch=batch_index,
-                    total_batches=max_batches,
+                    current_stage=f"Step 7/7 — Batch {batch_index} complete",
+                    batch_result=asdict(breakdown),
                 )
-                # Convert NormalizedMessage objects to plain dicts for session state.
-                messages_as_dicts: list[dict[str, Any]] = [
-                    m if isinstance(m, dict) else vars(m) for m in batch
-                ]
+                return breakdown, {}, False, []
 
-                if use_batch_api:
-                    from beever_atlas.services.batch_pipeline import BatchPipelineRunner
+            # Embedding similarity pre-computation is deferred: entity_tags
+            # are not available on raw messages before extraction runs.
+            embedding_similarity_candidates: list[dict[str, Any]] = []
 
-                    pipeline_runner = BatchPipelineRunner()
-                    breakdown = await pipeline_runner.process_batch_with_retry(
-                        messages=messages_as_dicts,
-                        channel_id=channel_id,
-                        channel_name=channel_name,
-                        sync_job_id=sync_job_id,
-                        batch_num=batch_index,
-                        max_batches=max_batches,
-                        known_entities=known_entities_snapshot,
-                        ingestion_config=ingestion_config,
+            _max_facts = (
+                ingestion_config.max_facts_per_message
+                if ingestion_config and ingestion_config.max_facts_per_message is not None
+                else settings.max_facts_per_message
+            )
+            # Resolve the batch's source language. When detection is enabled,
+            # sniff the batch's dominant language so extractor prompts
+            # receive a concrete BCP-47 tag via {source_language} and facts/
+            # entities can be tagged with `source_lang` at persist time.
+            # When disabled, we hardcode "en" so the pipeline behaves
+            # byte-identically to the pre-change implementation.
+            _batch_source_lang = "en"
+            if settings.language_detection_enabled:
+                try:
+                    from beever_atlas.services.language_detector import (
+                        detect_channel_primary_language,
                     )
-                    # Always carry the sub-batch keys so the worker can attribute
-                    # success/failure per sub-batch even when the batch path runs
-                    # through the BatchPipelineRunner.
-                    if not breakdown.keys:
-                        breakdown.keys = _keys_for_batch(batch)
-                    await stores.mongodb.update_sync_progress(
-                        job_id=sync_job_id,
-                        processed=0,
-                        current_batch=batch_index,
-                        current_stage=f"Step 7/7 — Batch {batch_index} complete",
-                        batch_result=asdict(breakdown),
+
+                    _sample_texts = [
+                        str(m.get("text") or m.get("content") or "") for m in messages_as_dicts
+                    ]
+                    _batch_source_lang, _ = detect_channel_primary_language(
+                        _sample_texts,
+                        confidence_threshold=settings.language_detection_confidence_threshold,
+                        default=settings.default_target_language,
                     )
-                    return breakdown, {}, False, []
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "BatchProcessor: language detection failed, defaulting to en",
+                        exc_info=True,
+                    )
+                    _batch_source_lang = "en"
 
-                # Embedding similarity pre-computation is deferred: entity_tags
-                # are not available on raw messages before extraction runs.
-                embedding_similarity_candidates: list[dict[str, Any]] = []
+            initial_state: dict[str, Any] = {
+                "messages": messages_as_dicts,
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "batch_num": batch_index,
+                "max_facts_per_message": _max_facts,
+                "known_entities": known_entities_snapshot,
+                "embedding_similarity_candidates": embedding_similarity_candidates,
+                "sync_job_id": sync_job_id,
+                "source_language": _batch_source_lang,
+                "skip_entity_extraction": bool(
+                    ingestion_config and ingestion_config.skip_entity_extraction
+                ),
+                "skip_graph_writes": bool(
+                    ingestion_config and ingestion_config.skip_graph_writes
+                ),
+                "quality_threshold": (
+                    ingestion_config.quality_threshold
+                    if ingestion_config and ingestion_config.quality_threshold is not None
+                    else None
+                ),
+            }
 
-                _max_facts = (
-                    ingestion_config.max_facts_per_message
-                    if ingestion_config and ingestion_config.max_facts_per_message is not None
-                    else settings.max_facts_per_message
+            # Load checkpoint if this batch was partially processed before
+            checkpoint = await stores.mongodb.load_pipeline_checkpoint(
+                sync_job_id=sync_job_id,
+                batch_num=batch_index,
+            )
+            _resumed_from: str | None = None
+            _skipped_stage_count = 0
+            if checkpoint:
+                _resumed_from = checkpoint["completed_stage"]
+                _skipped_stage_count = checkpoint["completed_stage_index"] + 1
+                snapshot = checkpoint.get("state_snapshot") or {}
+                for key in _ALL_CHECKPOINT_KEYS:
+                    if key in snapshot:
+                        initial_state[key] = snapshot[key]
+                logger.info(
+                    "BatchProcessor: resuming from checkpoint job_id=%s batch=%d/%d "
+                    "last_completed=%s skipping=%d stages",
+                    sync_job_id,
+                    batch_index,
+                    max_batches,
+                    _resumed_from,
+                    _skipped_stage_count,
                 )
-                # Resolve the batch's source language. When detection is enabled,
-                # sniff the batch's dominant language so extractor prompts
-                # receive a concrete BCP-47 tag via {source_language} and facts/
-                # entities can be tagged with `source_lang` at persist time.
-                # When disabled, we hardcode "en" so the pipeline behaves
-                # byte-identically to the pre-change implementation.
-                _batch_source_lang = "en"
-                if settings.language_detection_enabled:
-                    try:
-                        from beever_atlas.services.language_detector import (
-                            detect_channel_primary_language,
-                        )
 
-                        _sample_texts = [
-                            str(m.get("text") or m.get("content") or "") for m in messages_as_dicts
-                        ]
-                        _batch_source_lang, _ = detect_channel_primary_language(
-                            _sample_texts,
-                            confidence_threshold=settings.language_detection_confidence_threshold,
-                            default=settings.default_target_language,
-                        )
-                    except Exception:  # noqa: BLE001
+            session = await create_session(
+                user_id="system",
+                state=initial_state,
+            )
+
+            # Drive the pipeline to completion with retry on transient LLM errors.
+            # Each attempt gets its own fresh timeout budget so retry sleeps
+            # don't consume pipeline time.
+            batch_stage_timings: dict[str, float] = {}
+            for attempt in range(_LLM_MAX_RETRIES + 1):
+                try:
+                    # Each retry needs a fresh session since the pipeline
+                    # may have partially mutated the previous one.
+                    if attempt > 0:
+                        # Sleep between retries OUTSIDE the timeout scope
+                        base = _LLM_RETRY_BACKOFF[attempt - 1]
+                        jittered = base * (1 + random.uniform(-0.25, 0.25))
                         logger.warning(
-                            "BatchProcessor: language detection failed, defaulting to en",
-                            exc_info=True,
+                            "BatchProcessor: retrying job_id=%s batch=%d/%d "
+                            "attempt=%d/%d after %ds sleep",
+                            sync_job_id,
+                            batch_index,
+                            max_batches,
+                            attempt + 1,
+                            _LLM_MAX_RETRIES + 1,
+                            base,
                         )
-                        _batch_source_lang = "en"
-
-                initial_state: dict[str, Any] = {
-                    "messages": messages_as_dicts,
-                    "channel_id": channel_id,
-                    "channel_name": channel_name,
-                    "batch_num": batch_index,
-                    "max_facts_per_message": _max_facts,
-                    "known_entities": known_entities_snapshot,
-                    "embedding_similarity_candidates": embedding_similarity_candidates,
-                    "sync_job_id": sync_job_id,
-                    "source_language": _batch_source_lang,
-                    "skip_entity_extraction": bool(
-                        ingestion_config and ingestion_config.skip_entity_extraction
-                    ),
-                    "skip_graph_writes": bool(
-                        ingestion_config and ingestion_config.skip_graph_writes
-                    ),
-                    "quality_threshold": (
-                        ingestion_config.quality_threshold
-                        if ingestion_config and ingestion_config.quality_threshold is not None
-                        else None
-                    ),
-                }
-
-                # Load checkpoint if this batch was partially processed before
-                checkpoint = await stores.mongodb.load_pipeline_checkpoint(
-                    sync_job_id=sync_job_id,
-                    batch_num=batch_index,
-                )
-                _resumed_from: str | None = None
-                _skipped_stage_count = 0
-                if checkpoint:
-                    _resumed_from = checkpoint["completed_stage"]
-                    _skipped_stage_count = checkpoint["completed_stage_index"] + 1
-                    snapshot = checkpoint.get("state_snapshot") or {}
-                    for key in _ALL_CHECKPOINT_KEYS:
-                        if key in snapshot:
-                            initial_state[key] = snapshot[key]
-                    logger.info(
-                        "BatchProcessor: resuming from checkpoint job_id=%s batch=%d/%d "
-                        "last_completed=%s skipping=%d stages",
-                        sync_job_id,
-                        batch_index,
-                        max_batches,
-                        _resumed_from,
-                        _skipped_stage_count,
-                    )
-
-                session = await create_session(
-                    user_id="system",
-                    state=initial_state,
-                )
-
-                # Drive the pipeline to completion with retry on transient LLM errors.
-                # Each attempt gets its own fresh timeout budget so retry sleeps
-                # don't consume pipeline time.
-                batch_stage_timings: dict[str, float] = {}
-                for attempt in range(_LLM_MAX_RETRIES + 1):
-                    try:
-                        # Each retry needs a fresh session since the pipeline
-                        # may have partially mutated the previous one.
-                        if attempt > 0:
-                            # Sleep between retries OUTSIDE the timeout scope
-                            base = _LLM_RETRY_BACKOFF[attempt - 1]
-                            jittered = base * (1 + random.uniform(-0.25, 0.25))
-                            logger.warning(
-                                "BatchProcessor: retrying job_id=%s batch=%d/%d "
-                                "attempt=%d/%d after %ds sleep",
+                        await stores.mongodb.update_batch_stage(
+                            job_id=sync_job_id,
+                            batch_idx=batch_index,
+                            label=f"Step 0/6 — Retrying in {base}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1})",
+                        )
+                        await asyncio.sleep(jittered)
+                        # Phase 1 Step 2 (ingestion-pipeline-hardening): unconditionally
+                        # re-consult the checkpoint store before every retry, regardless of
+                        # which exception class triggered the retry. Without this, an
+                        # httpx.HTTPStatusError from the embedder could restart from Stage 1
+                        # and re-run expensive LLM fact/entity extraction that was already
+                        # checkpointed. Retry count is the only gate.
+                        _retry_checkpoint = await stores.mongodb.load_pipeline_checkpoint(
+                            sync_job_id=sync_job_id,
+                            batch_num=batch_index,
+                        )
+                        if _retry_checkpoint:
+                            _resumed_from = _retry_checkpoint["completed_stage"]
+                            _skipped_stage_count = (
+                                _retry_checkpoint["completed_stage_index"] + 1
+                            )
+                            _retry_snapshot = _retry_checkpoint.get("state_snapshot") or {}
+                            for _key in _ALL_CHECKPOINT_KEYS:
+                                if _key in _retry_snapshot:
+                                    initial_state[_key] = _retry_snapshot[_key]
+                            logger.info(
+                                "BatchProcessor: retry resuming from checkpoint job_id=%s batch=%d/%d "
+                                "attempt=%d last_completed=%s skipping=%d stages",
                                 sync_job_id,
                                 batch_index,
                                 max_batches,
                                 attempt + 1,
-                                _LLM_MAX_RETRIES + 1,
-                                base,
+                                _resumed_from,
+                                _skipped_stage_count,
                             )
-                            await stores.mongodb.update_batch_stage(
+                        session = await create_session(
+                            user_id="system",
+                            state=initial_state,
+                        )
+                    batch_stage_timings = {}
+                    activity_log: list[dict[str, Any]] = []
+
+                    async def _push_activity(entry: dict[str, Any]) -> None:
+                        """Append locally and atomically push to MongoDB so the UI feed updates live."""
+                        activity_log.append(entry)
+                        try:
+                            await stores.mongodb.push_activity_log_entry(
                                 job_id=sync_job_id,
                                 batch_idx=batch_index,
-                                label=f"Step 0/6 — Retrying in {base}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES + 1})",
+                                entry=entry,
                             )
-                            await asyncio.sleep(jittered)
-                            # Phase 1 Step 2 (ingestion-pipeline-hardening): unconditionally
-                            # re-consult the checkpoint store before every retry, regardless of
-                            # which exception class triggered the retry. Without this, an
-                            # httpx.HTTPStatusError from the embedder could restart from Stage 1
-                            # and re-run expensive LLM fact/entity extraction that was already
-                            # checkpointed. Retry count is the only gate.
-                            _retry_checkpoint = await stores.mongodb.load_pipeline_checkpoint(
-                                sync_job_id=sync_job_id,
-                                batch_num=batch_index,
+                        except Exception as exc:
+                            logger.warning(
+                                "push_activity_log_entry failed job_id=%s batch=%d: %s",
+                                sync_job_id,
+                                batch_index,
+                                exc,
                             )
-                            if _retry_checkpoint:
-                                _resumed_from = _retry_checkpoint["completed_stage"]
-                                _skipped_stage_count = (
-                                    _retry_checkpoint["completed_stage_index"] + 1
-                                )
-                                _retry_snapshot = _retry_checkpoint.get("state_snapshot") or {}
-                                for _key in _ALL_CHECKPOINT_KEYS:
-                                    if _key in _retry_snapshot:
-                                        initial_state[_key] = _retry_snapshot[_key]
-                                logger.info(
-                                    "BatchProcessor: retry resuming from checkpoint job_id=%s batch=%d/%d "
-                                    "attempt=%d last_completed=%s skipping=%d stages",
-                                    sync_job_id,
-                                    batch_index,
-                                    max_batches,
-                                    attempt + 1,
-                                    _resumed_from,
-                                    _skipped_stage_count,
-                                )
-                            session = await create_session(
-                                user_id="system",
-                                state=initial_state,
-                            )
-                        batch_stage_timings = {}
-                        activity_log: list[dict[str, Any]] = []
 
-                        async def _push_activity(entry: dict[str, Any]) -> None:
-                            """Append locally and atomically push to MongoDB so the UI feed updates live."""
-                            activity_log.append(entry)
-                            try:
-                                await stores.mongodb.push_activity_log_entry(
-                                    job_id=sync_job_id,
-                                    batch_idx=batch_index,
-                                    entry=entry,
-                                )
-                            except Exception as exc:
-                                logger.warning(
-                                    "push_activity_log_entry failed job_id=%s batch=%d: %s",
-                                    sync_job_id,
-                                    batch_index,
-                                    exc,
-                                )
-
+                    # Acquired per-attempt around the LLM dispatch and the
+                    # immediately surrounding bookkeeping (breaker check,
+                    # stage writes, pipeline runner). Released across retry
+                    # sleeps so sibling sub-batches can claim the slot
+                    # during backoff.
+                    _sem_wait_start = time.monotonic()
+                    async with sem:
+                        _semaphore_wait_s = time.monotonic() - _sem_wait_start
+                        _semaphore_waits.append(_semaphore_wait_s)
+                        _batch_idx_var.set(batch_index)
+                        logger.debug(
+                            "BatchProcessor: semaphore_acquired batch=%d job_id=%s wait_s=%.3f",
+                            batch_index,
+                            sync_job_id,
+                            _semaphore_wait_s,
+                        )
+                        # ── Circuit breaker: fail fast if provider is down ────────────
+                        # The injected breaker replaces the old module-globals.
+                        # The half-open recovery path is automatic — if the breaker is
+                        # open but the cooldown has elapsed, allow() transitions to
+                        # half_open and returns True, letting one probe through.
+                        if not await self._breaker.allow():
+                            snapshot = self._breaker.snapshot()
+                            logger.error(
+                                "BatchProcessor: provider outage breaker tripped "
+                                "consecutive=%d threshold=%d state=%s",
+                                snapshot.consecutive_failures,
+                                snapshot.threshold,
+                                snapshot.state,
+                            )
+                            raise ProviderOutageError(
+                                f"Provider outage: {snapshot.consecutive_failures} "
+                                f"consecutive Gemini 5xx failures"
+                            )
+                        # ─────────────────────────────────────────────────────────────
                         _logged_outputs: set[str] = (
                             set()
                         )  # Track which state keys we already logged
@@ -1472,362 +1477,362 @@ class BatchProcessor:
                         # Reset breaker on any successful batch
                         await self._breaker.record_success()
                         break  # success
-                    except (
-                        ServerError,
-                        httpx.HTTPStatusError,
-                        PydanticValidationError,
-                        json.JSONDecodeError,
-                    ) as exc:
-                        # A4: broaden checkpoint-aware retry to cover ValidationError and
-                        # JSONDecodeError in addition to provider 5xx. _is_resumable gates
-                        # which sub-types actually retry (e.g. httpx 4xx still re-raises).
-                        if not _is_resumable(exc):
-                            raise
-                        if attempt < _LLM_MAX_RETRIES:
+                except (
+                    ServerError,
+                    httpx.HTTPStatusError,
+                    PydanticValidationError,
+                    json.JSONDecodeError,
+                ) as exc:
+                    # A4: broaden checkpoint-aware retry to cover ValidationError and
+                    # JSONDecodeError in addition to provider 5xx. _is_resumable gates
+                    # which sub-types actually retry (e.g. httpx 4xx still re-raises).
+                    if not _is_resumable(exc):
+                        raise
+                    if attempt < _LLM_MAX_RETRIES:
+                        logger.warning(
+                            "BatchProcessor: transient error job_id=%s batch=%d/%d "
+                            "attempt=%d/%d: %s",
+                            sync_job_id,
+                            batch_index,
+                            max_batches,
+                            attempt + 1,
+                            _LLM_MAX_RETRIES + 1,
+                            exc,
+                        )
+                        # Sleep and retry happen at the top of the next loop iteration
+                    else:
+                        # Terminal failure after all retries — increment breaker counter once
+                        await self._breaker.record_failure(exc)
+                        raise
+                except Exception as exc:
+                    # Catch ValidationError (truncated LLM JSON) and similar parse failures.
+                    # Strategy: attempt 1 → reduce max_facts to 1, attempt 2 → halve batch.
+                    is_validation = _is_truncation_error(exc)
+                    if is_validation and attempt < _LLM_MAX_RETRIES:
+                        current_max = initial_state.get("max_facts_per_message", 2)
+                        current_msgs = initial_state.get("messages", [])
+                        if current_max > 1:
+                            # First: reduce facts per message
+                            initial_state["max_facts_per_message"] = 1
                             logger.warning(
-                                "BatchProcessor: transient error job_id=%s batch=%d/%d "
-                                "attempt=%d/%d: %s",
+                                "BatchProcessor: LLM output truncated job_id=%s batch=%d/%d "
+                                "attempt=%d/%d — reducing max_facts to 1 (%d messages): %s",
                                 sync_job_id,
                                 batch_index,
                                 max_batches,
                                 attempt + 1,
                                 _LLM_MAX_RETRIES + 1,
-                                exc,
+                                len(current_msgs),
+                                str(exc)[:200],
                             )
-                            # Sleep and retry happen at the top of the next loop iteration
+                        elif len(current_msgs) > 5:
+                            # Second: halve the batch (remaining messages will be missed
+                            # but the batch won't crash — user can re-sync to catch them)
+                            half = len(current_msgs) // 2
+                            initial_state["messages"] = current_msgs[:half]
+                            logger.warning(
+                                "BatchProcessor: LLM still truncating job_id=%s batch=%d/%d "
+                                "attempt=%d/%d — halving batch from %d to %d messages: %s",
+                                sync_job_id,
+                                batch_index,
+                                max_batches,
+                                attempt + 1,
+                                _LLM_MAX_RETRIES + 1,
+                                len(current_msgs),
+                                half,
+                                str(exc)[:200],
+                            )
                         else:
-                            # Terminal failure after all retries — increment breaker counter once
-                            await self._breaker.record_failure(exc)
-                            raise
-                    except Exception as exc:
-                        # Catch ValidationError (truncated LLM JSON) and similar parse failures.
-                        # Strategy: attempt 1 → reduce max_facts to 1, attempt 2 → halve batch.
-                        is_validation = _is_truncation_error(exc)
-                        if is_validation and attempt < _LLM_MAX_RETRIES:
-                            current_max = initial_state.get("max_facts_per_message", 2)
-                            current_msgs = initial_state.get("messages", [])
-                            if current_max > 1:
-                                # First: reduce facts per message
-                                initial_state["max_facts_per_message"] = 1
-                                logger.warning(
-                                    "BatchProcessor: LLM output truncated job_id=%s batch=%d/%d "
-                                    "attempt=%d/%d — reducing max_facts to 1 (%d messages): %s",
-                                    sync_job_id,
-                                    batch_index,
-                                    max_batches,
-                                    attempt + 1,
-                                    _LLM_MAX_RETRIES + 1,
-                                    len(current_msgs),
-                                    str(exc)[:200],
-                                )
-                            elif len(current_msgs) > 5:
-                                # Second: halve the batch (remaining messages will be missed
-                                # but the batch won't crash — user can re-sync to catch them)
-                                half = len(current_msgs) // 2
-                                initial_state["messages"] = current_msgs[:half]
-                                logger.warning(
-                                    "BatchProcessor: LLM still truncating job_id=%s batch=%d/%d "
-                                    "attempt=%d/%d — halving batch from %d to %d messages: %s",
-                                    sync_job_id,
-                                    batch_index,
-                                    max_batches,
-                                    attempt + 1,
-                                    _LLM_MAX_RETRIES + 1,
-                                    len(current_msgs),
-                                    half,
-                                    str(exc)[:200],
-                                )
-                            else:
-                                raise  # Batch is tiny and still truncating — give up
-                        else:
-                            raise
+                            raise  # Batch is tiny and still truncating — give up
+                    else:
+                        raise
 
-                # Re-fetch session to read final state written by PersisterAgent.
-                from beever_atlas.agents.runner import get_session_service
+            # Re-fetch session to read final state written by PersisterAgent.
+            from beever_atlas.agents.runner import get_session_service
 
-                session_service = get_session_service()
-                final_session = await session_service.get_session(
-                    app_name="beever_atlas",
-                    user_id="system",
-                    session_id=session.id,
-                )
-                final_state: dict[str, Any] = final_session.state if final_session else {}
-                persist_result: dict[str, Any] = final_state.get("persist_result") or {}
-                if not persist_result:
-                    logger.warning(
-                        "BatchProcessor: empty persist_result job_id=%s channel=%s batch=%d/%d",
-                        sync_job_id,
-                        channel_id,
-                        batch_index,
-                        max_batches,
-                    )
-
-                batch_facts = len(persist_result.get("weaviate_ids") or [])
-                batch_entities = persist_result.get("entity_count") or 0
-
-                # --- Post-pipeline: contradiction detection ---
-                # P0-1 (pipeline-cost-latency-reduction-v2): per-batch
-                # contradiction firing has been replaced with a single
-                # post-sync bulk pass driven by ``memory_settled`` (see
-                # ``server/app.py`` subscriber + ``contradiction_detector.
-                # check_and_supersede_for_channel``). The legacy per-batch
-                # path remains available as the ``defer_contradiction=False``
-                # kill switch — when off, we still accumulate ``persisted_facts``
-                # below and fire the detached check as before.
-                from beever_atlas.infra.config import get_settings as _get_settings
-
-                _defer = bool(getattr(_get_settings(), "defer_contradiction", True))
-
-                persisted_facts: list[Any] = []
-                try:
-                    embedded_facts_raw = final_state.get("embedded_facts") or []
-                    if embedded_facts_raw:
-                        from beever_atlas.models import AtomicFact
-
-                        weaviate_ids = persist_result.get("weaviate_ids") or []
-                        for idx, fd in enumerate(embedded_facts_raw):
-                            fact_channel = fd.get("channel_id") or channel_id
-                            # Content-derived deterministic ID for the
-                            # contradiction-detector fallback path. Mirrors the
-                            # persister so re-runs map to the same fact_id.
-                            entity_names = fd.get("entity_tags") or []
-                            fact_id = (
-                                weaviate_ids[idx]
-                                if idx < len(weaviate_ids)
-                                else AtomicFact.deterministic_id(
-                                    fd.get("memory_text", ""), entity_names
-                                )
-                            )
-                            persisted_facts.append(
-                                AtomicFact(
-                                    id=fact_id,
-                                    memory_text=fd.get("memory_text", ""),
-                                    topic_tags=fd.get("topic_tags") or [],
-                                    entity_tags=fd.get("entity_tags") or [],
-                                    channel_id=fact_channel,
-                                )
-                            )
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "BatchProcessor: persisted_facts accumulation failed job_id=%s batch=%d, continuing",
-                        sync_job_id,
-                        batch_index,
-                        exc_info=True,
-                    )
-
-                if _defer:
-                    logger.debug(
-                        "BatchProcessor: contradiction detection deferred to post-sync "
-                        "job_id=%s batch=%d facts=%d",
-                        sync_job_id,
-                        batch_index,
-                        len(persisted_facts),
-                    )
-                else:
-                    # Legacy kill-switch path — fire-and-forget per-batch.
-                    try:
-                        from beever_atlas.services.contradiction_detector import (
-                            check_and_supersede,
-                        )
-
-                        if persisted_facts:
-
-                            async def _detached_contradiction_check(
-                                facts_snapshot: list[Any],
-                                ch: str,
-                                job: str,
-                                b_idx: int,
-                            ) -> None:
-                                try:
-                                    await check_and_supersede(facts_snapshot, ch)
-                                except Exception:  # noqa: BLE001
-                                    logger.debug(
-                                        "BatchProcessor: detached contradiction check failed job_id=%s batch=%d",
-                                        job,
-                                        b_idx,
-                                        exc_info=True,
-                                    )
-
-                            asyncio.create_task(
-                                _detached_contradiction_check(
-                                    persisted_facts, channel_id, sync_job_id, batch_index
-                                )
-                            )
-                    except Exception:  # noqa: BLE001
-                        logger.debug(
-                            "BatchProcessor: contradiction detection scheduling failed job_id=%s batch=%d, continuing",
-                            sync_job_id,
-                            batch_index,
-                            exc_info=True,
-                        )
-
-                # Extract sample data for sync history.
-                raw_facts = final_state.get("extracted_facts") or {}
-                facts_list = (
-                    raw_facts.get("facts", [])
-                    if isinstance(raw_facts, dict)
-                    else (raw_facts if isinstance(raw_facts, list) else [])
-                )
-                raw_entities = final_state.get("extracted_entities") or {}
-                entities_list = (
-                    raw_entities.get("entities", []) if isinstance(raw_entities, dict) else []
-                )
-                rels_list = (
-                    raw_entities.get("relationships", []) if isinstance(raw_entities, dict) else []
-                )
-
-                batch_duration = sum(batch_stage_timings.values())
-                # Embedded + media counts for the UI MetricsBar tiles.
-                # Pulled here at construction time so they ride along with
-                # the breakdown into ``append_batch_results_for_channel``
-                # and survive activity_log eviction.
-                _embedded_facts = final_state.get("embedded_facts") or []
-                _preprocessed = final_state.get("preprocessed_messages") or []
-                _media_count_bd = sum(
-                    1
-                    for m in _preprocessed
-                    if isinstance(m, dict) and m.get("modality") == "mixed"
-                )
-                breakdown = BatchBreakdown(
-                    batch_num=batch_index,
-                    facts_count=len(facts_list),
-                    entities_count=len(entities_list),
-                    relationships_count=len(rels_list),
-                    embedded_count=len(_embedded_facts),
-                    media_count=_media_count_bd,
-                    sample_facts=[(f.get("memory_text") or "")[:120] for f in facts_list[:5]],
-                    sample_entities=[
-                        {"name": e.get("name", "?"), "type": e.get("type", "?")}
-                        for e in entities_list[:8]
-                    ],
-                    sample_relationships=[
-                        {
-                            "source": r.get("source", "?"),
-                            "target": r.get("target", "?"),
-                            "type": r.get("relationship_type", r.get("type", "?")),
-                        }
-                        for r in rels_list[:5]
-                    ],
-                    duration_seconds=round(batch_duration, 2),
-                    keys=_keys_for_batch(batch),
-                )
-                entities_persisted = persist_result.get("entity_count", 0) > 0
-
-                await stores.mongodb.update_sync_progress(
-                    job_id=sync_job_id,
-                    processed=0,
-                    current_batch=batch_index,
-                    current_stage="Step 7/7 — Complete",
-                    stage_timings=batch_stage_timings,
-                    batch_result=asdict(breakdown),
-                )
-
-                if _resumed_from:
-                    _llm_stages = {
-                        "fact_extractor",
-                        "entity_extractor",
-                        "classifier_agent",
-                        "cross_batch_validator_agent",
-                    }
-                    _skipped_llm = len(
-                        _llm_stages.intersection(set(_STAGE_ORDER[:_skipped_stage_count]))
-                    )
-                    logger.info(
-                        "BatchProcessor: resumed from checkpoint '%s' (skipped %d stages, saved ~%d LLM calls) job_id=%s batch=%d",
-                        _resumed_from,
-                        _skipped_stage_count,
-                        _skipped_llm,
-                        sync_job_id,
-                        batch_index,
-                    )
-
-                # Atomic increment — honest counter under concurrent batch execution.
-                # current_batch field keeps overwriting itself when batches run in
-                # parallel, so consumers should prefer batches_completed for progress.
-                await stores.mongodb.increment_batches_completed(sync_job_id)
-
-                # ALSO bump the user-facing sync_jobs row per batch so the
-                # UI's MetricsBar tiles update live instead of waiting for
-                # the worker tick (15-batch claim_size) to complete. The
-                # synthetic ``worker:*`` row is invisible to the frontend;
-                # the channel-row is what /sync/status returns.
-                if sync_job_id.startswith("worker:"):
-                    try:
-                        await stores.mongodb.increment_batches_completed_for_channel(
-                            channel_id=channel_id,
-                            count=1,
-                            max_batch_num=batch_index,
-                        )
-                        await stores.mongodb.append_batch_results_for_channel(
-                            channel_id=channel_id,
-                            batch_results=[asdict(breakdown)],
-                        )
-                        # Per-batch finalization of this batch's
-                        # channel_messages rows to ``status=done``. The worker
-                        # used to do this once per TICK after the whole
-                        # claim finished; that left the
-                        # ``MESSAGES 0/715`` counter at 0 throughout the tick
-                        # even when batches were obviously finishing. Now
-                        # each batch finalizes its own rows immediately, and
-                        # the refresh below picks up the new "done" count.
-                        # Idempotent — the EXTRACTION_STATUS_TRANSITIONS
-                        # map rejects ``done → done`` so the worker's later
-                        # tick-end bulk call becomes a no-op for these rows.
-                        if breakdown.keys:
-                            await stores.mongodb.finalize_extraction_status_bulk(
-                                keys=list(breakdown.keys),
-                                new_status="done",
-                            )
-                        await stores.mongodb.refresh_sync_progress_for_channel(
-                            channel_id
-                        )
-                    except Exception:
-                        # Mirror to channel-row is best-effort observability —
-                        # never fail a batch on a mongo blip.
-                        logger.exception(
-                            "BatchProcessor: channel-row mirror failed "
-                            "job_id=%s batch=%d channel=%s",
-                            sync_job_id,
-                            batch_index,
-                            channel_id,
-                        )
-
-                logger.info(
-                    "BatchProcessor: done batch=%d/%d job_id=%s channel=%s facts=%d entities=%d",
-                    batch_index,
-                    max_batches,
+            session_service = get_session_service()
+            final_session = await session_service.get_session(
+                app_name="beever_atlas",
+                user_id="system",
+                session_id=session.id,
+            )
+            final_state: dict[str, Any] = final_session.state if final_session else {}
+            persist_result: dict[str, Any] = final_state.get("persist_result") or {}
+            if not persist_result:
+                logger.warning(
+                    "BatchProcessor: empty persist_result job_id=%s channel=%s batch=%d/%d",
                     sync_job_id,
                     channel_id,
-                    batch_facts,
-                    batch_entities,
-                )
-                # Phase 0 / Task 1.1 — sub-batch end observability event.
-                logger.info(
-                    "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=end "
-                    "facts=%d entities=%d",
-                    channel_id,
                     batch_index,
-                    "batch",
-                    batch_facts,
-                    batch_entities,
+                    max_batches,
                 )
+
+            batch_facts = len(persist_result.get("weaviate_ids") or [])
+            batch_entities = persist_result.get("entity_count") or 0
+
+            # --- Post-pipeline: contradiction detection ---
+            # P0-1 (pipeline-cost-latency-reduction-v2): per-batch
+            # contradiction firing has been replaced with a single
+            # post-sync bulk pass driven by ``memory_settled`` (see
+            # ``server/app.py`` subscriber + ``contradiction_detector.
+            # check_and_supersede_for_channel``). The legacy per-batch
+            # path remains available as the ``defer_contradiction=False``
+            # kill switch — when off, we still accumulate ``persisted_facts``
+            # below and fire the detached check as before.
+            from beever_atlas.infra.config import get_settings as _get_settings
+
+            _defer = bool(getattr(_get_settings(), "defer_contradiction", True))
+
+            persisted_facts: list[Any] = []
+            try:
+                embedded_facts_raw = final_state.get("embedded_facts") or []
+                if embedded_facts_raw:
+                    from beever_atlas.models import AtomicFact
+
+                    weaviate_ids = persist_result.get("weaviate_ids") or []
+                    for idx, fd in enumerate(embedded_facts_raw):
+                        fact_channel = fd.get("channel_id") or channel_id
+                        # Content-derived deterministic ID for the
+                        # contradiction-detector fallback path. Mirrors the
+                        # persister so re-runs map to the same fact_id.
+                        entity_names = fd.get("entity_tags") or []
+                        fact_id = (
+                            weaviate_ids[idx]
+                            if idx < len(weaviate_ids)
+                            else AtomicFact.deterministic_id(
+                                fd.get("memory_text", ""), entity_names
+                            )
+                        )
+                        persisted_facts.append(
+                            AtomicFact(
+                                id=fact_id,
+                                memory_text=fd.get("memory_text", ""),
+                                topic_tags=fd.get("topic_tags") or [],
+                                entity_tags=fd.get("entity_tags") or [],
+                                channel_id=fact_channel,
+                            )
+                        )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "BatchProcessor: persisted_facts accumulation failed job_id=%s batch=%d, continuing",
+                    sync_job_id,
+                    batch_index,
+                    exc_info=True,
+                )
+
+            if _defer:
+                logger.debug(
+                    "BatchProcessor: contradiction detection deferred to post-sync "
+                    "job_id=%s batch=%d facts=%d",
+                    sync_job_id,
+                    batch_index,
+                    len(persisted_facts),
+                )
+            else:
+                # Legacy kill-switch path — fire-and-forget per-batch.
                 try:
-                    get_pipeline_events().record(
-                        channel_id=channel_id,
-                        stage="subbatch",
-                        label=(
-                            f"Batch {batch_index}/{max_batches} done — "
-                            f"{batch_facts} facts, {batch_entities} entities"
-                        ),
+                    from beever_atlas.services.contradiction_detector import (
+                        check_and_supersede,
                     )
+
+                    if persisted_facts:
+
+                        async def _detached_contradiction_check(
+                            facts_snapshot: list[Any],
+                            ch: str,
+                            job: str,
+                            b_idx: int,
+                        ) -> None:
+                            try:
+                                await check_and_supersede(facts_snapshot, ch)
+                            except Exception:  # noqa: BLE001
+                                logger.debug(
+                                    "BatchProcessor: detached contradiction check failed job_id=%s batch=%d",
+                                    job,
+                                    b_idx,
+                                    exc_info=True,
+                                )
+
+                        asyncio.create_task(
+                            _detached_contradiction_check(
+                                persisted_facts, channel_id, sync_job_id, batch_index
+                            )
+                        )
                 except Exception:  # noqa: BLE001
                     logger.debug(
-                        "BatchProcessor: pipeline_events.record end failed batch=%d",
+                        "BatchProcessor: contradiction detection scheduling failed job_id=%s batch=%d, continuing",
+                        sync_job_id,
                         batch_index,
                         exc_info=True,
                     )
-                batch_weaviate_ids: list[str] = list(persist_result.get("weaviate_ids") or [])
-                return breakdown, batch_stage_timings, entities_persisted, batch_weaviate_ids
+
+            # Extract sample data for sync history.
+            raw_facts = final_state.get("extracted_facts") or {}
+            facts_list = (
+                raw_facts.get("facts", [])
+                if isinstance(raw_facts, dict)
+                else (raw_facts if isinstance(raw_facts, list) else [])
+            )
+            raw_entities = final_state.get("extracted_entities") or {}
+            entities_list = (
+                raw_entities.get("entities", []) if isinstance(raw_entities, dict) else []
+            )
+            rels_list = (
+                raw_entities.get("relationships", []) if isinstance(raw_entities, dict) else []
+            )
+
+            batch_duration = sum(batch_stage_timings.values())
+            # Embedded + media counts for the UI MetricsBar tiles.
+            # Pulled here at construction time so they ride along with
+            # the breakdown into ``append_batch_results_for_channel``
+            # and survive activity_log eviction.
+            _embedded_facts = final_state.get("embedded_facts") or []
+            _preprocessed = final_state.get("preprocessed_messages") or []
+            _media_count_bd = sum(
+                1
+                for m in _preprocessed
+                if isinstance(m, dict) and m.get("modality") == "mixed"
+            )
+            breakdown = BatchBreakdown(
+                batch_num=batch_index,
+                facts_count=len(facts_list),
+                entities_count=len(entities_list),
+                relationships_count=len(rels_list),
+                embedded_count=len(_embedded_facts),
+                media_count=_media_count_bd,
+                sample_facts=[(f.get("memory_text") or "")[:120] for f in facts_list[:5]],
+                sample_entities=[
+                    {"name": e.get("name", "?"), "type": e.get("type", "?")}
+                    for e in entities_list[:8]
+                ],
+                sample_relationships=[
+                    {
+                        "source": r.get("source", "?"),
+                        "target": r.get("target", "?"),
+                        "type": r.get("relationship_type", r.get("type", "?")),
+                    }
+                    for r in rels_list[:5]
+                ],
+                duration_seconds=round(batch_duration, 2),
+                keys=_keys_for_batch(batch),
+            )
+            entities_persisted = persist_result.get("entity_count", 0) > 0
+
+            await stores.mongodb.update_sync_progress(
+                job_id=sync_job_id,
+                processed=0,
+                current_batch=batch_index,
+                current_stage="Step 7/7 — Complete",
+                stage_timings=batch_stage_timings,
+                batch_result=asdict(breakdown),
+            )
+
+            if _resumed_from:
+                _llm_stages = {
+                    "fact_extractor",
+                    "entity_extractor",
+                    "classifier_agent",
+                    "cross_batch_validator_agent",
+                }
+                _skipped_llm = len(
+                    _llm_stages.intersection(set(_STAGE_ORDER[:_skipped_stage_count]))
+                )
+                logger.info(
+                    "BatchProcessor: resumed from checkpoint '%s' (skipped %d stages, saved ~%d LLM calls) job_id=%s batch=%d",
+                    _resumed_from,
+                    _skipped_stage_count,
+                    _skipped_llm,
+                    sync_job_id,
+                    batch_index,
+                )
+
+            # Atomic increment — honest counter under concurrent batch execution.
+            # current_batch field keeps overwriting itself when batches run in
+            # parallel, so consumers should prefer batches_completed for progress.
+            await stores.mongodb.increment_batches_completed(sync_job_id)
+
+            # ALSO bump the user-facing sync_jobs row per batch so the
+            # UI's MetricsBar tiles update live instead of waiting for
+            # the worker tick (15-batch claim_size) to complete. The
+            # synthetic ``worker:*`` row is invisible to the frontend;
+            # the channel-row is what /sync/status returns.
+            if sync_job_id.startswith("worker:"):
+                try:
+                    await stores.mongodb.increment_batches_completed_for_channel(
+                        channel_id=channel_id,
+                        count=1,
+                        max_batch_num=batch_index,
+                    )
+                    await stores.mongodb.append_batch_results_for_channel(
+                        channel_id=channel_id,
+                        batch_results=[asdict(breakdown)],
+                    )
+                    # Per-batch finalization of this batch's
+                    # channel_messages rows to ``status=done``. The worker
+                    # used to do this once per TICK after the whole
+                    # claim finished; that left the
+                    # ``MESSAGES 0/715`` counter at 0 throughout the tick
+                    # even when batches were obviously finishing. Now
+                    # each batch finalizes its own rows immediately, and
+                    # the refresh below picks up the new "done" count.
+                    # Idempotent — the EXTRACTION_STATUS_TRANSITIONS
+                    # map rejects ``done → done`` so the worker's later
+                    # tick-end bulk call becomes a no-op for these rows.
+                    if breakdown.keys:
+                        await stores.mongodb.finalize_extraction_status_bulk(
+                            keys=list(breakdown.keys),
+                            new_status="done",
+                        )
+                    await stores.mongodb.refresh_sync_progress_for_channel(
+                        channel_id
+                    )
+                except Exception:
+                    # Mirror to channel-row is best-effort observability —
+                    # never fail a batch on a mongo blip.
+                    logger.exception(
+                        "BatchProcessor: channel-row mirror failed "
+                        "job_id=%s batch=%d channel=%s",
+                        sync_job_id,
+                        batch_index,
+                        channel_id,
+                    )
+
+            logger.info(
+                "BatchProcessor: done batch=%d/%d job_id=%s channel=%s facts=%d entities=%d",
+                batch_index,
+                max_batches,
+                sync_job_id,
+                channel_id,
+                batch_facts,
+                batch_entities,
+            )
+            # Phase 0 / Task 1.1 — sub-batch end observability event.
+            logger.info(
+                "BatchProcessor: subbatch_event channel=%s batch=%d stage=%s phase=end "
+                "facts=%d entities=%d",
+                channel_id,
+                batch_index,
+                "batch",
+                batch_facts,
+                batch_entities,
+            )
+            try:
+                get_pipeline_events().record(
+                    channel_id=channel_id,
+                    stage="subbatch",
+                    label=(
+                        f"Batch {batch_index}/{max_batches} done — "
+                        f"{batch_facts} facts, {batch_entities} entities"
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "BatchProcessor: pipeline_events.record end failed batch=%d",
+                    batch_index,
+                    exc_info=True,
+                )
+            batch_weaviate_ids: list[str] = list(persist_result.get("weaviate_ids") or [])
+            return breakdown, batch_stage_timings, entities_persisted, batch_weaviate_ids
 
         # Launch all batches with bounded concurrency via as_completed.
         # Results stream in completion order; each task returns (batch_idx, payload)

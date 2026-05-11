@@ -110,50 +110,172 @@ class ConsolidationService:
     # Public API
     # ------------------------------------------------------------------
 
-    async def on_sync_complete(
+    async def assign_clusters_only(
+        self,
+        channel_id: str,
+    ) -> ConsolidationResult:
+        """Per-batch consolidation path — clusters + cross-cluster links, NO LLM.
+
+        Runs the cheap pure-Python pieces of consolidation:
+
+        * ``_incremental_cluster`` (cosine vs existing centroids)
+        * ``_apply_cross_cluster_links`` (parallel Weaviate reads after Wave 1)
+        * ``_health_check`` (empty-cluster sweep, split/merge)
+
+        Skips both LLM-driven steps (``_generate_summaries`` and
+        ``_generate_channel_summary``). These are deferred to
+        :meth:`summarize_settled`, which fires once per channel on
+        ``memory_settled`` after the extraction queue has drained — so
+        a 25-batch sync makes one summary pass over the stable state
+        instead of 25 superseded passes.
+
+        Returns a :class:`ConsolidationResult`. ``touched_fact_ids`` is the
+        membership-delta set (from ``_incremental_cluster``); summary-driven
+        ids are appended later by :meth:`summarize_settled`. Always notifies
+        the maintainer with the membership-delta ids so per-batch routing
+        keeps working — the queue-write is non-flushing and the terminal
+        flush fires on ``memory_settled`` after summarize_settled completes.
+        """
+        result = ConsolidationResult(channel_id=channel_id)
+
+        try:
+            await self._incremental_cluster(channel_id, result)
+            # Cross-cluster links read from Weaviate in parallel — keep
+            # them on the per-batch path so related_cluster_ids stays
+            # fresh as new clusters appear mid-sync.
+            await self._apply_cross_cluster_links(channel_id)
+            await self._health_check(channel_id, result)
+        except Exception as exc:
+            logger.error(
+                "assign_clusters_only error for %s: %s",
+                channel_id,
+                exc,
+                exc_info=True,
+            )
+            result.errors.append(str(exc))
+
+        await self._notify_maintainer(channel_id, result.touched_fact_ids)
+        return result
+
+    async def summarize_settled(
         self,
         channel_id: str,
         channel_name: str = "",
     ) -> ConsolidationResult:
-        """Run incremental consolidation after a channel sync."""
+        """Settle-path consolidation — runs LLM summaries against the
+        post-drain stable cluster state.
+
+        Designed to fire exactly once per channel per sync, triggered by
+        the ``memory_settled`` event after the channel's extraction queue
+        has drained. Re-runs are cheap when nothing changed: this method
+        only summarizes clusters that have facts whose summary has not
+        yet incorporated them (membership > 0 AND
+        ``cluster.updated_at > cluster._last_summary_at`` heuristic — see
+        below).
+
+        Two LLM batches run:
+
+        * ``_generate_summaries`` — per-cluster, gated by
+          ``consolidation_max_concurrent_llm``.
+        * ``_generate_channel_summary`` — single channel-level call.
+
+        Idempotency: if no cluster has membership changes since its last
+        summary, both LLM batches are skipped and an empty result is
+        returned. ``memory_settled`` may re-fire (per its docstring) — the
+        second call sees no dirty clusters and is a cheap no-op.
+
+        Notifies the maintainer with the union of (membership-delta) and
+        (summary-touched) fact ids so the post-settle flush picks up the
+        precise affected pages.
+        """
         result = ConsolidationResult(channel_id=channel_id)
 
         try:
-            created, updated = await self._incremental_cluster(channel_id, result)
-            touched = created + updated
-            if touched:
-                await self._generate_summaries(channel_id, touched, result)
+            clusters = await self._weaviate.list_clusters(channel_id)
+            dirty_ids = self._select_clusters_needing_summary(clusters)
+            if dirty_ids:
+                await self._generate_summaries(channel_id, dirty_ids, result)
                 await self._generate_channel_summary(
                     channel_id,
                     result,
                     channel_name=channel_name,
                 )
-                await self._apply_cross_cluster_links(channel_id)
-            await self._health_check(channel_id, result)
         except Exception as exc:
-            logger.error("Consolidation error for %s: %s", channel_id, exc, exc_info=True)
+            logger.error(
+                "summarize_settled error for %s: %s",
+                channel_id,
+                exc,
+                exc_info=True,
+            )
             result.errors.append(str(exc))
 
-        # Notify the WikiMaintainer that consolidation finished. Replaces the
-        # legacy ``cache.mark_all_stale(channel_id)`` hammer. The populated
-        # ``touched_fact_ids`` is the precise set of facts whose grouping
-        # OR summary changed during this run — the maintainer routes those
-        # ids to affected pages (auto fires LLM rewrites, manual marks
-        # them dirty). Empty list is the no-op path (no clusters touched).
-        # Resolve maintenance_mode from settings so the manual-mode path
-        # actually marks pages dirty (the historic ``[]`` payload silently
-        # made this a no-op).
+        # Route the summary-touched facts to the maintainer queue. The
+        # maintainer's own ``memory_settled`` subscription fires the
+        # debounced flush right after this (settle_debounce default 5s
+        # gives the LLM calls plenty of headroom to land first).
+        await self._notify_maintainer(channel_id, result.touched_fact_ids)
+        return result
+
+    @staticmethod
+    def _select_clusters_needing_summary(
+        clusters: list[TopicCluster],
+    ) -> list[str]:
+        """Pick clusters whose summary is stale relative to membership.
+
+        Freshness signal: the persisted ``cluster.summary_dirty`` flag.
+        ``_incremental_cluster`` flips it True when a cluster receives new
+        members; ``_summarize_one`` flips it False after a successful LLM
+        write. A re-fire of ``memory_settled`` with no intervening
+        membership change therefore sees every cluster with
+        ``summary_dirty=False`` and returns ``[]`` — the idempotency
+        contract this method's docstring promises.
+
+        First-time summarization is covered by the model's default value
+        (``summary_dirty=True``) so a brand-new cluster always enters the
+        dirty set even before ``_incremental_cluster`` flips the flag.
+        Empty summaries are also explicitly captured as a defensive
+        fallback against legacy rows whose persisted flag was incorrectly
+        cleared. Clusters with zero members are skipped (the health-check
+        sweep deletes them on the next per-batch pass).
+        """
+        dirty: list[str] = []
+        for cluster in clusters:
+            if cluster.member_count <= 0:
+                continue
+            if cluster.summary_dirty:
+                dirty.append(cluster.id)
+                continue
+            # Defensive fallback — a cluster persisted without a summary
+            # must always re-summarize regardless of its dirty flag,
+            # otherwise the first migration window after a crash could
+            # leave it permanently summary-less.
+            if not (cluster.summary or "").strip():
+                dirty.append(cluster.id)
+        return dirty
+
+    async def _notify_maintainer(
+        self,
+        channel_id: str,
+        fact_ids: list[str],
+    ) -> None:
+        """Route touched fact ids to the WikiMaintainer queue.
+
+        Always queue-only — the terminal flush is owned by ``memory_settled``
+        in the maintainer's own subscriber. Empty ``fact_ids`` is a no-op
+        on the maintainer side (early-returns).
+        """
         try:
             from beever_atlas.services.wiki_maintainer import get_wiki_maintainer
 
             maintainer = get_wiki_maintainer()
-            if maintainer is not None:
-                mode = getattr(self._settings, "wiki_maintenance_mode", "manual") or "manual"
-                await maintainer.on_consolidation_complete(
-                    channel_id,
-                    fact_ids=list(result.touched_fact_ids),
-                    mode=mode,
-                )
+            if maintainer is None:
+                return
+            mode = getattr(self._settings, "wiki_maintenance_mode", "manual") or "manual"
+            await maintainer.on_consolidation_complete(
+                channel_id,
+                fact_ids=list(fact_ids),
+                mode=mode,
+            )
         except Exception as exc:  # noqa: BLE001 — never block consolidation on the maintainer
             logger.warning(
                 "wiki maintainer on_consolidation_complete failed for channel=%s: %s",
@@ -161,7 +283,47 @@ class ConsolidationService:
                 exc,
             )
 
-        return result
+    async def on_sync_complete(
+        self,
+        channel_id: str,
+        channel_name: str = "",
+    ) -> ConsolidationResult:
+        """Legacy combined entry point — clustering + LLM summaries in one call.
+
+        Retained for direct callers (tests, manual triggers, scheduled
+        consolidation) that want the pre-debounce behaviour. In normal
+        decoupled-extraction mode, the per-batch path now calls
+        :meth:`assign_clusters_only` and the ``memory_settled`` subscriber
+        calls :meth:`summarize_settled`; this method composes both for
+        callers that haven't migrated.
+        """
+        # Compose the two new methods so any external behavioural contract
+        # (single ConsolidationResult with both membership-delta AND
+        # summary-touched ids) keeps working. The maintainer notification
+        # fires twice (once per method) — both calls are queue-only and
+        # idempotent.
+        cluster_result = await self.assign_clusters_only(channel_id)
+        summary_result = await self.summarize_settled(channel_id, channel_name=channel_name)
+
+        # Merge stats into a single ConsolidationResult so callers see one
+        # combined view. ``touched_fact_ids`` preserves insertion order via
+        # dict-based dedupe (same pattern used inside ``_incremental_cluster``).
+        merged = ConsolidationResult(channel_id=channel_id)
+        merged.clusters_created = cluster_result.clusters_created
+        merged.clusters_updated = cluster_result.clusters_updated
+        merged.clusters_merged = cluster_result.clusters_merged
+        merged.clusters_split = cluster_result.clusters_split
+        merged.clusters_deleted = cluster_result.clusters_deleted
+        merged.facts_clustered = cluster_result.facts_clustered
+        merged.summaries_generated = summary_result.summaries_generated
+        merged.errors = list(cluster_result.errors) + list(summary_result.errors)
+        merged_seen: dict[str, None] = {}
+        for fid in cluster_result.touched_fact_ids:
+            merged_seen[fid] = None
+        for fid in summary_result.touched_fact_ids:
+            merged_seen[fid] = None
+        merged.touched_fact_ids = list(merged_seen.keys())
+        return merged
 
     async def full_reconsolidate(
         self,
@@ -289,6 +451,12 @@ class ConsolidationService:
             if member_vectors:
                 cluster.centroid_vector = self._compute_centroid(member_vectors)
 
+            # Membership changed — mark the cluster dirty so the next
+            # ``summarize_settled`` pass picks it up. ``_summarize_one``
+            # clears the flag after writing the summary, so re-firing
+            # ``memory_settled`` with no new members returns [] (the
+            # idempotency contract of ``_select_clusters_needing_summary``).
+            cluster.summary_dirty = True
             await self._weaviate.upsert_cluster(cluster)
             if cluster.id not in created_ids:
                 updated_ids.append(cluster.id)
@@ -458,9 +626,12 @@ class ConsolidationService:
             "You are summarizing a topic cluster from a team channel. "
             "Return structured JSON with the following fields:\n"
             "\n"
-            "- **title**: A short descriptive name for this topic (5-10 words, e.g. "
-            "'JWT Migration to RS256', 'CI/CD Pipeline Redesign'). "
-            "Do NOT use the first sentence of the summary as the title.\n"
+            "- **title**: A short, specific, descriptive name for this topic (5-10 words). "
+            "You MUST output a non-empty `title`. "
+            "Good examples: 'GPU Selection for ASR Inference', 'JWT Migration to RS256', "
+            "'CI/CD Pipeline Redesign'. "
+            "Do NOT use generic placeholders like 'general-discussion', 'misc', or 'topic'. "
+            "Do NOT leave `title` blank. Do NOT use the first sentence of the summary as the title.\n"
             "- **summary_text**: A 2-3 sentence narrative of what happened chronologically. "
             "Include key decisions, actions, and who was involved.\n"
             "- **current_state**: 1-2 sentences on where things stand NOW — "
@@ -1117,11 +1288,21 @@ class ConsolidationService:
         if len(clusters) < 2:
             return
 
-        # Pre-fetch all members for all clusters
+        # Fan-out all member fetches in parallel for perf (pure reads, no ordering deps).
+        member_results = await asyncio.gather(
+            *[self._weaviate.get_cluster_members(c.id, limit=200) for c in clusters],
+            return_exceptions=True,
+        )
         all_members: dict[str, list[AtomicFact]] = {}
-        for cluster in clusters:
-            members = await self._weaviate.get_cluster_members(cluster.id, limit=200)
-            all_members[cluster.id] = members
+        for cluster, result in zip(clusters, member_results):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Failed to fetch members for cluster %s, skipping: %s",
+                    cluster.id,
+                    result,
+                )
+                continue
+            all_members[cluster.id] = result
 
         links = self._compute_cross_cluster_links(clusters, all_members)
 
@@ -1275,6 +1456,13 @@ class ConsolidationService:
                         ctx.aggregated_action_tags,
                     )
 
+                    # Summary write succeeded — clear the dirty flag so a
+                    # subsequent ``memory_settled`` re-fire with no new
+                    # members short-circuits in
+                    # ``_select_clusters_needing_summary``. Flipped BEFORE
+                    # the upsert so the persisted row reflects the clean
+                    # state.
+                    cluster.summary_dirty = False
                     await self._weaviate.upsert_cluster(cluster)
                     result.summaries_generated += 1
                     # Spec: append every fact_id whose cluster's summary
@@ -1522,7 +1710,11 @@ class ConsolidationService:
         return activity
 
     async def _call_topic_llm(self, prompt: str) -> dict[str, Any]:
-        """Call LLM for topic summary with structured TopicSummaryResult output."""
+        """Call LLM for topic summary with structured TopicSummaryResult output.
+
+        If the LLM returns an empty title, retries once at temperature=0.3 before
+        falling through to the downstream synthesis fallback.
+        """
         from beever_atlas.agents.consolidation.summarizer import create_topic_summarizer
         from beever_atlas.agents.runner import run_agent
 
@@ -1530,10 +1722,32 @@ class ConsolidationService:
         state = await run_agent(agent)
 
         result = state.get("summary_result") or {}
-        if isinstance(result, dict):
-            return result
-        # Fallback: treat as flat text
-        return {"summary_text": str(result)} if result else {}
+        if not isinstance(result, dict):
+            # Fallback: treat as flat text
+            return {"summary_text": str(result)} if result else {}
+
+        if not result.get("title", "").strip():
+            logger.info(
+                "topic_summarizer returned empty title — retrying once at temperature=0.3"
+            )
+            retry_agent = create_topic_summarizer(instruction=prompt, temperature=0.3)
+            retry_state = await run_agent(retry_agent)
+            retry_result = retry_state.get("summary_result") or {}
+            # Blocker 3 fix: only return ``retry_result`` when the retry
+            # actually produced a non-empty title (the win case). If the
+            # retry also returned an empty title, fall through to the
+            # ORIGINAL result so the downstream compiler synthesis
+            # fallback (``_apply_title_fallbacks`` in ``wiki/compiler.py``)
+            # gets to synthesize a title from topic_tags — exactly the
+            # behaviour we'd see if no retry had been attempted at all.
+            if isinstance(retry_result, dict) and retry_result.get("title", "").strip():
+                return retry_result
+            logger.info(
+                "topic_summarizer retry also returned empty title — falling "
+                "through to compiler synthesis fallback"
+            )
+
+        return result
 
     async def _call_channel_llm(self, prompt: str) -> dict[str, Any]:
         """Call LLM for channel summary with structured ChannelSummaryResult output."""
@@ -1612,7 +1826,7 @@ class ConsolidationService:
         group_a = members[:mid]
         group_b = members[mid:]
 
-        # Create new cluster for group B
+        # Create new cluster for group B (default summary_dirty=True)
         new_cluster = TopicCluster(
             channel_id=channel_id,
             member_ids=[m.id for m in group_b],
@@ -1623,6 +1837,8 @@ class ConsolidationService:
         # Update original cluster to only have group A
         cluster.member_ids = [m.id for m in group_a]
         cluster.member_count = len(group_a)
+        # Membership changed (split) — re-summarize on next settle.
+        cluster.summary_dirty = True
 
         # Reassign facts
         updates = [(m.id, new_cluster.id) for m in group_b]
@@ -1655,6 +1871,8 @@ class ConsolidationService:
                     # Merge b into a
                     a.member_ids.extend(b.member_ids)
                     a.member_count = len(a.member_ids)
+                    # Membership changed (merge) — re-summarize on next settle.
+                    a.summary_dirty = True
 
                     # Reassign b's facts to a
                     updates = [(mid, a.id) for mid in b.member_ids]

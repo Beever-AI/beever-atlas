@@ -227,6 +227,12 @@ class TopicCluster(BaseModel):
     staleness_score: float = 0.0  # 0.0=fresh, 1.0=very stale
     status: str = "active"  # "active", "completed", "stale"
     fact_type_counts: dict[str, int] = Field(default_factory=dict)  # {"decision": N, ...}
+    # Summary freshness signal — flips True whenever ``_incremental_cluster``
+    # adds new members (membership delta), flips False after a successful
+    # ``_summarize_one`` run. ``_select_clusters_needing_summary`` filters
+    # on this so re-firing ``memory_settled`` with no intervening membership
+    # changes is a cheap no-op (idempotency contract).
+    summary_dirty: bool = True
     # Wiki-ready enrichment fields
     key_facts: list[dict[str, Any]] = Field(default_factory=list)
     # [{"fact_id", "memory_text", "author_name", "message_ts", "fact_type", "importance", "quality_score", "source_message_id"}]

@@ -56,10 +56,17 @@ def create_summarizer(instruction: str, model=None) -> LlmAgent:
     return wrap_with_recovery(agent, _recover_summary, SummaryResult)
 
 
-def create_topic_summarizer(instruction: str, model=None) -> LlmAgent:
+def create_topic_summarizer(
+    instruction: str, model=None, temperature: float | None = None
+) -> LlmAgent:
     """Create a topic summarizer with structured TopicSummaryResult output.
 
     Returns title, multi-angle summaries, focused topic_tags, and FAQ candidates.
+
+    Args:
+        instruction: The prompt template with context already interpolated.
+        model: Optional model override. If None, resolved from config.
+        temperature: Optional generation temperature override (e.g. 0.3 for retry).
     """
     agent = LlmAgent(
         name="topic_summarizer",
@@ -69,6 +76,7 @@ def create_topic_summarizer(instruction: str, model=None) -> LlmAgent:
         output_schema=TopicSummaryResult,
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json",
+            temperature=temperature,
         ),
     )
     return wrap_with_recovery(agent, _recover_topic_summary, TopicSummaryResult)
