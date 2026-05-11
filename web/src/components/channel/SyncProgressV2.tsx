@@ -404,7 +404,7 @@ function ProgressHeader({
 // MetricsBar — derives rich monitoring counts from events + activity_log
 // ─────────────────────────────────────────────────────────────────────────
 
-interface PipelineMetrics {
+export interface PipelineMetrics {
   totalBatches: number;
   batchesDone: number;
   batchesInFlight: number;
@@ -415,7 +415,7 @@ interface PipelineMetrics {
   totalMediaEnriched: number;
 }
 
-function deriveMetrics(
+export function deriveMetrics(
   events: RecentEvent[],
   activityLog: ActivityEntry[],
   stickyResults: BatchResultEntry[],
@@ -638,7 +638,7 @@ function MetricsBar({
 // BatchFilteredActivityLog — per-batch tabs that filter the activity log
 // ─────────────────────────────────────────────────────────────────────────
 
-interface BatchSummary {
+export interface BatchSummary {
   batchIdx: number;
   state: "pending" | "running" | "done" | "failed";
   stagesStarted: number;
@@ -649,7 +649,7 @@ interface BatchSummary {
   hasFailure: boolean;
 }
 
-function summariseBatches(
+export function summariseBatches(
   activityLog: ActivityEntry[],
   totalBatches?: number,
   batchesCompleted?: number,
@@ -753,7 +753,7 @@ function summariseBatches(
 // decoupled ExtractionWorker flow (where ``sync_jobs.batch_results``
 // stays empty because the worker uses synthetic job_ids).
 // ──────────────────────────────────────────────────────────────────────
-function deriveBatchResultsFromActivity(
+export function deriveBatchResultsFromActivity(
   activityLog: ActivityEntry[],
 ): BatchResultEntry[] {
   const byBatch = new Map<number, BatchResultEntry>();
