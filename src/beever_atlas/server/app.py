@@ -255,6 +255,23 @@ async def lifespan(app: FastAPI):
         )
         init_wiki_maintainer(maintainer)
 
+        # memory-then-wiki-pipeline-realignment — recover any
+        # ``wiki_dirty_queue`` rows stuck in ``flushing`` from a prior
+        # crashed flush. Runs once at startup; the next debounced flush
+        # will pick up the re-pending rows.
+        try:
+            recovered = await stores.mongodb.recover_stale_flushing()
+            if recovered:
+                logging.getLogger(__name__).info(
+                    "wiki_dirty_queue: recovered %d stale-flushing rows at startup",
+                    recovered,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "wiki_dirty_queue: recover_stale_flushing failed at startup: %s",
+                exc,
+            )
+
         worker = get_extraction_worker()
         if worker is not None:
             _env_default_mode = settings.wiki_maintenance_mode
