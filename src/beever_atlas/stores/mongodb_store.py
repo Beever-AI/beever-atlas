@@ -490,7 +490,7 @@ class MongoDBStore:
         )
 
     async def increment_batches_completed_for_channel(
-        self, channel_id: str, count: int
+        self, channel_id: str, count: int, max_batch_num: int | None = None,
     ) -> None:
         """Increment ``batches_completed`` on the most-recent user-facing
         sync_jobs row for a channel.
@@ -522,10 +522,18 @@ class MongoDBStore:
             return
         completed = int(doc.get("batches_completed") or 0)
         total = int(doc.get("total_batches") or 0)
-        if completed > total:
+        # SyncRunner's initial ``total_batches`` is a fixed-size estimate
+        # (``ceil(total_messages / sync_batch_size)``). Token-aware
+        # batching in BatchProcessor can yield more batches than the
+        # estimate, so bump ``total_batches`` to the high-water mark of
+        # either the completed counter OR the actual batch_num the
+        # caller is reporting. Without this, the UI shows weirdness
+        # like ``14/15`` while the chip strip extends to Batch 21.
+        target = max(completed, max_batch_num or 0)
+        if target > total:
             await self._sync_jobs.update_one(
                 {"id": doc.get("id")},
-                {"$set": {"total_batches": completed}, "$inc": {"version": 1}},
+                {"$set": {"total_batches": target}, "$inc": {"version": 1}},
             )
 
     async def append_batch_results_for_channel(

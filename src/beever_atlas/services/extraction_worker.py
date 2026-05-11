@@ -726,46 +726,12 @@ class ExtractionWorker:
             return 0, len(valid_keys)
 
         duration_ms = int((time.monotonic() - started) * 1000)
-        # Advance the user-facing row's global ``batches_completed`` by the
-        # number of sub-batches this tick produced. This keeps the BATCHES
-        # tile's numerator monotonically increasing across ticks AND seeds
-        # the next tick's ``batch_index_offset`` so global numbering stays
-        # contiguous. Counts both succeeded and failed sub-batches — they
-        # consumed a batch slot either way.
-        try:
-            tick_breakdowns = list(
-                getattr(result, "batch_breakdowns", None) or []
-            )
-            tick_batch_count = len(tick_breakdowns)
-            if tick_batch_count > 0:
-                await stores.mongodb.increment_batches_completed_for_channel(
-                    channel_id=channel_id, count=tick_batch_count
-                )
-                # Also persist the per-batch breakdowns (facts_count,
-                # entities_count, sample_facts, etc.) to the user-facing
-                # row so the UI MetricsBar + Batch Results panel see
-                # authoritative numbers that don't decay as activity_log
-                # entries evict from the $slice buffer.
-                from dataclasses import asdict as _asdict
-
-                breakdown_dicts: list[dict[str, Any]] = []
-                for bd in tick_breakdowns:
-                    try:
-                        breakdown_dicts.append(_asdict(bd))
-                    except Exception:  # noqa: BLE001 — bd may already be a dict
-                        if isinstance(bd, dict):
-                            breakdown_dicts.append(bd)
-                if breakdown_dicts:
-                    await stores.mongodb.append_batch_results_for_channel(
-                        channel_id=channel_id,
-                        batch_results=breakdown_dicts,
-                    )
-        except Exception:
-            logger.exception(
-                "ExtractionWorker: failed to advance global batches_completed "
-                "channel=%s — next tick's batch_idx may overlap",
-                channel_id,
-            )
+        # NOTE: post-tick aggregation of batches_completed +
+        # batch_results was removed — BatchProcessor now writes per
+        # batch directly to the user-facing channel row (see
+        # ``batch_processor.py`` near ``increment_batches_completed``).
+        # This gives the UI live MetricsBar updates instead of waiting
+        # for the entire tick (10+ batches, 5-15 min) to finish.
         if result.errors:
             # Phase 1.1 / Task 2.1.3 — per-sub-batch attribution (decision
             # D1). Walk the BatchBreakdowns and partition ``valid_keys``

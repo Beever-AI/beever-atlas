@@ -1672,6 +1672,33 @@ class BatchProcessor:
                 # parallel, so consumers should prefer batches_completed for progress.
                 await stores.mongodb.increment_batches_completed(sync_job_id)
 
+                # ALSO bump the user-facing sync_jobs row per batch so the
+                # UI's MetricsBar tiles update live instead of waiting for
+                # the worker tick (15-batch claim_size) to complete. The
+                # synthetic ``worker:*`` row is invisible to the frontend;
+                # the channel-row is what /sync/status returns.
+                if sync_job_id.startswith("worker:"):
+                    try:
+                        await stores.mongodb.increment_batches_completed_for_channel(
+                            channel_id=channel_id,
+                            count=1,
+                            max_batch_num=batch_index,
+                        )
+                        await stores.mongodb.append_batch_results_for_channel(
+                            channel_id=channel_id,
+                            batch_results=[asdict(breakdown)],
+                        )
+                    except Exception:
+                        # Mirror to channel-row is best-effort observability —
+                        # never fail a batch on a mongo blip.
+                        logger.exception(
+                            "BatchProcessor: channel-row mirror failed "
+                            "job_id=%s batch=%d channel=%s",
+                            sync_job_id,
+                            batch_index,
+                            channel_id,
+                        )
+
                 logger.info(
                     "BatchProcessor: done batch=%d/%d job_id=%s channel=%s facts=%d entities=%d",
                     batch_index,
