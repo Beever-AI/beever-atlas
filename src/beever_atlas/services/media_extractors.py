@@ -8,6 +8,7 @@ MIME types and returns extracted text content.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import logging
 import re
@@ -92,6 +93,50 @@ async def _poll_file_active(
         elapsed += poll_interval
 
     raise TimeoutError(f"File {file_name} did not reach ACTIVE state within {max_wait}s")
+
+
+def _compute_media_hash(data: bytes) -> str:
+    """Return SHA-256 hex of ``data`` mixed with the configured cache version.
+
+    Mixing the version string means bumping MEDIA_CACHE_VERSION invalidates
+    all existing entries without a manual collection drop.
+    """
+    settings = get_settings()
+    version_bytes = str(settings.media_cache_version).encode()
+    return hashlib.sha256(data + version_bytes).hexdigest()
+
+
+async def _check_media_cache(content_hash: str, mime_type: str) -> MediaContent | None:
+    """Return a cached ``MediaContent`` on hit, or ``None`` on miss."""
+    from beever_atlas.stores import get_stores
+
+    try:
+        stores = get_stores()
+        cached = await stores.mongodb.media_cache.get_cached(content_hash, mime_type)
+        if cached is not None:
+            logger.info("MediaCache: HIT hash=%s mime=%s", content_hash[:12], mime_type)
+            return MediaContent(text=cached.description, media_type="")
+    except Exception:
+        logger.warning("MediaCache: get_cached failed — treating as miss", exc_info=True)
+    return None
+
+
+async def _write_media_cache(
+    content_hash: str, mime_type: str, content: MediaContent, model_version: str
+) -> None:
+    """Write ``content`` to the cache.  Failures are logged but not re-raised."""
+    from beever_atlas.stores import get_stores
+
+    try:
+        stores = get_stores()
+        await stores.mongodb.media_cache.set_cached(
+            content_hash, mime_type, content.text, model_version
+        )
+        logger.debug("MediaCache: WRITE hash=%s mime=%s", content_hash[:12], mime_type)
+    except Exception:
+        logger.warning(
+            "MediaCache: set_cached failed — result returned but not cached", exc_info=True
+        )
 
 
 @dataclass
@@ -305,11 +350,23 @@ class ImageExtractor(MediaExtractor):
         message_text = (metadata or {}).get("message_text", "")
         size_kb = len(data) // 1024
 
+        # Vision gate FIRST — skip hash computation for images that won't be
+        # described (architect requirement: no SHA-256 on skipped images).
         if not self._should_use_vision(message_text, filename):
             return MediaContent(
                 text=f"[Attachment: {filename} (image)]",
                 media_type="image",
             )
+
+        settings = get_settings()
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+        mime_type = self._IMAGE_MIME_MAP.get(ext, "image/png")
+
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
 
         description = await self._describe_image(data, message_text, filename)
         if description:
@@ -319,7 +376,12 @@ class ImageExtractor(MediaExtractor):
             )
         else:
             desc = f"[Attachment: {filename} (image, {size_kb} kB)]"
-        return MediaContent(text=desc, media_type="image")
+        result = MediaContent(text=desc, media_type="image")
+
+        if settings.media_cache_enabled:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     def _should_use_vision(self, message_text: str, filename: str) -> bool:
         text = (message_text or "").strip()
@@ -557,6 +619,21 @@ class VideoExtractor(MediaExtractor):
                 media_type="video",
             )
 
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp4"
+        mime_map = {
+            "mp4": "video/mp4",
+            "mov": "video/quicktime",
+            "webm": "video/webm",
+            "avi": "video/x-msvideo",
+        }
+        mime_type = mime_map.get(ext, "video/mp4")
+
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
+
         parts: list[str] = [f"[Attachment: {filename} (video, {size_mb:.1f} MB)]"]
 
         # Single Gemini call for combined transcript + visual analysis
@@ -564,7 +641,12 @@ class VideoExtractor(MediaExtractor):
         if analysis:
             parts.append(f"[Video summary]: {analysis}")
 
-        return MediaContent(text="\n".join(parts), media_type="video")
+        result = MediaContent(text="\n".join(parts), media_type="video")
+
+        if settings.media_cache_enabled:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     async def _analyze_video(self, data: bytes, filename: str) -> str:
         """Analyze video using Gemini Files API + content generation."""
@@ -725,25 +807,34 @@ class AudioExtractor(MediaExtractor):
                 media_type="audio",
             )
 
-        parts: list[str] = [f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]"]
-
         if not settings.google_api_key:
-            return MediaContent(text="\n".join(parts), media_type="audio")
+            return MediaContent(
+                text=f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]",
+                media_type="audio",
+            )
+
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
+        mime_map = {
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "m4a": "audio/mp4",
+            "ogg": "audio/ogg",
+            "flac": "audio/flac",
+        }
+        mime_type = mime_map.get(ext, "audio/mpeg")
+
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
+
+        parts: list[str] = [f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]"]
 
         uploaded = None
         client = await _get_gemini_client()
         try:
             from google.genai import types as genai_types
-
-            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
-            mime_map = {
-                "mp3": "audio/mpeg",
-                "wav": "audio/wav",
-                "m4a": "audio/mp4",
-                "ogg": "audio/ogg",
-                "flac": "audio/flac",
-            }
-            mime_type = mime_map.get(ext, "audio/mpeg")
 
             # Upload via Files API
             logger.info("AudioExtractor: uploading %s (%s, %.1f MB)", filename, mime_type, size_mb)
@@ -801,7 +892,12 @@ class AudioExtractor(MediaExtractor):
                 except Exception:
                     logger.debug("AudioExtractor: cleanup failed for %s", filename)
 
-        return MediaContent(text="\n".join(parts), media_type="audio")
+        result = MediaContent(text="\n".join(parts), media_type="audio")
+
+        if settings.media_cache_enabled:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     @staticmethod
     def _parse_transcript(text: str) -> tuple[str, str]:

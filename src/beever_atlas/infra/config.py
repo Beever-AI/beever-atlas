@@ -158,6 +158,25 @@ class Settings(BaseSettings):
     entity_similarity_threshold: float = Field(default=0.85)
     merge_rejection_ttl_days: int = Field(default=30)
 
+    # Cross-batch validator — P0-3 (plan ``pipeline-cost-latency-reduction-v2.md``).
+    # When True, the cross_batch_validator stage runs a deterministic
+    # ``BaseAgent`` (name normalization + embedding cosine similarity)
+    # instead of the legacy LLM-based validator. Default True — the
+    # deterministic path eliminates ~24 Gemini calls/sync and removes the
+    # ``json_recovery: truncated validation result`` failure mode. The
+    # legacy LlmAgent path was removed in this change; the flag is
+    # retained for forward compatibility (a False value logs a one-shot
+    # WARN and falls through to the deterministic agent). Roll back via
+    # git revert if a regression is observed during the soak window.
+    cross_batch_validator_deterministic: bool = Field(default=True)
+    # When True (default), the deterministic validator falls back to a
+    # bounded LLM call (max 5 pairs per batch) for ambiguous cosine band
+    # 0.85–0.92. Architect demanded the safety net stay ON until 2 weeks
+    # of soak data confirm the deterministic-only path is safe to default
+    # OFF. The per-batch fallback counter is logged as
+    # ``cross_batch_validator_llm_fallback_count`` for calibration.
+    cross_batch_validator_llm_fallback: bool = Field(default=True)
+
     # Multimodal expansion
     media_video_max_duration_minutes: int = Field(default=10)
     media_video_max_size_mb: int = Field(default=100)
@@ -177,6 +196,13 @@ class Settings(BaseSettings):
     # Temporal fact lifecycle
     contradiction_confidence_threshold: float = Field(default=0.8)
     contradiction_flag_threshold: float = Field(default=0.5)
+
+    # P0-1 (pipeline-cost-latency-reduction-v2): when True, BatchProcessor
+    # skips its per-batch detached contradiction check; a single bulk pass
+    # fires post-sync on ``memory_settled`` via ``check_and_supersede_for_channel``.
+    # When False, the legacy per-batch fire-and-forget behaviour is restored
+    # (kill switch for emergency rollback without redeploy).
+    defer_contradiction: bool = Field(default=True, alias="DEFER_CONTRADICTION")
 
     # Provider rate limits (requests per minute)
     gemini_rpm: int = Field(default=300)
@@ -657,6 +683,17 @@ class Settings(BaseSettings):
     # operators must explicitly backfill ownership on legacy rows (see
     # ``stores.platform_store.PlatformStore.backfill_legacy_owners``).
     beever_single_tenant: bool = Field(default=True, alias="BEEVER_SINGLE_TENANT")
+
+    # Media extractor content-hash cache (P0-2).
+    # When True, ImageExtractor / VideoExtractor / AudioExtractor skip the
+    # Gemini vision/audio call and return the cached description when the same
+    # file bytes have been seen before (SHA-256 keyed, stored in MongoDB
+    # ``media_cache``). Set MEDIA_CACHE_ENABLED=false to disable globally.
+    media_cache_enabled: bool = Field(default=True, alias="MEDIA_CACHE_ENABLED")
+    # Bump MEDIA_CACHE_VERSION to invalidate all cached descriptions — e.g.
+    # after a Gemini model upgrade. The version is mixed into the hash so old
+    # entries become unreachable without requiring a manual collection drop.
+    media_cache_version: int = Field(default=1, alias="MEDIA_CACHE_VERSION")
 
     @property
     def neo4j_user(self) -> str:

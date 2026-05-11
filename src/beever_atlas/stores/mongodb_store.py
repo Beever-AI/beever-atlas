@@ -69,6 +69,11 @@ class MongoDBStore:
         # backend crashes during the debounce window no longer lose
         # queued page rewrites. See specs/wiki-dirty-queue/spec.md.
         self._wiki_dirty_queue = self._db["wiki_dirty_queue"]
+        # P0-2: media extractor content-hash cache.  One document per unique
+        # (hash, mime_type) pair; compound unique index created in startup().
+        from beever_atlas.stores.media_cache_store import MediaCacheStore
+
+        self._media_cache_store = MediaCacheStore(self._db["media_cache"])
 
     @property
     def db(self):
@@ -85,6 +90,11 @@ class MongoDBStore:
     def wiki_proposed_edits(self):
         """Reserved for §7.9 — v2 agent ``propose_wiki_edit`` writes here."""
         return self._wiki_proposed_edits
+
+    @property
+    def media_cache(self):
+        """P0-2: content-hash cache for media extractor outputs."""
+        return self._media_cache_store
 
     async def startup(self) -> None:
         """Ping MongoDB to verify the connection is alive."""
@@ -197,6 +207,8 @@ class MongoDBStore:
             [("channel_id", 1), ("slug", 1), ("status", 1)],
             name="wiki_proposed_edits_channel_slug_status",
         )
+        # P0-2: media extractor content-hash cache index.
+        await self._media_cache_store.ensure_indexes()
         # Seed global policy defaults from Settings if not present
         existing = await self._global_policy_defaults.find_one({"id": "global"})
         if existing is None:
@@ -800,6 +812,95 @@ class MongoDBStore:
         """Delete the sync state for a channel, forcing a full re-sync next time."""
         await self._channel_sync_state.delete_one({"channel_id": channel_id})
         await self._sync_jobs.delete_many({"channel_id": channel_id})
+
+    # ------------------------------------------------------------------
+    # Contradiction watermark (P0-1 pipeline-cost-latency-reduction-v2)
+    # ------------------------------------------------------------------
+
+    async def get_contradiction_watermark(self, channel_id: str) -> datetime:
+        """Return the channel's persisted ``contradiction_watermark``.
+
+        Rows that pre-date the watermark field (i.e. existing pre-deploy
+        documents OR brand-new channels with no sync state yet) are
+        treated as the Unix epoch ``datetime(1970, 1, 1, tzinfo=UTC)``
+        so the very first post-deploy ``check_and_supersede_for_channel``
+        call processes every fact written for the channel.
+
+        No schema migration is required — the ``advance_contradiction_watermark``
+        ``$lte`` filter combined with this epoch default handles missing
+        values uniformly.
+        """
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        doc = await self._channel_sync_state.find_one(
+            {"channel_id": channel_id},
+            {"contradiction_watermark": 1},
+        )
+        if doc is None:
+            return epoch
+        wm = doc.get("contradiction_watermark")
+        if wm is None:
+            return epoch
+        if isinstance(wm, datetime):
+            return wm if wm.tzinfo is not None else wm.replace(tzinfo=UTC)
+        # Defensive — ISO-8601 string fallback in case a future writer
+        # persists the watermark as a string. Pymongo normally stores
+        # ``datetime`` natively as BSON Date so this branch is rarely hit.
+        if isinstance(wm, str):
+            try:
+                parsed = datetime.fromisoformat(wm.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+            except ValueError:
+                logger.warning(
+                    "get_contradiction_watermark: unparseable string watermark "
+                    "channel=%s value=%r — falling back to epoch",
+                    channel_id,
+                    wm,
+                )
+        return epoch
+
+    async def advance_contradiction_watermark(
+        self,
+        channel_id: str,
+        pre_check: datetime,
+        post_check: datetime,
+    ) -> bool:
+        """Atomically advance ``contradiction_watermark`` from ``pre_check`` → ``post_check``.
+
+        Uses ``find_one_and_update`` with a ``$lte`` filter on the existing
+        watermark to guarantee that two concurrent post-sync checks
+        cannot both succeed — the loser observes ``result is None`` and
+        the caller treats that as "another invocation already advanced
+        the watermark; the work is done".
+
+        The filter accepts either ``contradiction_watermark <= pre_check``
+        OR a missing field (existing pre-deploy rows / fresh channels),
+        so the first post-deploy call always wins regardless of whether
+        the field was ever persisted.
+
+        Returns:
+            True when this caller successfully advanced the watermark,
+            False when a concurrent caller had already moved it past
+            ``pre_check``.
+        """
+        # Normalise tzinfo so the BSON write is always UTC-aware.
+        if pre_check.tzinfo is None:
+            pre_check = pre_check.replace(tzinfo=UTC)
+        if post_check.tzinfo is None:
+            post_check = post_check.replace(tzinfo=UTC)
+
+        result = await self._channel_sync_state.find_one_and_update(
+            {
+                "channel_id": channel_id,
+                "$or": [
+                    {"contradiction_watermark": {"$lte": pre_check}},
+                    {"contradiction_watermark": {"$exists": False}},
+                ],
+            },
+            {"$set": {"contradiction_watermark": post_check}},
+            upsert=False,
+            return_document=False,
+        )
+        return result is not None
 
     async def count_synced_channels(self) -> int:
         """Return the number of channels that have a sync state record."""
