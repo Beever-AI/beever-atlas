@@ -12,7 +12,18 @@ import type {
 
 export interface SyncState {
   state: "idle" | "syncing" | "error";
+  /** The ``job_id`` from the most-recent ``/sync/status`` response.
+   *  This is whichever row the server returned — possibly a previous
+   *  run's row during the brief window after trigger but before the new
+   *  row lands. Use ``triggered_job_id`` for the source-of-truth of
+   *  "what sync did the user actually start?". */
   job_id?: string;
+  /** The ``job_id`` returned by ``POST /sync`` (the trigger). This is
+   *  the authoritative id for the active sync from the caller's
+   *  perspective — SyncProgressV2 gates its ``batch_results`` ingestion
+   *  on (``job_id === triggered_job_id``) so that stale rows from the
+   *  previous run can't leak DONE chips into the new view. */
+  triggered_job_id?: string;
   total_messages?: number;
   parent_messages?: number;
   processed_messages?: number;
@@ -151,7 +162,11 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
       const fp = fingerprintStatus(status);
       if (fp !== lastFingerprintRef.current) {
         lastFingerprintRef.current = fp;
-        setSyncState({
+        setSyncState((prev) => ({
+          // Preserve ``triggered_job_id`` across polls — only the
+          // trigger sets it. SyncProgressV2 uses it as the canonical
+          // current-sync id to gate against stale ``batch_results``.
+          triggered_job_id: prev.triggered_job_id,
           state: status.state,
           job_id: status.job_id,
           total_messages: status.total_messages,
@@ -176,7 +191,7 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
           // sync-monitor-redesign — surface started_at so the activity
           // feed can compute elapsed-time stamps.
           started_at: status.started_at,
-        });
+        }));
         setError(backendError);
       }
       // isSyncing reflects active fetch only — extraction can still be
@@ -242,9 +257,19 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
       const response = await api.post<SyncResponse>(
         syncUrl,
       );
+      // Reset the fingerprint so the very next poll re-renders even
+      // though state is also "syncing" — without this, the dedup guard
+      // could swallow the first fresh-job response and leave the UI
+      // showing the trigger's optimistic snapshot.
+      lastFingerprintRef.current = "";
       setSyncState({
         state: "syncing",
         job_id: response.job_id,
+        // ``triggered_job_id`` is the authoritative current-sync id —
+        // SyncProgressV2 uses it to gate ``batch_results`` ingestion
+        // against stale rows that ``/sync/status`` may briefly return
+        // before the new ``sync_jobs`` row lands.
+        triggered_job_id: response.job_id,
       });
       startPolling();
     } catch (err) {

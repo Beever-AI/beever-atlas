@@ -521,6 +521,14 @@ export function SyncProgress({
         events={syncState.recent_events ?? []}
         stageDetails={syncState.stage_details}
         batchResults={syncState.batch_results}
+        // ``batchResultsJobId`` is the job_id of the row that supplied
+        // ``batch_results`` (the most-recent ``/sync/status`` response).
+        // ``currentJobId`` is the authoritative current-sync id from the
+        // trigger. SyncProgressV2 gates ``batch_results`` ingestion on
+        // ``batchResultsJobId === currentJobId`` so stale rows from the
+        // previous run can't leak DONE chips into the new view.
+        batchResultsJobId={syncState.job_id ?? null}
+        currentJobId={syncState.triggered_job_id ?? syncState.job_id ?? null}
         smoothedEtaSeconds={syncState.smoothed_eta_seconds ?? null}
         parseFailureState={syncState.parse_failure_state ?? null}
         totalMessages={syncState.total_messages}

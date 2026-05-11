@@ -75,6 +75,15 @@ interface SyncProgressV2Props {
     [key: string]: unknown;
   };
   batchResults?: BatchResultEntry[];
+  /** The ``job_id`` that the current ``batchResults`` array came from.
+   *  Threaded through so the consumer can gate ingestion against the
+   *  ``currentJobId`` — without this, the brief window between
+   *  triggering a new sync and the new ``sync_jobs`` row landing leaks
+   *  the previous run's done chips into the chip strip. */
+  batchResultsJobId?: string | null;
+  /** The ``job_id`` of the current sync as known to the caller. Used to
+   *  reset sticky accumulators and gate ``batchResults`` ingestion. */
+  currentJobId?: string | null;
   smoothedEtaSeconds?: number | null;
   parseFailureState?: ParseFailureState | null;
   totalMessages?: number;
@@ -1592,6 +1601,8 @@ export function SyncProgressV2({
   events,
   stageDetails,
   batchResults,
+  batchResultsJobId,
+  currentJobId,
   smoothedEtaSeconds,
   parseFailureState,
   totalMessages,
@@ -1658,13 +1669,21 @@ export function SyncProgressV2({
   // flickering as entries evict.
   const stickyResultsRef = useRef<Map<number, BatchResultEntry>>(new Map());
   const lastStartedAtRef = useRef<string | null>(null);
-  // Reset the sticky batch-results accumulator when a new sync starts
-  // (different ``started_at``). The module-level activity-log cache
-  // (``_activityLogCache``) is keyed by ``(channelId, startedAt)`` so
-  // it auto-resets on sync change — no manual cleanup needed.
-  if (lastStartedAtRef.current !== (startedAt ?? null)) {
+  const lastJobIdRef = useRef<string | null>(null);
+  // Reset the sticky batch-results accumulator when a new sync starts —
+  // either a different ``started_at`` OR a different ``currentJobId``.
+  // The job_id check closes the race window where the parent has already
+  // swapped to a new job (via triggerSync optimistic update) but the
+  // first /sync/status poll for the new job hasn't returned yet — the
+  // previous ``started_at`` would otherwise be sticky for one extra
+  // tick, leaking the prior run's batches into the new view.
+  if (
+    lastStartedAtRef.current !== (startedAt ?? null) ||
+    lastJobIdRef.current !== (currentJobId ?? null)
+  ) {
     stickyResultsRef.current = new Map();
     lastStartedAtRef.current = startedAt ?? null;
+    lastJobIdRef.current = currentJobId ?? null;
   }
   // Compute batches summary at the container level so both the activity
   // tab AND the batch-results tab share the same state source.
@@ -1694,21 +1713,33 @@ export function SyncProgressV2({
     for (const bn of stickyResultsRef.current.keys()) {
       s.add(bn);
     }
-    // Source 3: SERVER-PROVIDED ``batch_results`` directly. When the
-    // backend has already accumulated per-batch breakdowns (decoupled
-    // mode writes these to the user-facing channel-row), the sticky
-    // accumulator stays empty because ``derivedBatchResults`` early-
-    // returns ``batchResults`` without populating sticky. Without
-    // reading directly from the server array we'd miss every entry
-    // it provided — caught by UI testing where 11 batches showed
-    // DONE in the Batch Results tab but PENDING in the chip strip.
-    for (const r of batchResults ?? []) {
-      if (typeof r.batch_num === "number") {
-        s.add(r.batch_num);
+    // Source 3: SERVER-PROVIDED ``batch_results`` directly — but ONLY
+    // when the response's ``job_id`` matches the caller's current
+    // ``currentJobId``. Otherwise we risk absorbing the previous sync's
+    // done chips during the brief window after the user clicks "Sync
+    // Channel" but before the new ``sync_jobs`` row lands. The backend
+    // race window leaks the prior run's ``batch_results`` array to
+    // ``/sync/status`` for a few hundred ms; without this gate the
+    // chip strip jumps to DONE before any work has happened.
+    //
+    // When ``currentJobId`` is undefined we preserve the previous
+    // unconditional behaviour for back-compat with tests + callers that
+    // haven't threaded job_id through yet.
+    const jobIdsAligned =
+      currentJobId === undefined ||
+      currentJobId === null ||
+      batchResultsJobId === undefined ||
+      batchResultsJobId === null ||
+      batchResultsJobId === currentJobId;
+    if (jobIdsAligned) {
+      for (const r of batchResults ?? []) {
+        if (typeof r.batch_num === "number") {
+          s.add(r.batch_num);
+        }
       }
     }
     return s;
-  }, [activityLog, batchResults]);
+  }, [activityLog, batchResults, batchResultsJobId, currentJobId]);
   const batchSummaries = useMemo(
     () => summariseBatches(activityLog, totalBatches, batchesCompleted, knownDoneBatchNums),
     [activityLog, totalBatches, batchesCompleted, knownDoneBatchNums],
@@ -1717,7 +1748,19 @@ export function SyncProgressV2({
   const derivedBatchResults = useMemo<BatchResultEntry[]>(() => {
     // Server-provided ``batch_results`` (legacy in-process flow) wins
     // when populated — that path already accumulates server-side.
-    if (batchResults && batchResults.length > 0) return batchResults;
+    // BUT: gate on job_id alignment so we don't render the previous
+    // sync's batch_results during the brief trigger→new-row window.
+    // When job ids are not provided by the caller, fall back to the
+    // legacy unconditional behaviour for back-compat.
+    const jobIdsAlignedHere =
+      currentJobId === undefined ||
+      currentJobId === null ||
+      batchResultsJobId === undefined ||
+      batchResultsJobId === null ||
+      batchResultsJobId === currentJobId;
+    if (jobIdsAlignedHere && batchResults && batchResults.length > 0) {
+      return batchResults;
+    }
     const fresh = deriveBatchResultsFromActivity(activityLog);
     for (const r of fresh) {
       const prev = stickyResultsRef.current.get(r.batch_num);
@@ -1776,7 +1819,7 @@ export function SyncProgressV2({
       };
     });
     return merged;
-  }, [batchResults, activityLog, batchSummaries]);
+  }, [batchResults, batchResultsJobId, currentJobId, activityLog, batchSummaries]);
 
   const batchCount = derivedBatchResults.length;
 

@@ -273,6 +273,29 @@ class MongoDBStore:
         MUST treat missing/None values as owned by the ``"legacy:shared"``
         sentinel.
         """
+        # Defensive: any prior ``running`` row for this channel/kind is
+        # orphaned by construction — a new sync was just triggered.
+        # Mark such rows as ``orphaned`` and clear their ``batch_results`` +
+        # ``batches_completed`` so the brief window between this insert
+        # and the runner stamping the new row can't leak the previous
+        # run's done chips to ``/sync/status``. ``orphaned`` is treated as
+        # a terminal status by ``get_sync_status``'s status filter — it
+        # only prefers ``running`` rows, so an ``orphaned`` row is invisible
+        # to that path.
+        await self._sync_jobs.update_many(
+            {
+                "channel_id": channel_id,
+                "kind": kind,
+                "status": "running",
+            },
+            {
+                "$set": {
+                    "status": "orphaned",
+                    "batch_results": [],
+                    "batches_completed": 0,
+                }
+            },
+        )
         job = SyncJob(
             channel_id=channel_id,
             sync_type=sync_type,
@@ -616,15 +639,34 @@ class MongoDBStore:
         await self._sync_jobs.update_one({"id": job_id}, {"$set": update})
 
     async def get_sync_status(self, channel_id: str) -> SyncJob | None:
-        """Return the most recent SyncJob for the given channel, or None."""
-        doc = await self._sync_jobs.find_one(
+        """Return the active SyncJob for the given channel, or None.
+
+        Prefers the currently-running sync row when one exists. Without
+        this preference, the row returned by ``/sync/status`` during the
+        brief window between trigger and the new ``sync_jobs`` row
+        landing is the *previous* run's completed row — whose
+        ``batch_results`` array then pollutes the frontend's chip strip
+        with stale DONE batches before any new work has been done.
+
+        Falls back to the most-recent row (any status) when no running
+        sync exists so legacy callers reading historical state — e.g.
+        cooldown checks in ``capabilities.sync`` — keep working.
+        """
+        running = await self._sync_jobs.find_one(
+            {"channel_id": channel_id, "kind": "sync", "status": "running"},
+            sort=[("started_at", -1)],
+        )
+        if running is not None:
+            running.pop("_id", None)
+            return SyncJob(**running)
+        latest = await self._sync_jobs.find_one(
             {"channel_id": channel_id},
             sort=[("started_at", -1)],
         )
-        if doc is None:
+        if latest is None:
             return None
-        doc.pop("_id", None)
-        return SyncJob(**doc)
+        latest.pop("_id", None)
+        return SyncJob(**latest)
 
     async def list_recent_activity_log(
         self,
