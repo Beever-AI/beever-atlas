@@ -18,6 +18,7 @@ import { useWikiRefresh, type WikiGenerationStatus } from "@/hooks/useWikiRefres
 import { useWikiVersions } from "@/hooks/useWikiVersions";
 import { useWikiVersion } from "@/hooks/useWikiVersion";
 import { useChannelMemoryCount } from "@/hooks/useChannelMemoryCount";
+import { useRegenerateOverview } from "@/hooks/useRegenerateOverview";
 import { WikiLayout } from "@/components/wiki/WikiLayout";
 import { WikiHealthToolbar } from "@/components/wiki/WikiHealthToolbar";
 import { SegmentedToggle } from "@/components/shared/SegmentedToggle";
@@ -462,6 +463,120 @@ function WikiEmptyState({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Format an elapsed-seconds count as a compact human-readable string.
+ *  Under 60s → "Xs"; under an hour → "Xm Ys"; otherwise → "Xh Ym".
+ *  Used by the overview-wiki in-flight screen to show "Elapsed: 3m 42s"
+ *  ticking live so the user knows the build is still alive and roughly
+ *  when they can reasonably expect to retry. */
+function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `${m}m ${rem}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+interface OverviewInFlightStateProps {
+  channelId: string | undefined;
+  description: string;
+  startedAt?: string;
+}
+
+/** In-flight loading screen for the auto-overview build with a live
+ *  elapsed-time counter and graduated retry affordances:
+ *    * elapsed > 3 min → subdued "Taking longer than usual. Retry?" link
+ *    * elapsed > 10 min → prominent "Retry overview generation" button
+ *
+ *  Falls back gracefully when ``startedAt`` is missing (legacy
+ *  backends) — renders the description without a number and surfaces
+ *  the Retry button immediately so the user is never trapped. */
+function OverviewInFlightState({
+  channelId,
+  description,
+  startedAt,
+}: OverviewInFlightStateProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const startedMs = useMemo(() => {
+    if (!startedAt) return null;
+    const t = Date.parse(startedAt);
+    return Number.isFinite(t) ? t : null;
+  }, [startedAt]);
+
+  const elapsedSeconds =
+    startedMs !== null ? Math.max(0, Math.round((nowMs - startedMs) / 1000)) : null;
+
+  const showSubduedRetry = elapsedSeconds !== null && elapsedSeconds > 180;
+  const showProminentRetry =
+    elapsedSeconds === null || elapsedSeconds > 600;
+
+  const {
+    isPending: isRetryPending,
+    error: retryError,
+    succeeded: retrySucceeded,
+    regenerate,
+  } = useRegenerateOverview(channelId);
+
+  const onRetry = useCallback(() => {
+    void regenerate();
+  }, [regenerate]);
+
+  return (
+    <PipelineEmptyState
+      icon={BookOpen}
+      title="Generating overview wiki…"
+      description={
+        elapsedSeconds !== null
+          ? `${description} Elapsed: ${formatElapsed(elapsedSeconds)}.`
+          : `${description} The build has been running for a while.`
+      }
+      steps={[
+        { label: "Sync channel", icon: FolderSync, done: true, active: false },
+        { label: "Build memories", icon: Sparkles, done: true, active: false },
+        { label: "Generate wiki", icon: BookOpen, done: false, active: true },
+      ]}
+    >
+      {retrySucceeded && (
+        <p className="text-xs text-emerald-600 dark:text-emerald-500">
+          Restarted — give it a few moments.
+        </p>
+      )}
+      {retryError && (
+        <p className="text-xs text-red-600 dark:text-red-500">
+          {retryError.message}
+        </p>
+      )}
+      {showProminentRetry ? (
+        <Button
+          size="lg"
+          onClick={onRetry}
+          disabled={isRetryPending}
+          className="px-5"
+        >
+          <RefreshCw className={isRetryPending ? "animate-spin" : ""} />
+          {isRetryPending ? "Restarting…" : "Retry overview generation"}
+        </Button>
+      ) : showSubduedRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={isRetryPending}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          {isRetryPending ? "Restarting…" : "Taking longer than usual. Retry?"}
+        </button>
+      ) : null}
+    </PipelineEmptyState>
   );
 }
 
@@ -1035,21 +1150,18 @@ export function WikiTab() {
 
     // ``in_flight`` — auto-overview wiki is being generated right now.
     // Hide the manual Generate button (redundant) and the "Sync now"
-    // CTA (sync already happened) — render a spinner-only state.
+    // CTA (sync already happened). The OverviewInFlightState renders a
+    // live elapsed-time counter and a graduated Retry affordance so a
+    // hung upstream call doesn't trap the user on this screen forever.
     if (overviewState === "in_flight") {
       return (
-        <PipelineEmptyState
-          icon={BookOpen}
-          title="Generating overview wiki…"
+        <OverviewInFlightState
+          channelId={channelId}
           description={
             overviewPhase?.last_event_label ??
             "Beever Atlas is auto-generating the overview wiki for this channel."
           }
-          steps={[
-            { label: "Sync channel", icon: FolderSync, done: true, active: false },
-            { label: "Build memories", icon: Sparkles, done: true, active: false },
-            { label: "Generate wiki", icon: BookOpen, done: false, active: true },
-          ]}
+          startedAt={overviewPhase?.started_at}
         />
       );
     }

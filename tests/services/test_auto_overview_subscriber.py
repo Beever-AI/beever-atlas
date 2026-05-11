@@ -10,6 +10,7 @@ require a real MongoDB / Weaviate / LLM.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -295,6 +296,72 @@ async def test_inflight_slot_released_on_generator_failure() -> None:
     await sub.on_extraction_done("C123", ["f1"])
 
     assert "C123" not in sub._inflight
+
+
+@pytest.mark.asyncio
+async def test_attempted_cleared_on_exception() -> None:
+    """A generator exception must ALSO clear ``_attempted`` so the API
+    returns to a pending state and the UI Retry button can re-fire.
+
+    Regression: prior to the timeout-fix this set was sticky-on-success-
+    only, which trapped the loading screen until process restart when
+    the generator raised."""
+
+    async def failing_generator(channel_id: str, language: str) -> None:
+        raise RuntimeError("LLM quota exhausted")
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=failing_generator),
+    )
+
+    await sub.on_extraction_done("C123", ["f1"])
+
+    assert "C123" not in sub._attempted
+    assert sub.is_inflight("C123") is False
+
+
+@pytest.mark.asyncio
+async def test_attempted_cleared_on_timeout(monkeypatch) -> None:
+    """A generator that runs past ``_GENERATION_TIMEOUT_SECONDS`` must
+    log + clear ``_attempted`` so the UI Retry button works."""
+
+    async def slow_generator(channel_id: str, language: str) -> None:
+        await asyncio.sleep(5)
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=slow_generator),
+    )
+    # Force a tiny timeout for the test so we don't actually wait 10 minutes.
+    monkeypatch.setattr(sub, "_GENERATION_TIMEOUT_SECONDS", 0.05)
+
+    await sub.on_extraction_done("C123", ["f1"])
+
+    assert "C123" not in sub._inflight
+    assert "C123" not in sub._attempted
+    assert sub.is_inflight("C123") is False
+
+
+@pytest.mark.asyncio
+async def test_force_reset_clears_both_sets() -> None:
+    """``force_reset`` must clear both ``_inflight`` and ``_attempted``
+    so the regenerate endpoint can return the channel to a pending
+    state for a clean re-trigger."""
+    sub = AutoOverviewSubscriber()
+    sub._inflight.add("C123")
+    sub._attempted["C123"] = datetime.now(tz=UTC)
+
+    assert sub.is_inflight("C123") is True
+
+    sub.force_reset("C123")
+
+    assert "C123" not in sub._inflight
+    assert "C123" not in sub._attempted
+    assert sub.is_inflight("C123") is False
+    assert sub.attempted_started_at("C123") is None
 
 
 @pytest.mark.asyncio

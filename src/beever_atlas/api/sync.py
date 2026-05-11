@@ -428,6 +428,11 @@ async def _safe_overview_state(stores: Any, channel_id: str) -> dict[str, Any]:
         subscriber = get_auto_overview_subscriber()
         if subscriber is not None and subscriber.is_inflight(channel_id):
             out["state"] = "in_flight"
+            # Surface the attempt start-time so the frontend can render
+            # elapsed seconds + a Retry button if the build hangs.
+            started_at = subscriber.attempted_started_at(channel_id)
+            if started_at is not None:
+                out["started_at"] = started_at.isoformat()
             return out
     except Exception:  # noqa: BLE001
         pass
@@ -577,7 +582,18 @@ def _compose_phases(
     overview_state_str = str(overview_state.get("state", "pending"))
     if extract_state in ("pending", "in_flight") and overview_state_str == "in_flight":
         overview_state_str = "pending"
-    phases.append({"name": "overview_wiki", "state": overview_state_str})
+    overview_entry: dict[str, Any] = {
+        "name": "overview_wiki",
+        "state": overview_state_str,
+    }
+    # Surface the subscriber's attempt-start ISO timestamp when the
+    # phase is genuinely in-flight so the WikiTab can render a live
+    # elapsed-time stamp and a Retry button if the build hangs.
+    if overview_state_str == "in_flight":
+        started_at = overview_state.get("started_at")
+        if isinstance(started_at, str) and started_at:
+            overview_entry["started_at"] = started_at
+    phases.append(overview_entry)
 
     return phases
 

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,12 @@ class AutoOverviewSubscriber:
     :meth:`ExtractionWorker.subscribe_extraction_done`. Stateless aside
     from the in-flight set used for idempotency.
     """
+
+    # Generous-enough that genuine slow Gemini builds complete on big
+    # channels, tight enough that a hung upstream call doesn't pin the
+    # UI's loading screen for hours. Class constant for now — future:
+    # promote to Settings if operators need per-deployment tuning.
+    _GENERATION_TIMEOUT_SECONDS = 600
 
     def __init__(
         self,
@@ -102,16 +109,15 @@ class AutoOverviewSubscriber:
         # released in ``on_extraction_done``'s finally block so a
         # crashed generator does not permanently lock the channel.
         self._inflight: set[str] = set()
-        # Channels that have ever STARTED an overview generation in
-        # this process. Used by ``is_inflight`` so the ``/sync/status``
-        # endpoint reports ``in_flight`` continuously across the
-        # subscriber's transient enter/exit cycles (e.g., when the
-        # generator returns without persisting the row yet, or when
-        # multiple memory_settled events trigger re-attempts). Cleared
-        # only on confirmed success — see ``_clear_attempted_on_success``.
-        # Without this, the API flickers ``in_flight → pending`` between
-        # attempts, violating the forward-only UI state machine.
-        self._attempted: set[str] = set()
+        # Channels that have STARTED an overview generation in this
+        # process, keyed by channel_id with the UTC start-time as the
+        # value. The value lets the API surface "elapsed since attempt
+        # began" so the frontend can render a live timer + retry button
+        # if the build hangs. Cleared on terminal failure (so the user
+        # can retry through the regenerate endpoint) AND naturally
+        # superseded on success by the overview-row existence check
+        # (``_safe_overview_state``) which short-circuits this signal.
+        self._attempted: dict[str, datetime] = {}
         # Lazy-init so the constructor stays event-loop-free and
         # importable from non-async test fixtures (matches the
         # ``ExtractionWorker._semaphore`` pattern).
@@ -197,8 +203,11 @@ class AutoOverviewSubscriber:
             # keeps reporting True between the moment the generator returns
             # and the moment the wiki_pages overview row appears — closing
             # the API-flicker window observed by test_pipeline_design.
-            self._attempted.add(channel_id)
+            # Persist a UTC start-time so the API can surface elapsed
+            # seconds to the user (retry-after-timeout UX).
+            self._attempted[channel_id] = datetime.now(tz=UTC)
 
+        terminal_failure = False
         try:
             language = await self._resolve_language(channel_id)
             logger.info(
@@ -206,13 +215,25 @@ class AutoOverviewSubscriber:
                 channel_id,
                 language,
             )
-            await self._generate_overview(channel_id, language)
+            await asyncio.wait_for(
+                self._generate_overview(channel_id, language),
+                timeout=self._GENERATION_TIMEOUT_SECONDS,
+            )
             logger.info(
                 "AutoOverviewSubscriber: overview generation completed channel=%s language=%s",
                 channel_id,
                 language,
             )
-        except Exception:  # noqa: BLE001 — never propagate; manual Generate is the recovery path
+        except asyncio.TimeoutError:
+            terminal_failure = True
+            logger.error(
+                "AutoOverviewSubscriber: generation timed out after %ds channel=%s — "
+                "clearing attempted so the user can retry",
+                self._GENERATION_TIMEOUT_SECONDS,
+                channel_id,
+            )
+        except Exception:  # noqa: BLE001 — never propagate; manual retry is the recovery path
+            terminal_failure = True
             logger.exception(
                 "AutoOverviewSubscriber: generation failed channel=%s",
                 channel_id,
@@ -220,15 +241,15 @@ class AutoOverviewSubscriber:
         finally:
             async with lock:
                 self._inflight.discard(channel_id)
-                # Note: _attempted is intentionally NOT cleared here.
-                # The /sync/status overview-row check ``_overview_exists``
-                # will return ``done`` once the wiki_pages row lands,
-                # which takes priority over our ``in_flight`` signal.
-                # If generation failed without persisting, the channel
-                # stays ``in_flight`` from the API perspective until a
-                # successful retry — preferable to the prior flicker
-                # because it correctly says "we tried and we're still
-                # working on it" rather than oscillating to ``pending``.
+                # _attempted is cleared on terminal failure so the API
+                # can return to a pending state and the user can retry.
+                # On success, _attempted is cleared elsewhere (the
+                # overview-row existence check in ``_safe_overview_state``
+                # makes the sticky in_flight redundant once the row
+                # lands). Without this, a hung Gemini call would pin the
+                # UI on the loading screen until process restart.
+                if terminal_failure:
+                    self._attempted.pop(channel_id, None)
 
     # ------------------------------------------------------------------
     # Internals (override-able for tests)
@@ -444,6 +465,32 @@ class AutoOverviewSubscriber:
         machine the UI assumes.
         """
         return channel_id in self._inflight or channel_id in self._attempted
+
+    def attempted_started_at(self, channel_id: str) -> datetime | None:
+        """Return the UTC datetime when the current attempt began, or None.
+
+        Used by ``/sync/status`` to surface ``overview_wiki.started_at``
+        so the frontend can render a live elapsed-time stamp and decide
+        when to expose a Retry button.
+        """
+        return self._attempted.get(channel_id)
+
+    def force_reset(self, channel_id: str) -> None:
+        """Drop the channel from BOTH the in-flight and attempted sets.
+
+        Backs the ``POST /wiki/regenerate-overview`` recovery endpoint.
+        After this call the channel is in a clean "pending" state — a
+        subsequent ``on_extraction_done`` will pass the in-flight gate
+        and re-trigger generation. Synchronous (no await) so the API
+        handler can fire it under a regular request lifecycle.
+        """
+        # The asyncio.Lock would otherwise need to be acquired here, but
+        # both ``set.discard`` and ``dict.pop`` are atomic under CPython
+        # GIL, and the API handler doesn't run inside the subscriber's
+        # event-handler context anyway. Skipping the await keeps the
+        # endpoint synchronous-ish (no extra suspension point).
+        self._inflight.discard(channel_id)
+        self._attempted.pop(channel_id, None)
 
 
 # ----------------------------------------------------------------------

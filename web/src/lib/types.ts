@@ -253,6 +253,11 @@ export interface Phase {
    *  Used by the activity feed when ``recent_events`` is not yet
    *  populated. */
   last_event_label?: string;
+  /** ISO-8601 UTC timestamp of when this phase's current attempt
+   *  started. Currently emitted for ``overview_wiki`` in the
+   *  ``in_flight`` state so the WikiTab can render an elapsed-time
+   *  stamp and a Retry button if the build hangs. */
+  started_at?: string;
 }
 
 export interface RecentEvent {

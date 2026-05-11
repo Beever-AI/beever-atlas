@@ -413,6 +413,52 @@ async def get_wiki_status(
     return status
 
 
+@router.post("/regenerate-overview", status_code=202)
+async def regenerate_overview(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict:
+    """Force-restart a stuck auto-overview build.
+
+    Backs the WikiTab "Retry overview generation" affordance shown when
+    the loading screen has been stuck for too long (e.g. a hung Gemini
+    call upstream of the subscriber's timeout). The handler is
+    idempotent — calling it while a build is genuinely running will
+    drop the in-flight state but the subscriber's gate-check inside
+    ``on_extraction_done`` re-verifies before scheduling new work, so
+    two parallel builds cannot fire from a fat-fingered double-click.
+    """
+    await assert_channel_access(principal, channel_id)
+    from beever_atlas.services.auto_overview_subscriber import (
+        get_auto_overview_subscriber,
+    )
+
+    subscriber = get_auto_overview_subscriber()
+    if subscriber is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AutoOverviewSubscriber not initialised — restart the worker.",
+        )
+
+    logger.info(
+        "wiki_regenerate_overview principal=%s channel=%s — force_reset + re-trigger",
+        getattr(principal, "id", "unknown"),
+        channel_id,
+    )
+    subscriber.force_reset(channel_id)
+    # Re-trigger generation as a fire-and-forget task. The empty
+    # fact_ids list is fine — the gate logic doesn't require facts to
+    # act, it only cares about the extraction-done / overview-row /
+    # threshold gates. ``on_extraction_done`` awaits the full build
+    # inline (multi-minute), so we must NOT await it here or the
+    # endpoint would block the user's retry click for the entire
+    # rebuild.
+    import asyncio as _asyncio
+
+    _asyncio.create_task(subscriber.on_extraction_done(channel_id, fact_ids=[]))
+    return {"status": "triggered", "channel_id": channel_id}
+
+
 @router.post("/refresh", status_code=202)
 async def refresh_wiki(
     channel_id: str,
