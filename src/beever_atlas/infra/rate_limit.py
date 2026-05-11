@@ -8,11 +8,6 @@ Exports the lazy AsyncLimiter singletons used by the ingestion pipeline:
   * ``GEMINI_LIMITER``    — chat / extraction calls.
   * ``EMBEDDING_LIMITER`` — provider-agnostic embedding calls (built on
     LiteLLM via ``llm.embeddings.embed_texts``).
-  * ``JINA_LIMITER``      — DEPRECATED alias for ``EMBEDDING_LIMITER``.
-    Retained for one release so out-of-tree imports don't break.
-
-Per-provider RPM is sourced from ``settings.embedding_rpm`` (which falls
-back to the legacy ``jina_rpm`` when only the legacy env is set).
 """
 
 from __future__ import annotations
@@ -74,7 +69,3 @@ class _LazyLimiter:
 
 GEMINI_LIMITER: _LazyLimiter = _LazyLimiter(_get_gemini_limiter)
 EMBEDDING_LIMITER: _LazyLimiter = _LazyLimiter(_get_embedding_limiter)
-
-# DEPRECATED — kept for one release. Points at the same lazy limiter as
-# ``EMBEDDING_LIMITER``; remove in v0.3 once external imports have updated.
-JINA_LIMITER: _LazyLimiter = EMBEDDING_LIMITER

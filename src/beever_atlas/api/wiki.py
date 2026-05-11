@@ -429,15 +429,6 @@ async def refresh_wiki(
             "Each value maps to a distinct user-facing button."
         ),
     ),
-    restructure: bool = Query(
-        default=False,
-        description=(
-            "[DEPRECATED — use ``mode`` instead] When true, force the "
-            "structure planner to run. Kept for backward compat with "
-            "callers still on the legacy ``?restructure=true`` flag — "
-            "treated as ``mode=reorganize``."
-        ),
-    ),
     force: bool = Query(
         default=False,
         description=(
@@ -451,19 +442,14 @@ async def refresh_wiki(
 ) -> dict:
     """Trigger async wiki generation for a channel.
 
-    ``mode`` is the new contract; ``restructure`` is kept as a legacy
-    alias for backward compat. When both are supplied, ``mode`` wins.
-    Unknown ``mode`` values fall back to ``update`` (defensive default
-    so a stale frontend never escalates a request unintentionally).
+    Unknown ``mode`` values fall back to ``update`` (defensive default so
+    a stale frontend never escalates a request unintentionally).
     """
     await assert_channel_access(principal, channel_id)
     from beever_atlas.wiki.builder import WikiBuilder
 
-    # Resolve effective mode. Legacy ``restructure=true`` → reorganize.
     valid_modes = {"update", "reorganize", "rebuild"}
     effective_mode = mode if mode in valid_modes else "update"
-    if effective_mode == "update" and restructure:
-        effective_mode = "reorganize"
 
     stores = get_stores()
     cache = _get_cache()
@@ -533,7 +519,6 @@ async def refresh_wiki(
         "status": "started",
         "channel_id": channel_id,
         "mode": effective_mode,
-        "restructure": force_restructure,
         "force_recompile": force_recompile,
     }
 

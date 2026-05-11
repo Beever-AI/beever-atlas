@@ -686,6 +686,23 @@ class ExtractionWorker:
             return 0, 0
 
         sync_job_id = f"worker:{channel_id}:{int(time.time() * 1000)}"
+        # Read the user-facing sync_jobs row's ``batches_completed`` once
+        # per tick to use as the global ``batch_index_offset``. Without
+        # this, every worker tick restarts batch_idx at 1, so the UI's
+        # batch chips churn (Batch 1 in tick A is different messages than
+        # Batch 1 in tick B). The offset shifts this tick's internal
+        # batches to global positions ``offset+1..offset+K``.
+        try:
+            batch_index_offset = (
+                await stores.mongodb.get_user_facing_batches_completed(channel_id)
+            )
+        except Exception:
+            logger.exception(
+                "ExtractionWorker: failed to read batches_completed offset "
+                "channel=%s — defaulting to 0",
+                channel_id,
+            )
+            batch_index_offset = 0
         started = time.monotonic()
         try:
             result = await self._batch_processor.process_messages(
@@ -694,6 +711,7 @@ class ExtractionWorker:
                 channel_name=channel_name,
                 sync_job_id=sync_job_id,
                 ingestion_config=None,
+                batch_index_offset=batch_index_offset,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
@@ -708,6 +726,46 @@ class ExtractionWorker:
             return 0, len(valid_keys)
 
         duration_ms = int((time.monotonic() - started) * 1000)
+        # Advance the user-facing row's global ``batches_completed`` by the
+        # number of sub-batches this tick produced. This keeps the BATCHES
+        # tile's numerator monotonically increasing across ticks AND seeds
+        # the next tick's ``batch_index_offset`` so global numbering stays
+        # contiguous. Counts both succeeded and failed sub-batches — they
+        # consumed a batch slot either way.
+        try:
+            tick_breakdowns = list(
+                getattr(result, "batch_breakdowns", None) or []
+            )
+            tick_batch_count = len(tick_breakdowns)
+            if tick_batch_count > 0:
+                await stores.mongodb.increment_batches_completed_for_channel(
+                    channel_id=channel_id, count=tick_batch_count
+                )
+                # Also persist the per-batch breakdowns (facts_count,
+                # entities_count, sample_facts, etc.) to the user-facing
+                # row so the UI MetricsBar + Batch Results panel see
+                # authoritative numbers that don't decay as activity_log
+                # entries evict from the $slice buffer.
+                from dataclasses import asdict as _asdict
+
+                breakdown_dicts: list[dict[str, Any]] = []
+                for bd in tick_breakdowns:
+                    try:
+                        breakdown_dicts.append(_asdict(bd))
+                    except Exception:  # noqa: BLE001 — bd may already be a dict
+                        if isinstance(bd, dict):
+                            breakdown_dicts.append(bd)
+                if breakdown_dicts:
+                    await stores.mongodb.append_batch_results_for_channel(
+                        channel_id=channel_id,
+                        batch_results=breakdown_dicts,
+                    )
+        except Exception:
+            logger.exception(
+                "ExtractionWorker: failed to advance global batches_completed "
+                "channel=%s — next tick's batch_idx may overlap",
+                channel_id,
+            )
         if result.errors:
             # Phase 1.1 / Task 2.1.3 — per-sub-batch attribution (decision
             # D1). Walk the BatchBreakdowns and partition ``valid_keys``

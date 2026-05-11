@@ -16,10 +16,8 @@ export interface SyncState {
   total_messages?: number;
   parent_messages?: number;
   processed_messages?: number;
-  current_batch?: number;
   total_batches?: number;
   batches_completed?: number;
-  current_stage?: string | null;
   stage_timings?: Record<string, number>;
   stage_details?: {
     activity_log?: import("@/lib/types").ActivityEntry[];
@@ -159,10 +157,8 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
           total_messages: status.total_messages,
           parent_messages: status.parent_messages,
           processed_messages: status.processed_messages,
-          current_batch: status.current_batch,
           total_batches: status.total_batches,
           batches_completed: status.batches_completed,
-          current_stage: status.current_stage,
           stage_timings: status.stage_timings,
           stage_details: status.stage_details,
           batch_results: status.batch_results,
@@ -271,7 +267,16 @@ export function useSync(channelId: string, connectionId?: string | null): UseSyn
   useEffect(() => {
     if (!channelId) return;
     void pollStatus().then((status) => {
-      if (status?.state === "syncing") {
+      if (!status) return;
+      // Start polling whenever there's live pipeline activity. Under the
+      // decoupled flow the sync HTTP returns immediately (state = idle)
+      // but the background worker keeps processing, so we must keep
+      // polling as long as ANY phase is still in_flight — otherwise the
+      // UI shows a frozen snapshot and the user has to hard-refresh.
+      const phasesInFlight = (status.phases ?? []).some(
+        (p) => p.state === "in_flight",
+      );
+      if (status.state === "syncing" || phasesInFlight) {
         startPolling();
       }
     });

@@ -485,10 +485,13 @@ class Settings(BaseSettings):
     # runs the 6-stage ADK pipeline asynchronously. This is the primary
     # lever that makes a Gemini 503 storm survivable — sync (fetch + persist)
     # finishes in seconds; extraction proceeds in the background and retries
-    # with exponential backoff. Default OFF — staging soak (48 h) before
-    # flipping in production. Rollback is reversible: flipping OFF returns to
-    # inline extraction; the worker idles harmlessly with no rows to claim.
-    decouple_extraction: bool = Field(default=False, alias="DECOUPLE_EXTRACTION")
+    # with exponential backoff. Default ON — the durable channel_messages
+    # queue makes uvicorn restarts, worker crashes, and Gemini outages
+    # recoverable without re-fetching from the source. Flip OFF only for
+    # CI tests that need single-process determinism, or local dev sessions
+    # where you Ctrl-C uvicorn often and want to avoid orphan extracting
+    # rows (the stale-sweep recovers them in 5 min either way).
+    decouple_extraction: bool = Field(default=True, alias="DECOUPLE_EXTRACTION")
 
     # Tuning knobs (worker tick interval, stale-recovery window, max
     # retries, breaker cooldown, LLM failover enablement, fallback

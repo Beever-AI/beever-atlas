@@ -85,9 +85,21 @@ def _compute_build_input_hash(gathered: dict) -> str:
     cs = gathered.get("channel_summary")
     if cs is not None:
         parts.append(f"summary_facts={getattr(cs, 'fact_count', 0)}")
-        parts.append(
-            "glossary=" + ",".join(sorted(getattr(cs, "glossary_terms", None) or []))
+        # ``glossary_terms`` shape changed from ``list[str]`` (legacy
+        # extraction schema) to ``list[GlossaryTerm]`` (consolidation
+        # schema) — and Weaviate deserialises whatever JSON was last
+        # written. Coerce to comparable strings before sorting so the
+        # hash works regardless of which shape is in flight.
+        def _glossary_key(t):
+            if isinstance(t, str):
+                return t
+            if isinstance(t, dict):
+                return str(t.get("term") or "")
+            return str(getattr(t, "term", "") or "")
+        _glossary_keys = sorted(
+            _glossary_key(t) for t in (getattr(cs, "glossary_terms", None) or [])
         )
+        parts.append("glossary=" + ",".join(_glossary_keys))
     decisions = gathered.get("decisions") or []
     parts.append(
         "decisions="

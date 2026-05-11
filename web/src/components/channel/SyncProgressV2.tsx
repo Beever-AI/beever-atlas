@@ -38,9 +38,12 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   FileText,
   Loader2,
+  Search,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -76,6 +79,8 @@ interface SyncProgressV2Props {
   parseFailureState?: ParseFailureState | null;
   totalMessages?: number;
   processedMessages?: number;
+  totalBatches?: number;
+  batchesCompleted?: number;
   startedAt?: string | null;
   retrying?: number;
   abandoned?: number;
@@ -88,6 +93,40 @@ const PHASE_DISPLAY_ORDER: Array<{ name: PhaseName; label: string }> = [
   { name: "overview_wiki", label: "Done" },
 ];
 
+// ───────────────────────────────────────────────────────────────────────
+// Tiny localStorage-backed state hook.
+// Persists across page navigations and reloads so the monitor remembers
+// the user's last collapse / filter choices.
+// ───────────────────────────────────────────────────────────────────────
+function useLocalStorageState<T>(
+  key: string,
+  initialValue: T,
+): [T, (value: T | ((prev: T) => T)) => void] {
+  const [value, setValueRaw] = useState<T>(() => {
+    if (typeof window === "undefined") return initialValue;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) return initialValue;
+      return JSON.parse(raw) as T;
+    } catch {
+      return initialValue;
+    }
+  });
+  const setValue = (next: T | ((prev: T) => T)) => {
+    setValueRaw((prev) => {
+      const resolved =
+        typeof next === "function" ? (next as (p: T) => T)(prev) : next;
+      try {
+        window.localStorage.setItem(key, JSON.stringify(resolved));
+      } catch {
+        // Quota exceeded or storage disabled — degrade silently.
+      }
+      return resolved;
+    });
+  };
+  return [value, setValue];
+}
+
 function deriveActivePhase(
   state: "idle" | "syncing" | "error",
   phases: Phase[],
@@ -95,9 +134,12 @@ function deriveActivePhase(
   if (state === "error") return "error";
   const byName = (n: PhaseName) => phases.find((p) => p.name === n);
   if (phases.some((p) => p.state === "failed")) return "error";
-  if (byName("fetched")?.state === "in_flight" || state === "syncing") {
-    return "syncing";
-  }
+  // Phases waterfall is the single source of truth — the previous
+  // ``|| state === "syncing"`` shortcut caused the header to say
+  // "Fetching messages" forever, even after fetch had completed and
+  // extraction was in flight. Walk the phases in order and return the
+  // first one that's actually ``in_flight``.
+  if (byName("fetched")?.state === "in_flight") return "syncing";
   if (byName("extracting")?.state === "in_flight") return "extracting";
   if (
     byName("wiki_maintenance")?.state === "in_flight" ||
@@ -105,6 +147,10 @@ function deriveActivePhase(
   ) {
     return "building";
   }
+  // Fallback: if the API still says ``syncing`` but no phase is
+  // in_flight yet (sub-second window between fetch start and the first
+  // status poll), assume we're in the fetch phase.
+  if (state === "syncing") return "syncing";
   return "done";
 }
 
@@ -156,12 +202,21 @@ interface StepperDotProps {
 function StepperDot({ state, label, isLast }: StepperDotProps) {
   return (
     <div className="flex items-center gap-2 flex-1 min-w-0">
-      <div className="flex flex-col items-center gap-1 shrink-0">
+      <div className="flex flex-col items-center gap-1 shrink-0 relative">
+        {/* Outer ripple ring — visible only when active. Heavier than the
+         *  built-in ``animate-pulse`` so the user can see the dot is
+         *  actually doing work, not just static art. */}
+        {state === "active" && (
+          <span
+            className="absolute -inset-2 rounded-full bg-primary/20 animate-ping"
+            style={{ animationDuration: "1.6s" }}
+            aria-hidden="true"
+          />
+        )}
         <div
           className={cn(
-            "w-2.5 h-2.5 rounded-full transition-colors duration-300 shrink-0",
-            state === "active" &&
-              "bg-primary ring-2 ring-primary/30 animate-pulse",
+            "w-3 h-3 rounded-full transition-colors duration-300 shrink-0 relative",
+            state === "active" && "bg-primary ring-2 ring-primary/40",
             state === "done" && "bg-emerald-500",
             state === "failed" && "bg-red-500",
             state === "pending" && "bg-muted-foreground/30",
@@ -170,7 +225,7 @@ function StepperDot({ state, label, isLast }: StepperDotProps) {
         <span
           className={cn(
             "text-[10px] uppercase tracking-wide whitespace-nowrap",
-            state === "active" && "text-primary font-medium",
+            state === "active" && "text-primary font-semibold",
             state === "done" && "text-emerald-600 dark:text-emerald-400",
             state === "failed" && "text-red-500",
             state === "pending" && "text-muted-foreground/60",
@@ -182,12 +237,22 @@ function StepperDot({ state, label, isLast }: StepperDotProps) {
       {!isLast && (
         <div
           className={cn(
-            "flex-1 h-px transition-colors duration-300 min-w-[20px]",
+            "flex-1 h-px transition-colors duration-300 min-w-[20px] relative overflow-hidden",
             state === "done"
               ? "bg-emerald-500/40"
               : "bg-muted-foreground/20",
           )}
-        />
+        >
+          {/* Active stepper segment — moving shimmer to signal "in motion".
+           *  We approximate the look using two overlaid gradients on the
+           *  next-stage segment when the current is active. */}
+          {state === "active" && (
+            <span
+              aria-hidden="true"
+              className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/60 to-transparent animate-stepper-shimmer"
+            />
+          )}
+        </div>
       )}
     </div>
   );
@@ -346,65 +411,58 @@ interface PipelineMetrics {
 function deriveMetrics(
   events: RecentEvent[],
   activityLog: ActivityEntry[],
-  phases: Phase[],
+  stickyResults: BatchResultEntry[],
+  jobTotalBatches?: number,
+  jobBatchesCompleted?: number,
 ): PipelineMetrics {
-  // Total batches: prefer ``phases.extracting.total`` (authoritative);
-  // otherwise infer from the max ``batch_idx`` seen in activity_log.
-  const extractPhase = phases.find((p) => p.name === "extracting");
-  const totalFromPhase = extractPhase?.total ?? 0;
-  const maxBatchIdx = activityLog.reduce(
-    (m, e) => Math.max(m, (e.batch_idx ?? 0)),
+  // Total + done counts come from the user-facing sync_jobs row, but
+  // SyncRunner's ``total_batches`` is just an ESTIMATE based on a fixed
+  // batch size, while ExtractionWorker actually produces a different
+  // (usually larger) number of token-aware batches per tick. So the
+  // ``done`` counter can legitimately exceed the static ``total``,
+  // producing weird displays like "21/15". Clamp the denominator to be
+  // at least ``done`` so the fraction stays sensible monotonically:
+  // 5/15 → 9/15 → 14/15 → 21/21.
+  const maxBatchIdxSeen = activityLog.reduce(
+    (m, e) => Math.max(m, e.batch_idx ?? 0),
     0,
   );
+  const batchesDone = jobBatchesCompleted ?? 0;
   const totalBatches = Math.max(
-    totalFromPhase,
-    maxBatchIdx > 0 ? maxBatchIdx : 0,
+    jobTotalBatches ?? 0,
+    batchesDone,
+    maxBatchIdxSeen,
   );
 
-  // Per-batch state: a batch is "done" when a persister stage_output
-  // entry exists for it; "in_flight" when there's any stage_start but
-  // no persister output yet.
-  const batchHasPersisterDone = new Map<number, boolean>();
-  const batchHasStart = new Set<number>();
-  for (const e of activityLog) {
-    const idx = e.batch_idx;
-    if (idx == null) continue;
-    if (e.type === "stage_start") {
-      batchHasStart.add(idx);
-    } else if (
-      e.type === "stage_output" &&
-      e.agent === "persister"
-    ) {
-      batchHasPersisterDone.set(idx, true);
-    }
-  }
-  const batchesDone = Array.from(batchHasPersisterDone.values()).filter(
-    Boolean,
-  ).length;
+  // In-flight: highest batch_idx observed minus done count. Using
+  // server-side ``batchesDone`` keeps the floor honest even after older
+  // stage_outputs evict from the activity_log buffer.
   const batchesInFlight = Math.max(
     0,
-    batchHasStart.size - batchesDone,
+    Math.min(
+      maxBatchIdxSeen - batchesDone,
+      Math.max(0, totalBatches - batchesDone),
+    ),
   );
 
-  // Aggregate fact / entity / embedding counts from stage_output metrics.
+  // Aggregate fact / entity / embedded / media counts from the STICKY
+  // batch-results accumulator (kept by SyncProgressV2 across polls).
+  // The previous implementation summed across raw ``activity_log`` —
+  // but that log is server-side ``$slice``-capped, so as the sync
+  // progresses, old stage_outputs evict and the tile counters
+  // appeared to DROP. Sticky aggregation keeps the totals monotonic
+  // for the entire sync session.
   let totalFacts = 0;
   let totalEntities = 0;
   let totalRelationships = 0;
   let totalEmbedded = 0;
   let totalMediaEnriched = 0;
-  for (const e of activityLog) {
-    if (e.type !== "stage_output") continue;
-    const m = e.metrics ?? {};
-    if (e.agent === "fact_extractor") {
-      totalFacts += Number(m.count ?? 0);
-    } else if (e.agent === "entity_extractor") {
-      totalEntities += Number(m.entities ?? 0);
-      totalRelationships += Number(m.relationships ?? 0);
-    } else if (e.agent === "embedder") {
-      totalEmbedded += Number(m.embedded ?? 0);
-    } else if (e.agent === "preprocessor") {
-      totalMediaEnriched += Number(m.media_enriched ?? 0);
-    }
+  for (const r of stickyResults) {
+    totalFacts += r.facts_count;
+    totalEntities += r.entities_count;
+    totalRelationships += r.relationships_count;
+    totalEmbedded += r.embedded_count ?? 0;
+    totalMediaEnriched += r.media_count ?? 0;
   }
 
   // Also count message_processing events from the recent_events ring
@@ -456,12 +514,27 @@ function MetricBadge({ label, value, detail, accent = "default" }: MetricBadgePr
     amber: "text-amber-500",
     sky: "text-sky-500",
   };
+  // Detect when the displayed value changes from the previous render so
+  // we can flash a brief highlight on the tile — gives the user a
+  // visual cue that a metric just updated, instead of numbers silently
+  // ticking up.
+  const prevValueRef = useRef<number | string | null>(null);
+  const [flashKey, setFlashKey] = useState(0);
+  useEffect(() => {
+    if (prevValueRef.current !== null && prevValueRef.current !== value) {
+      setFlashKey((k) => k + 1);
+    }
+    prevValueRef.current = value;
+  }, [value]);
   return (
-    <div className="flex flex-col gap-0.5 min-w-0">
+    <div className="flex flex-col gap-0.5 min-w-0 px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded">
       <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60 font-medium">
         {label}
       </div>
-      <div className="flex items-baseline gap-1">
+      <div
+        key={flashKey}
+        className="flex items-baseline gap-1 motion-safe:animate-value-flash"
+      >
         <span className={cn("text-sm font-semibold tabular-nums", accentClasses[accent])}>
           {value}
         </span>
@@ -478,19 +551,30 @@ function MetricBadge({ label, value, detail, accent = "default" }: MetricBadgePr
 function MetricsBar({
   events,
   activityLog,
-  phases,
+  stickyResults,
   totalMessages,
   processedMessages,
+  totalBatches,
+  batchesCompleted,
 }: {
   events: RecentEvent[];
   activityLog: ActivityEntry[];
-  phases: Phase[];
+  stickyResults: BatchResultEntry[];
   totalMessages?: number;
   processedMessages?: number;
+  totalBatches?: number;
+  batchesCompleted?: number;
 }) {
   const m = useMemo(
-    () => deriveMetrics(events, activityLog, phases),
-    [events, activityLog, phases],
+    () =>
+      deriveMetrics(
+        events,
+        activityLog,
+        stickyResults,
+        totalBatches,
+        batchesCompleted,
+      ),
+    [events, activityLog, stickyResults, totalBatches, batchesCompleted],
   );
 
   const msgsDone = processedMessages ?? 0;
@@ -553,6 +637,8 @@ interface BatchSummary {
 
 function summariseBatches(
   activityLog: ActivityEntry[],
+  totalBatches?: number,
+  batchesCompleted?: number,
 ): BatchSummary[] {
   const byBatch = new Map<number, BatchSummary>();
   for (const e of activityLog) {
@@ -589,8 +675,104 @@ function summariseBatches(
     else if (s.stagesStarted > 0) s.state = "running";
     else s.state = "pending";
   }
+
+  // Always render the full strip 1..totalBatches so the user sees every
+  // batch that will run, even before activity_log entries arrive for it.
+  // ``batchesCompleted`` is the user-facing row's global counter
+  // (incremented once per tick by ExtractionWorker), so batches
+  // 1..batchesCompleted are definitively done — anything higher that we
+  // haven't yet observed is pending.
+  if (totalBatches && totalBatches > 0) {
+    const done = Math.max(0, batchesCompleted ?? 0);
+    for (let i = 1; i <= totalBatches; i++) {
+      if (byBatch.has(i)) continue;
+      byBatch.set(i, {
+        batchIdx: i,
+        state: i <= done ? "done" : "pending",
+        stagesStarted: 0,
+        hasPersisterDone: i <= done,
+        factsCount: 0,
+        entitiesCount: 0,
+        totalElapsedMs: 0,
+        hasFailure: false,
+      });
+    }
+  }
+
   return Array.from(byBatch.values()).sort((a, b) => a.batchIdx - b.batchIdx);
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// deriveBatchResultsFromActivity — synthesise ``BatchResultEntry[]`` from
+// the activity_log so the Batch Results tab is populated under the
+// decoupled ExtractionWorker flow (where ``sync_jobs.batch_results``
+// stays empty because the worker uses synthetic job_ids).
+// ──────────────────────────────────────────────────────────────────────
+function deriveBatchResultsFromActivity(
+  activityLog: ActivityEntry[],
+): BatchResultEntry[] {
+  const byBatch = new Map<number, BatchResultEntry>();
+  for (const e of activityLog) {
+    if (e.batch_idx == null) continue;
+    const idx = e.batch_idx;
+    if (!byBatch.has(idx)) {
+      byBatch.set(idx, {
+        batch_num: idx,
+        facts_count: 0,
+        entities_count: 0,
+        relationships_count: 0,
+        embedded_count: 0,
+        media_count: 0,
+        sample_facts: [],
+        sample_entities: [],
+        sample_relationships: [],
+        duration_seconds: 0,
+        error: null,
+      });
+    }
+    const acc = byBatch.get(idx)!;
+    if (e.type !== "stage_output") continue;
+    if (typeof e.elapsed === "number") acc.duration_seconds += e.elapsed;
+    const m = e.metrics ?? {};
+    if (e.agent === "fact_extractor") {
+      acc.facts_count += Number(m.count ?? 0);
+      for (const s of e.samples ?? []) {
+        if (s.item_type === "fact" && acc.sample_facts.length < 8) {
+          const c = (s.content ?? "").trim();
+          if (c) acc.sample_facts.push(c);
+        }
+      }
+    } else if (e.agent === "entity_extractor") {
+      acc.entities_count += Number(m.entities ?? 0);
+      acc.relationships_count += Number(m.relationships ?? 0);
+      for (const s of e.samples ?? []) {
+        if (s.item_type === "entity" && acc.sample_entities.length < 12) {
+          const name = s.content ?? "";
+          const type = (s.tags ?? [])[0] ?? "";
+          if (name) acc.sample_entities.push({ name, type });
+        } else if (
+          s.item_type === "relationship" &&
+          acc.sample_relationships.length < 8
+        ) {
+          acc.sample_relationships.push({
+            source: s.source ?? "",
+            target: s.target ?? "",
+            type: s.rel_type ?? "",
+          });
+        }
+      }
+    } else if (e.agent === "embedder") {
+      acc.embedded_count = (acc.embedded_count ?? 0) + Number(m.embedded ?? 0);
+    } else if (e.agent === "preprocessor") {
+      acc.media_count = (acc.media_count ?? 0) + Number(m.media ?? m.media_enriched ?? 0);
+    }
+  }
+  return Array.from(byBatch.values()).sort(
+    (a, b) => a.batch_num - b.batch_num,
+  );
+}
+
+type BatchStateFilter = "all" | "done" | "running" | "pending" | "failed";
 
 function BatchTabs({
   batches,
@@ -601,112 +783,344 @@ function BatchTabs({
   selected: number | "all";
   onSelect: (sel: number | "all") => void;
 }) {
+  const [stateFilter, setStateFilter] =
+    useLocalStorageState<BatchStateFilter>(
+      "beever.monitor.activityStateFilter",
+      "all",
+    );
+
   if (batches.length === 0) return null;
+
+  // Per-state counts for the top-row state filter chips.
+  const counts = {
+    all: batches.length,
+    done: batches.filter((b) => b.state === "done").length,
+    running: batches.filter((b) => b.state === "running").length,
+    pending: batches.filter((b) => b.state === "pending").length,
+    failed: batches.filter((b) => b.state === "failed").length,
+  };
+
+  const visibleBatches =
+    stateFilter === "all"
+      ? batches
+      : batches.filter((b) => b.state === stateFilter);
+
+  const STATE_CHIPS: Array<{
+    key: BatchStateFilter;
+    label: string;
+    color: string;
+    icon: string;
+  }> = [
+    { key: "all", label: "All", color: "text-foreground", icon: "·" },
+    { key: "done", label: "Done", color: "text-emerald-500", icon: "✓" },
+    { key: "running", label: "Running", color: "text-primary", icon: "●" },
+    { key: "pending", label: "Pending", color: "text-muted-foreground/60", icon: "○" },
+    { key: "failed", label: "Failed", color: "text-red-500", icon: "✗" },
+  ];
+
   return (
-    <div className="flex flex-wrap items-center gap-1 px-3 py-1.5 border-b border-border bg-muted/5">
-      <button
-        type="button"
-        onClick={() => onSelect("all")}
-        className={cn(
-          "px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded transition-colors",
-          selected === "all"
-            ? "text-primary bg-primary/10"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
-        )}
-      >
-        All ({batches.length})
-      </button>
-      <span className="text-muted-foreground/30">·</span>
-      {batches.map((b) => {
-        const isSelected = selected === b.batchIdx;
-        const stateColor =
-          b.state === "running"
-            ? "text-primary"
-            : b.state === "done"
-              ? "text-emerald-500"
-              : b.state === "failed"
-                ? "text-red-500"
-                : "text-muted-foreground/50";
-        const stateIcon =
-          b.state === "running"
-            ? "●"
-            : b.state === "done"
-              ? "✓"
-              : b.state === "failed"
-                ? "✗"
-                : "○";
-        return (
-          <button
-            key={b.batchIdx}
-            type="button"
-            onClick={() => onSelect(b.batchIdx)}
-            title={
-              `Batch ${b.batchIdx} — ${b.state}` +
-              (b.factsCount > 0 ? ` · ${b.factsCount} facts` : "") +
-              (b.entitiesCount > 0 ? ` · ${b.entitiesCount} entities` : "") +
-              (b.totalElapsedMs > 0
-                ? ` · ${(b.totalElapsedMs / 1000).toFixed(1)}s`
-                : "")
-            }
-            className={cn(
-              "inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded transition-colors",
-              isSelected
-                ? "text-primary bg-primary/10 border border-primary/20"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
-            )}
-          >
-            <span className={stateColor}>{stateIcon}</span>
-            Batch {b.batchIdx}
-          </button>
-        );
-      })}
+    <div className="sticky top-0 z-20 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      {/* Row 1 — State filter chips with live counts */}
+      <div className="flex flex-wrap items-center gap-1 px-3 py-1.5 border-b border-border/40">
+        {STATE_CHIPS.map((f) => {
+          const count = counts[f.key];
+          const active = stateFilter === f.key;
+          const disabled = count === 0 && f.key !== "all";
+          return (
+            <button
+              key={f.key}
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                setStateFilter(f.key);
+                // Reset the per-batch selection when filter changes so
+                // the user doesn't end up looking at a hidden batch.
+                if (selected !== "all") {
+                  const stillVisible = batches.find(
+                    (b) => b.batchIdx === selected && (f.key === "all" || b.state === f.key),
+                  );
+                  if (!stillVisible) onSelect("all");
+                }
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] rounded transition-colors",
+                active
+                  ? "bg-primary/10 text-primary border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40 border border-transparent",
+                disabled && "opacity-40 cursor-not-allowed",
+              )}
+            >
+              <span
+                className={cn(
+                  "font-mono",
+                  f.color,
+                  // Pulse animation on the "Running" dot icon so users
+                  // notice when batches are actively processing.
+                  f.key === "running" && count > 0 && "animate-pulse",
+                )}
+              >
+                {f.icon}
+              </span>
+              <span className="font-medium uppercase tracking-wide">{f.label}</span>
+              <span className="text-[9px] tabular-nums text-muted-foreground/70">
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Row 2 — individual batch chips, filtered by state */}
+      <div className="flex flex-wrap items-center gap-1 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => onSelect("all")}
+          className={cn(
+            "px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded transition-colors",
+            selected === "all"
+              ? "text-primary bg-primary/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+          )}
+        >
+          All ({visibleBatches.length})
+        </button>
+        <span className="text-muted-foreground/30">·</span>
+        {visibleBatches.map((b) => {
+          const isSelected = selected === b.batchIdx;
+          const stateColor =
+            b.state === "running"
+              ? "text-primary"
+              : b.state === "done"
+                ? "text-emerald-500"
+                : b.state === "failed"
+                  ? "text-red-500"
+                  : "text-muted-foreground/50";
+          const stateIcon =
+            b.state === "running"
+              ? "●"
+              : b.state === "done"
+                ? "✓"
+                : b.state === "failed"
+                  ? "✗"
+                  : "○";
+          return (
+            <button
+              key={b.batchIdx}
+              type="button"
+              onClick={() => onSelect(b.batchIdx)}
+              title={
+                `Batch ${b.batchIdx} — ${b.state}` +
+                (b.factsCount > 0 ? ` · ${b.factsCount} facts` : "") +
+                (b.entitiesCount > 0 ? ` · ${b.entitiesCount} entities` : "") +
+                (b.totalElapsedMs > 0
+                  ? ` · ${(b.totalElapsedMs / 1000).toFixed(1)}s`
+                  : "")
+              }
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded transition-all duration-300",
+                isSelected
+                  ? "text-primary bg-primary/10 border border-primary/20 scale-[1.04]"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+                // Running batches get a subtle pulse so they "breathe"
+                b.state === "running" && "ring-1 ring-primary/30 animate-pulse",
+              )}
+            >
+              <span className={cn(stateColor, b.state === "running" && "animate-pulse")}>
+                {stateIcon}
+              </span>
+              Batch {b.batchIdx}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 function BatchFilteredActivityLog({
   stageDetails,
+  totalBatches,
+  batchesCompleted,
 }: {
   stageDetails?: {
     activity_log?: ActivityEntry[];
     [k: string]: unknown;
   };
+  totalBatches?: number;
+  batchesCompleted?: number;
 }) {
   const [selectedBatch, setSelectedBatch] = useState<number | "all">("all");
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const activityLog = stageDetails?.activity_log ?? [];
 
-  const batches = useMemo(() => summariseBatches(activityLog), [activityLog]);
-
-  // Auto-follow: snap to the latest running batch when the user hasn't
-  // manually picked one yet. Once they click a tab, we honour it.
-  const hasUserSelection = useRef(false);
+  // Cmd-K / Ctrl-K: focus the activity-log search. Esc when focused: clear.
+  // Mounted only on the Pipeline Activity tab, so won't collide with the
+  // Batch Results panel's own Cmd-K.
   useEffect(() => {
-    if (hasUserSelection.current) return;
-    const running = batches.filter((b) => b.state === "running");
-    if (running.length > 0) {
-      setSelectedBatch(running[running.length - 1].batchIdx);
-    }
-  }, [batches]);
-
-  const filteredDetails = useMemo(() => {
-    if (selectedBatch === "all") return stageDetails;
-    return {
-      ...stageDetails,
-      activity_log: activityLog.filter((e) => e.batch_idx === selectedBatch),
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      } else if (
+        e.key === "Escape" &&
+        document.activeElement === searchInputRef.current
+      ) {
+        e.preventDefault();
+        setSearchTerm("");
+        searchInputRef.current?.blur();
+      }
     };
-  }, [stageDetails, activityLog, selectedBatch]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const batches = useMemo(
+    () => summariseBatches(activityLog, totalBatches, batchesCompleted),
+    [activityLog, totalBatches, batchesCompleted],
+  );
+
+  // Filter pipeline:
+  //   1. by selected batch chip (if not "all")
+  //   2. by search term (case-insensitive match on agent / stage / message)
+  const filteredEntries = useMemo(() => {
+    let entries: ActivityEntry[] = activityLog;
+    if (selectedBatch !== "all") {
+      entries = entries.filter((e) => e.batch_idx === selectedBatch);
+    }
+    const q = searchTerm.trim().toLowerCase();
+    if (q) {
+      entries = entries.filter((e) => {
+        const hay = [
+          e.agent ?? "",
+          e.stage ?? "",
+          e.message ?? "",
+          e.model ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    return entries;
+  }, [activityLog, selectedBatch, searchTerm]);
+
+  const filteredDetails = useMemo(
+    () => ({ ...stageDetails, activity_log: filteredEntries }),
+    [stageDetails, filteredEntries],
+  );
+
+  // Contextual empty-state message — shown when the filter produces zero
+  // entries. Replaces the old generic "Waiting for pipeline events..."
+  // with something that tells the user WHY there's nothing to show.
+  const emptyMessage = useMemo<{ title: string; hint: string } | null>(() => {
+    if (filteredEntries.length > 0) return null;
+    if (searchTerm.trim()) {
+      return {
+        title: `No matches for "${searchTerm.trim()}"`,
+        hint: "Try a different keyword, or clear the search to see all events.",
+      };
+    }
+    if (selectedBatch === "all") {
+      return activityLog.length === 0
+        ? {
+            title: "Waiting for the first pipeline event…",
+            hint: "The worker is queuing up — events will appear here as batches start processing.",
+          }
+        : {
+            title: "No matching events",
+            hint: "Try clicking a specific batch chip above.",
+          };
+    }
+    const b = batches.find((x) => x.batchIdx === selectedBatch);
+    if (!b) return { title: `Batch ${selectedBatch} not found`, hint: "" };
+    switch (b.state) {
+      case "running":
+        return {
+          title: `Batch ${b.batchIdx} is processing…`,
+          hint: "Events stream in real time — first one usually appears within a few seconds.",
+        };
+      case "pending":
+        return {
+          title: `Batch ${b.batchIdx} is queued`,
+          hint: "Waiting for a worker slot. The pipeline runs 4 batches in parallel by default.",
+        };
+      case "done":
+        return {
+          title: `Batch ${b.batchIdx} completed`,
+          hint: "Detailed events have aged out of the log buffer. Open the Batch Results tab to see this batch's facts and entities.",
+        };
+      case "failed":
+        return {
+          title: `Batch ${b.batchIdx} failed`,
+          hint: "Check the Batch Results tab for the error message.",
+        };
+    }
+  }, [filteredEntries, searchTerm, selectedBatch, activityLog, batches]);
 
   return (
     <div>
+      {/* Header bundle: batch chips + search input.
+       *  Sticky-pinned at the top of the scroll container so it stays
+       *  visible during long activity-log scrolls. */}
+      <div className="sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
       <BatchTabs
         batches={batches}
         selected={selectedBatch}
-        onSelect={(sel) => {
-          hasUserSelection.current = true;
-          setSelectedBatch(sel);
-        }}
+        onSelect={setSelectedBatch}
       />
-      <ActivityLog details={filteredDetails} />
+      <div
+        className="flex items-center gap-2 px-3 py-1.5 border-b border-border"
+      >
+        <Search size={12} className="text-muted-foreground/60 shrink-0" />
+        <input
+          ref={searchInputRef}
+          type="search"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search events… (agent, stage, message) — ⌘K"
+          className="flex-1 bg-transparent border-0 outline-none text-[11px] placeholder:text-muted-foreground/50 text-foreground"
+        />
+        {searchTerm && (
+          <button
+            type="button"
+            onClick={() => setSearchTerm("")}
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            clear
+          </button>
+        )}
+        <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+          {filteredEntries.length} {filteredEntries.length === 1 ? "event" : "events"}
+        </span>
+      </div>
+      </div>
+      {emptyMessage ? (
+        <div className="flex flex-col items-center justify-center py-8 px-4 text-center gap-1.5">
+          <Loader2
+            size={16}
+            className={cn(
+              "text-muted-foreground/40",
+              // Only animate-spin when there's still active extraction
+              selectedBatch !== "all" &&
+                batches.find((x) => x.batchIdx === selectedBatch)?.state ===
+                  "running" &&
+                "animate-spin text-primary/60",
+            )}
+          />
+          <div className="text-[12px] font-medium text-foreground/80">
+            {emptyMessage.title}
+          </div>
+          {emptyMessage.hint && (
+            <div className="text-[10.5px] text-muted-foreground/70 max-w-md">
+              {emptyMessage.hint}
+            </div>
+          )}
+        </div>
+      ) : (
+        <ActivityLog details={filteredDetails} />
+      )}
     </div>
   );
 }
@@ -955,9 +1369,49 @@ export function SyncProgressV2({
   parseFailureState,
   totalMessages,
   processedMessages,
+  totalBatches,
+  batchesCompleted,
   startedAt,
 }: SyncProgressV2Props) {
-  const [activeTab, setActiveTab] = useState<TabId>("activity");
+  const [activeTab, setActiveTab] = useLocalStorageState<TabId>(
+    "beever.monitor.activeTab",
+    "activity",
+  );
+  const [collapsed, setCollapsed] = useLocalStorageState<boolean>(
+    "beever.monitor.collapsed",
+    false,
+  );
+  // Panel height — user can drag the bottom edge of the activity/results
+  // body to resize. Persisted across reloads.
+  const [panelHeight, setPanelHeight] = useLocalStorageState<number>(
+    "beever.monitor.panelHeight",
+    480,
+  );
+  const resizeStartRef = useRef<{ startY: number; startH: number } | null>(null);
+  const handleResizeDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    resizeStartRef.current = { startY: e.clientY, startH: panelHeight };
+    const MIN_H = 200;
+    const MAX_H = Math.max(MIN_H, Math.floor(window.innerHeight * 0.8));
+    const move = (ev: PointerEvent) => {
+      const start = resizeStartRef.current;
+      if (!start) return;
+      const delta = ev.clientY - start.startY;
+      const next = Math.min(MAX_H, Math.max(MIN_H, start.startH + delta));
+      setPanelHeight(next);
+    };
+    const up = () => {
+      resizeStartRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "ns-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   const activePhase = useMemo(
     () => deriveActivePhase(state, phases),
     [state, phases],
@@ -977,7 +1431,99 @@ export function SyncProgressV2({
   }, [events]);
 
   const showParseBanner = parseFailureState?.should_show_banner ?? false;
-  const batchCount = batchResults?.length ?? 0;
+
+  // Worker-flow fallback + sticky accumulator: ``batch_results`` is
+  // populated only when ``BatchProcessor.update_sync_progress`` writes
+  // to the user-facing sync_jobs row. The decoupled ExtractionWorker
+  // writes to synthetic ``worker:<channel>:<ts>`` rows, so ``batchResults``
+  // is empty for the entire run. Compose from ``activity_log`` instead.
+  //
+  // Server-side ``activity_log`` is $sliced to the last 50 entries, so
+  // earlier batches' data scrolls off as the sync progresses. We keep a
+  // per-sync client-side accumulator (``stickyResultsRef``) so once a
+  // batch's facts/entities/samples land, they persist for the rest of
+  // the sync — the Batch Results tab grows monotonically instead of
+  // flickering as entries evict.
+  const stickyResultsRef = useRef<Map<number, BatchResultEntry>>(new Map());
+  const lastStartedAtRef = useRef<string | null>(null);
+  // Reset the accumulator when a new sync starts (different ``started_at``).
+  if (lastStartedAtRef.current !== (startedAt ?? null)) {
+    stickyResultsRef.current = new Map();
+    lastStartedAtRef.current = startedAt ?? null;
+  }
+  // Compute batches summary at the container level so both the activity
+  // tab AND the batch-results tab share the same state source.
+  const activityLog = stageDetails?.activity_log ?? [];
+  const batchSummaries = useMemo(
+    () => summariseBatches(activityLog, totalBatches, batchesCompleted),
+    [activityLog, totalBatches, batchesCompleted],
+  );
+
+  const derivedBatchResults = useMemo<BatchResultEntry[]>(() => {
+    // Server-provided ``batch_results`` (legacy in-process flow) wins
+    // when populated — that path already accumulates server-side.
+    if (batchResults && batchResults.length > 0) return batchResults;
+    const fresh = deriveBatchResultsFromActivity(activityLog);
+    for (const r of fresh) {
+      const prev = stickyResultsRef.current.get(r.batch_num);
+      if (!prev) {
+        stickyResultsRef.current.set(r.batch_num, r);
+        continue;
+      }
+      // Merge — keep the highest seen counts and union the sample lists
+      // so partial activity_log frames don't shrink an already-rich
+      // batch entry.
+      stickyResultsRef.current.set(r.batch_num, {
+        batch_num: r.batch_num,
+        facts_count: Math.max(prev.facts_count, r.facts_count),
+        entities_count: Math.max(prev.entities_count, r.entities_count),
+        relationships_count: Math.max(
+          prev.relationships_count,
+          r.relationships_count,
+        ),
+        embedded_count: Math.max(
+          prev.embedded_count ?? 0,
+          r.embedded_count ?? 0,
+        ),
+        media_count: Math.max(prev.media_count ?? 0, r.media_count ?? 0),
+        sample_facts: r.sample_facts.length > 0
+          ? r.sample_facts
+          : prev.sample_facts,
+        sample_entities: r.sample_entities.length > 0
+          ? r.sample_entities
+          : prev.sample_entities,
+        sample_relationships: r.sample_relationships.length > 0
+          ? r.sample_relationships
+          : prev.sample_relationships,
+        duration_seconds: Math.max(prev.duration_seconds, r.duration_seconds),
+        error: r.error ?? prev.error,
+      });
+    }
+    // Build the final list: one entry per batch in batchSummaries (1..N),
+    // merging in sticky data when present. This ensures pending /
+    // running batches without samples yet still appear in the list with
+    // accurate state — the user sees ALL batches and can filter by state.
+    const merged: BatchResultEntry[] = batchSummaries.map((b) => {
+      const sticky = stickyResultsRef.current.get(b.batchIdx);
+      return {
+        batch_num: b.batchIdx,
+        facts_count: sticky?.facts_count ?? b.factsCount,
+        entities_count: sticky?.entities_count ?? b.entitiesCount,
+        relationships_count: sticky?.relationships_count ?? 0,
+        embedded_count: sticky?.embedded_count ?? 0,
+        media_count: sticky?.media_count ?? 0,
+        state: b.state,
+        sample_facts: sticky?.sample_facts ?? [],
+        sample_entities: sticky?.sample_entities ?? [],
+        sample_relationships: sticky?.sample_relationships ?? [],
+        duration_seconds: sticky?.duration_seconds ?? (b.totalElapsedMs > 0 ? b.totalElapsedMs / 1000 : 0),
+        error: sticky?.error ?? null,
+      };
+    });
+    return merged;
+  }, [batchResults, activityLog, batchSummaries]);
+
+  const batchCount = derivedBatchResults.length;
 
   // Cumulative elapsed time from started_at.
   const elapsedHeader = useMemo(
@@ -987,9 +1533,35 @@ export function SyncProgressV2({
 
   return (
     <div
-      className="rounded-lg border border-border bg-card overflow-hidden"
+      className="rounded-lg border border-border bg-card overflow-hidden relative"
       data-testid={`sync-progress-v2-${channelId}`}
     >
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        title={collapsed ? "Expand pipeline monitor" : "Collapse pipeline monitor"}
+        aria-label={collapsed ? "Expand pipeline monitor" : "Collapse pipeline monitor"}
+        className="absolute top-2 right-2 z-10 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted/60 hover:border-primary/40 transition-colors shadow-sm"
+      >
+        <span className="text-[10px] font-medium uppercase tracking-wider">
+          {collapsed ? "Expand" : "Collapse"}
+        </span>
+        {collapsed ? (
+          <ChevronDown size={14} />
+        ) : (
+          <ChevronUp size={14} />
+        )}
+      </button>
+      {/* Indeterminate "starting" bar — shown only during the brief window
+       *  between the sync trigger and the first /sync/status poll
+       *  returning real phase data. Replaces the otherwise-blank
+       *  monitor appearance with a clear "we're waiting on the server"
+       *  signal. */}
+      {phases.length === 0 && (state === "syncing") && (
+        <div className="h-0.5 w-full bg-muted overflow-hidden" aria-hidden>
+          <div className="h-full w-1/3 bg-gradient-to-r from-transparent via-primary to-transparent motion-safe:animate-stepper-shimmer" />
+        </div>
+      )}
       <PipelineStepper phases={phases} activePhase={activePhase} />
       <ProgressHeader
         activePhase={activePhase}
@@ -999,12 +1571,24 @@ export function SyncProgressV2({
         startedAt={startedAt}
         phases={phases}
       />
+      {/* Collapsible body — pipeline detail. The stepper + header stay
+       *  visible at all times so the user always sees the high-level
+       *  phase. Click the chevron in the top-right to fold the detail. */}
+      <div
+        className={cn(
+          "transition-all duration-300 ease-out overflow-hidden",
+          collapsed ? "max-h-0 opacity-0" : "max-h-[2000px] opacity-100",
+        )}
+        aria-hidden={collapsed}
+      >
       <MetricsBar
         events={events}
         activityLog={stageDetails?.activity_log ?? []}
-        phases={phases}
+        stickyResults={derivedBatchResults}
         totalMessages={totalMessages}
         processedMessages={processedMessages}
+        totalBatches={totalBatches}
+        batchesCompleted={batchesCompleted}
       />
       {showParseBanner && parseFailureState && (
         <div
@@ -1028,12 +1612,30 @@ export function SyncProgressV2({
         batchCount={batchCount}
         channelId={channelId}
       />
-      <div className="px-3 py-2 bg-card max-h-[480px] overflow-y-auto">
+      <div
+        className="px-3 py-2 bg-card overflow-y-auto"
+        style={{ maxHeight: `${panelHeight}px` }}
+      >
         {activeTab === "activity" ? (
-          <BatchFilteredActivityLog stageDetails={stageDetails} />
+          <BatchFilteredActivityLog
+            stageDetails={stageDetails}
+            totalBatches={totalBatches}
+            batchesCompleted={batchesCompleted}
+          />
         ) : (
-          <BatchResults results={batchResults ?? []} />
+          <BatchResults results={derivedBatchResults} />
         )}
+      </div>
+      {/* Resize handle — drag the line to grow/shrink the activity panel.
+       *  Subtle by default; lights up on hover so it's discoverable. */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize activity panel"
+        onPointerDown={handleResizeDown}
+        className="group h-1.5 cursor-ns-resize bg-border/40 hover:bg-primary/40 transition-colors flex items-center justify-center"
+      >
+        <div className="h-0.5 w-8 rounded-full bg-muted-foreground/30 group-hover:bg-primary/60" />
       </div>
       <LiveEventsList events={events} startedAt={startedAt} />
       <div className="flex items-center flex-wrap gap-3 border-t border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
@@ -1062,6 +1664,7 @@ export function SyncProgressV2({
             {parseFailureState?.count_last_10_min ?? 0}
           </span>
         </span>
+      </div>
       </div>
     </div>
   );

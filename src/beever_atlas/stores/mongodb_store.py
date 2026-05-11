@@ -368,6 +368,7 @@ class MongoDBStore:
         total_messages: int,
         parent_messages: int,
         sync_type: str | None = None,
+        total_batches: int | None = None,
     ) -> None:
         """Patch a sync job's message totals after creation.
 
@@ -380,6 +381,12 @@ class MongoDBStore:
         ``sync_type`` is optional because the type may be promoted from
         ``incremental`` to ``full`` mid-fetch (when an incremental sync
         finds zero new messages and falls back to a full re-pull).
+
+        ``total_batches`` is the global batch count for the whole sync
+        (``ceil(total_messages / batch_size)``) — stable for the entire
+        run. Without this, the user-facing sync_jobs row's total_batches
+        stays 0 because the decoupled ExtractionWorker only writes
+        per-tick totals to synthetic ``worker:*`` rows.
         """
         update: dict[str, Any] = {
             "total_messages": total_messages,
@@ -387,6 +394,8 @@ class MongoDBStore:
         }
         if sync_type is not None:
             update["sync_type"] = sync_type
+        if total_batches is not None:
+            update["total_batches"] = total_batches
         await self._sync_jobs.update_one(
             {"id": job_id},
             {"$set": update, "$inc": {"version": 1}},
@@ -460,7 +469,7 @@ class MongoDBStore:
             "$push": {
                 "stage_details.activity_log": {
                     "$each": [tagged_entry],
-                    "$slice": -50,
+                    "$slice": -500,
                 }
             },
             "$inc": {"version": 1},
@@ -479,6 +488,87 @@ class MongoDBStore:
             {"id": job_id},
             {"$inc": {"batches_completed": 1, "version": 1}},
         )
+
+    async def increment_batches_completed_for_channel(
+        self, channel_id: str, count: int
+    ) -> None:
+        """Increment ``batches_completed`` on the most-recent user-facing
+        sync_jobs row for a channel.
+
+        The decoupled ExtractionWorker uses synthetic ``worker:*`` job_ids
+        so ``increment_batches_completed(job_id)`` calls inside BatchProcessor
+        never reach the row the UI reads. This helper bridges that gap —
+        the worker calls it once per tick with ``count = len(breakdowns)``,
+        keeping the user-facing row's global ``batches_completed`` accurate
+        for the BATCHES tile and as the offset for the next tick's global
+        batch_index numbering.
+        """
+        if count <= 0:
+            return
+        # First bump batches_completed atomically.
+        doc = await self._sync_jobs.find_one_and_update(
+            {"channel_id": channel_id, "kind": "sync"},
+            {"$inc": {"batches_completed": count, "version": 1}},
+            sort=[("created_at", -1)],
+            return_document=True,
+        )
+        # SyncRunner's initial ``total_batches`` is a fixed-size estimate
+        # (``ceil(total_messages / sync_batch_size)``) but the worker
+        # actually uses token-aware batching that can yield more, smaller
+        # batches. Bump ``total_batches`` to track the high-water mark of
+        # ``batches_completed`` so the API never returns "21 done / 15
+        # total" nonsense.
+        if doc is None:
+            return
+        completed = int(doc.get("batches_completed") or 0)
+        total = int(doc.get("total_batches") or 0)
+        if completed > total:
+            await self._sync_jobs.update_one(
+                {"id": doc.get("id")},
+                {"$set": {"total_batches": completed}, "$inc": {"version": 1}},
+            )
+
+    async def append_batch_results_for_channel(
+        self,
+        channel_id: str,
+        batch_results: list[dict[str, Any]],
+    ) -> None:
+        """Append per-batch breakdown rows to the user-facing sync_jobs
+        row for a channel.
+
+        Without this bridge, BatchProcessor's ``update_sync_progress``
+        calls only persist to the synthetic ``worker:*`` job_ids that
+        nobody reads — and the frontend's MetricsBar tiles end up
+        reflecting only whatever happens to still be in the
+        ``activity_log`` $slice buffer. With this bridge, each tick's
+        batch breakdowns land on the row the UI polls, so per-batch
+        facts/entities/embedded/media counts are accurate even after
+        the activity_log entries evict.
+        """
+        if not batch_results:
+            return
+        await self._sync_jobs.find_one_and_update(
+            {"channel_id": channel_id, "kind": "sync"},
+            {
+                "$push": {"batch_results": {"$each": batch_results}},
+                "$inc": {"version": 1},
+            },
+            sort=[("created_at", -1)],
+        )
+
+    async def get_user_facing_batches_completed(self, channel_id: str) -> int:
+        """Return ``batches_completed`` from the most-recent user-facing
+        sync_jobs row for a channel. Used by ExtractionWorker as the global
+        ``batch_index_offset`` for BatchProcessor invocations.
+        """
+        doc = await self._sync_jobs.find_one(
+            {"channel_id": channel_id, "kind": "sync"},
+            {"_id": 0, "batches_completed": 1},
+            sort=[("created_at", -1)],
+        )
+        if not doc:
+            return 0
+        return int(doc.get("batches_completed") or 0)
 
     async def complete_sync_job(
         self,

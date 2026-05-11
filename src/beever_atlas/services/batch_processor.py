@@ -245,6 +245,13 @@ class BatchBreakdown:
     facts_count: int = 0
     entities_count: int = 0
     relationships_count: int = 0
+    # Counts surfaced by the embedder and preprocessor stages — populated
+    # by batch_pipeline.py from the same stage_output metrics that feed
+    # the UI's activity_log. Frontend MetricsBar reads these when the
+    # server-side ``batch_results`` array is preferred over the sticky
+    # client-side accumulator.
+    embedded_count: int = 0
+    media_count: int = 0
     sample_facts: list[str] = field(default_factory=list)
     sample_entities: list[dict[str, str]] = field(default_factory=list)
     sample_relationships: list[dict[str, str]] = field(default_factory=list)
@@ -301,6 +308,7 @@ class BatchProcessor:
         sync_job_id: str,
         ingestion_config: IngestionConfig | None = None,
         use_batch_api: bool = False,
+        batch_index_offset: int = 0,
     ) -> BatchResult:
         """Process all messages in fixed-size batches.
 
@@ -310,6 +318,17 @@ class BatchProcessor:
             channel_name: Human-readable channel name.
             sync_job_id: MongoDB SyncJob ID for progress tracking.
             ingestion_config: Per-channel ingestion overrides (optional).
+            batch_index_offset: Global batch counter offset. The decoupled
+                ExtractionWorker calls process_messages once per tick, and
+                each tick claims a slice of the channel's pending rows. With
+                offset=0 every tick would restart batch numbering at 1,
+                making the activity_log batch_idx values churn for the UI
+                (Batch 1 in tick A means different messages than Batch 1
+                in tick B). Passing the sync's ``batches_completed`` count
+                as the offset shifts this tick's internal batches 1..K to
+                global indices ``(offset+1)..(offset+K)``, giving the
+                user-facing sync_jobs row a stable 1..ceil(N/batch_size)
+                numbering for the whole sync.
 
         Returns:
             BatchResult with accumulated fact/entity counts and any errors.
@@ -1688,12 +1707,18 @@ class BatchProcessor:
             except BaseException as exc:  # noqa: BLE001
                 return idx, exc
 
-        _tasks = [_tagged(i, b) for i, b in enumerate(batches, start=1)]
+        # ``batch_index_offset`` makes the enumeration global across the
+        # whole sync (see process_messages docstring). The array lookup
+        # below subtracts the offset to recover the local index.
+        _tasks = [
+            _tagged(i, b)
+            for i, b in enumerate(batches, start=batch_index_offset + 1)
+        ]
 
         processed_so_far = 0
         for coro in asyncio.as_completed(_tasks):
             batch_index, raw = await coro
-            batch = batches[batch_index - 1]
+            batch = batches[batch_index - 1 - batch_index_offset]
 
             if isinstance(raw, BaseException):
                 if isinstance(raw, ProviderOutageError):

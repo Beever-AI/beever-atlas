@@ -255,7 +255,7 @@ class BatchPipelineRunner:
                 total_batches=max_batches,
                 current_stage=stage,
                 stage_timings=stage_timings,
-                stage_details={"activity_log": activity_log[-50:]},
+                stage_details={"activity_log": activity_log[-500:]},
             )
 
         # ── Stage 1: Preprocess ────────────────────────────────────────────
@@ -804,6 +804,8 @@ class BatchPipelineRunner:
         breakdown.facts_count = wv_count
         breakdown.entities_count = neo_count
         breakdown.relationships_count = rel_count
+        breakdown.embedded_count = len(embedded_facts)
+        breakdown.media_count = media_count
         breakdown.facts_stored = wv_count
         breakdown.sample_facts = [f.get("memory_text", "")[:120] for f in filtered_facts_list[:3]]
         breakdown.sample_entities = [

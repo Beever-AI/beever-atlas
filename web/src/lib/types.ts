@@ -326,6 +326,16 @@ export interface BatchResultEntry {
   facts_count: number;
   entities_count: number;
   relationships_count: number;
+  /** Embeddings produced in this batch (jina/etc). Optional — present
+   *  when derived from activity_log; absent on legacy backends. */
+  embedded_count?: number;
+  /** Media items enriched by the preprocessor (images, PDFs, audio). */
+  media_count?: number;
+  /** Lifecycle state — populated when caller has BatchSummary context.
+   *  ``running`` means stage_start was seen but no persister stage_output
+   *  yet; ``done`` means persister wrote successfully; ``pending`` is
+   *  pre-claim; ``failed`` is explicit error. */
+  state?: "pending" | "running" | "done" | "failed";
   sample_facts: string[];
   sample_entities: { name: string; type: string }[];
   sample_relationships: { source: string; target: string; type: string }[];

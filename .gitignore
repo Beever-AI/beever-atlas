@@ -105,3 +105,4 @@ web/openspec/
 # Local presentation drafts and ad-hoc debug scripts (intentionally untracked)
 PRESENTATION.md
 web/test-faq.mjs
+.env.backup

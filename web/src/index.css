@@ -177,6 +177,19 @@ body,
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes stepper-shimmer {
+  0%   { transform: translateX(-100%); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+@keyframes value-flash {
+  0%   { background: rgba(var(--primary-rgb, 99, 102, 241), 0); }
+  20%  { background: rgba(var(--primary-rgb, 99, 102, 241), 0.18); }
+  100% { background: rgba(var(--primary-rgb, 99, 102, 241), 0); }
+}
+
 @layer utilities {
   .animate-fade-in {
     animation: fade-in 180ms ease-out both;
@@ -195,6 +208,13 @@ body,
     animation: rise-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
     will-change: transform, opacity;
   }
+  .animate-stepper-shimmer {
+    animation: stepper-shimmer 2.4s ease-in-out infinite;
+    will-change: transform, opacity;
+  }
+  .animate-value-flash {
+    animation: value-flash 800ms ease-out;
+  }
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -209,7 +229,9 @@ body,
   .animate-slide-in-left,
   .animate-scale-in,
   .animate-page-enter,
-  .animate-rise-in {
+  .animate-rise-in,
+  .animate-stepper-shimmer,
+  .animate-value-flash {
     animation: none !important;
   }
 }

@@ -380,11 +380,19 @@ class SyncRunner:
             # Patch the placeholder job row with the actual totals + the
             # final sync_type (which may have been promoted from
             # ``incremental`` to ``full`` above).
+            # Global ``total_batches`` is locked in here so the user-facing
+            # sync_jobs row exposes a stable denominator (29 for 711 msgs at
+            # batch_size=25) instead of the per-tick worker totals (which
+            # swing 5/7/4 as ticks claim varying counts of pending rows).
+            _settings = get_settings()
+            _bsize = max(1, _settings.sync_batch_size)
+            _global_total_batches = (len(messages) + _bsize - 1) // _bsize
             await stores.mongodb.set_sync_job_totals(
                 job_id=job_id,
                 total_messages=len(messages),
                 parent_messages=parent_count,
                 sync_type=resolved_type,
+                total_batches=_global_total_batches,
             )
 
             logger.info(
