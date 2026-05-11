@@ -196,12 +196,14 @@ async def test_empty_consolidation_yields_empty_touched_list():
 
 
 async def test_manual_mode_marks_pages_dirty_via_consolidation_hook(monkeypatch):
+    """memory-then-wiki realignment: consolidation_complete is queue-only in
+    both manual and auto mode. Manual-mode operators trigger flushes via the
+    Maintain Wiki button (``maintain_now``); the consolidation hook itself
+    no longer calls ``page_store.mark_dirty`` inline."""
     page_store = AsyncMock()
-    page_store.mark_dirty = AsyncMock(return_value=2)
+    page_store.mark_dirty = AsyncMock(return_value=0)
     maintainer = WikiMaintainer(page_store=page_store)
 
-    # Stub fact loader so the maintainer can route ``[f10]`` through
-    # plan_updates without hitting Weaviate.
     async def _load(channel_id, fact_ids):
         return [
             {
@@ -213,35 +215,24 @@ async def test_manual_mode_marks_pages_dirty_via_consolidation_hook(monkeypatch)
         ]
 
     maintainer._load_facts = _load  # type: ignore[method-assign]
-    # Use ``monkeypatch.setattr`` so the singleton is auto-restored on
-    # teardown — direct ``wm_mod._maintainer_instance = ...`` would leak
-    # the test maintainer into later tests that expect ``None`` (e.g. the
-    # admin metrics endpoint zeroed-shape test).
     monkeypatch.setattr(wm_mod, "_maintainer_instance", maintainer)
 
     counters = await maintainer.on_consolidation_complete("C1", fact_ids=["f10"], mode="manual")
+    # Routing surfaces affected pages so observability counters work.
     assert counters["affected_pages"] >= 2
-    page_store.mark_dirty.assert_awaited_once()
-    args, kwargs = page_store.mark_dirty.call_args
-    # args[0] = channel_id, args[1] = page_ids list
-    assert args[0] == "C1"
-    page_ids = args[1]
-    # plan_updates routes one fact with cluster=auth + entity_tags=[alice]
-    # to ``topic:auth`` plus the canonical ``people`` and ``glossary``
-    # pages — the kind=entity page set is dead in the redesign, so
-    # ``entity:alice`` is no longer a valid target.
-    assert "topic:auth" in page_ids
-    assert "people" in page_ids
-    assert "glossary" in page_ids
-    assert not any(p.startswith("entity:") for p in page_ids)
+    # Critical: no inline mark_dirty — flush is deferred to memory_settled
+    # (or operator-triggered maintain_now).
+    page_store.mark_dirty.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# 2.9 — Auto-mode fires apply_update (no regression)
+# 2.9 — Auto-mode no longer fires apply_update inline (memory-then-wiki
+# realignment): the consolidation hook is now queue-only; the terminal
+# flush is owned by ``memory_settled``.
 # ---------------------------------------------------------------------------
 
 
-async def test_auto_mode_fires_apply_update_via_consolidation_hook(monkeypatch):
+async def test_auto_mode_does_not_fire_apply_update_via_consolidation_hook(monkeypatch):
     page_store = AsyncMock()
     page_store.mark_dirty = AsyncMock(return_value=0)
     maintainer = WikiMaintainer(page_store=page_store)
@@ -268,8 +259,7 @@ async def test_auto_mode_fires_apply_update_via_consolidation_hook(monkeypatch):
     monkeypatch.setattr(wm_mod, "_maintainer_instance", maintainer)
 
     await maintainer.on_consolidation_complete("C1", fact_ids=["f10"], mode="auto")
-    # ``decision`` fact_type routes to topic:auth + decisions role page.
-    routed = {pid for _cid, pid, _ in apply_calls}
-    assert "topic:auth" in routed
-    assert "decisions" in routed
+    # Regression test for the mid-sync wiki rewrite bug: consolidation
+    # MUST NOT trigger apply_update — only memory_settled may flush.
+    assert apply_calls == []
     page_store.mark_dirty.assert_not_called()

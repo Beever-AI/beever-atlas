@@ -1332,17 +1332,21 @@ class WikiMaintainer:
     ) -> dict[str, Any]:
         """Hook invoked after consolidation finishes for a channel.
 
-        Replaces the legacy ``WikiCache.mark_all_stale(channel_id)`` hammer:
-        instead of marking the entire wiki stale, the maintainer routes the
-        consolidation's touched fact ids to the specific pages they affect.
-        Behaviour mirrors :meth:`on_extraction_done` exactly — non-empty
-        ``fact_ids`` routes to affected pages (auto fires LLM rewrites,
-        manual marks them dirty); empty ``fact_ids`` is a no-op (the worker
-        path's per-batch fan-out already covered any new facts during
-        consolidation).
+        Routes the consolidation's touched fact ids into the dirty queue via
+        the accumulator path (:meth:`on_memory_changed`) so they are picked
+        up by the next terminal flush. Does NOT schedule a debounced flush —
+        ``memory_settled`` owns that, ensuring the wiki only projects from a
+        stable memory state. Empty ``fact_ids`` is a no-op.
+
+        The ``mode`` argument is accepted for backwards-compatibility with
+        callers that pre-date the memory-then-wiki realignment but is unused
+        here: routing is always non-flushing. Manual-mode operators trigger
+        page rewrites via the ``Maintain Wiki`` button which calls
+        :meth:`maintain_now`.
         """
-        return await self.on_extraction_done(
-            channel_id, fact_ids, target_lang=target_lang, mode=mode
+        del mode  # accepted for backwards-compat; flushes are owned by memory_settled
+        return await self.on_memory_changed(
+            channel_id, fact_ids, target_lang=target_lang
         )
 
     async def maintain_now(self, channel_id: str, target_lang: str = "en") -> dict[str, int]:

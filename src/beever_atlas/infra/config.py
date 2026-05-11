@@ -653,7 +653,7 @@ class Settings(BaseSettings):
     # heuristic candidate signals don't accumulate enough evidence to
     # be reliable. Operators can lower it for testing on small
     # channels but the default is conservative.
-    wiki_min_topics_for_folders: int = Field(default=8, alias="WIKI_MIN_TOPICS_FOR_FOLDERS")
+    wiki_min_topics_for_folders: int = Field(default=6, alias="WIKI_MIN_TOPICS_FOR_FOLDERS")
 
     # Per-kind drift-A/B sample rate (§8.1). The legacy ``WIKI_DRIFT_AB``
     # rate-limiter applies only to the legacy single-prompt comparison;

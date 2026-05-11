@@ -3247,7 +3247,7 @@ class WikiCompiler:
         "activity": 8192,
         "glossary": 12288,
         "faq": 12288,
-        "analysis": 4096,
+        "analysis": 8192,
         "translation": 4096,
     }
     _PAGE_KIND_MAX_TOKENS_DEFAULT = 16384
@@ -3738,18 +3738,38 @@ class WikiCompiler:
             fact_count=len(sorted_facts),
             indexed_facts_json=json.dumps(indexed_facts, default=str),
         )
-        try:
-            raw = await self._llm_generate_json(prompt, page_kind="analysis")
-            data = json.loads(raw)
-            if not isinstance(data, dict) or "needs_subpages" not in data:
+        for attempt in range(2):
+            try:
+                raw = await self._llm_generate_json(prompt, page_kind="analysis")
+                data = json.loads(raw)
+                if not isinstance(data, dict) or "needs_subpages" not in data:
+                    logger.warning(
+                        "WikiCompiler: topic analysis returned invalid structure for %s",
+                        cluster.title,
+                    )
+                    return None
+                return data
+            except json.JSONDecodeError as exc:
+                if attempt == 0:
+                    logger.warning(
+                        "WikiCompiler: topic analysis JSON truncated for %s "
+                        "(attempt 1), retrying: %s",
+                        cluster.title,
+                        exc,
+                    )
+                    continue
                 logger.warning(
-                    "WikiCompiler: topic analysis returned invalid structure for %s", cluster.title
+                    "WikiCompiler: topic analysis failed for %s after retry: %s",
+                    cluster.title,
+                    exc,
                 )
                 return None
-            return data
-        except (json.JSONDecodeError, Exception) as exc:
-            logger.warning("WikiCompiler: topic analysis failed for %s: %s", cluster.title, exc)
-            return None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "WikiCompiler: topic analysis failed for %s: %s", cluster.title, exc
+                )
+                return None
+        return None
 
     async def _compile_subtopic_page(
         self,
