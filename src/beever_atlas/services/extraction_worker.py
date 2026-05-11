@@ -110,11 +110,14 @@ def _doc_to_normalized_message(doc: dict[str, Any]) -> NormalizedMessage | None:
         return None
 
 
-_RETRY_BACKOFF_SCHEDULE: list[int] = [30, 60, 120, 240, 480]
+_RETRY_BACKOFF_SCHEDULE: list[int] = [5, 30, 90, 180, 360]
 """Exponential backoff per attempt (seconds). Capped at the tail
-for attempts beyond the schedule. Combined with ``_MAX_RETRIES``,
-gives the system ~17 minutes of soft retries before a row stays
-``failed`` permanently."""
+for attempts beyond the schedule. First retry intentionally short (5s)
+for transient hiccups; later attempts climb sharply for real
+rate-limit windows. Mirrors ``batch_processor._LLM_RETRY_BACKOFF``
+(commit 84c4413) — the two schedules must move together; if one
+changes, change the other. (Architect-agent audit caught the drift
+between this file and batch_processor.py — both now aligned.)"""
 
 _MAX_RETRIES: int = len(_RETRY_BACKOFF_SCHEDULE)
 """Max retry attempts before a failed row stays failed permanently.
