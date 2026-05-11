@@ -1762,6 +1762,25 @@ class BatchProcessor:
                             channel_id=channel_id,
                             batch_results=[asdict(breakdown)],
                         )
+                        # Per-batch finalization of this batch's
+                        # channel_messages rows to ``status=done``. The worker
+                        # used to do this once per TICK after the whole
+                        # claim finished; that left the
+                        # ``MESSAGES 0/715`` counter at 0 throughout the tick
+                        # even when batches were obviously finishing. Now
+                        # each batch finalizes its own rows immediately, and
+                        # the refresh below picks up the new "done" count.
+                        # Idempotent — the EXTRACTION_STATUS_TRANSITIONS
+                        # map rejects ``done → done`` so the worker's later
+                        # tick-end bulk call becomes a no-op for these rows.
+                        if breakdown.keys:
+                            await stores.mongodb.finalize_extraction_status_bulk(
+                                keys=list(breakdown.keys),
+                                new_status="done",
+                            )
+                        await stores.mongodb.refresh_sync_progress_for_channel(
+                            channel_id
+                        )
                     except Exception:
                         # Mirror to channel-row is best-effort observability —
                         # never fail a batch on a mongo blip.
