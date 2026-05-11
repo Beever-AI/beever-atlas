@@ -26,33 +26,30 @@ interface MemoriesResponse {
 }
 
 /**
- * Atomic-facts pagination hook. Accumulates pages so the UI can browse the
- * full result set with a single Load more button — important when a channel
- * carries hundreds of facts but the backend caps each request at 200.
+ * Atomic-facts pagination hook. Page-based — UI gets prev/next/jump
+ * controls instead of an infinite scroll, which keeps a 600+ fact list
+ * navigable.
  */
-export function useMemories(channelId: string, limit = 100) {
+export function useMemories(channelId: string, limit = 25) {
   const [filters, setFilters] = useState<MemoryFilters>(defaultFilters);
   const [facts, setFacts] = useState<MemoryTier2[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [pages, setPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [fetchKey, setFetchKey] = useState(0);
   const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
   // Stale-response guard. Each fetch increments the request id; only the
-  // latest id's response is allowed to write state. Prevents a slow page-1
-  // from overwriting an already-loaded page-2 (or vice versa).
+  // latest id's response is allowed to write state.
   const requestIdRef = useRef(0);
 
   const fetchPage = useCallback(
-    async (pageNum: number, append: boolean) => {
+    async (pageNum: number) => {
       if (!channelId) return;
       const myId = ++requestIdRef.current;
-      if (append) setIsLoadingMore(true);
-      else setIsLoading(true);
+      setIsLoading(true);
 
       const params = new URLSearchParams();
       params.set("page", String(pageNum));
@@ -66,7 +63,7 @@ export function useMemories(channelId: string, limit = 100) {
           `/api/channels/${channelId}/memories?${params.toString()}`,
         );
         if (requestIdRef.current !== myId) return;
-        setFacts((prev) => (append ? [...prev, ...res.memories] : res.memories));
+        setFacts(res.memories);
         setTotal(res.total);
         setPages(res.pages);
         setCurrentPage(res.page);
@@ -75,29 +72,25 @@ export function useMemories(channelId: string, limit = 100) {
         if (requestIdRef.current !== myId) return;
         setError(err as Error);
       } finally {
-        if (requestIdRef.current === myId) {
-          setIsLoading(false);
-          setIsLoadingMore(false);
-        }
+        if (requestIdRef.current === myId) setIsLoading(false);
       }
     },
     [channelId, limit, filters.topic, filters.entity, filters.minImportance],
   );
 
-  // Reset to page 1 whenever filters or refetch trigger change.
+  // Reset to page 1 on filter / refetch trigger.
   useEffect(() => {
-    setFacts([]);
     setCurrentPage(1);
-    void fetchPage(1, false);
+    void fetchPage(1);
   }, [fetchPage, fetchKey]);
 
-  const loadMore = useCallback(() => {
-    if (isLoadingMore || isLoading) return;
-    if (currentPage >= pages) return;
-    void fetchPage(currentPage + 1, true);
-  }, [fetchPage, currentPage, pages, isLoading, isLoadingMore]);
-
-  const hasMore = currentPage < pages;
+  const goToPage = useCallback(
+    (pageNum: number) => {
+      if (pageNum < 1 || pageNum > pages || pageNum === currentPage) return;
+      void fetchPage(pageNum);
+    },
+    [fetchPage, pages, currentPage],
+  );
 
   // Stub fields kept for back-compat with callers that still destructure them.
   const summary = {
@@ -116,12 +109,11 @@ export function useMemories(channelId: string, limit = 100) {
     total,
     page: currentPage,
     pages,
-    hasMore,
-    loadMore,
+    pageSize: limit,
+    goToPage,
     filters,
     setFilters,
     isLoading,
-    isLoadingMore,
     error,
     refetch,
   };

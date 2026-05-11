@@ -8,6 +8,7 @@ import { useChannelMemoryCount } from "@/hooks/useChannelMemoryCount";
 import { api, ApiError } from "@/lib/api";
 import { MemoryFilters } from "./MemoryFilters";
 import { FactCard } from "./FactCard";
+import { Pagination } from "./Pagination";
 import { SummaryCard } from "./SummaryCard";
 import { ClusterCard } from "./ClusterCard";
 import { MemoryGraphView } from "./MemoryGraphView";
@@ -124,9 +125,10 @@ export function TierBrowser() {
   const {
     facts,
     total: factsTotal,
-    hasMore: factsHasMore,
-    loadMore: loadMoreFacts,
-    isLoadingMore: isLoadingMoreFacts,
+    page: factsPage,
+    pages: factsPages,
+    pageSize: factsPageSize,
+    goToPage: goToFactsPage,
     filters,
     setFilters,
     isLoading,
@@ -403,20 +405,26 @@ export function TierBrowser() {
             </p>
           </div>
           <span className="text-sm text-muted-foreground">
-            {factsTotal === facts.length
-              ? `${factsTotal} matching facts`
-              : `Showing ${facts.length} of ${factsTotal} matching facts`}
+            {factsTotal.toLocaleString()} matching facts
           </span>
         </div>
 
         <MemoryFilters filters={filters} setFilters={setFilters} />
 
-        {facts.length === 0 ? (
+        {factsTotal === 0 ? (
           <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center text-sm text-muted-foreground">
             No memories yet. Sync this channel to start extracting knowledge.
           </div>
         ) : (
           <>
+            <Pagination
+              page={factsPage}
+              pages={factsPages}
+              total={factsTotal}
+              pageSize={factsPageSize}
+              onPage={goToFactsPage}
+              disabled={isLoading}
+            />
             <div className="space-y-3">
               {facts.map((fact, idx) => (
                 <div
@@ -428,20 +436,19 @@ export function TierBrowser() {
                 </div>
               ))}
             </div>
-            {factsHasMore && (
-              <div className="flex justify-center pt-4">
-                <button
-                  type="button"
-                  onClick={loadMoreFacts}
-                  disabled={isLoadingMoreFacts}
-                  className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:opacity-50"
-                >
-                  {isLoadingMoreFacts
-                    ? "Loading…"
-                    : `Load more (${factsTotal - facts.length} remaining)`}
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={factsPage}
+              pages={factsPages}
+              total={factsTotal}
+              pageSize={factsPageSize}
+              onPage={(p: number) => {
+                goToFactsPage(p);
+                document
+                  .getElementById("tier2-facts")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              disabled={isLoading}
+            />
           </>
         )}
       </div>
