@@ -33,12 +33,29 @@ logger = logging.getLogger(__name__)
 
 
 ExtractionDoneCallback = Callable[[str, list[str]], Awaitable[None] | None]
-"""Signature for ``on_extraction_done`` subscribers (channel_id, fact_ids).
+"""DEPRECATED. Signature for ``on_extraction_done`` subscribers.
 
-:class:`WikiMaintainer` subscribes to this event to route freshly-extracted
-facts to affected wiki pages. The worker fans out via ``asyncio.gather`` and
-tolerates per-callback failures so one buggy subscriber cannot block
-extraction progress.
+Kept as a transitional alias during the ``memory-then-wiki-pipeline-realignment``
+deprecation window. New code should subscribe via
+:meth:`ExtractionWorker.subscribe_memory_changed` (accumulator) +
+:meth:`ExtractionWorker.subscribe_memory_settled` (terminal trigger).
+"""
+
+MemoryChangedCallback = Callable[[str, list[str]], Awaitable[None] | None]
+"""``memory_changed`` subscriber signature ``(channel_id, fact_ids)``.
+
+Accumulator-only — handlers route facts into durable per-page accumulators
+and do NOT take terminal actions (LLM rewrites, builder runs). Terminal
+actions wait for the corresponding :data:`MemorySettledCallback`.
+"""
+
+MemorySettledCallback = Callable[[str], Awaitable[None] | None]
+"""``memory_settled`` subscriber signature ``(channel_id,)``.
+
+Fired ONLY when the channel's extraction queue transitions to empty
+(``pending+extracting=0``). Idempotent — multiple emits for the same
+drained channel are safe. Subscribers take terminal action on this
+event (flush wiki dirty queue, run auto-overview, etc.).
 """
 
 
@@ -103,9 +120,11 @@ _MAX_RETRIES: int = len(_RETRY_BACKOFF_SCHEDULE)
 """Max retry attempts before a failed row stays failed permanently.
 Tied to the backoff schedule length so the two cannot drift."""
 
-_TICK_SECONDS: int = 30
-"""Default scheduler tick interval. Operators don't tune this — if
-30s is wrong for some deployment, change it here and redeploy."""
+_TICK_SECONDS: int = 10
+"""Default scheduler tick interval. Reduced from 30s to 10s in
+``memory-then-wiki-pipeline-realignment`` — combined with the
+``kick()`` event channel, the worker now responds to new pending
+rows within 1-2 seconds typically; the tick is the safety floor."""
 
 _STALE_SECONDS: int = 600
 """Stale-extracting recovery threshold. A row stuck in ``extracting``
@@ -144,7 +163,7 @@ class ExtractionWorker:
         self,
         batch_processor: BatchProcessor | None = None,
         semaphore_size: int | None = None,
-        settle_seconds: int = 5,
+        settle_seconds: int = 2,
         stale_seconds: int = 600,
         breaker: "CircuitBreaker | None" = None,
     ) -> None:
@@ -164,6 +183,27 @@ class ExtractionWorker:
         self._settle_seconds = settle_seconds
         self._stale_seconds = stale_seconds
         self._on_extraction_done: list[ExtractionDoneCallback] = []
+        # memory-then-wiki-pipeline-realignment — two-event contract.
+        # ``memory_changed`` is the accumulator (fires per batch);
+        # ``memory_settled`` is the terminal trigger (fires when the
+        # channel's queue drains). See design.md D1.
+        self._on_memory_changed: list[MemoryChangedCallback] = []
+        self._on_memory_settled: list[MemorySettledCallback] = []
+        # Channels whose queue was non-empty at the start of the
+        # current tick; used to detect the "transitioned to empty"
+        # edge and emit memory_settled exactly once per drain.
+        self._channels_with_pending_pre_tick: set[str] = set()
+        # memory-then-wiki-pipeline-realignment — kick channel.
+        # SyncRunner sets this event after a sync upserts new pending
+        # rows; the worker's run loop awaits it (with a tick-interval
+        # timeout) so the first claim fires immediately instead of
+        # waiting for the next 10s tick boundary. ``asyncio.Event`` is
+        # idempotent — back-to-back sets coalesce into one wakeup.
+        self._kick_event: asyncio.Event | None = None
+        # Total kicks received since process start — surfaced in
+        # ``metrics_snapshot`` so operators can verify SyncRunner is
+        # actually kicking after upserts.
+        self._kick_received_count: int = 0
         # Rolling-window metrics for the admin observability endpoint
         # (production-wiring §20). Each entry is a per-tick record:
         # ``(monotonic_ts, claimed, succeeded, failed)``. Trimmed to the
@@ -187,28 +227,134 @@ class ExtractionWorker:
     # ------------------------------------------------------------------
 
     def subscribe_extraction_done(self, callback: ExtractionDoneCallback) -> None:
-        """Register a coroutine called after each successful batch.
+        """DEPRECATED. Register a callback under the legacy combined event.
 
-        Subscribers receive ``(channel_id, fact_ids)``. Synchronous
-        callbacks are tolerated. :class:`WikiMaintainer` uses this to fire
-        :meth:`WikiMaintainer.on_extraction_done` so wiki pages refresh
-        incrementally instead of waiting on full consolidation.
+        Kept as a transitional alias during the
+        ``memory-then-wiki-pipeline-realignment`` deprecation window. New
+        consumers should call :meth:`subscribe_memory_changed` and/or
+        :meth:`subscribe_memory_settled` directly.
+
+        Internally the legacy callbacks are invoked from
+        :meth:`_emit_extraction_done` which still fires per batch
+        (accumulator semantics — terminal callers receive both legacy
+        callback AND ``memory_settled`` events).
         """
         self._on_extraction_done.append(callback)
 
+    def subscribe_memory_changed(self, callback: MemoryChangedCallback) -> None:
+        """Register a callback fired AFTER every per-channel batch.
+
+        Accumulator-only. Subscribers MUST NOT take terminal action
+        (LLM calls, builder runs) on this event — route facts into
+        durable per-page accumulators (see ``wiki_dirty_queue``) and
+        wait for :meth:`subscribe_memory_settled`.
+        """
+        self._on_memory_changed.append(callback)
+
+    def kick(self) -> None:
+        """Wake the worker's run loop immediately.
+
+        Called by ``SyncRunner`` (or any upstream producer) after new
+        pending rows land in ``channel_messages``. Lazily initialises
+        the ``asyncio.Event`` on first call so the constructor stays
+        loop-free for non-async test fixtures. Multiple kicks coalesce
+        into one wakeup — the run loop processes them in a single tick.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — kicks from sync code (e.g., tests) are
+            # absorbed as a counter bump but won't wake an unstarted loop.
+            self._kick_received_count += 1
+            return
+        if self._kick_event is None:
+            self._kick_event = asyncio.Event()
+        self._kick_event.set()
+        self._kick_received_count += 1
+
+    async def wait_for_kick(self, timeout: float) -> bool:
+        """Await the next kick (or timeout). Returns True if kicked.
+
+        Run loops call this with ``timeout=_TICK_SECONDS`` so the worker
+        wakes on either the kick OR the tick floor. The event is
+        cleared after wait returns so the next call blocks again.
+        """
+        if self._kick_event is None:
+            self._kick_event = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._kick_event.wait(), timeout=timeout)
+            kicked = True
+        except TimeoutError:
+            kicked = False
+        self._kick_event.clear()
+        return kicked
+
+    def subscribe_memory_settled(self, callback: MemorySettledCallback) -> None:
+        """Register a callback fired when the channel's queue drains.
+
+        Terminal trigger — subscribers take action (flush, build) on
+        this event. Idempotent: re-fires if the channel re-enters and
+        drains again.
+        """
+        self._on_memory_settled.append(callback)
+
+    async def _safe_invoke(
+        self,
+        cb: Callable[..., Awaitable[None] | None],
+        *args: Any,
+    ) -> None:
+        """Invoke ``cb`` swallowing exceptions so one bad subscriber
+        cannot crash siblings or block the worker tick.
+
+        Logs with structured context for observability.
+        """
+        try:
+            result = cb(*args)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:  # noqa: BLE001 — one bad subscriber must not stall extraction
+            logger.exception(
+                "ExtractionWorker: subscriber raised cb=%s args_head=%s",
+                getattr(cb, "__name__", repr(cb)),
+                repr(args[:2]) if args else "()",
+            )
+
     async def _emit_extraction_done(self, channel_id: str, fact_ids: list[str]) -> None:
+        """DEPRECATED legacy emission.
+
+        Invokes the legacy ``on_extraction_done`` subscribers via
+        fire-and-forget tasks. ALSO fans out to ``memory_changed``
+        subscribers so the new accumulator path receives a parallel
+        notification during the deprecation window. ``memory_settled``
+        is NOT emitted here — it fires exactly once per drain in
+        :meth:`tick` so per-batch over-firing is impossible.
+        """
         for cb in self._on_extraction_done:
-            try:
-                result = cb(channel_id, fact_ids)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:  # noqa: BLE001 — one bad subscriber must not stall extraction
-                logger.exception(
-                    "ExtractionWorker: on_extraction_done subscriber raised "
-                    "for channel=%s fact_count=%d (continuing)",
-                    channel_id,
-                    len(fact_ids),
-                )
+            asyncio.create_task(self._safe_invoke(cb, channel_id, fact_ids))
+        # Dual-emit so subscribers that have already migrated to
+        # ``memory_changed`` get the new event AND legacy callers keep
+        # working unchanged. Removed after the deprecation window.
+        for cb in self._on_memory_changed:
+            asyncio.create_task(self._safe_invoke(cb, channel_id, fact_ids))
+
+    async def _emit_memory_changed(self, channel_id: str, fact_ids: list[str]) -> None:
+        """Fire ``memory_changed`` to all subscribers via create_task.
+
+        Each subscriber runs in its own task so the worker tick is
+        never blocked on subscriber I/O. Exceptions are swallowed and
+        logged per subscriber.
+        """
+        for cb in self._on_memory_changed:
+            asyncio.create_task(self._safe_invoke(cb, channel_id, fact_ids))
+
+    async def _emit_memory_settled(self, channel_id: str) -> None:
+        """Fire ``memory_settled`` to all subscribers via create_task.
+
+        Idempotent — terminal subscribers (maintainer flush, auto
+        overview) are themselves idempotent.
+        """
+        for cb in self._on_memory_settled:
+            asyncio.create_task(self._safe_invoke(cb, channel_id))
 
     # ------------------------------------------------------------------
     # Public lifecycle methods (called by SyncScheduler)
@@ -351,6 +497,26 @@ class ExtractionWorker:
             counters["failed"],
             counters["channels"],
         )
+        # memory-then-wiki-pipeline-realignment — settlement detection.
+        # For each channel touched in this tick, check whether its queue
+        # has transitioned to empty. If so, emit ``memory_settled``.
+        # Idempotent — a channel that was empty before the tick gets no
+        # event; one that drains DURING the tick fires exactly once. A
+        # channel that re-enters pending mid-tick is correctly skipped
+        # (pending+extracting>0) and the next tick will detect when it
+        # actually drains.
+        for ch_id in list(by_channel.keys()):
+            try:
+                counts = await stores_ref.mongodb.count_channel_messages_by_status(ch_id)
+                pending = int(counts.get("pending", 0))
+                extracting = int(counts.get("extracting", 0))
+                if pending == 0 and extracting == 0:
+                    await self._emit_memory_settled(ch_id)
+            except Exception:  # noqa: BLE001 — settlement is best-effort observability
+                logger.exception(
+                    "ExtractionWorker: memory_settled detection failed channel=%s",
+                    ch_id,
+                )
         self._record_tick_metrics(counters)
         return counters
 
@@ -464,6 +630,11 @@ class ExtractionWorker:
             "success_rate_5min": round(success_rate, 4),
             "breaker_state": breaker_state,
             "recent_failures": list(self._recent_failures),
+            # memory-then-wiki-pipeline-realignment — kick counter so
+            # operators can verify SyncRunner is calling ``kick()`` after
+            # each new upsert. A value that stays at 0 during active sync
+            # indicates a wiring regression.
+            "kick_received_count": self._kick_received_count,
         }
 
     async def sweep_stale(self) -> int:
@@ -600,6 +771,12 @@ class ExtractionWorker:
             # sub-batches produced — partial success still has signal.
             if succeeded_keys:
                 fact_ids: list[str] = list(getattr(result, "fact_ids", None) or [])
+                # memory-then-wiki-pipeline-realignment — accumulator path
+                # fires per batch. ``_emit_extraction_done`` ALSO fans out
+                # to memory_changed subscribers during the deprecation
+                # window; emitting both keeps legacy callers + new callers
+                # working without double-counting on memory_changed
+                # subscribers (they only fire once via _emit_extraction_done).
                 await self._emit_extraction_done(channel_id, fact_ids)
 
             logger.warning(

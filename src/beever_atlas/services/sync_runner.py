@@ -787,6 +787,25 @@ class SyncRunner:
                             upsert_result.get("matched", 0),
                             upsert_result.get("modified", 0),
                         )
+                        # memory-then-wiki-pipeline-realignment — kick the
+                        # extraction worker so the first claim fires now
+                        # instead of waiting for the next 10s tick boundary.
+                        # No-op when DECOUPLE_EXTRACTION=false (inline path)
+                        # or when the worker is not yet registered.
+                        if inserted_count > 0:
+                            try:
+                                from beever_atlas.services.extraction_worker import (
+                                    get_extraction_worker,
+                                )
+
+                                _worker = get_extraction_worker()
+                                if _worker is not None:
+                                    _worker.kick()
+                            except Exception:  # noqa: BLE001 — best-effort
+                                logger.debug(
+                                    "SyncRunner: extraction worker kick failed",
+                                    exc_info=True,
+                                )
                 except Exception as exc:  # noqa: BLE001 — additive store
                     logger.warning(
                         "SyncRunner: channel_messages upsert failed job_id=%s "

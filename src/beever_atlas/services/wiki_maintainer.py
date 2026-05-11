@@ -842,6 +842,125 @@ class WikiMaintainer:
             self._dirty_lock = asyncio.Lock()
         return self._dirty_lock
 
+    async def on_memory_changed(
+        self,
+        channel_id: str,
+        fact_ids: list[str],
+        *,
+        target_lang: str = "en",
+    ) -> dict[str, int]:
+        """``memory_changed`` subscriber — accumulator path only.
+
+        Routes ``fact_ids`` to affected pages via the existing
+        ``plan_updates`` pipeline, then enqueues each ``(channel_id,
+        page_id, fact_ids)`` tuple into ``wiki_dirty_queue`` so the
+        state survives backend restarts. NEVER schedules a debounced
+        flush — that happens in :meth:`on_memory_settled` once the
+        channel's extraction queue drains.
+
+        Also writes through to the legacy in-memory ``_dirty`` dict
+        for the deprecation window so existing flush paths keep
+        working. The in-memory cache is removed in a follow-up commit.
+        """
+        counters: dict[str, int] = {"affected_pages": 0}
+        if not fact_ids:
+            return counters
+
+        affected_pages = await self._route_facts_to_pages(
+            channel_id, fact_ids, target_lang=target_lang
+        )
+        counters["affected_pages"] = len(affected_pages)
+
+        # Write to the durable queue first so a crash before the
+        # in-memory write still preserves the work.
+        try:
+            from beever_atlas.stores import get_stores
+
+            stores = get_stores()
+            for page_id, page_fact_ids in affected_pages.items():
+                await stores.mongodb.enqueue_dirty(
+                    channel_id=channel_id,
+                    page_id=page_id,
+                    fact_ids=list(page_fact_ids),
+                )
+        except Exception:  # noqa: BLE001 — never destabilise the worker hot path
+            logger.exception(
+                "wiki_maintainer.on_memory_changed: enqueue_dirty failed channel=%s",
+                channel_id,
+            )
+
+        # Mirror into legacy in-memory dirty set so the existing flush
+        # path (which reads ``self._dirty``) continues to work during
+        # the deprecation window. Removed in the cleanup commit.
+        async with self._get_dirty_lock():
+            for page_id, page_fact_ids in affected_pages.items():
+                key = (channel_id, page_id)
+                self._dirty.setdefault(key, set()).update(page_fact_ids)
+
+        logger.info(
+            "wiki_maintainer.on_memory_changed channel=%s affected=%d (queue-only, no flush)",
+            channel_id,
+            counters["affected_pages"],
+        )
+        return counters
+
+    async def on_memory_settled(
+        self,
+        channel_id: str,
+        *,
+        target_lang: str = "en",
+    ) -> dict[str, int]:
+        """``memory_settled`` subscriber — terminal trigger.
+
+        Schedules one debounced flush task for the channel. Multiple
+        ``memory_settled`` events for the same channel within the
+        debounce window collapse to a single flush (idempotent
+        scheduling via ``_ensure_flush_scheduled``).
+
+        Manual mode (``WIKI_MAINTENANCE_MODE=manual``) skips the
+        scheduled flush — the operator's "Maintain Wiki" button is
+        the trigger via :meth:`maintain_now`.
+        """
+        # Determine the effective mode the same way on_extraction_done does.
+        effective_mode = self._mode_override or self._resolve_default_mode()
+        if effective_mode == "manual":
+            logger.info(
+                "wiki_maintainer.on_memory_settled channel=%s mode=manual "
+                "(flush deferred to operator)",
+                channel_id,
+            )
+            return {"scheduled": 0}
+
+        debounce = self._resolve_debounce_seconds()
+        if debounce <= 0:
+            # Immediate flush — preserves the legacy synchronous path
+            # used by some unit tests.
+            rewritten = await self._flush_dirty(target_lang=target_lang)
+            logger.info(
+                "wiki_maintainer.on_memory_settled channel=%s rewritten=%d "
+                "(debounce=0, inline flush)",
+                channel_id,
+                rewritten,
+            )
+            return {"scheduled": 0, "rewritten": rewritten}
+
+        self._ensure_flush_scheduled(debounce, target_lang=target_lang)
+        logger.info(
+            "wiki_maintainer.on_memory_settled channel=%s debounce_seconds=%.1f (flush scheduled)",
+            channel_id,
+            debounce,
+        )
+        return {"scheduled": 1}
+
+    def _resolve_default_mode(self) -> str:
+        """Read the global ``WIKI_MAINTENANCE_MODE`` env setting."""
+        from beever_atlas.infra.config import get_settings
+
+        try:
+            return get_settings().wiki_maintenance_mode or "auto"
+        except Exception:  # noqa: BLE001
+            return "auto"
+
     async def on_extraction_done(
         self,
         channel_id: str,

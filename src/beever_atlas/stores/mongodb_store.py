@@ -64,6 +64,11 @@ class MongoDBStore:
         # the collection is created with TTL/indexes so the v2 ship is
         # a code-only change.
         self._wiki_proposed_edits = self._db["wiki_proposed_edits"]
+        # memory-then-wiki-pipeline-realignment — durable per-page dirty
+        # queue. Replaces the in-memory ``WikiMaintainer._dirty`` dict so
+        # backend crashes during the debounce window no longer lose
+        # queued page rewrites. See specs/wiki-dirty-queue/spec.md.
+        self._wiki_dirty_queue = self._db["wiki_dirty_queue"]
 
     @property
     def db(self):
@@ -92,6 +97,19 @@ class MongoDBStore:
         await self._activity_events.create_index([("timestamp", -1)])
         await self._channel_policies.create_index("channel_id", unique=True)
         await self._pipeline_checkpoints.create_index("batch_key", unique=True)
+        # memory-then-wiki-pipeline-realignment — wiki_dirty_queue indexes.
+        # Primary lookup is by ``(channel_id, page_id)`` for upsert; status
+        # field is the predicate for claim/recover sweeps.
+        await self._wiki_dirty_queue.create_index(
+            [("channel_id", 1), ("page_id", 1)],
+            unique=True,
+            name="wiki_dirty_queue_channel_page_unique",
+        )
+        # Stale-flushing recovery: scan rows by status + age.
+        await self._wiki_dirty_queue.create_index(
+            [("status", 1), ("updated_at", 1)],
+            name="wiki_dirty_queue_status_age",
+        )
         # ``channel_messages`` indexes.
         # 1) Compound unique key for idempotent upsert.
         await self._channel_messages.create_index(
@@ -1811,3 +1829,111 @@ class MongoDBStore:
                 stale_seconds,
             )
         return result.modified_count
+
+    # ------------------------------------------------------------------
+    # memory-then-wiki-pipeline-realignment — wiki_dirty_queue
+    # ------------------------------------------------------------------
+
+    async def enqueue_dirty(
+        self,
+        channel_id: str,
+        page_id: str,
+        fact_ids: list[str],
+    ) -> None:
+        """Append ``fact_ids`` to the per-page dirty row, upserting if absent.
+
+        Uses ``$addToSet`` so duplicate fact_ids never accumulate. On
+        insert, status is ``pending`` and ``created_at`` is stamped.
+        On every call ``updated_at`` is bumped. If the row was previously
+        ``done`` (last flush finished cleanly), the upsert flips it back
+        to ``pending`` — the same page can re-enter the queue when new
+        facts arrive after a successful flush.
+        """
+        if not fact_ids:
+            return
+        now = datetime.now(tz=UTC)
+        await self._wiki_dirty_queue.update_one(
+            {"channel_id": channel_id, "page_id": page_id},
+            {
+                "$addToSet": {"fact_ids": {"$each": list(set(fact_ids))}},
+                "$set": {
+                    "status": "pending",
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+
+    async def claim_dirty(self, channel_id: str) -> list[dict[str, Any]]:
+        """Atomically claim every pending dirty row for the channel.
+
+        Flips ``status: pending → flushing`` for all matching rows in one
+        update_many, then returns the rows with their ``_id``, ``page_id``,
+        ``fact_ids``. Idempotent — a second concurrent call sees nothing
+        to claim and returns an empty list.
+        """
+        now = datetime.now(tz=UTC)
+        await self._wiki_dirty_queue.update_many(
+            {"channel_id": channel_id, "status": "pending"},
+            {"$set": {"status": "flushing", "updated_at": now}},
+        )
+        cursor = self._wiki_dirty_queue.find(
+            {"channel_id": channel_id, "status": "flushing"},
+            {"_id": 1, "page_id": 1, "fact_ids": 1},
+        )
+        claimed: list[dict[str, Any]] = []
+        async for doc in cursor:
+            claimed.append(doc)
+        return claimed
+
+    async def mark_dirty_done(self, doc_ids: list[Any]) -> None:
+        """Flip the supplied dirty-queue rows to ``status="done"``."""
+        if not doc_ids:
+            return
+        now = datetime.now(tz=UTC)
+        await self._wiki_dirty_queue.update_many(
+            {"_id": {"$in": doc_ids}},
+            {"$set": {"status": "done", "updated_at": now}},
+        )
+
+    async def recover_stale_flushing(self, stale_seconds: int = 600) -> int:
+        """Reset rows stuck in ``flushing`` longer than ``stale_seconds``
+        back to ``pending`` so the next flush re-claims them.
+
+        Crash recovery for maintainer-mid-flush failures. Default 10 min.
+        Returns the number of rows reset.
+        """
+        now = datetime.now(tz=UTC)
+        threshold = now - timedelta(seconds=stale_seconds)
+        result = await self._wiki_dirty_queue.update_many(
+            {"status": "flushing", "updated_at": {"$lt": threshold}},
+            {"$set": {"status": "pending", "updated_at": now}},
+        )
+        if result.modified_count:
+            logger.warning(
+                "WikiMaintainer: recovered %d stale-flushing dirty rows older than %ds",
+                result.modified_count,
+                stale_seconds,
+            )
+        return result.modified_count
+
+    async def cleanup_done_dirty(self, retention_days: int = 7) -> int:
+        """Delete ``done`` rows older than ``retention_days``.
+
+        Bounds the collection size while keeping recent audit history
+        for the operator console.
+        """
+        cutoff = datetime.now(tz=UTC) - timedelta(days=retention_days)
+        result = await self._wiki_dirty_queue.delete_many(
+            {"status": "done", "updated_at": {"$lt": cutoff}}
+        )
+        if result.deleted_count:
+            logger.info(
+                "WikiMaintainer: cleaned %d done dirty rows older than %dd",
+                result.deleted_count,
+                retention_days,
+            )
+        return result.deleted_count

@@ -345,16 +345,55 @@ async def lifespan(app: FastAPI):
                     exc_info=exc,
                 )
 
-            def _on_extraction_done(channel_id: str, fact_ids: list[str]):
-                # Fire-and-forget so the worker's batch loop is never
-                # blocked by maintainer LLM calls. Per-page exceptions are
-                # already swallowed inside ``on_extraction_done``;
-                # ``_on_done_log_exc`` covers the rare top-level failure
-                # path (import errors, etc.).
-                task = _asyncio.create_task(_resolve_and_run(channel_id, fact_ids))
+            # memory-then-wiki-pipeline-realignment — subscribe to the
+            # two-event contract so the maintainer accumulates per batch
+            # but only flushes after the channel's extraction queue
+            # actually drains. Drops the legacy ``subscribe_extraction_done``
+            # registration; the maintainer's ``on_extraction_done`` method
+            # remains callable for out-of-tree callers during the
+            # deprecation window but no longer fires per batch.
+            async def _resolve_and_run_memory_changed(
+                channel_id: str, fact_ids: list[str]
+            ) -> None:
+                try:
+                    await maintainer.on_memory_changed(
+                        channel_id, fact_ids, target_lang="en"
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).exception(
+                        "wiki_maintainer.on_memory_changed crashed channel=%s",
+                        channel_id,
+                    )
+
+            async def _resolve_and_run_memory_settled(channel_id: str) -> None:
+                try:
+                    # The auto-overview path (initial build for first sync)
+                    # is owned by AutoOverviewSubscriber, which subscribes
+                    # to memory_settled separately. Here the maintainer
+                    # only schedules the debounced page-flush.
+                    await maintainer.on_memory_settled(
+                        channel_id, target_lang="en"
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).exception(
+                        "wiki_maintainer.on_memory_settled crashed channel=%s",
+                        channel_id,
+                    )
+
+            def _on_memory_changed(channel_id: str, fact_ids: list[str]):
+                task = _asyncio.create_task(
+                    _resolve_and_run_memory_changed(channel_id, fact_ids)
+                )
                 task.add_done_callback(_on_done_log_exc)
 
-            worker.subscribe_extraction_done(_on_extraction_done)
+            def _on_memory_settled(channel_id: str):
+                task = _asyncio.create_task(
+                    _resolve_and_run_memory_settled(channel_id)
+                )
+                task.add_done_callback(_on_done_log_exc)
+
+            worker.subscribe_memory_changed(_on_memory_changed)
+            worker.subscribe_memory_settled(_on_memory_settled)
     except Exception as exc:
         logging.getLogger(__name__).warning("WikiMaintainer init failed (non-fatal): %s", exc)
 
@@ -433,7 +472,36 @@ async def lifespan(app: FastAPI):
 
                 task.add_done_callback(_log_exc)
 
-            _aov_worker.subscribe_extraction_done(_on_extraction_done_aov)
+            # memory-then-wiki-pipeline-realignment — the auto-overview
+            # subscriber's 5-gate check used to include ``pending+extracting=0``;
+            # the new ``memory_settled`` event already guarantees that
+            # invariant. Subscribe to it instead; legacy
+            # ``subscribe_extraction_done`` no longer fires the auto-overview.
+            def _on_memory_settled_aov(channel_id: str) -> None:
+                # The auto-overview subscriber's existing entry point
+                # still expects ``(channel_id, fact_ids)``; pass an empty
+                # fact-id list since the trigger no longer carries them
+                # (it doesn't need them — the gate checks Weaviate counts).
+                task = _asyncio_aov.create_task(
+                    _auto_overview.on_extraction_done(channel_id, [])
+                )
+
+                def _log_exc(t: _asyncio_aov.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logging.getLogger(__name__).warning(
+                            "auto_overview_subscriber fan-out task raised "
+                            "channel=%s: %s",
+                            channel_id,
+                            exc,
+                            exc_info=exc,
+                        )
+
+                task.add_done_callback(_log_exc)
+
+            _aov_worker.subscribe_memory_settled(_on_memory_settled_aov)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "AutoOverviewSubscriber init failed (non-fatal): %s", exc
