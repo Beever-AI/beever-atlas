@@ -384,8 +384,20 @@ class SyncRunner:
             # sync_jobs row exposes a stable denominator (29 for 711 msgs at
             # batch_size=25) instead of the per-tick worker totals (which
             # swing 5/7/4 as ticks claim varying counts of pending rows).
+            #
+            # Use ``batch_max_messages`` (the AdaptiveBatcher hard-cap,
+            # default 30) — NOT ``sync_batch_size`` (default 50) — because
+            # AdaptiveBatcher closes batches at the token-aware boundary,
+            # which in practice hits the 30-msg cap before the input-token
+            # budget. Estimating with the 50-msg ``sync_batch_size`` gave
+            # the UI "15 batches" when reality was 24+, so total_batches
+            # kept growing tick-by-tick (15 → 17 → 19 → 21 → 22 → 24)
+            # as ``increment_batches_completed_for_channel`` used $max to
+            # raise the denominator. Now the initial estimate is close to
+            # actual, and the only remaining growth comes from edge cases
+            # where the LLM trigger AdaptiveBatcher to use smaller batches.
             _settings = get_settings()
-            _bsize = max(1, _settings.sync_batch_size)
+            _bsize = max(1, _settings.batch_max_messages)
             _global_total_batches = (len(messages) + _bsize - 1) // _bsize
             await stores.mongodb.set_sync_job_totals(
                 job_id=job_id,

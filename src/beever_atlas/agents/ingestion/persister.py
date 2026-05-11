@@ -120,7 +120,7 @@ class PersisterAgent(BaseAgent):
         if not isinstance(raw_validated, dict):
             if raw_validated:
                 logger.warning(
-                    "PersisterAgent: validated_entities is %s, not dict; treating as empty batch=%s",
+                    "PersisterAgent: validated_entities is %s, not dict; falling back to extracted_entities batch=%s",
                     type(raw_validated).__name__,
                     batch_num,
                 )
@@ -133,6 +133,35 @@ class PersisterAgent(BaseAgent):
         relationship_dicts: list[dict[str, Any]] = [
             r for r in (validated_payload.get("relationships") or []) if isinstance(r, dict)
         ]
+        # If the cross_batch_validator's output was lost (truncated JSON
+        # that could not be recovered by adk_recovery), fall back to the
+        # entity_extractor's raw output rather than persisting an empty
+        # set. The upstream extractor data has already been schema-
+        # validated; the only thing we lose by skipping the validator is
+        # the cross-batch dedup pass — preferable to silently dropping
+        # ~100 entities + relationships per affected batch. Observed in
+        # production logs (batch 21, 23) where validated_entities became
+        # a "failed_recoverable=True" sentinel string and persister wrote
+        # facts=N entities=0 relationships=0.
+        if not entity_dicts and not relationship_dicts:
+            raw_extracted = ctx.session.state.get("extracted_entities")
+            if isinstance(raw_extracted, dict):
+                fallback_ents = [
+                    e for e in (raw_extracted.get("entities") or []) if isinstance(e, dict)
+                ]
+                fallback_rels = [
+                    r for r in (raw_extracted.get("relationships") or []) if isinstance(r, dict)
+                ]
+                if fallback_ents or fallback_rels:
+                    logger.warning(
+                        "PersisterAgent: using extracted_entities fallback for batch=%s "
+                        "(recovered %d entities + %d relationships)",
+                        batch_num,
+                        len(fallback_ents),
+                        len(fallback_rels),
+                    )
+                    entity_dicts = fallback_ents
+                    relationship_dicts = fallback_rels
 
         stores = get_stores()
 
