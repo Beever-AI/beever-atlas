@@ -134,6 +134,12 @@ class DeterministicCrossBatchValidator(BaseAgent):
             len(result.merges),
             llm_fallback_count,
         )
+        # Accumulate into per-sync counter for sync_summary: metric line.
+        if llm_fallback_count and channel_id and sync_job_id:
+            from beever_atlas.services.batch_processor import increment_sync_metric
+            increment_sync_metric(
+                channel_id, sync_job_id, "cross_batch_validator_llm_fallback_total", llm_fallback_count
+            )
 
         yield Event(
             author=self.name,

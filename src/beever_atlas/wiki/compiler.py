@@ -1288,6 +1288,15 @@ and trip the CircuitBreaker mid-regenerate. Tune in code if Gemini
 quota grows; not exposed as an env var because operators have no
 reason to lower this (lower = strictly slower)."""
 
+_TOPIC_COMPILE_PARALLELISM: int = 6
+"""Max simultaneous in-flight topic-page LLM compiles in ``compile_pages``.
+
+Default 6 matches the Gemini Flash RPM ceiling (~360 RPM = 6 RPS) so a
+wide channel (50+ topics) doesn't trip the provider quota mid-regenerate.
+Overrideable via ``Settings.wiki_topic_compile_parallelism`` (env var
+``WIKI_TOPIC_COMPILE_PARALLELISM``, range 1–16). Set to 16 for ultra-large
+channels on paid high-quota tiers."""
+
 
 def _rollup_folder_child_phantom_facts(modules: list[Any]) -> list[dict[str, Any]]:
     """Synthesize phantom facts from a sub-folder's persisted module data.
@@ -5136,6 +5145,18 @@ class WikiCompiler:
         # Store skipped topics so overview can reference them
         gathered["_skipped_topics"] = skipped_topics
 
+        topic_parallelism = get_settings().wiki_topic_compile_parallelism
+        topic_sem = asyncio.Semaphore(topic_parallelism)
+        logger.info(
+            "WikiCompiler: topic_compile_parallelism=%d topics=%d",
+            topic_parallelism,
+            len(filtered_clusters),
+        )
+
+        async def _bounded_topic(coro):
+            async with topic_sem:
+                return await coro
+
         if parallel_dispatch:
 
             async def _compile_topic_with_titles(cluster):
@@ -5146,7 +5167,10 @@ class WikiCompiler:
             topic_tasks = [
                 (
                     f"topic-{_slugify(c.title) or c.id}",
-                    _tracked(_compile_topic_with_titles(c), f"topic-{_slugify(c.title) or c.id}"),
+                    _tracked(
+                        _bounded_topic(_compile_topic_with_titles(c)),
+                        f"topic-{_slugify(c.title) or c.id}",
+                    ),
                 )
                 for c in filtered_clusters
             ]
@@ -5155,7 +5179,8 @@ class WikiCompiler:
                 (
                     f"topic-{_slugify(c.title) or c.id}",
                     _tracked(
-                        self._compile_topic_page(c, gathered), f"topic-{_slugify(c.title) or c.id}"
+                        _bounded_topic(self._compile_topic_page(c, gathered)),
+                        f"topic-{_slugify(c.title) or c.id}",
                     ),
                 )
                 for c in filtered_clusters

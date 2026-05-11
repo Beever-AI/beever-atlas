@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     # destructive ops (e.g. /api/dev/reset) to scope wipes away from the
     # default graph when a shared cluster hosts multiple tenants.
     neo4j_database: str = Field(default="neo4j", alias="NEO4J_DATABASE")
+    neo4j_batch_name_vector: bool = Field(
+        default=True,
+        alias="NEO4J_BATCH_NAME_VECTOR",
+        description="When true, persister batches name_vector writes via a single UNWIND Cypher call. Falls back to per-entity on failure.",
+    )
     mongodb_uri: str = Field(default="mongodb://localhost:27017/beever_atlas")
     redis_url: str = Field(default="redis://localhost:6379")
 
@@ -692,6 +697,14 @@ class Settings(BaseSettings):
     # via the curation UI (no auto-merge — proposals only). 0.70 starts
     # conservative; tune up if false-positive rate exceeds 1/week.
     wiki_page_merge_threshold: float = Field(default=0.70, alias="WIKI_PAGE_MERGE_THRESHOLD")
+
+    wiki_topic_compile_parallelism: int = Field(
+        default=6,
+        ge=1,
+        le=16,
+        alias="WIKI_TOPIC_COMPILE_PARALLELISM",
+        description="Max concurrent topic page LLM compilations. Default 6 matches Gemini Flash RPM ceiling. Set to 16 for ultra-large channels (50+ topics) on paid tiers.",
+    )
 
     # Single-tenant compatibility mode for the v1.0 OSS launch. When True,
     # any authenticated user principal is granted access to channels whose

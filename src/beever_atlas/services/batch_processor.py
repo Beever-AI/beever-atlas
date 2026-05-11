@@ -304,6 +304,51 @@ class BatchResult:
     fact_ids: list[str] = field(default_factory=list)
 
 
+# ── Per-sync metrics registry ──────────────────────────────────────────────────
+# Process-local counters keyed by (channel_id, sync_job_id).  Initialised at
+# sync start, drained + cleared when the 4 sync_summary: lines are emitted.
+# No Mongo persistence — these are observational only.
+
+import threading as _threading
+
+_sync_metrics_lock = _threading.Lock()
+# _sync_metrics[(channel_id, sync_job_id)] -> {"metric_name": int|float}
+_sync_metrics: dict[tuple[str, str], dict[str, float]] = {}
+
+
+def _init_sync_metrics(channel_id: str, sync_job_id: str) -> None:
+    """Create a fresh metrics bucket for this sync."""
+    key = (channel_id, sync_job_id)
+    with _sync_metrics_lock:
+        _sync_metrics[key] = {
+            "relationships_dropped_total": 0,
+            "entity_truncation_recoveries": 0,
+            "lost_estimate_sum": 0,
+            "cross_batch_validator_llm_fallback_total": 0,
+        }
+
+
+def increment_sync_metric(channel_id: str, sync_job_id: str, metric: str, delta: float = 1) -> None:
+    """Atomically increment a per-sync metric counter.
+
+    Called from quality_gates.py, cross_batch_validator.py, and neo4j_store.py.
+    Safe to call concurrently from multiple batch coroutines.
+    No-ops silently when the key is missing (metric window closed or unknown sync).
+    """
+    key = (channel_id, sync_job_id)
+    with _sync_metrics_lock:
+        bucket = _sync_metrics.get(key)
+        if bucket is not None:
+            bucket[metric] = bucket.get(metric, 0) + delta
+
+
+def _drain_sync_metrics(channel_id: str, sync_job_id: str) -> dict[str, float]:
+    """Return the accumulated metrics dict and remove the key from the registry."""
+    key = (channel_id, sync_job_id)
+    with _sync_metrics_lock:
+        return _sync_metrics.pop(key, {})
+
+
 if TYPE_CHECKING:
     from beever_atlas.services.circuit_breaker import CircuitBreaker
 
@@ -356,6 +401,12 @@ class BatchProcessor:
         settings = get_settings()
         stores = get_stores()
         result = BatchResult()
+
+        # Initialise per-sync metric counters (process-local, no Mongo).
+        # The bucket is drained on the success path below; the caller
+        # (ExtractionWorker) wraps process_messages in a try/finally that
+        # also drains on exception paths to prevent unbounded dict growth.
+        _init_sync_metrics(channel_id, sync_job_id)
 
         # Use per-channel config if provided, else fall back to global settings
         batch_size = (
@@ -1932,4 +1983,71 @@ class BatchProcessor:
             result.total_entities,
             len(result.errors),
         )
+
+        # ── sync_summary: structured metrics ─────────────────────────────────
+        # Emit 4 log lines exactly once per sync_completed event.  These lines
+        # are the PR-1 measurement substrate for the PR-2 data gate.
+        # Each line is parseable by the grep one-liners in runbooks/sync-metrics.md.
+        # A failed histogram query must NOT block sync completion (try/except).
+        _metrics = _drain_sync_metrics(channel_id, sync_job_id)
+        _rels_dropped = int(_metrics.get("relationships_dropped_total", 0))
+        _trunc_recoveries = int(_metrics.get("entity_truncation_recoveries", 0))
+        _lost_estimate_sum = int(_metrics.get("lost_estimate_sum", 0))
+        _cbv_fallback = int(_metrics.get("cross_batch_validator_llm_fallback_total", 0))
+
+        logger.info(
+            "sync_summary: metric=relationships_dropped_total value=%d channel_id=%s sync_job_id=%s",
+            _rels_dropped,
+            channel_id,
+            sync_job_id,
+        )
+
+        # Cluster-size histogram — query Weaviate; failures are non-fatal.
+        try:
+            _clusters = await stores.weaviate.list_clusters(channel_id)
+            _buckets: dict[int, int] = {1: 0, 2: 0, 3: 0, 5: 0, 10: 0, 11: 0}
+            for _cl in _clusters:
+                _mc = getattr(_cl, "member_count", 0) or 0
+                if _mc <= 1:
+                    _buckets[1] += 1
+                elif _mc == 2:
+                    _buckets[2] += 1
+                elif _mc == 3:
+                    _buckets[3] += 1
+                elif _mc <= 5:
+                    _buckets[5] += 1
+                elif _mc <= 10:
+                    _buckets[10] += 1
+                else:
+                    _buckets[11] += 1
+            _histogram = json.dumps(
+                [[k, _buckets[k]] for k in (1, 2, 3, 5, 10, 11)]
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "sync_summary: cluster_size_histogram query failed — emitting empty",
+                exc_info=True,
+            )
+            _histogram = "[]"
+
+        logger.info(
+            "sync_summary: metric=cluster_size_histogram value=%s channel_id=%s sync_job_id=%s",
+            _histogram,
+            channel_id,
+            sync_job_id,
+        )
+        logger.info(
+            "sync_summary: metric=entity_truncation_recoveries value=%d lost_estimate_sum=%d channel_id=%s sync_job_id=%s",
+            _trunc_recoveries,
+            _lost_estimate_sum,
+            channel_id,
+            sync_job_id,
+        )
+        logger.info(
+            "sync_summary: metric=cross_batch_validator_llm_fallback_total value=%d channel_id=%s sync_job_id=%s",
+            _cbv_fallback,
+            channel_id,
+            sync_job_id,
+        )
+
         return result

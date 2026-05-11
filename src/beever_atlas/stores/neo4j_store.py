@@ -1163,6 +1163,24 @@ class Neo4jStore:
                 vector=vector,
             )
 
+    async def batch_store_name_vectors(self, items: list[tuple[str, list[float]]]) -> int:
+        """Persist name-embedding vectors for multiple entities in one Cypher call.
+
+        Uses UNWIND + MATCH (not MERGE) — only updates entities that already exist.
+        Returns the number of items submitted (not matched, since SET returns no count).
+        """
+        if not items:
+            return 0
+        params = [{"name": name, "vector": vector} for name, vector in items]
+        async with self._driver.session() as session:
+            await session.run(
+                "UNWIND $items AS item "
+                "MATCH (e:Entity {name: item.name}) "
+                "SET e.name_vector = item.vector",
+                items=params,
+            )
+        return len(items)
+
     # ------------------------------------------------------------------
     # Batch operations (optimised for persister pipeline)
     # ------------------------------------------------------------------

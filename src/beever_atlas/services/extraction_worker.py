@@ -727,6 +727,15 @@ class ExtractionWorker:
                 stores, keys_with_attempts, error=f"{type(exc).__name__}: {exc}"
             )
             return 0, len(valid_keys)
+        finally:
+            # Drain any sync_summary metric bucket that process_messages may
+            # have left behind on the exception path. Idempotent: returns
+            # {} when the success path already popped the bucket.
+            try:
+                from beever_atlas.services.batch_processor import _drain_sync_metrics
+                _drain_sync_metrics(channel_id, sync_job_id)
+            except Exception:  # noqa: BLE001
+                pass
 
         duration_ms = int((time.monotonic() - started) * 1000)
         # NOTE: post-tick aggregation of batches_completed +

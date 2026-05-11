@@ -129,6 +129,13 @@ class EntityRegistry:
         """Cache a name embedding vector on a graph Entity node."""
         await self._graph.store_name_vector(entity_name, vector)
 
+    async def batch_store_name_vectors(self, items: list[tuple[str, list[float]]]) -> int:
+        """Write name-embedding vectors for multiple entities in one Cypher call.
+
+        Delegates to the underlying graph store. Returns the number of items submitted.
+        """
+        return await self._graph.batch_store_name_vectors(items)
+
     def is_merge_rejected(self, name_a: str, name_b: str) -> bool:
         """Check if a merge pair was previously rejected."""
         key = tuple(sorted([name_a, name_b]))

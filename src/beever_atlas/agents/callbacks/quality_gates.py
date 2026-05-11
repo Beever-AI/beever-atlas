@@ -227,6 +227,15 @@ def entity_extraction_with_recovery(callback_context: CallbackContext) -> None:
             report.last_boundary_offset,
             callback_context.state.get("batch_num", "?"),
         )
+        # Accumulate per-sync truncation counters for sync_summary: metric lines.
+        _qg_channel_id = callback_context.state.get("channel_id", "")
+        _qg_sync_job_id = callback_context.state.get("sync_job_id", "")
+        if _qg_channel_id and _qg_sync_job_id:
+            from beever_atlas.services.batch_processor import increment_sync_metric
+            increment_sync_metric(_qg_channel_id, _qg_sync_job_id, "entity_truncation_recoveries")
+            increment_sync_metric(
+                _qg_channel_id, _qg_sync_job_id, "lost_estimate_sum", report.estimated_lost
+            )
         if recovered:
             logger.info(
                 "entity_extraction_with_recovery: recovered %d entities from truncated output",

@@ -25,6 +25,7 @@ from google.adk.events import Event, EventActions
 
 from beever_atlas.stores import get_stores
 from beever_atlas.models import AtomicFact, GraphEntity, GraphRelationship
+from beever_atlas.infra.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +352,8 @@ class PersisterAgent(BaseAgent):
                         len(entities),
                     )
                 if relationships:
-                    await stores.graph.batch_upsert_relationships(relationships)
+                    _rel_eids = await stores.graph.batch_upsert_relationships(relationships)
+                    _dropped = sum(1 for eid in _rel_eids if not eid)
                     logger.info(
                         "PersisterAgent: neo4j relationship upsert job_id=%s channel=%s batch=%s relationships=%d",
                         sync_job_id,
@@ -359,19 +361,56 @@ class PersisterAgent(BaseAgent):
                         batch_num,
                         len(relationships),
                     )
+                    if _dropped and channel_id and sync_job_id:
+                        from beever_atlas.services.batch_processor import increment_sync_metric
+                        increment_sync_metric(
+                            channel_id, sync_job_id, "relationships_dropped_total", _dropped
+                        )
                 # Store name_vectors on Neo4j entity nodes
-                for entity in entities:
-                    if entity.name_vector:
-                        try:
-                            await stores.entity_registry.store_name_vector(
-                                entity.name, entity.name_vector
-                            )
-                        except Exception:  # noqa: BLE001
-                            logger.warning(
-                                "PersisterAgent: store_name_vector failed for %s",
-                                entity.name,
-                                exc_info=True,
-                            )
+                settings = get_settings()
+                if settings.neo4j_batch_name_vector:
+                    try:
+                        items = [
+                            (e.name, e.name_vector)
+                            for e in entities
+                            if e.name_vector is not None
+                        ]
+                        await stores.entity_registry.batch_store_name_vectors(items)
+                        logger.info(
+                            "PersisterAgent: batch_store_name_vectors items=%d batch=%s",
+                            len(items),
+                            batch_num,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "PersisterAgent: batch_store_name_vectors failed, falling back to per-entity batch=%s",
+                            batch_num,
+                            exc_info=True,
+                        )
+                        for entity in entities:
+                            if not entity.name_vector:
+                                continue
+                            try:
+                                await stores.entity_registry.store_name_vector(
+                                    entity.name, entity.name_vector
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.exception(
+                                    "store_name_vector failed entity=%s", entity.name
+                                )
+                else:
+                    for entity in entities:
+                        if entity.name_vector:
+                            try:
+                                await stores.entity_registry.store_name_vector(
+                                    entity.name, entity.name_vector
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.warning(
+                                    "PersisterAgent: store_name_vector failed for %s",
+                                    entity.name,
+                                    exc_info=True,
+                                )
             await stores.mongodb.mark_intent_neo4j_done(intent_id)
 
         weaviate_ids: list[str] = []
