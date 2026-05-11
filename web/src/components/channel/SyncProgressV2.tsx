@@ -982,20 +982,33 @@ function BatchTabs({
   );
 }
 
-// Module-level activity-log cache keyed by channelId. Survives across
-// tab navigation (component unmount/remount) so the user doesn't lose
-// the per-batch history when they hop between Wiki / Source / Settings
-// tabs while a sync is running. The previous component-scoped useRef
-// reset on remount — UI testing surfaced that as the "history lost
-// when I go out and go back" complaint.
-const _activityLogCache: Map<string, Map<string, ActivityEntry>> = new Map();
-function _getActivityCacheFor(channelId: string): Map<string, ActivityEntry> {
-  let m = _activityLogCache.get(channelId);
-  if (!m) {
-    m = new Map<string, ActivityEntry>();
-    _activityLogCache.set(channelId, m);
+// Module-level activity-log cache. Survives across tab navigation
+// (component unmount/remount) so the user doesn't lose the per-batch
+// history when they hop between Wiki / Source / Settings tabs.
+//
+// Keyed by ``${channelId}::${startedAt}`` so a NEW sync starts with
+// fresh state — without the startedAt segment, persister events from
+// the PREVIOUS sync polluted the current sync's chip strip ("Batch 1
+// DONE while its activity log shows preprocessor running").
+interface _ActivityLogCacheEntry {
+  startedAt: string | null;
+  entries: Map<string, ActivityEntry>;
+}
+const _activityLogCache: Map<string, _ActivityLogCacheEntry> = new Map();
+function _getActivityCacheFor(
+  channelId: string,
+  startedAt: string | null,
+): Map<string, ActivityEntry> {
+  const existing = _activityLogCache.get(channelId);
+  if (existing && existing.startedAt === startedAt) {
+    return existing.entries;
   }
-  return m;
+  const fresh: _ActivityLogCacheEntry = {
+    startedAt,
+    entries: new Map<string, ActivityEntry>(),
+  };
+  _activityLogCache.set(channelId, fresh);
+  return fresh.entries;
 }
 
 function BatchFilteredActivityLog({
@@ -1003,6 +1016,7 @@ function BatchFilteredActivityLog({
   totalBatches,
   batchesCompleted,
   channelId,
+  startedAt,
   knownDoneBatchNums,
 }: {
   stageDetails?: {
@@ -1012,6 +1026,10 @@ function BatchFilteredActivityLog({
   totalBatches?: number;
   batchesCompleted?: number;
   channelId?: string;
+  /** Sync-identity timestamp — used to key the module-level activity
+   *  log cache so the buffer naturally resets when a new sync starts
+   *  (different ``started_at``) without manual cleanup. */
+  startedAt?: string | null;
   /** Authoritative set of done batch_nums computed by the parent
    *  SyncProgressV2 from sticky_results + activity_log persister
    *  events. The activity_log buffer is server-side $sliced to the
@@ -1033,7 +1051,7 @@ function BatchFilteredActivityLog({
   // Key by ``${batch_idx}:${type}:${agent}:${message_hash}`` — stable
   // identity for retries with the same agent (same key clobbers; OK
   // because the latest payload is the most accurate).
-  const stickyMap = _getActivityCacheFor(channelId || "_default");
+  const stickyMap = _getActivityCacheFor(channelId || "_default", startedAt ?? null);
   const activityLog = useMemo(() => {
     for (const entry of rawActivityLog) {
       const key =
@@ -1640,7 +1658,10 @@ export function SyncProgressV2({
   // flickering as entries evict.
   const stickyResultsRef = useRef<Map<number, BatchResultEntry>>(new Map());
   const lastStartedAtRef = useRef<string | null>(null);
-  // Reset the accumulator when a new sync starts (different ``started_at``).
+  // Reset the sticky batch-results accumulator when a new sync starts
+  // (different ``started_at``). The module-level activity-log cache
+  // (``_activityLogCache``) is keyed by ``(channelId, startedAt)`` so
+  // it auto-resets on sync change — no manual cleanup needed.
   if (lastStartedAtRef.current !== (startedAt ?? null)) {
     stickyResultsRef.current = new Map();
     lastStartedAtRef.current = startedAt ?? null;
@@ -1860,6 +1881,7 @@ export function SyncProgressV2({
             totalBatches={totalBatches}
             batchesCompleted={batchesCompleted}
             channelId={channelId}
+            startedAt={startedAt}
             knownDoneBatchNums={knownDoneBatchNums}
           />
         ) : (
