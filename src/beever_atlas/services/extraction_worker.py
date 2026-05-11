@@ -445,22 +445,23 @@ class ExtractionWorker:
         if not normalized:
             return 0, 0
 
-        sync_job_id = f"worker:{channel_id}:{int(time.time() * 1000)}"
         started = time.monotonic()
         try:
+            # ``sync_job_id=None`` lets BatchProcessor resolve the user-facing
+            # ``kind="sync"`` row for this channel and write progress straight
+            # to it. No synthetic worker:* IDs, no bridge methods.
             result = await self._batch_processor.process_messages(
                 messages=normalized,
                 channel_id=channel_id,
                 channel_name=channel_name,
-                sync_job_id=sync_job_id,
+                sync_job_id=None,
                 ingestion_config=None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
-                "ExtractionWorker: batch raised channel=%s rows=%d sync_job_id=%s",
+                "ExtractionWorker: batch raised channel=%s rows=%d",
                 channel_id,
                 len(valid_keys),
-                sync_job_id,
             )
             await self._finalize_failed(
                 stores, keys_with_attempts, error=f"{type(exc).__name__}: {exc}"

@@ -242,7 +242,7 @@ class BatchProcessor:
         messages: list[Any],
         channel_id: str,
         channel_name: str,
-        sync_job_id: str,
+        sync_job_id: str | None = None,
         ingestion_config: IngestionConfig | None = None,
         use_batch_api: bool = False,
     ) -> BatchResult:
@@ -252,7 +252,11 @@ class BatchProcessor:
             messages: List of NormalizedMessage (or dict-serialisable) objects.
             channel_id: Slack/platform channel identifier.
             channel_name: Human-readable channel name.
-            sync_job_id: MongoDB SyncJob ID for progress tracking.
+            sync_job_id: MongoDB SyncJob ID for progress tracking. When ``None``
+                (the ExtractionWorker path), the processor resolves the
+                channel's most recent ``kind="sync"`` job and writes progress
+                straight to that user-facing row — no synthetic IDs, no bridge
+                methods, one row to read.
             ingestion_config: Per-channel ingestion overrides (optional).
 
         Returns:
@@ -261,6 +265,26 @@ class BatchProcessor:
         settings = get_settings()
         stores = get_stores()
         result = BatchResult()
+
+        if sync_job_id is None:
+            # Resolve the user-facing row once at the top so every write
+            # below targets the same document the UI is polling. A channel
+            # with no sync history yet (worker tick raced ahead of the
+            # first sync row landing) skips progress writes — the worker
+            # will catch up on the next tick once SyncRunner has created
+            # the job document.
+            latest_sync_job = await stores.mongodb.get_last_job_by_kind(
+                channel_id, kind="sync"
+            )
+            if latest_sync_job is None:
+                logger.warning(
+                    "BatchProcessor: no sync job for channel=%s — extraction "
+                    "will run but progress writes are skipped this tick",
+                    channel_id,
+                )
+                sync_job_id = ""  # sentinel: writes below short-circuit
+            else:
+                sync_job_id = latest_sync_job.id
 
         # Use per-channel config if provided, else fall back to global settings
         batch_size = (
