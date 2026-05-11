@@ -84,6 +84,22 @@ function fingerprintStatus(status: SyncStatusResponse): string {
   const evCount = (status.recent_events ?? []).length;
   const lastEvTs = (status.recent_events ?? [])[0]?.ts ?? "";
   const parseFails = status.parse_failure_state?.count_last_10_min ?? 0;
+  // sync-monitor-redesign — include activity_log signal so the
+  // MetricsBar / per-batch tabs re-render as the worker pushes new
+  // stage_output entries. Without this, the dedup guard would skip
+  // re-renders when only the activity_log changes (no message_processing
+  // bump, no phase transition).
+  const activityLog =
+    (status.stage_details as { activity_log?: unknown[] } | undefined)
+      ?.activity_log ?? [];
+  const logCount = activityLog.length;
+  const lastLogKey = (() => {
+    const last = activityLog[logCount - 1] as
+      | { batch_idx?: number; agent?: string; type?: string }
+      | undefined;
+    if (!last) return "";
+    return `${last.batch_idx ?? "-"}:${last.agent ?? "-"}:${last.type ?? "-"}`;
+  })();
   return [
     status.state,
     status.processed_messages ?? -1,
@@ -92,6 +108,8 @@ function fingerprintStatus(status: SyncStatusResponse): string {
     evCount,
     lastEvTs,
     parseFails,
+    logCount,
+    lastLogKey,
   ].join("|");
 }
 

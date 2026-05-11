@@ -32,7 +32,7 @@
  * covered.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
@@ -537,6 +537,181 @@ function MetricsBar({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// BatchFilteredActivityLog — per-batch tabs that filter the activity log
+// ─────────────────────────────────────────────────────────────────────────
+
+interface BatchSummary {
+  batchIdx: number;
+  state: "pending" | "running" | "done" | "failed";
+  stagesStarted: number;
+  hasPersisterDone: boolean;
+  factsCount: number;
+  entitiesCount: number;
+  totalElapsedMs: number;
+  hasFailure: boolean;
+}
+
+function summariseBatches(
+  activityLog: ActivityEntry[],
+): BatchSummary[] {
+  const byBatch = new Map<number, BatchSummary>();
+  for (const e of activityLog) {
+    if (e.batch_idx == null) continue;
+    const idx = e.batch_idx;
+    if (!byBatch.has(idx)) {
+      byBatch.set(idx, {
+        batchIdx: idx,
+        state: "pending",
+        stagesStarted: 0,
+        hasPersisterDone: false,
+        factsCount: 0,
+        entitiesCount: 0,
+        totalElapsedMs: 0,
+        hasFailure: false,
+      });
+    }
+    const s = byBatch.get(idx)!;
+    if (e.type === "stage_start") {
+      s.stagesStarted += 1;
+    } else if (e.type === "stage_output") {
+      if (e.agent === "persister") s.hasPersisterDone = true;
+      if (e.agent === "fact_extractor")
+        s.factsCount += Number(e.metrics?.count ?? 0);
+      if (e.agent === "entity_extractor")
+        s.entitiesCount += Number(e.metrics?.entities ?? 0);
+      if (typeof e.elapsed === "number") s.totalElapsedMs += e.elapsed * 1000;
+    }
+  }
+  // Derive state per batch.
+  for (const s of byBatch.values()) {
+    if (s.hasFailure) s.state = "failed";
+    else if (s.hasPersisterDone) s.state = "done";
+    else if (s.stagesStarted > 0) s.state = "running";
+    else s.state = "pending";
+  }
+  return Array.from(byBatch.values()).sort((a, b) => a.batchIdx - b.batchIdx);
+}
+
+function BatchTabs({
+  batches,
+  selected,
+  onSelect,
+}: {
+  batches: BatchSummary[];
+  selected: number | "all";
+  onSelect: (sel: number | "all") => void;
+}) {
+  if (batches.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1 px-3 py-1.5 border-b border-border bg-muted/5">
+      <button
+        type="button"
+        onClick={() => onSelect("all")}
+        className={cn(
+          "px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded transition-colors",
+          selected === "all"
+            ? "text-primary bg-primary/10"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+        )}
+      >
+        All ({batches.length})
+      </button>
+      <span className="text-muted-foreground/30">·</span>
+      {batches.map((b) => {
+        const isSelected = selected === b.batchIdx;
+        const stateColor =
+          b.state === "running"
+            ? "text-primary"
+            : b.state === "done"
+              ? "text-emerald-500"
+              : b.state === "failed"
+                ? "text-red-500"
+                : "text-muted-foreground/50";
+        const stateIcon =
+          b.state === "running"
+            ? "●"
+            : b.state === "done"
+              ? "✓"
+              : b.state === "failed"
+                ? "✗"
+                : "○";
+        return (
+          <button
+            key={b.batchIdx}
+            type="button"
+            onClick={() => onSelect(b.batchIdx)}
+            title={
+              `Batch ${b.batchIdx} — ${b.state}` +
+              (b.factsCount > 0 ? ` · ${b.factsCount} facts` : "") +
+              (b.entitiesCount > 0 ? ` · ${b.entitiesCount} entities` : "") +
+              (b.totalElapsedMs > 0
+                ? ` · ${(b.totalElapsedMs / 1000).toFixed(1)}s`
+                : "")
+            }
+            className={cn(
+              "inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded transition-colors",
+              isSelected
+                ? "text-primary bg-primary/10 border border-primary/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+            )}
+          >
+            <span className={stateColor}>{stateIcon}</span>
+            Batch {b.batchIdx}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function BatchFilteredActivityLog({
+  stageDetails,
+}: {
+  stageDetails?: {
+    activity_log?: ActivityEntry[];
+    [k: string]: unknown;
+  };
+}) {
+  const [selectedBatch, setSelectedBatch] = useState<number | "all">("all");
+  const activityLog = stageDetails?.activity_log ?? [];
+
+  const batches = useMemo(() => summariseBatches(activityLog), [activityLog]);
+
+  // Auto-follow: snap to the latest running batch when the user hasn't
+  // manually picked one yet. Once they click a tab, we honour it.
+  const hasUserSelection = useRef(false);
+  useEffect(() => {
+    if (hasUserSelection.current) return;
+    const running = batches.filter((b) => b.state === "running");
+    if (running.length > 0) {
+      setSelectedBatch(running[running.length - 1].batchIdx);
+    }
+  }, [batches]);
+
+  const filteredDetails = useMemo(() => {
+    if (selectedBatch === "all") return stageDetails;
+    return {
+      ...stageDetails,
+      activity_log: activityLog.filter((e) => e.batch_idx === selectedBatch),
+    };
+  }, [stageDetails, activityLog, selectedBatch]);
+
+  return (
+    <div>
+      <BatchTabs
+        batches={batches}
+        selected={selectedBatch}
+        onSelect={(sel) => {
+          hasUserSelection.current = true;
+          setSelectedBatch(sel);
+        }}
+      />
+      <ActivityLog details={filteredDetails} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // CostSummaryBadge — aggregate LLM cost from cost_summary events
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -855,7 +1030,7 @@ export function SyncProgressV2({
       />
       <div className="px-3 py-2 bg-card max-h-[480px] overflow-y-auto">
         {activeTab === "activity" ? (
-          <ActivityLog details={stageDetails} />
+          <BatchFilteredActivityLog stageDetails={stageDetails} />
         ) : (
           <BatchResults results={batchResults ?? []} />
         )}
