@@ -690,11 +690,23 @@ function summariseBatches(
       if (typeof e.elapsed === "number") s.totalElapsedMs += e.elapsed * 1000;
     }
   }
-  // Derive state per batch.
+  // Derive state per batch. Consult ``knownDoneBatchNums`` as the
+  // authoritative done signal — it survives activity_log $slice
+  // eviction. Without this override, a batch that has some events
+  // in the log (e.g. stage_start) but whose persister event has
+  // scrolled off would render as "running" forever, even though
+  // batch_results.json confirms it's done.
   for (const s of byBatch.values()) {
-    if (s.hasFailure) s.state = "failed";
-    else if (s.hasPersisterDone) s.state = "done";
-    else if (s.stagesStarted > 0) s.state = "running";
+    if (s.hasFailure) {
+      s.state = "failed";
+      continue;
+    }
+    if (s.hasPersisterDone || knownDoneBatchNums?.has(s.batchIdx)) {
+      s.state = "done";
+      s.hasPersisterDone = true;
+      continue;
+    }
+    if (s.stagesStarted > 0) s.state = "running";
     else s.state = "pending";
   }
 
@@ -1646,6 +1658,7 @@ export function SyncProgressV2({
   // due to server-side $slice eviction).
   const knownDoneBatchNums = useMemo(() => {
     const s = new Set<number>();
+    // Source 1: persister events still in the activity_log slice.
     for (const e of activityLog) {
       if (
         e.type === "stage_output" &&
@@ -1655,11 +1668,26 @@ export function SyncProgressV2({
         s.add(e.batch_idx);
       }
     }
+    // Source 2: sticky results accumulator (populated by
+    // ``derivedBatchResults`` when batch_results is server-empty).
     for (const bn of stickyResultsRef.current.keys()) {
       s.add(bn);
     }
+    // Source 3: SERVER-PROVIDED ``batch_results`` directly. When the
+    // backend has already accumulated per-batch breakdowns (decoupled
+    // mode writes these to the user-facing channel-row), the sticky
+    // accumulator stays empty because ``derivedBatchResults`` early-
+    // returns ``batchResults`` without populating sticky. Without
+    // reading directly from the server array we'd miss every entry
+    // it provided — caught by UI testing where 11 batches showed
+    // DONE in the Batch Results tab but PENDING in the chip strip.
+    for (const r of batchResults ?? []) {
+      if (typeof r.batch_num === "number") {
+        s.add(r.batch_num);
+      }
+    }
     return s;
-  }, [activityLog]);
+  }, [activityLog, batchResults]);
   const batchSummaries = useMemo(
     () => summariseBatches(activityLog, totalBatches, batchesCompleted, knownDoneBatchNums),
     [activityLog, totalBatches, batchesCompleted, knownDoneBatchNums],
