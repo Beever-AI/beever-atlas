@@ -329,6 +329,214 @@ function ProgressHeader({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// MetricsBar — derives rich monitoring counts from events + activity_log
+// ─────────────────────────────────────────────────────────────────────────
+
+interface PipelineMetrics {
+  totalBatches: number;
+  batchesDone: number;
+  batchesInFlight: number;
+  totalFacts: number;
+  totalEntities: number;
+  totalRelationships: number;
+  totalEmbedded: number;
+  totalMediaEnriched: number;
+}
+
+function deriveMetrics(
+  events: RecentEvent[],
+  activityLog: ActivityEntry[],
+  phases: Phase[],
+): PipelineMetrics {
+  // Total batches: prefer ``phases.extracting.total`` (authoritative);
+  // otherwise infer from the max ``batch_idx`` seen in activity_log.
+  const extractPhase = phases.find((p) => p.name === "extracting");
+  const totalFromPhase = extractPhase?.total ?? 0;
+  const maxBatchIdx = activityLog.reduce(
+    (m, e) => Math.max(m, (e.batch_idx ?? 0)),
+    0,
+  );
+  const totalBatches = Math.max(
+    totalFromPhase,
+    maxBatchIdx > 0 ? maxBatchIdx : 0,
+  );
+
+  // Per-batch state: a batch is "done" when a persister stage_output
+  // entry exists for it; "in_flight" when there's any stage_start but
+  // no persister output yet.
+  const batchHasPersisterDone = new Map<number, boolean>();
+  const batchHasStart = new Set<number>();
+  for (const e of activityLog) {
+    const idx = e.batch_idx;
+    if (idx == null) continue;
+    if (e.type === "stage_start") {
+      batchHasStart.add(idx);
+    } else if (
+      e.type === "stage_output" &&
+      e.agent === "persister"
+    ) {
+      batchHasPersisterDone.set(idx, true);
+    }
+  }
+  const batchesDone = Array.from(batchHasPersisterDone.values()).filter(
+    Boolean,
+  ).length;
+  const batchesInFlight = Math.max(
+    0,
+    batchHasStart.size - batchesDone,
+  );
+
+  // Aggregate fact / entity / embedding counts from stage_output metrics.
+  let totalFacts = 0;
+  let totalEntities = 0;
+  let totalRelationships = 0;
+  let totalEmbedded = 0;
+  let totalMediaEnriched = 0;
+  for (const e of activityLog) {
+    if (e.type !== "stage_output") continue;
+    const m = e.metrics ?? {};
+    if (e.agent === "fact_extractor") {
+      totalFacts += Number(m.count ?? 0);
+    } else if (e.agent === "entity_extractor") {
+      totalEntities += Number(m.entities ?? 0);
+      totalRelationships += Number(m.relationships ?? 0);
+    } else if (e.agent === "embedder") {
+      totalEmbedded += Number(m.embedded ?? 0);
+    } else if (e.agent === "preprocessor") {
+      totalMediaEnriched += Number(m.media_enriched ?? 0);
+    }
+  }
+
+  // Also count message_processing events from the recent_events ring
+  // as a fallback metric source (when activity_log is empty during
+  // the warm-up window).
+  if (totalFacts === 0 && totalEntities === 0) {
+    // Fallback signal: if nothing in activity_log yet, surface
+    // message_processing counts so the user sees activity.
+    const processingCount = events.filter(
+      (e) => e.event_type === "message_processing",
+    ).length;
+    return {
+      totalBatches,
+      batchesDone,
+      batchesInFlight: Math.max(batchesInFlight, processingCount > 0 ? 1 : 0),
+      totalFacts: 0,
+      totalEntities: 0,
+      totalRelationships: 0,
+      totalEmbedded: 0,
+      totalMediaEnriched: 0,
+    };
+  }
+
+  return {
+    totalBatches,
+    batchesDone,
+    batchesInFlight,
+    totalFacts,
+    totalEntities,
+    totalRelationships,
+    totalEmbedded,
+    totalMediaEnriched,
+  };
+}
+
+interface MetricBadgeProps {
+  label: string;
+  value: number | string;
+  detail?: string;
+  accent?: "default" | "primary" | "emerald" | "violet" | "amber" | "sky";
+}
+
+function MetricBadge({ label, value, detail, accent = "default" }: MetricBadgeProps) {
+  const accentClasses: Record<NonNullable<MetricBadgeProps["accent"]>, string> = {
+    default: "text-foreground",
+    primary: "text-primary",
+    emerald: "text-emerald-500",
+    violet: "text-violet-500",
+    amber: "text-amber-500",
+    sky: "text-sky-500",
+  };
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <div className="text-[9px] uppercase tracking-wider text-muted-foreground/60 font-medium">
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className={cn("text-sm font-semibold tabular-nums", accentClasses[accent])}>
+          {value}
+        </span>
+        {detail && (
+          <span className="text-[10px] text-muted-foreground/70 font-mono">
+            {detail}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetricsBar({
+  events,
+  activityLog,
+  phases,
+  totalMessages,
+  processedMessages,
+}: {
+  events: RecentEvent[];
+  activityLog: ActivityEntry[];
+  phases: Phase[];
+  totalMessages?: number;
+  processedMessages?: number;
+}) {
+  const m = useMemo(
+    () => deriveMetrics(events, activityLog, phases),
+    [events, activityLog, phases],
+  );
+
+  const msgsDone = processedMessages ?? 0;
+  const msgsTotal = totalMessages ?? 0;
+  const msgsRemaining = Math.max(0, msgsTotal - msgsDone);
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 border-y border-border bg-muted/10 px-3 py-2">
+      <MetricBadge
+        label="Messages"
+        value={`${msgsDone}/${msgsTotal}`}
+        detail={msgsRemaining > 0 ? `${msgsRemaining} left` : "complete"}
+        accent={msgsRemaining > 0 ? "primary" : "emerald"}
+      />
+      <MetricBadge
+        label="Batches"
+        value={m.totalBatches > 0 ? `${m.batchesDone}/${m.totalBatches}` : "—"}
+        detail={m.batchesInFlight > 0 ? `${m.batchesInFlight} active` : undefined}
+        accent={m.batchesInFlight > 0 ? "primary" : "emerald"}
+      />
+      <MetricBadge
+        label="Facts"
+        value={m.totalFacts}
+        accent="violet"
+      />
+      <MetricBadge
+        label="Entities"
+        value={m.totalEntities}
+        detail={m.totalRelationships > 0 ? `${m.totalRelationships} rels` : undefined}
+        accent="emerald"
+      />
+      <MetricBadge
+        label="Embedded"
+        value={m.totalEmbedded}
+        accent="amber"
+      />
+      <MetricBadge
+        label="Media"
+        value={m.totalMediaEnriched}
+        accent="sky"
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // CostSummaryBadge — aggregate LLM cost from cost_summary events
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -615,6 +823,13 @@ export function SyncProgressV2({
         smoothedEtaSeconds={smoothedEtaSeconds}
         startedAt={startedAt}
         phases={phases}
+      />
+      <MetricsBar
+        events={events}
+        activityLog={stageDetails?.activity_log ?? []}
+        phases={phases}
+        totalMessages={totalMessages}
+        processedMessages={processedMessages}
       />
       {showParseBanner && parseFailureState && (
         <div
