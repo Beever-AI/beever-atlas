@@ -74,7 +74,13 @@ class ProviderOutageError(Exception):
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LLM_MAX_RETRIES = 5
-_LLM_RETRY_BACKOFF = [30, 60, 120, 240, 480]  # seconds between retries
+# First retry intentionally short (5s) — transient 5xx/network blips
+# recover almost immediately. Subsequent retries climb sharply for
+# real rate-limit windows (Gemini quotas reset on per-minute boundary).
+# Earlier schedule [30, 60, 120, 240, 480] added 30s of dead time to
+# EVERY transient hiccup, causing the per-batch max latency observed
+# in scripts/test_pipeline_design.py to balloon to 144s on one outlier.
+_LLM_RETRY_BACKOFF = [5, 30, 90, 180, 360]  # seconds between retries
 
 # Map ADK agent names to human-readable stage descriptions with step numbers.
 _STAGE_LABELS: dict[str, str] = {
