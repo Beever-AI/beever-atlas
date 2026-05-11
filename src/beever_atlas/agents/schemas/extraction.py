@@ -68,7 +68,14 @@ class ExtractedFact(BaseModel):
     """One of: "decision", "opinion", "observation", "action_item", "question"."""
 
     thread_context_summary: str = ""
-    """Brief summary of thread deliberation arc when fact comes from a threaded discussion."""
+    """Brief summary of thread deliberation arc when fact comes from a threaded discussion.
+
+    The LLM occasionally emits ``null`` for this field. We accept that and
+    coerce to ``""`` via a ``before`` validator below so a single ``None``
+    cell does NOT trigger the 6-attempt retry death spiral observed in
+    batch_processor (each retry replays the same data and fails the same
+    way, wasting ~11 minutes per occurrence).
+    """
 
     source_lang: str = "en"
     """BCP-47 language tag of the source message this fact was extracted from

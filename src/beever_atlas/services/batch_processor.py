@@ -233,12 +233,26 @@ def _is_resumable(exc: Exception) -> bool:
     These exception types warrant a full retry from the last checkpoint rather
     than the truncation-reduce-halve path: provider 5xx (ServerError, HTTP 5xx),
     pydantic ValidationError (malformed LLM JSON), and json.JSONDecodeError.
+
+    EXCEPTION: a ``PydanticValidationError`` whose error string identifies a
+    DETERMINISTIC schema mismatch (LLM returned a wrongly-typed scalar like
+    ``None`` for a required ``str`` field) is NOT resumable — replaying the
+    checkpoint just feeds the same bad data back in and fails the same way.
+    The retry chain wastes ~11 min per such error before giving up. We catch
+    the prefix ``Input should be a valid``/``Input should be a string`` here
+    and bail out immediately. The persister's downstream coercion handles
+    the empty-result case.
     """
+    if isinstance(exc, PydanticValidationError):
+        msg = str(exc)
+        if "Input should be a valid" in msg or "Input should be a string" in msg:
+            return False
+        return True
     if isinstance(exc, ServerError):
         return True
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
         return True
-    if isinstance(exc, (PydanticValidationError, json.JSONDecodeError)):
+    if isinstance(exc, json.JSONDecodeError):
         return True
     return False
 

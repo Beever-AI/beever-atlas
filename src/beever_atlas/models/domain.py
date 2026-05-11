@@ -7,11 +7,32 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AtomicFact(BaseModel):
     """A single extracted fact stored in Weaviate (Tier 2)."""
+
+    # Coerce ``None`` to empty string for plain-``str`` fields below.
+    # The LLM occasionally emits ``null`` for ``thread_context_summary``
+    # and a few other narrative fields; without this validator Pydantic
+    # raises ``Input should be a valid string`` which the BatchProcessor
+    # retry classifier treated as transient — wasting up to 11 minutes
+    # per occurrence in the 5/30/90/180/360s backoff schedule (observed
+    # in production logs 2026-05-11). Validation errors against
+    # deterministic LLM output should fail fast OR coerce; we coerce.
+    @field_validator(
+        "thread_context_summary",
+        "derived_from",
+        "source_media_url",
+        "source_media_type",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_null_to_empty(cls, v: Any) -> Any:
+        if v is None:
+            return ""
+        return v
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     memory_text: str
