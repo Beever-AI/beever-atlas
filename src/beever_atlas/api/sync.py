@@ -392,11 +392,21 @@ async def _safe_overview_state(stores: Any, channel_id: str) -> dict[str, Any]:
         pass
 
     # 2) existing overview row?
+    # The wiki is stored in the ``wiki_versions`` collection as the
+    # ``structure.pages`` array on each version document — NOT in a
+    # separate ``wiki_pages`` collection. The previous lookup against
+    # ``wiki_pages`` always returned None (collection is unused), so
+    # the phase was stuck at ``pending`` even after the overview was
+    # successfully built — caught by scripts/test_pipeline_design.py
+    # against a hand-triggered /api/wiki/refresh.
     try:
         db = getattr(stores.mongodb, "db", None)
         if db is not None:
-            doc = await db["wiki_pages"].find_one(
-                {"channel_id": channel_id, "page_type": "overview"},
+            doc = await db["wiki_versions"].find_one(
+                {
+                    "channel_id": channel_id,
+                    "structure.pages.id": "overview",
+                },
                 projection={"_id": 1},
             )
             if doc is not None:
@@ -404,7 +414,7 @@ async def _safe_overview_state(stores: Any, channel_id: str) -> dict[str, Any]:
                 return out
     except Exception:  # noqa: BLE001
         logger.debug(
-            "Sync API: wiki_pages overview lookup raised channel=%s",
+            "Sync API: wiki_versions overview lookup raised channel=%s",
             channel_id,
             exc_info=True,
         )

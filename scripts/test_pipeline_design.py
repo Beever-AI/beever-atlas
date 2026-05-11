@@ -451,17 +451,27 @@ async def observe(
                 flush=True,
             )
 
-        # Settle condition: all phases done/skipped/failed, AND state==idle.
+        # Settle condition: no phase is ``in_flight`` AND ``state==idle``.
+        # ``pending`` is treated as terminal because:
+        #   - ``overview_wiki`` may legitimately stay ``pending`` when
+        #     the channel is not yet eligible (e.g. first sync gate),
+        #     or when no new memory has settled.
+        #   - ``extracting`` may be ``pending`` for an empty channel.
+        # Any active work ``in_flight`` resets the stability counter.
         phases = status.get("phases") or []
-        all_terminal = phases and all(
-            p.get("state") in ("done", "skipped", "failed") for p in phases
+        none_in_flight = phases and not any(
+            p.get("state") == "in_flight" for p in phases
         )
         idle = status.get("state") in (None, "idle", "completed")
-        if all_terminal and idle:
+        if none_in_flight and idle:
             stable_idle_polls += 1
         else:
             stable_idle_polls = 0
-        if stable_idle_polls >= 2:
+        # Require 3 stable polls (~6s) to avoid declaring settled
+        # during a transient in_flight→pending blink (the very bug the
+        # ``overview_wiki`` clamp guards against — but tests should not
+        # rely on the clamp; they should observe stable settlement).
+        if stable_idle_polls >= 3:
             print(f"\n  Settled at T+{int(run.t)}s — observation complete", flush=True)
             break
 
