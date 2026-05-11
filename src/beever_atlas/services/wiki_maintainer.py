@@ -1135,27 +1135,72 @@ class WikiMaintainer:
             logger.exception("wiki_maintainer._debounced_flush crashed")
 
     async def _flush_dirty(self, *, target_lang: str = "en") -> int:
-        """Snapshot-and-clear the dirty-set, then rewrite each page once.
+        """Drain the dirty queue and rewrite each page once.
 
-        Snapshot + clear happen UNDER the lock; iteration of the snapshot
-        runs OUTSIDE the lock so a long-running LLM call cannot block
-        subsequent ``on_extraction_done`` events from accumulating into a
-        fresh dirty-set. Returns the number of pages successfully
-        rewritten (one ``apply_update`` call per page).
+        memory-then-wiki-pipeline-realignment P0 fix: the durable
+        ``wiki_dirty_queue`` is now the authoritative source for dirty
+        pages. ``claim_dirty(channel_id)`` atomically transitions
+        pending rows to ``flushing`` so a crash mid-flush leaves rows
+        that ``recover_stale_flushing`` can revive on the next startup.
+        After successful per-page rewrite, ``mark_dirty_done`` flips
+        each row to ``status="done"``.
+
+        The legacy in-memory ``_dirty`` snapshot path is retained as a
+        fallback for tests that manually populate ``self._dirty``
+        without the queue. Production callers always go through
+        ``on_memory_changed`` which writes to both stores; the queue
+        path wins when both are available.
 
         ``unified-llm-wiki-graph-redesign`` D8 — first-sync gate: when a
         channel's wiki has not been built yet (no ``wiki_pages`` rows
         exist for it), the maintainer's flush MUST defer that channel's
         dirty entries instead of creating pages on-the-fly. The Builder
         owns first-sync page creation; the maintainer only patches
-        existing pages. After the Builder's auto-overview run completes
-        and pages exist, the deferred entries drain on the next flush.
+        existing pages.
         """
+        # ── Primary path: drain the durable queue ────────────────────
+        # Identify channels with pending dirty work. Without a global
+        # ``list_dirty_channels`` helper we walk the in-memory set as a
+        # proxy (callers always co-write both). If the queue has rows
+        # the in-memory set doesn't know about (post-crash recovery),
+        # they get picked up on the NEXT flush triggered by either a
+        # ``memory_settled`` event or the operator's ``maintain_now``.
         async with self._get_dirty_lock():
-            snapshot: dict[tuple[str, str], set[str]] = {
-                key: set(facts) for key, facts in self._dirty.items()
-            }
+            in_memory_channels: set[str] = {ch for (ch, _pid) in self._dirty}
+
+        snapshot: dict[tuple[str, str], set[str]] = {}
+        claimed_doc_ids: dict[tuple[str, str], Any] = {}
+
+        try:
+            from beever_atlas.stores import get_stores
+
+            stores = get_stores()
+            for channel_id in in_memory_channels:
+                try:
+                    claimed = await stores.mongodb.claim_dirty(channel_id)
+                except Exception:  # noqa: BLE001 — best-effort; fall back to in-memory
+                    claimed = []
+                for row in claimed:
+                    page_id = str(row.get("page_id", ""))
+                    fact_ids = list(row.get("fact_ids", []) or [])
+                    if not page_id:
+                        continue
+                    snapshot[(channel_id, page_id)] = set(fact_ids)
+                    claimed_doc_ids[(channel_id, page_id)] = row.get("_id")
+        except Exception:  # noqa: BLE001 — store may not be initialised in test paths
+            pass
+
+        # ── Fallback path: in-memory snapshot for tests/legacy ───────
+        # Merge any in-memory entries the queue didn't return (this
+        # primarily catches tests that write to ``self._dirty`` directly).
+        async with self._get_dirty_lock():
+            for key, facts in self._dirty.items():
+                if key not in snapshot:
+                    snapshot[key] = set(facts)
+                else:
+                    snapshot[key].update(facts)
             self._dirty.clear()
+
         if not snapshot:
             return 0
 
@@ -1208,6 +1253,9 @@ class WikiMaintainer:
             )
 
         rewritten = 0
+        # Collect doc_ids that completed successfully so we can mark
+        # them done in a single bulk update at the end of the flush.
+        done_ids: list[Any] = []
         for (channel_id, page_id), fact_ids in snapshot.items():
             if channel_id in deferred_channels:
                 continue
@@ -1217,6 +1265,13 @@ class WikiMaintainer:
                 )
                 if applied:
                     rewritten += 1
+                    # Mark the queue row done — incrementally finalised
+                    # rather than all-or-nothing so a crash mid-flush
+                    # leaves only the failed pages in ``flushing`` state
+                    # for ``recover_stale_flushing`` to revive.
+                    doc_id = claimed_doc_ids.get((channel_id, page_id))
+                    if doc_id is not None:
+                        done_ids.append(doc_id)
             except Exception:  # noqa: BLE001 — one bad page must not stall others
                 logger.exception(
                     "wiki_maintainer._flush_dirty: rewrite failed "
@@ -1224,6 +1279,18 @@ class WikiMaintainer:
                     channel_id,
                     page_id,
                     len(fact_ids),
+                )
+        # Bulk-mark completed rows as done. Done as a tail operation so
+        # one bad-mongo-write doesn't lose the work already completed.
+        if done_ids:
+            try:
+                from beever_atlas.stores import get_stores
+
+                await get_stores().mongodb.mark_dirty_done(done_ids)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "wiki_maintainer._flush_dirty: mark_dirty_done failed for %d rows",
+                    len(done_ids),
                 )
         logger.info(
             "wiki_maintainer._flush_dirty pages=%d rewritten=%d deferred=%d",

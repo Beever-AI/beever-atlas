@@ -103,7 +103,11 @@ class Settings(BaseSettings):
     llm_quality_model: str = Field(default="gemini-2.5-flash")
 
     # Pipeline config
-    sync_batch_size: int = Field(default=10)
+    # memory-then-wiki-pipeline-realignment perf P0 — bumped from 10 to 25.
+    # Combined with default ``ingest_batch_concurrency=4`` this gives the
+    # ExtractionWorker a 100-message claim_size per tick, reducing the
+    # tick count by 2.5× on bulk syncs.
+    sync_batch_size: int = Field(default=25)
     sync_max_messages: int = Field(default=1000)
     quality_threshold: float = Field(default=0.5)
     entity_threshold: float = Field(default=0.6)
@@ -254,7 +258,11 @@ class Settings(BaseSettings):
     use_batch_api: bool = Field(default=False)
     batch_poll_interval_seconds: int = Field(default=15)
     batch_max_wait_seconds: int = Field(default=3600)
-    batch_max_prompt_tokens: int = Field(default=6000)
+    # memory-then-wiki-pipeline-realignment perf P0 — bumped from 6000
+    # to 12000. Gemini 2.5 Flash comfortably handles 12-15k input tokens,
+    # and the doubling cuts the number of sub-batches in half (fewer LLM
+    # round trips → faster extraction wall time).
+    batch_max_prompt_tokens: int = Field(default=12000)
     batch_time_window_seconds: int = Field(default=600)
     # Output-token ceiling for adaptive batching. Projects expected response
     # size per batch so we split BEFORE Gemini hits its max_output_tokens

@@ -369,12 +369,35 @@ async def lifespan(app: FastAPI):
             # registration; the maintainer's ``on_extraction_done`` method
             # remains callable for out-of-tree callers during the
             # deprecation window but no longer fires per batch.
+            async def _resolve_channel_lang(channel_id: str) -> str:
+                """Resolve the channel's wiki target_lang. Falls back to
+                ``settings.default_target_language`` then ``"en"``.
+
+                Reads ``channel_sync_state.primary_language`` if present
+                — set by the language-detector during the first sync.
+                """
+                try:
+                    from beever_atlas.stores import get_stores as _gs
+
+                    state = await _gs().mongodb.get_channel_sync_state(channel_id)
+                    if state is not None:
+                        primary = getattr(state, "primary_language", None)
+                        if primary:
+                            return str(primary)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    return settings.default_target_language or "en"
+                except Exception:  # noqa: BLE001
+                    return "en"
+
             async def _resolve_and_run_memory_changed(
                 channel_id: str, fact_ids: list[str]
             ) -> None:
                 try:
+                    target_lang = await _resolve_channel_lang(channel_id)
                     await maintainer.on_memory_changed(
-                        channel_id, fact_ids, target_lang="en"
+                        channel_id, fact_ids, target_lang=target_lang
                     )
                 except Exception:  # noqa: BLE001
                     logging.getLogger(__name__).exception(
@@ -388,8 +411,9 @@ async def lifespan(app: FastAPI):
                     # is owned by AutoOverviewSubscriber, which subscribes
                     # to memory_settled separately. Here the maintainer
                     # only schedules the debounced page-flush.
+                    target_lang = await _resolve_channel_lang(channel_id)
                     await maintainer.on_memory_settled(
-                        channel_id, target_lang="en"
+                        channel_id, target_lang=target_lang
                     )
                 except Exception:  # noqa: BLE001
                     logging.getLogger(__name__).exception(
