@@ -121,7 +121,17 @@ export function TierBrowser() {
     setSearchParams(updated, { replace: true });
   };
 
-  const { facts, total: factsTotal, filters, setFilters, isLoading, refetch: refetchFacts } = useMemories(channelId);
+  const {
+    facts,
+    total: factsTotal,
+    hasMore: factsHasMore,
+    loadMore: loadMoreFacts,
+    isLoadingMore: isLoadingMoreFacts,
+    filters,
+    setFilters,
+    isLoading,
+    refetch: refetchFacts,
+  } = useMemories(channelId);
   const { clusters, isLoading: clustersLoading, error: clustersError, refetch: refetchTopics } = useTopics(channelId);
   const { summary, isLoading: summaryLoading, error: summaryError, refetch: refetchSummary } = useChannelSummary(channelId);
   const { hasMemories, isLoading: isMemoryCountLoading, refetch: refetchMemoryCount } = useChannelMemoryCount(channelId);
@@ -393,7 +403,9 @@ export function TierBrowser() {
             </p>
           </div>
           <span className="text-sm text-muted-foreground">
-            {facts.length} matching facts
+            {factsTotal === facts.length
+              ? `${factsTotal} matching facts`
+              : `Showing ${facts.length} of ${factsTotal} matching facts`}
           </span>
         </div>
 
@@ -404,17 +416,33 @@ export function TierBrowser() {
             No memories yet. Sync this channel to start extracting knowledge.
           </div>
         ) : (
-          <div className="space-y-3">
-            {facts.map((fact, idx) => (
-              <div
-                key={fact.id}
-                className="motion-safe:animate-rise-in"
-                style={{ animationDelay: `${Math.min(idx, 10) * 35}ms` }}
-              >
-                <FactCard fact={fact} />
+          <>
+            <div className="space-y-3">
+              {facts.map((fact, idx) => (
+                <div
+                  key={fact.id}
+                  className="motion-safe:animate-rise-in"
+                  style={{ animationDelay: `${Math.min(idx, 10) * 35}ms` }}
+                >
+                  <FactCard fact={fact} />
+                </div>
+              ))}
+            </div>
+            {factsHasMore && (
+              <div className="flex justify-center pt-4">
+                <button
+                  type="button"
+                  onClick={loadMoreFacts}
+                  disabled={isLoadingMoreFacts}
+                  className="rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:opacity-50"
+                >
+                  {isLoadingMoreFacts
+                    ? "Loading…"
+                    : `Load more (${factsTotal - facts.length} remaining)`}
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
         </div>
