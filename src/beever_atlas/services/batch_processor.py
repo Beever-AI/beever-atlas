@@ -1566,25 +1566,24 @@ class BatchProcessor:
                 batch_entities = persist_result.get("entity_count") or 0
 
                 # --- Post-pipeline: contradiction detection ---
-                # Runs AFTER persistence completes, outside the outbox
-                # transaction AND outside the batch semaphore slot. The
-                # detector fires ~20-40 serial LLM calls per batch (one
-                # per fact with entity tags), which previously blocked
-                # slot release for 16-24 seconds per batch. Over ~24
-                # batches that was 6-12 minutes on the critical path.
-                # By detaching as a fire-and-forget task we free the
-                # semaphore immediately so the next batch can claim
-                # the slot, while contradiction supersession still
-                # completes eventually (it's already best-effort and
-                # eventually-consistent — exceptions are swallowed).
-                try:
-                    from beever_atlas.services.contradiction_detector import check_and_supersede
+                # P0-1 (pipeline-cost-latency-reduction-v2): per-batch
+                # contradiction firing has been replaced with a single
+                # post-sync bulk pass driven by ``memory_settled`` (see
+                # ``server/app.py`` subscriber + ``contradiction_detector.
+                # check_and_supersede_for_channel``). The legacy per-batch
+                # path remains available as the ``defer_contradiction=False``
+                # kill switch — when off, we still accumulate ``persisted_facts``
+                # below and fire the detached check as before.
+                from beever_atlas.infra.config import get_settings as _get_settings
 
+                _defer = bool(getattr(_get_settings(), "defer_contradiction", True))
+
+                persisted_facts: list[Any] = []
+                try:
                     embedded_facts_raw = final_state.get("embedded_facts") or []
                     if embedded_facts_raw:
                         from beever_atlas.models import AtomicFact
 
-                        persisted_facts: list[AtomicFact] = []
                         weaviate_ids = persist_result.get("weaviate_ids") or []
                         for idx, fd in enumerate(embedded_facts_raw):
                             fact_channel = fd.get("channel_id") or channel_id
@@ -1608,36 +1607,59 @@ class BatchProcessor:
                                     channel_id=fact_channel,
                                 )
                             )
-
-                        async def _detached_contradiction_check(
-                            facts_snapshot: list[AtomicFact],
-                            ch: str,
-                            job: str,
-                            b_idx: int,
-                        ) -> None:
-                            try:
-                                await check_and_supersede(facts_snapshot, ch)
-                            except Exception:  # noqa: BLE001
-                                logger.debug(
-                                    "BatchProcessor: detached contradiction check failed job_id=%s batch=%d",
-                                    job,
-                                    b_idx,
-                                    exc_info=True,
-                                )
-
-                        # Fire-and-forget — does NOT block semaphore release.
-                        asyncio.create_task(
-                            _detached_contradiction_check(
-                                persisted_facts, channel_id, sync_job_id, batch_index
-                            )
-                        )
                 except Exception:  # noqa: BLE001
                     logger.debug(
-                        "BatchProcessor: contradiction detection scheduling failed job_id=%s batch=%d, continuing",
+                        "BatchProcessor: persisted_facts accumulation failed job_id=%s batch=%d, continuing",
                         sync_job_id,
                         batch_index,
                         exc_info=True,
                     )
+
+                if _defer:
+                    logger.debug(
+                        "BatchProcessor: contradiction detection deferred to post-sync "
+                        "job_id=%s batch=%d facts=%d",
+                        sync_job_id,
+                        batch_index,
+                        len(persisted_facts),
+                    )
+                else:
+                    # Legacy kill-switch path — fire-and-forget per-batch.
+                    try:
+                        from beever_atlas.services.contradiction_detector import (
+                            check_and_supersede,
+                        )
+
+                        if persisted_facts:
+
+                            async def _detached_contradiction_check(
+                                facts_snapshot: list[Any],
+                                ch: str,
+                                job: str,
+                                b_idx: int,
+                            ) -> None:
+                                try:
+                                    await check_and_supersede(facts_snapshot, ch)
+                                except Exception:  # noqa: BLE001
+                                    logger.debug(
+                                        "BatchProcessor: detached contradiction check failed job_id=%s batch=%d",
+                                        job,
+                                        b_idx,
+                                        exc_info=True,
+                                    )
+
+                            asyncio.create_task(
+                                _detached_contradiction_check(
+                                    persisted_facts, channel_id, sync_job_id, batch_index
+                                )
+                            )
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "BatchProcessor: contradiction detection scheduling failed job_id=%s batch=%d, continuing",
+                            sync_job_id,
+                            batch_index,
+                            exc_info=True,
+                        )
 
                 # Extract sample data for sync history.
                 raw_facts = final_state.get("extracted_facts") or {}

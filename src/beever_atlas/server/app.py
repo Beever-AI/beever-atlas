@@ -548,6 +548,71 @@ async def lifespan(app: FastAPI):
             "AutoOverviewSubscriber init failed (non-fatal): %s", exc
         )
 
+    # P0-1 (pipeline-cost-latency-reduction-v2) — defer ContradictionDetector
+    # to a single post-sync bulk pass driven by ``memory_settled``. Replaces
+    # the per-batch ``asyncio.create_task(check_and_supersede(...))`` block
+    # that previously fired ~720 LLM calls during a 715-msg sync. Subscriber
+    # is independent of WikiMaintainer / AutoOverview so a failure here cannot
+    # block wiki rebuilds (and vice versa).
+    try:
+        import asyncio as _asyncio_contradiction
+
+        from beever_atlas.services.contradiction_detector import (
+            check_and_supersede_for_channel,
+        )
+        from beever_atlas.services.extraction_worker import (
+            get_extraction_worker as _get_extraction_worker_contradiction,
+        )
+
+        _contradiction_worker = _get_extraction_worker_contradiction()
+        if _contradiction_worker is not None:
+
+            async def _run_post_sync_contradiction(channel_id: str) -> None:
+                """Wrap the bulk pass in try/except so subscriber errors
+                never bubble into the worker tick. The detector itself
+                is best-effort; we only log here for top-level surprises
+                (e.g. import-time failures).
+                """
+                try:
+                    await check_and_supersede_for_channel(channel_id)
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "post-sync contradiction check raised channel=%s "
+                        "(best-effort, will retry on next memory_settled)",
+                        channel_id,
+                        exc_info=True,
+                    )
+
+            def _on_memory_settled_contradiction(channel_id: str) -> None:
+                task = _asyncio_contradiction.create_task(
+                    _run_post_sync_contradiction(channel_id)
+                )
+
+                def _log_exc(t: _asyncio_contradiction.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logging.getLogger(__name__).warning(
+                            "post-sync contradiction fan-out task raised "
+                            "channel=%s: %s",
+                            channel_id,
+                            exc,
+                            exc_info=exc,
+                        )
+
+                task.add_done_callback(_log_exc)
+
+            _contradiction_worker.subscribe_memory_settled(
+                _on_memory_settled_contradiction
+            )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "post-sync ContradictionDetector subscriber init failed "
+            "(non-fatal): %s",
+            exc,
+        )
+
     # Wire consolidation to ExtractionWorker.on_extraction_done so that
     # topic_clusters and channel_summary are built after actual facts land
     # in Weaviate (not at sync-return time when facts=0).
