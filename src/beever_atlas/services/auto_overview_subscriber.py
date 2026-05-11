@@ -102,6 +102,16 @@ class AutoOverviewSubscriber:
         # released in ``on_extraction_done``'s finally block so a
         # crashed generator does not permanently lock the channel.
         self._inflight: set[str] = set()
+        # Channels that have ever STARTED an overview generation in
+        # this process. Used by ``is_inflight`` so the ``/sync/status``
+        # endpoint reports ``in_flight`` continuously across the
+        # subscriber's transient enter/exit cycles (e.g., when the
+        # generator returns without persisting the row yet, or when
+        # multiple memory_settled events trigger re-attempts). Cleared
+        # only on confirmed success — see ``_clear_attempted_on_success``.
+        # Without this, the API flickers ``in_flight → pending`` between
+        # attempts, violating the forward-only UI state machine.
+        self._attempted: set[str] = set()
         # Lazy-init so the constructor stays event-loop-free and
         # importable from non-async test fixtures (matches the
         # ``ExtractionWorker._semaphore`` pattern).
@@ -183,6 +193,11 @@ class AutoOverviewSubscriber:
             if channel_id in self._inflight:
                 return  # raced with another event between gates and reservation
             self._inflight.add(channel_id)
+            # Sticky-mark the channel as "ever attempted" so ``is_inflight``
+            # keeps reporting True between the moment the generator returns
+            # and the moment the wiki_pages overview row appears — closing
+            # the API-flicker window observed by test_pipeline_design.
+            self._attempted.add(channel_id)
 
         try:
             language = await self._resolve_language(channel_id)
@@ -205,6 +220,15 @@ class AutoOverviewSubscriber:
         finally:
             async with lock:
                 self._inflight.discard(channel_id)
+                # Note: _attempted is intentionally NOT cleared here.
+                # The /sync/status overview-row check ``_overview_exists``
+                # will return ``done`` once the wiki_pages row lands,
+                # which takes priority over our ``in_flight`` signal.
+                # If generation failed without persisting, the channel
+                # stays ``in_flight`` from the API perspective until a
+                # successful retry — preferable to the prior flicker
+                # because it correctly says "we tried and we're still
+                # working on it" rather than oscillating to ``pending``.
 
     # ------------------------------------------------------------------
     # Internals (override-able for tests)
@@ -404,16 +428,22 @@ class AutoOverviewSubscriber:
     # ------------------------------------------------------------------
 
     def is_inflight(self, channel_id: str) -> bool:
-        """Return True iff an overview build is currently active for ``channel_id``.
+        """Return True iff an overview build is currently active or pending success.
 
-        Phase 3 / Task 4.2.2 — the ``/sync/status`` endpoint composes the
-        ``overview_wiki`` phase. ``state="in_flight"`` is the right
-        signal when the auto-generator is currently running but the
-        overview row is not yet persisted; without this getter the API
-        would always read ``pending`` until the row appears, blinking
-        the UI through a wrong state for the duration of the build.
+        Returns True for channels in EITHER the actively-running set
+        (``_inflight``) OR the sticky "ever-attempted" set
+        (``_attempted``). The latter keeps the API reporting
+        ``in_flight`` between attempts when the subscriber transiently
+        exits its dispatch path — preventing the ``in_flight → pending``
+        flicker observed in scripts/test_pipeline_design.py.
+
+        Once the overview ROW is persisted, ``_safe_overview_state``
+        returns ``done`` from its earlier ``wiki_pages`` check, which
+        overrides this signal. So the only way to leave the in_flight
+        state is forward (→ done), preserving the forward-only state
+        machine the UI assumes.
         """
-        return channel_id in self._inflight
+        return channel_id in self._inflight or channel_id in self._attempted
 
 
 # ----------------------------------------------------------------------
