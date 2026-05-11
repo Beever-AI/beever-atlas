@@ -427,19 +427,50 @@ class MongoDBStore:
 
         Tags the entry with batch_idx so the frontend can group/filter per batch.
         Uses $push + $slice to avoid unbounded growth — race-safe under concurrency.
+
+        memory-then-wiki-pipeline-realignment fix: ``upsert=True`` so the
+        synthetic ``worker:<channel>:<ts>`` job_ids used by the decoupled
+        ExtractionWorker auto-create a sync_jobs document on first write.
+        Without this, activity_log entries silently dropped because the
+        target document never existed. Parses channel_id + started_at
+        from the synthetic id format so the merge in
+        ``list_recent_activity_log`` (used by /sync/status) can find it.
         """
         tagged_entry = {**entry, "batch_idx": batch_idx}
+        # Parse channel_id + started_at from the synthetic worker job_id
+        # so the upsert document carries enough metadata for the merge
+        # query to find it. Format: ``worker:<channel_id>:<epoch_ms>``.
+        set_on_insert: dict[str, Any] = {}
+        if job_id.startswith("worker:"):
+            try:
+                parts = job_id.split(":", 2)
+                if len(parts) == 3:
+                    set_on_insert["channel_id"] = parts[1]
+                    # epoch_ms → ISO datetime so list_recent_activity_log
+                    # can filter by ``started_at >= main_job.started_at``.
+                    epoch_ms = int(parts[2])
+                    set_on_insert["started_at"] = datetime.fromtimestamp(
+                        epoch_ms / 1000.0, tz=UTC
+                    ).isoformat()
+                    set_on_insert["kind"] = "worker_extraction"
+                    set_on_insert["status"] = "running"
+            except Exception:  # noqa: BLE001 — best-effort
+                pass
+        update: dict[str, Any] = {
+            "$push": {
+                "stage_details.activity_log": {
+                    "$each": [tagged_entry],
+                    "$slice": -50,
+                }
+            },
+            "$inc": {"version": 1},
+        }
+        if set_on_insert:
+            update["$setOnInsert"] = set_on_insert
         await self._sync_jobs.update_one(
             {"id": job_id},
-            {
-                "$push": {
-                    "stage_details.activity_log": {
-                        "$each": [tagged_entry],
-                        "$slice": -50,
-                    }
-                },
-                "$inc": {"version": 1},
-            },
+            update,
+            upsert=True,
         )
 
     async def increment_batches_completed(self, job_id: str) -> None:
