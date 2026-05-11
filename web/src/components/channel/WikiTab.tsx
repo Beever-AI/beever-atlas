@@ -1095,14 +1095,13 @@ export function WikiTab() {
     // tells the user the wiki is being built; showing a "Generate"
     // button at the same time teases an action they can't usefully take.
     const isPipelineInFlight = phases.some((p) => p.state === "in_flight");
-    // When the pipeline monitor at the top of the page is showing live
-    // progress, hide this redundant body placeholder. The monitor card
-    // already communicates "in progress" via its own stepper + active
-    // shimmer animation; rendering this duplicate underneath produced
-    // a cluttered "two pipeline displays" page the user didn't want.
-    if (isPipelineInFlight) {
-      return null;
-    }
+    // Previously we ``return null`` here on the rationale that the
+    // monitor card at the top of the page already shows progress. But
+    // when the monitor is COLLAPSED, the user sees only a compact
+    // stepper strip and a blank canvas below it — caught by UI testing
+    // as "blank page when sync and monitoring is running". Fall through
+    // to the phase-aware PipelineEmptyState below so the wiki tab body
+    // always shows SOMETHING informative.
     const steps = [
       { label: "Sync channel", icon: FolderSync, done: !isNoMemory, active: isNoMemory },
       { label: "Build memories", icon: Sparkles, done: !isNoMemory, active: false },

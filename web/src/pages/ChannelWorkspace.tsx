@@ -279,14 +279,25 @@ export function ChannelWorkspace() {
 
   const instructions = platformInstructions[channel?.platform ?? "slack"] ?? platformInstructions.slack;
 
-  // A sync is considered active when state is syncing/error OR any
-  // pipeline phase is currently in_flight. Used to (a) decide whether
-  // to render the monitor and (b) override the "Channel Not Connected"
-  // empty state — a running pipeline proves the channel is connected.
+  // A sync is considered active when state is syncing/error OR while
+  // the EXTRACTING phase is still pending/in_flight. Once extraction
+  // completes (extracting=done), the wiki is browsable in the
+  // background and the monitor auto-hides — the user no longer needs
+  // to see the progress bar even if wiki_maintenance/overview_wiki
+  // are still finalizing in the background. This drops the "monitor
+  // bar still here when wiki is generated" complaint from UI testing.
+  const _phaseByName = Object.fromEntries(
+    (syncState.phases ?? []).map((p) => [p.name, p]),
+  );
+  const _extracting = _phaseByName["extracting"]?.state;
+  const _fetched = _phaseByName["fetched"]?.state;
   const pipelineActive =
     syncState.state === "syncing" ||
     syncState.state === "error" ||
-    (syncState.phases ?? []).some((p) => p.state === "in_flight");
+    _fetched === "in_flight" ||
+    _fetched === "pending" ||
+    _extracting === "in_flight" ||
+    _extracting === "pending";
 
   return (
     <div className="flex flex-col h-full min-h-0">

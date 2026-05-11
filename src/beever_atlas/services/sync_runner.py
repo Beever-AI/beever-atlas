@@ -397,8 +397,52 @@ class SyncRunner:
             # actual, and the only remaining growth comes from edge cases
             # where the LLM trigger AdaptiveBatcher to use smaller batches.
             _settings = get_settings()
-            _bsize = max(1, _settings.batch_max_messages)
-            _global_total_batches = (len(messages) + _bsize - 1) // _bsize
+            # Pre-run the AdaptiveBatcher on the FULL message list to get
+            # the EXACT batch count up-front. Previously we used a fixed
+            # ``ceil(total / batch_max_messages)`` estimate which under-
+            # counts when thread groups force token-aware splits — the
+            # UI denominator then crept upward (24 → 25) via the $max
+            # update path. Running the batcher once here pre-computes
+            # the same partition the worker would, modulo a small
+            # ~5-10% drift from across-tick thread fragmentation. We
+            # add a 10% buffer for that drift so total_batches stays
+            # at or above the actual final count.
+            try:
+                if _settings.batch_max_prompt_tokens > 0:
+                    from beever_atlas.services.adaptive_batcher import token_aware_batches
+
+                    _projected = token_aware_batches(
+                        [m if isinstance(m, dict) else vars(m) for m in messages],
+                        max_tokens=_settings.batch_max_prompt_tokens,
+                        time_window_seconds=_settings.batch_time_window_seconds,
+                        max_output_tokens=(
+                            _settings.batch_max_output_tokens
+                            if _settings.batch_max_output_tokens > 0
+                            else None
+                        ),
+                        max_facts_per_message=_settings.max_facts_per_message,
+                        max_messages=_settings.batch_max_messages,
+                    )
+                    _projected_count = max(1, len(_projected))
+                    # 10% drift buffer for thread fragmentation across ticks.
+                    _global_total_batches = max(
+                        _projected_count,
+                        int(_projected_count * 1.10) + 1,
+                    )
+                else:
+                    _bsize = max(1, _settings.batch_max_messages)
+                    _global_total_batches = (len(messages) + _bsize - 1) // _bsize
+            except Exception:
+                # If the pre-run fails for any reason (malformed messages,
+                # import path drift), fall back to the simple ceiling
+                # estimate. Better a slightly-off denominator than a sync
+                # that won't start.
+                logger.warning(
+                    "SyncRunner: AdaptiveBatcher pre-run failed — falling back to fixed estimate",
+                    exc_info=True,
+                )
+                _bsize = max(1, _settings.batch_max_messages)
+                _global_total_batches = (len(messages) + _bsize - 1) // _bsize
             await stores.mongodb.set_sync_job_totals(
                 job_id=job_id,
                 total_messages=len(messages),

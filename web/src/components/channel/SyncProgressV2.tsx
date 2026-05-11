@@ -951,10 +951,27 @@ function BatchTabs({
   );
 }
 
+// Module-level activity-log cache keyed by channelId. Survives across
+// tab navigation (component unmount/remount) so the user doesn't lose
+// the per-batch history when they hop between Wiki / Source / Settings
+// tabs while a sync is running. The previous component-scoped useRef
+// reset on remount — UI testing surfaced that as the "history lost
+// when I go out and go back" complaint.
+const _activityLogCache: Map<string, Map<string, ActivityEntry>> = new Map();
+function _getActivityCacheFor(channelId: string): Map<string, ActivityEntry> {
+  let m = _activityLogCache.get(channelId);
+  if (!m) {
+    m = new Map<string, ActivityEntry>();
+    _activityLogCache.set(channelId, m);
+  }
+  return m;
+}
+
 function BatchFilteredActivityLog({
   stageDetails,
   totalBatches,
   batchesCompleted,
+  channelId,
 }: {
   stageDetails?: {
     activity_log?: ActivityEntry[];
@@ -962,6 +979,7 @@ function BatchFilteredActivityLog({
   };
   totalBatches?: number;
   batchesCompleted?: number;
+  channelId?: string;
 }) {
   const [selectedBatch, setSelectedBatch] = useState<number | "all">("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -969,35 +987,34 @@ function BatchFilteredActivityLog({
   const rawActivityLog = stageDetails?.activity_log ?? [];
 
   // Sticky activity-entry accumulator — preserves the full per-batch
-  // history across polls so when the user clicks "Batch 4" they see the
-  // complete preprocessor → fact_extractor → entity_extractor → embedder
-  // → persister trace, NOT just the lone "Batch 4 completed" entry that
-  // happens to still be in the backend's $slice'd activity_log buffer.
+  // history across polls AND across tab navigation. Backed by a
+  // module-level Map keyed by channelId so unmount/remount no longer
+  // clears the buffer.
   //
   // Key by ``${batch_idx}:${type}:${agent}:${message_hash}`` — stable
   // identity for retries with the same agent (same key clobbers; OK
   // because the latest payload is the most accurate).
-  const stickyEntriesRef = useRef<Map<string, ActivityEntry>>(new Map());
+  const stickyMap = _getActivityCacheFor(channelId || "_default");
   const activityLog = useMemo(() => {
     for (const entry of rawActivityLog) {
       const key =
         `${entry.batch_idx ?? "-"}:${entry.type}:${entry.agent}:` +
         `${(entry.message ?? "").slice(0, 80)}`;
-      stickyEntriesRef.current.set(key, entry);
+      stickyMap.set(key, entry);
     }
     // Sort sticky entries: primary by batch_idx, secondary by a stable
     // order that approximates "stage progression". The activity_log
     // from the server is already roughly chronological — we preserve
     // insertion order within each batch via Map's preservation, then
     // group by batch.
-    const all = Array.from(stickyEntriesRef.current.values());
+    const all = Array.from(stickyMap.values());
     all.sort((a, b) => {
       const ai = a.batch_idx ?? Number.MAX_SAFE_INTEGER;
       const bi = b.batch_idx ?? Number.MAX_SAFE_INTEGER;
       return ai - bi;
     });
     return all;
-  }, [rawActivityLog]);
+  }, [rawActivityLog, stickyMap]);
 
   // Cmd-K / Ctrl-K: focus the activity-log search. Esc when focused: clear.
   // Mounted only on the Pipeline Activity tab, so won't collide with the
@@ -1187,6 +1204,20 @@ function BatchFilteredActivityLog({
           <Loader2 size={12} className="animate-spin text-primary/60" />
           <span>
             All {batches.length} batches processed — finalising wiki…
+          </span>
+        </div>
+      )}
+      {/* Bottom-gap filler — when batches are RUNNING but none are pending
+       *  (so UpNextStrip doesn't render) and not yet all done, render a
+       *  centered "live updates" indicator pushed to the bottom via
+       *  ``mt-auto`` so the activity panel doesn't show a big white gap
+       *  in fullscreen mode. */}
+      {!allBatchesDone && !showUpNext && runningBatches.length > 0 && (
+        <div className="mt-auto flex items-center justify-center gap-2 px-3 py-3 text-[11px] text-muted-foreground/70 border-t border-border/30 bg-muted/5">
+          <Loader2 size={12} className="animate-spin text-primary/50" />
+          <span>
+            {runningBatches.length} batch
+            {runningBatches.length === 1 ? "" : "es"} running — live updates as events arrive
           </span>
         </div>
       )}
@@ -1732,6 +1763,7 @@ export function SyncProgressV2({
             stageDetails={stageDetails}
             totalBatches={totalBatches}
             batchesCompleted={batchesCompleted}
+            channelId={channelId}
           />
         ) : (
           <BatchResults results={derivedBatchResults} />
