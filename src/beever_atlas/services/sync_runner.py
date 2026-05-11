@@ -670,11 +670,6 @@ class SyncRunner:
         )
 
         try:
-            # Resolve per-channel ingestion config from policy
-            from beever_atlas.services.policy_resolver import resolve_effective_policy
-
-            effective_policy = await resolve_effective_policy(channel_id)
-
             # Persist messages into the durable channel_messages collection
             # BEFORE LLM extraction. The store is the source of truth from the
             # moment a message is fetched — extraction failures (e.g. Gemini
@@ -716,37 +711,23 @@ class SyncRunner:
                         exc,
                     )
 
-            # With DECOUPLE_EXTRACTION ON, sync skips inline extraction
-            # entirely — messages already landed in ``channel_messages`` with
-            # ``extraction_status="pending"`` via ``$setOnInsert``, so the
-            # background ExtractionWorker picks them up in the next tick
-            # (default 30 s). Sync returns in seconds; a Gemini 503 can no
-            # longer kill the job. Rolls back trivially: flag OFF returns to
-            # inline extraction.
-            decouple_extraction = get_settings().decouple_extraction
-            if decouple_extraction:
-                logger.info(
-                    "SyncRunner: DECOUPLE_EXTRACTION=true — skipping inline "
-                    "extraction job_id=%s channel=%s message_count=%d "
-                    "(worker will claim from channel_messages)",
-                    job_id,
-                    channel_id,
-                    len(messages),
-                )
-                # Synthesize an empty BatchResult so downstream cursor + status
-                # logic is unchanged. The worker will populate per-row state.
-                from beever_atlas.services.batch_processor import BatchResult
+            # Sync skips inline extraction entirely — messages already landed
+            # in ``channel_messages`` with ``extraction_status="pending"`` via
+            # ``$setOnInsert``, so the background ExtractionWorker picks them
+            # up in the next tick (default 30 s). Sync returns in seconds; a
+            # Gemini 503 can no longer kill the job.
+            logger.info(
+                "SyncRunner: skipping inline extraction job_id=%s channel=%s "
+                "message_count=%d (worker will claim from channel_messages)",
+                job_id,
+                channel_id,
+                len(messages),
+            )
+            # Synthesize an empty BatchResult so downstream cursor + status
+            # logic is unchanged. The worker will populate per-row state.
+            from beever_atlas.services.batch_processor import BatchResult
 
-                result = BatchResult()
-            else:
-                result = await self._batch_processor.process_messages(
-                    messages=messages,
-                    channel_id=channel_id,
-                    channel_name=channel_name,
-                    sync_job_id=job_id,
-                    ingestion_config=effective_policy.ingestion,
-                    use_batch_api=use_batch_api,
-                )
+            result = BatchResult()
 
             # Determine last_sync_ts from the latest TOP-LEVEL message only.
             # Thread replies may have older timestamps that would cause cursor drift.
@@ -886,17 +867,12 @@ class SyncRunner:
                 },
             )
 
-            # Trigger consolidation via pipeline orchestrator (policy-aware).
-            # When DECOUPLE_EXTRACTION=true, facts=0 at sync-return time (the
-            # background ExtractionWorker hasn't run yet). Firing consolidation
-            # here would see an empty Weaviate and produce 0 clusters. Instead,
-            # the ExtractionWorker's on_extraction_done subscriber (wired in
-            # server/app.py) fires consolidation after each successful batch so
-            # it sees the real facts.
-            if not result.errors and not decouple_extraction:
-                from beever_atlas.services.pipeline_orchestrator import on_ingestion_complete
-
-                await on_ingestion_complete(channel_id, result.total_facts)
+            # Consolidation is no longer triggered here. At sync-return time
+            # facts=0 (the background ExtractionWorker hasn't run yet). Firing
+            # consolidation here would see an empty Weaviate and produce 0
+            # clusters. Instead, the ExtractionWorker's on_extraction_done
+            # subscriber (wired in server/app.py) fires consolidation after
+            # each successful batch so it sees the real facts.
 
             logger.info(
                 "SyncRunner: run complete job_id=%s channel=%s status=%s facts=%d entities=%d errors=%d",

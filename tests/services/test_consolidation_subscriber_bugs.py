@@ -1,7 +1,4 @@
-"""Regression tests for the three consolidation-subscriber bugs fixed in this PR.
-
-Bug A — CRITICAL — double-consolidation in legacy mode:
-  When DECOUPLE_EXTRACTION=false the subscriber must NOT be registered.
+"""Regression tests for the two consolidation-subscriber bugs.
 
 Bug B — HIGH — debounce was "drop all after first" instead of "queue one follow-up":
   7 batches arriving while one consolidation is in-flight must result in exactly
@@ -11,71 +8,19 @@ Bug C — MEDIUM — AFTER_N_SYNCS counter incremented per batch:
   The subscriber path calls consolidate_only() (no counter tick); the counter
   is incremented by SyncRunner once per logical sync.
 
+(Bug A — legacy-mode double-consolidation — is now structurally impossible:
+the inline DECOUPLE_EXTRACTION=false code path was removed; the subscriber
+is unconditional.)
+
 Convention: pyproject.toml sets ``asyncio_mode = "auto"``.
 """
 
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_settings(*, decouple_extraction: bool) -> SimpleNamespace:
-    s = SimpleNamespace()
-    s.decouple_extraction = decouple_extraction
-    return s
-
-
-# ---------------------------------------------------------------------------
-# Bug A — subscriber skipped in legacy mode
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_consolidation_subscriber_skipped_in_legacy_mode() -> None:
-    """DECOUPLE_EXTRACTION=false → subscriber must NOT be registered.
-
-    We exercise the registration code path directly by calling the inner
-    logic that app.py's lifespan uses: if ``settings.decouple_extraction``
-    is False the whole block is skipped and subscribe_extraction_done is
-    never called.
-    """
-    subscribe_spy = MagicMock()
-
-    mock_worker = MagicMock()
-    mock_worker.subscribe_extraction_done = subscribe_spy
-
-    settings = _make_settings(decouple_extraction=False)
-
-    # Simulate the app.py conditional: only enter the try-block when True.
-    if settings.decouple_extraction:
-        mock_worker.subscribe_extraction_done(lambda *_: None)
-
-    subscribe_spy.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_consolidation_subscriber_registered_in_decoupled_mode() -> None:
-    """DECOUPLE_EXTRACTION=true → subscriber IS registered (positive case)."""
-    subscribe_spy = MagicMock()
-
-    mock_worker = MagicMock()
-    mock_worker.subscribe_extraction_done = subscribe_spy
-
-    settings = _make_settings(decouple_extraction=True)
-
-    if settings.decouple_extraction:
-        mock_worker.subscribe_extraction_done(lambda *_: None)
-
-    subscribe_spy.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

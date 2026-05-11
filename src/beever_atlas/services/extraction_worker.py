@@ -2,12 +2,11 @@
 
 Drains pending messages from the durable Message Store and feeds them
 through the existing ``BatchProcessor`` so sync (fetch + persist) is
-decoupled from extraction (LLM calls). When the ``DECOUPLE_EXTRACTION``
-flag is ON, sync writes ``ChannelMessage`` rows with
-``extraction_status="pending"`` and returns; this worker — registered as
-periodic APScheduler jobs by :class:`SyncScheduler` — claims them
-atomically via ``find_one_and_update``, runs extraction, and bulk-updates
-status to ``done`` or ``failed``.
+decoupled from extraction (LLM calls). Sync writes ``ChannelMessage``
+rows with ``extraction_status="pending"`` and returns; this worker —
+registered as periodic APScheduler jobs by :class:`SyncScheduler` —
+claims them atomically via ``find_one_and_update``, runs extraction,
+and bulk-updates status to ``done`` or ``failed``.
 
 Spec: ``openspec/changes/oss-pipeline-and-wiki-redesign/specs/extraction-worker/``
 """

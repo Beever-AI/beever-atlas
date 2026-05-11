@@ -445,19 +445,6 @@ class Settings(BaseSettings):
     # this flag — only the legacy collection write is gated.
     write_dual_file_imports: bool = Field(default=True, alias="WRITE_DUAL_FILE_IMPORTS")
 
-    # Background extraction worker flag.
-    # When True, ``services/sync_runner.py`` skips the inline
-    # ``BatchProcessor.process_messages()`` call after upserting messages
-    # to ``channel_messages``. The background ExtractionWorker registered
-    # by the scheduler claims the rows in the next tick (default 30 s) and
-    # runs the 6-stage ADK pipeline asynchronously. This is the primary
-    # lever that makes a Gemini 503 storm survivable — sync (fetch + persist)
-    # finishes in seconds; extraction proceeds in the background and retries
-    # with exponential backoff. Default OFF — staging soak (48 h) before
-    # flipping in production. Rollback is reversible: flipping OFF returns to
-    # inline extraction; the worker idles harmlessly with no rows to claim.
-    decouple_extraction: bool = Field(default=False, alias="DECOUPLE_EXTRACTION")
-
     # Tuning knobs (worker tick interval, stale-recovery window, max
     # retries, breaker cooldown, LLM failover enablement, fallback
     # model map) intentionally NOT env-configurable. They live as

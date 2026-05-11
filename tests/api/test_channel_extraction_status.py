@@ -1,10 +1,10 @@
 """Tests for ``GET /api/channels/{channel_id}/extraction-status`` (PR-B.4).
 
 Backs the frontend's "Enriching: X of Y messages complete" progress
-display that replaces the wall-of-503 banner once
-``DECOUPLE_EXTRACTION`` is ON. The endpoint zero-fills missing statuses
-and aggregates via a single MongoDB pipeline (the partial-filter index
-on ``(extraction_status, next_attempt_at)`` keeps the query cheap).
+display that replaces the wall-of-503 banner. The endpoint zero-fills
+missing statuses and aggregates via a single MongoDB pipeline (the
+partial-filter index on ``(extraction_status, next_attempt_at)`` keeps
+the query cheap).
 
 Spec: ``openspec/changes/oss-pipeline-and-wiki-redesign/specs/extraction-worker/``
 → "Requirement: Extraction-status API endpoint".

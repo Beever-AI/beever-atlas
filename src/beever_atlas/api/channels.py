@@ -855,9 +855,8 @@ async def get_channel_extraction_status(
     """Return per-status extraction counts for a channel.
 
     Backs the frontend's "Enriching: X of Y messages complete" progress
-    row shown when ``DECOUPLE_EXTRACTION`` is ON. Counts are aggregated
-    via a single MongoDB pipeline that hits the partial-filter index
-    on ``(extraction_status, next_attempt_at)``.
+    row. Counts are aggregated via a single MongoDB pipeline that hits
+    the partial-filter index on ``(extraction_status, next_attempt_at)``.
 
     Response shape::
 

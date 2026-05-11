@@ -329,128 +329,119 @@ async def lifespan(app: FastAPI):
     # topic_clusters and channel_summary are built after actual facts land
     # in Weaviate (not at sync-return time when facts=0).
     #
-    # Bug A fix: only register in decoupled mode.  In legacy mode
-    # (DECOUPLE_EXTRACTION=false) the ExtractionWorker still exists and emits
-    # on_extraction_done events for inline batches.  Without this gate the
-    # subscriber would fire consolidation on top of the SyncRunner path,
-    # running it twice per sync.
-    #
-    # Bug B fix: two-flag debounce ("running" + "pending") instead of one.
+    # Two-flag debounce ("running" + "pending") instead of one.
     # The old single-flag pattern dropped every event after the first,
     # so a 7-batch fanout ran consolidation exactly once with only batch-1's
     # facts.  The new pattern guarantees: at most 1 in-flight + at most 1
     # queued follow-up.  After the in-flight finishes it drains the pending
     # flag and runs once more, incorporating all facts from the remaining batches.
     #
-    # Bug C fix: the subscriber calls consolidate_only() instead of
-    # on_ingestion_complete().  on_ingestion_complete() increments the
-    # AFTER_N_SYNCS counter — calling it once per batch would tick the counter
-    # N times per logical sync.  consolidate_only() calls _spawn_consolidation
-    # directly without touching the counter.  The counter is incremented exactly
-    # once per sync in SyncRunner._run_sync (legacy path) which is correct.
-    _consolidation_settings = get_settings()
-    if _consolidation_settings.decouple_extraction:
-        try:
-            import asyncio as _asyncio
+    # The subscriber calls consolidate_only() instead of on_ingestion_complete().
+    # on_ingestion_complete() increments the AFTER_N_SYNCS counter — calling
+    # it once per batch would tick the counter N times per logical sync.
+    # consolidate_only() calls _spawn_consolidation directly without touching
+    # the counter.
+    try:
+        import asyncio as _asyncio
 
-            from beever_atlas.services.extraction_worker import (
-                get_extraction_worker as _get_extraction_worker,
-            )
+        from beever_atlas.services.extraction_worker import (
+            get_extraction_worker as _get_extraction_worker,
+        )
 
-            _consolidation_worker = _get_extraction_worker()
-            if _consolidation_worker is not None:
-                # Two-flag debounce per channel.
-                # _consolidation_running: channel_id -> True while a task is executing.
-                # _consolidation_pending: channel_id -> True when >=1 event arrived
-                #   while a task was already running (collapsed to one follow-up run).
-                _consolidation_running: dict[str, bool] = {}
-                _consolidation_pending: dict[str, bool] = {}
+        _consolidation_worker = _get_extraction_worker()
+        if _consolidation_worker is not None:
+            # Two-flag debounce per channel.
+            # _consolidation_running: channel_id -> True while a task is executing.
+            # _consolidation_pending: channel_id -> True when >=1 event arrived
+            #   while a task was already running (collapsed to one follow-up run).
+            _consolidation_running: dict[str, bool] = {}
+            _consolidation_pending: dict[str, bool] = {}
 
-                async def _run_consolidation_after_extraction(
-                    channel_id: str,
-                ) -> None:
-                    """Policy-gated consolidation via consolidate_only (no counter tick)."""
-                    from beever_atlas.services.pipeline_orchestrator import (
-                        consolidate_only as _consolidate_only,
+            async def _run_consolidation_after_extraction(
+                channel_id: str,
+            ) -> None:
+                """Policy-gated consolidation via consolidate_only (no counter tick)."""
+                from beever_atlas.services.pipeline_orchestrator import (
+                    consolidate_only as _consolidate_only,
+                )
+                from beever_atlas.services.policy_resolver import (
+                    resolve_effective_policy as _rp,
+                )
+
+                # Policy gate: only fire for consolidation-triggering strategies.
+                try:
+                    effective = await _rp(channel_id)
+                    strategy = effective.consolidation.strategy
+                    # Import here to avoid circular at module load time.
+                    from beever_atlas.models.sync_policy import ConsolidationStrategy
+
+                    if strategy not in (
+                        ConsolidationStrategy.AFTER_EVERY_SYNC,
+                        ConsolidationStrategy.AFTER_N_SYNCS,
+                    ):
+                        return
+                except Exception as exc:  # noqa: BLE001
+                    logging.getLogger(__name__).debug(
+                        "consolidation policy resolution failed channel=%s: %s — skipping",
+                        channel_id,
+                        exc,
                     )
-                    from beever_atlas.services.policy_resolver import (
-                        resolve_effective_policy as _rp,
-                    )
+                    return
 
-                    # Policy gate: only fire for consolidation-triggering strategies.
-                    try:
-                        effective = await _rp(channel_id)
-                        strategy = effective.consolidation.strategy
-                        # Import here to avoid circular at module load time.
-                        from beever_atlas.models.sync_policy import ConsolidationStrategy
+                await _consolidate_only(channel_id)
 
-                        if strategy not in (
-                            ConsolidationStrategy.AFTER_EVERY_SYNC,
-                            ConsolidationStrategy.AFTER_N_SYNCS,
-                        ):
-                            return
-                    except Exception as exc:  # noqa: BLE001
-                        logging.getLogger(__name__).debug(
-                            "consolidation policy resolution failed channel=%s: %s — skipping",
+            async def _run_with_debounce(channel_id: str) -> None:
+                """At most 1 in-flight + 1 queued follow-up per channel.
+
+                If a consolidation is already running when we arrive, we set
+                the pending flag and return immediately.  The in-flight task
+                will see the flag on its next loop iteration and run once more
+                after it finishes, picking up all facts from intervening batches.
+                """
+                if _consolidation_running.get(channel_id):
+                    # Collapse all concurrent arrivals into one follow-up.
+                    _consolidation_pending[channel_id] = True
+                    return
+                _consolidation_running[channel_id] = True
+                try:
+                    while True:
+                        # Clear pending BEFORE running so any new arrivals
+                        # during this run will set it again and be caught.
+                        _consolidation_pending.pop(channel_id, None)
+                        await _run_consolidation_after_extraction(channel_id)
+                        # If another batch arrived while we were running,
+                        # loop once more; otherwise we're done.
+                        if not _consolidation_pending.pop(channel_id, False):
+                            break
+                finally:
+                    _consolidation_running.pop(channel_id, None)
+
+            def _on_extraction_done_consolidation(channel_id: str, fact_ids: list[str]) -> None:
+                # Fire-and-forget, same pattern as WikiMaintainer subscriber.
+                # fact_ids is intentionally unused here: consolidate_only calls
+                # _spawn_consolidation which reads directly from Weaviate — the
+                # full accumulated fact set, not just this batch's ids.
+                task = _asyncio.create_task(_run_with_debounce(channel_id))
+
+                def _log_exc(t: _asyncio.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logging.getLogger(__name__).warning(
+                            "consolidation fan-out task raised channel=%s: %s",
                             channel_id,
                             exc,
+                            exc_info=exc,
                         )
-                        return
 
-                    await _consolidate_only(channel_id)
+                task.add_done_callback(_log_exc)
 
-                async def _run_with_debounce(channel_id: str) -> None:
-                    """At most 1 in-flight + 1 queued follow-up per channel.
-
-                    If a consolidation is already running when we arrive, we set
-                    the pending flag and return immediately.  The in-flight task
-                    will see the flag on its next loop iteration and run once more
-                    after it finishes, picking up all facts from intervening batches.
-                    """
-                    if _consolidation_running.get(channel_id):
-                        # Collapse all concurrent arrivals into one follow-up.
-                        _consolidation_pending[channel_id] = True
-                        return
-                    _consolidation_running[channel_id] = True
-                    try:
-                        while True:
-                            # Clear pending BEFORE running so any new arrivals
-                            # during this run will set it again and be caught.
-                            _consolidation_pending.pop(channel_id, None)
-                            await _run_consolidation_after_extraction(channel_id)
-                            # If another batch arrived while we were running,
-                            # loop once more; otherwise we're done.
-                            if not _consolidation_pending.pop(channel_id, False):
-                                break
-                    finally:
-                        _consolidation_running.pop(channel_id, None)
-
-                def _on_extraction_done_consolidation(channel_id: str, fact_ids: list[str]) -> None:
-                    # Fire-and-forget, same pattern as WikiMaintainer subscriber.
-                    # fact_ids is intentionally unused here: consolidate_only calls
-                    # _spawn_consolidation which reads directly from Weaviate — the
-                    # full accumulated fact set, not just this batch's ids.
-                    task = _asyncio.create_task(_run_with_debounce(channel_id))
-
-                    def _log_exc(t: _asyncio.Task) -> None:
-                        if t.cancelled():
-                            return
-                        exc = t.exception()
-                        if exc is not None:
-                            logging.getLogger(__name__).warning(
-                                "consolidation fan-out task raised channel=%s: %s",
-                                channel_id,
-                                exc,
-                                exc_info=exc,
-                            )
-
-                    task.add_done_callback(_log_exc)
-
-                _consolidation_worker.subscribe_extraction_done(_on_extraction_done_consolidation)
-        except Exception as exc:
-            logging.getLogger(__name__).warning(
-                "Consolidation-after-extraction wiring failed (non-fatal): %s", exc
-            )
+            _consolidation_worker.subscribe_extraction_done(_on_extraction_done_consolidation)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Consolidation-after-extraction wiring failed (non-fatal): %s", exc
+        )
 
     # Initialize outbound MCP registry — non-blocking, skips unreachable servers
     from beever_atlas.agents.mcp_registry import init_mcp_registry
