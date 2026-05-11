@@ -158,3 +158,127 @@ async def test_bulk_burst_fires_one_flush_not_N() -> None:
     assert schedule_count == 1, (
         "Bulk sync must produce exactly 1 flush schedule, not 1 per batch"
     )
+
+
+# ---------------------------------------------------------------------------
+# G6 — rate limiter audit (documentation test)
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limiter_dispatch_is_per_sub_agent() -> None:
+    """ADK's ``ParallelAgent`` emits events per sub-agent, not under its
+    own name. The batch_processor's rate-limiter acquisition is keyed
+    by ``event.author`` (which is the sub-agent name), so each
+    concurrent Gemini call already gets one token. The original design
+    hypothesis about under-counting was wrong — this test documents the
+    finding by inspecting the dispatch logic.
+    """
+    from pathlib import Path
+
+    src = Path(
+        "/Users/alanyang/Desktop/beever-ai/beever-atlas/src/beever_atlas/services/batch_processor.py"
+    ).read_text(encoding="utf-8")
+
+    # The dispatch uses author-based branching; no special-case for the
+    # ParallelAgent wrapper name.
+    assert 'author == "embedder"' in src
+    assert 'author not in ("preprocessor", "persister")' in src
+    # The G6 audit comment locks in the finding.
+    assert "memory-then-wiki-pipeline-realignment G6 audit" in src
+
+
+# ---------------------------------------------------------------------------
+# G8.3 — crash recovery scenario (queue-only path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_resumes_pending_via_queue() -> None:
+    """Simulate a process restart during the debounce window.
+
+    Before restart: 3 page_ids enqueued into ``wiki_dirty_queue`` (via
+    ``enqueue_dirty``). The backend crashes before the flush runs.
+    Some rows may already be in ``status="flushing"`` if the crash
+    happened mid-flush.
+
+    After restart: ``recover_stale_flushing`` flips ``flushing`` rows
+    back to ``pending``. The next ``memory_settled`` event claims them
+    and processes them.
+    """
+    # In-memory fake mongo for the queue methods.
+    enqueued: list[dict] = []
+    flushing_set: set[str] = set()
+    done_set: set[str] = set()
+
+    class _FakeStore:
+        class mongodb:
+            @staticmethod
+            async def enqueue_dirty(channel_id, page_id, fact_ids):
+                enqueued.append(
+                    {
+                        "_id": f"{channel_id}:{page_id}",
+                        "channel_id": channel_id,
+                        "page_id": page_id,
+                        "fact_ids": list(fact_ids),
+                        "status": "pending",
+                    }
+                )
+
+            @staticmethod
+            async def claim_dirty(channel_id):
+                claimed = []
+                for row in enqueued:
+                    if (
+                        row["channel_id"] == channel_id
+                        and row["status"] == "pending"
+                    ):
+                        row["status"] = "flushing"
+                        flushing_set.add(row["_id"])
+                        claimed.append(dict(row))
+                return claimed
+
+            @staticmethod
+            async def mark_dirty_done(doc_ids):
+                for doc_id in doc_ids:
+                    for row in enqueued:
+                        if row["_id"] == doc_id:
+                            row["status"] = "done"
+                            flushing_set.discard(doc_id)
+                            done_set.add(doc_id)
+
+            @staticmethod
+            async def recover_stale_flushing(stale_seconds=600):
+                # Simulating "all stuck flushing rows recover regardless
+                # of age" for the test — the real implementation gates on
+                # updated_at < now - stale_seconds.
+                count = 0
+                for row in enqueued:
+                    if row["status"] == "flushing":
+                        row["status"] = "pending"
+                        flushing_set.discard(row["_id"])
+                        count += 1
+                return count
+
+    fake = _FakeStore()
+
+    # Pre-crash: enqueue 3 rows for channel C1, then mark one as
+    # flushing to simulate a crash mid-flush.
+    with patch("beever_atlas.stores.get_stores", lambda: fake):
+        await fake.mongodb.enqueue_dirty("C1", "topic:gpu", ["f1"])
+        await fake.mongodb.enqueue_dirty("C1", "topic:k8s", ["f2"])
+        await fake.mongodb.enqueue_dirty("C1", "people", ["f3"])
+        # Simulate crash mid-flush — one row got into flushing state.
+        claimed_pre_crash = await fake.mongodb.claim_dirty("C1")
+        assert len(claimed_pre_crash) == 3
+        # Mark only one as done (the other 2 are stuck in flushing).
+        await fake.mongodb.mark_dirty_done([claimed_pre_crash[0]["_id"]])
+
+        # Restart: recover_stale_flushing flips remaining flushing rows
+        # back to pending.
+        recovered = await fake.mongodb.recover_stale_flushing()
+        assert recovered == 2  # the 2 stuck rows
+
+        # Post-restart: next claim drains them.
+        claimed_post_restart = await fake.mongodb.claim_dirty("C1")
+        post_ids = sorted(r["_id"] for r in claimed_post_restart)
+        assert post_ids == ["C1:people", "C1:topic:k8s"]

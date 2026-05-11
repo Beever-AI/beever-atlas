@@ -728,6 +728,16 @@ class BatchProcessor:
                                 # B2: acquire per-provider rate limiter before the stage runs.
                                 # Embedder = Jina; all other LLM stages = Gemini.
                                 # preprocessor/persister are local-only, no quota needed.
+                                #
+                                # memory-then-wiki-pipeline-realignment G6 audit:
+                                # ADK's ``ParallelAgent`` (``extraction_parallel`` wrapping
+                                # fact_extractor + entity_extractor, ``enrich_parallel``
+                                # wrapping embedder + validator) does NOT emit a single
+                                # event under its own name — each sub-agent emits its own
+                                # event with ``author = sub_agent.name``. The dispatch
+                                # below therefore acquires ONE token per concurrent Gemini
+                                # call. No double-counting fix needed; the previous design
+                                # hypothesis about under-counting was incorrect.
                                 if author == "embedder":
                                     _lim_t0 = time.monotonic()
                                     await (await _get_limiter("embedding")).acquire()
