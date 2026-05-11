@@ -991,6 +991,7 @@ function BatchFilteredActivityLog({
   totalBatches,
   batchesCompleted,
   channelId,
+  knownDoneBatchNums,
 }: {
   stageDetails?: {
     activity_log?: ActivityEntry[];
@@ -999,6 +1000,13 @@ function BatchFilteredActivityLog({
   totalBatches?: number;
   batchesCompleted?: number;
   channelId?: string;
+  /** Authoritative set of done batch_nums computed by the parent
+   *  SyncProgressV2 from sticky_results + activity_log persister
+   *  events. The activity_log buffer is server-side $sliced to the
+   *  last 50 entries, so early-completed batches' persister events
+   *  scroll off — without this prop the chip strip mis-reports them
+   *  as still pending (caught by UI testing). */
+  knownDoneBatchNums?: Set<number>;
 }) {
   const [selectedBatch, setSelectedBatch] = useState<number | "all">("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
@@ -1059,14 +1067,12 @@ function BatchFilteredActivityLog({
 
   const batches = useMemo(
     () => {
-      // Derive the set of batches that have a persister stage_output in
-      // the activity_log — those are CONFIRMED done. Pass it to
-      // ``summariseBatches`` so the chip strip doesn't fall back to the
-      // (incorrect) ``idx <= batchesCompleted`` heuristic, which marks
-      // Batch 1 as done when reality is {Batch 2, Batch 5} (out-of-order
-      // completion). UI testing surfaced this as the "Batch 1 done →
-      // running" flicker.
-      const persistedNums = new Set<number>();
+      // Confirmed-done set: union of (a) ``knownDoneBatchNums`` from
+      // the parent (which combines sticky_results + persister events
+      // — survives the activity_log $slice eviction) and (b) any
+      // additional persister events in the local activity_log slice.
+      // Either source proves the batch finished.
+      const persistedNums = new Set<number>(knownDoneBatchNums ?? []);
       for (const e of activityLog) {
         if (
           e.type === "stage_output" &&
@@ -1078,7 +1084,7 @@ function BatchFilteredActivityLog({
       }
       return summariseBatches(activityLog, totalBatches, batchesCompleted, persistedNums);
     },
-    [activityLog, totalBatches, batchesCompleted],
+    [activityLog, totalBatches, batchesCompleted, knownDoneBatchNums],
   );
 
   // Filter pipeline:
@@ -1630,29 +1636,33 @@ export function SyncProgressV2({
   // Compute batches summary at the container level so both the activity
   // tab AND the batch-results tab share the same state source.
   const activityLog = stageDetails?.activity_log ?? [];
+  // Confirmed-done set: union of (a) persister stage_output entries
+  // in activity_log and (b) batch_nums already accumulated in the
+  // sticky results buffer. Either source proves the batch finished
+  // — and using BOTH closes the window between persister-done and
+  // batch_results-row-arrival. Computed at the container level so
+  // it can be passed DOWN to BatchFilteredActivityLog (whose own
+  // activity_log slice has lost early batches' persister events
+  // due to server-side $slice eviction).
+  const knownDoneBatchNums = useMemo(() => {
+    const s = new Set<number>();
+    for (const e of activityLog) {
+      if (
+        e.type === "stage_output" &&
+        e.agent === "persister" &&
+        typeof e.batch_idx === "number"
+      ) {
+        s.add(e.batch_idx);
+      }
+    }
+    for (const bn of stickyResultsRef.current.keys()) {
+      s.add(bn);
+    }
+    return s;
+  }, [activityLog]);
   const batchSummaries = useMemo(
-    () => {
-      // Confirmed-done set: union of (a) persister stage_output entries
-      // in activity_log and (b) batch_nums already accumulated in the
-      // sticky results buffer. Either source proves the batch finished
-      // — and using BOTH closes the window between persister-done and
-      // batch_results-row-arrival.
-      const persistedNums = new Set<number>();
-      for (const e of activityLog) {
-        if (
-          e.type === "stage_output" &&
-          e.agent === "persister" &&
-          typeof e.batch_idx === "number"
-        ) {
-          persistedNums.add(e.batch_idx);
-        }
-      }
-      for (const bn of stickyResultsRef.current.keys()) {
-        persistedNums.add(bn);
-      }
-      return summariseBatches(activityLog, totalBatches, batchesCompleted, persistedNums);
-    },
-    [activityLog, totalBatches, batchesCompleted],
+    () => summariseBatches(activityLog, totalBatches, batchesCompleted, knownDoneBatchNums),
+    [activityLog, totalBatches, batchesCompleted, knownDoneBatchNums],
   );
 
   const derivedBatchResults = useMemo<BatchResultEntry[]>(() => {
@@ -1822,6 +1832,7 @@ export function SyncProgressV2({
             totalBatches={totalBatches}
             batchesCompleted={batchesCompleted}
             channelId={channelId}
+            knownDoneBatchNums={knownDoneBatchNums}
           />
         ) : (
           <BatchResults results={derivedBatchResults} />
