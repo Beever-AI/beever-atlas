@@ -477,9 +477,21 @@ interface SyncProgressProps {
   syncState: SyncState;
   isSyncing: boolean;
   channelId?: string | null;
+  /** Optional controlled collapse state — when provided, the parent
+   *  layout can react to the collapsed state (e.g. switch fullscreen
+   *  → compact). Without these props, the monitor keeps its internal
+   *  localStorage-backed collapse state as before. */
+  collapsed?: boolean;
+  onCollapsedChange?: (next: boolean) => void;
 }
 
-export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressProps) {
+export function SyncProgress({
+  syncState,
+  isSyncing,
+  channelId,
+  collapsed,
+  onCollapsedChange,
+}: SyncProgressProps) {
   const isFailed = syncState.state === "error";
   if (!channelId) return null;
   const phases = syncState.phases ?? [];
@@ -501,7 +513,7 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
     return null;
   }
   return (
-    <div className="border-b border-border bg-background px-4 sm:px-6 py-3">
+    <div className="flex-1 min-h-0 flex flex-col">
       <SyncProgressV2
         channelId={channelId}
         phases={phases}
@@ -518,6 +530,8 @@ export function SyncProgress({ syncState, isSyncing, channelId }: SyncProgressPr
         startedAt={syncState.started_at ?? null}
         retrying={syncState.retrying}
         abandoned={syncState.abandoned}
+        collapsed={collapsed}
+        onCollapsedChange={onCollapsedChange}
       />
     </div>
   );

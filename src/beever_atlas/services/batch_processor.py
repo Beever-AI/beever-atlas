@@ -1603,11 +1603,24 @@ class BatchProcessor:
                 )
 
                 batch_duration = sum(batch_stage_timings.values())
+                # Embedded + media counts for the UI MetricsBar tiles.
+                # Pulled here at construction time so they ride along with
+                # the breakdown into ``append_batch_results_for_channel``
+                # and survive activity_log eviction.
+                _embedded_facts = final_state.get("embedded_facts") or []
+                _preprocessed = final_state.get("preprocessed_messages") or []
+                _media_count_bd = sum(
+                    1
+                    for m in _preprocessed
+                    if isinstance(m, dict) and m.get("modality") == "mixed"
+                )
                 breakdown = BatchBreakdown(
                     batch_num=batch_index,
                     facts_count=len(facts_list),
                     entities_count=len(entities_list),
                     relationships_count=len(rels_list),
+                    embedded_count=len(_embedded_facts),
+                    media_count=_media_count_bd,
                     sample_facts=[(f.get("memory_text") or "")[:120] for f in facts_list[:5]],
                     sample_entities=[
                         {"name": e.get("name", "?"), "type": e.get("type", "?")}

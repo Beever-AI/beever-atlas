@@ -84,6 +84,13 @@ interface SyncProgressV2Props {
   startedAt?: string | null;
   retrying?: number;
   abandoned?: number;
+  /** When provided, makes the collapse toggle controlled by the parent.
+   *  Allows the workspace layout to react to the collapsed state (e.g.
+   *  switch from fullscreen monitor to a compact strip with the wiki
+   *  body visible below). When undefined, the component keeps an
+   *  internal localStorage-backed collapse state as before. */
+  collapsed?: boolean;
+  onCollapsedChange?: (next: boolean) => void;
 }
 
 const PHASE_DISPLAY_ORDER: Array<{ name: PhaseName; label: string }> = [
@@ -434,16 +441,23 @@ function deriveMetrics(
     maxBatchIdxSeen,
   );
 
-  // In-flight: highest batch_idx observed minus done count. Using
-  // server-side ``batchesDone`` keeps the floor honest even after older
-  // stage_outputs evict from the activity_log buffer.
-  const batchesInFlight = Math.max(
-    0,
-    Math.min(
-      maxBatchIdxSeen - batchesDone,
-      Math.max(0, totalBatches - batchesDone),
-    ),
-  );
+  // In-flight: count batches that have a ``stage_start`` event but no
+  // ``persister`` ``stage_output`` event yet — this matches what the
+  // batch chip strip actually shows as ●Running. Previously this was
+  // ``maxBatchIdxSeen - batchesDone`` which double-counted batches
+  // whose persister entries had been evicted from the activity_log.
+  const startedSet = new Set<number>();
+  const persistedSet = new Set<number>();
+  for (const e of activityLog) {
+    if (e.batch_idx == null) continue;
+    if (e.type === "stage_start") startedSet.add(e.batch_idx);
+    else if (e.type === "stage_output" && e.agent === "persister") {
+      persistedSet.add(e.batch_idx);
+    }
+  }
+  const batchesInFlight = Array.from(startedSet).filter(
+    (i) => !persistedSet.has(i),
+  ).length;
 
   // Aggregate fact / entity / embedded / media counts from the STICKY
   // batch-results accumulator (kept by SyncProgressV2 across polls).
@@ -952,7 +966,38 @@ function BatchFilteredActivityLog({
   const [selectedBatch, setSelectedBatch] = useState<number | "all">("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const activityLog = stageDetails?.activity_log ?? [];
+  const rawActivityLog = stageDetails?.activity_log ?? [];
+
+  // Sticky activity-entry accumulator — preserves the full per-batch
+  // history across polls so when the user clicks "Batch 4" they see the
+  // complete preprocessor → fact_extractor → entity_extractor → embedder
+  // → persister trace, NOT just the lone "Batch 4 completed" entry that
+  // happens to still be in the backend's $slice'd activity_log buffer.
+  //
+  // Key by ``${batch_idx}:${type}:${agent}:${message_hash}`` — stable
+  // identity for retries with the same agent (same key clobbers; OK
+  // because the latest payload is the most accurate).
+  const stickyEntriesRef = useRef<Map<string, ActivityEntry>>(new Map());
+  const activityLog = useMemo(() => {
+    for (const entry of rawActivityLog) {
+      const key =
+        `${entry.batch_idx ?? "-"}:${entry.type}:${entry.agent}:` +
+        `${(entry.message ?? "").slice(0, 80)}`;
+      stickyEntriesRef.current.set(key, entry);
+    }
+    // Sort sticky entries: primary by batch_idx, secondary by a stable
+    // order that approximates "stage progression". The activity_log
+    // from the server is already roughly chronological — we preserve
+    // insertion order within each batch via Map's preservation, then
+    // group by batch.
+    const all = Array.from(stickyEntriesRef.current.values());
+    all.sort((a, b) => {
+      const ai = a.batch_idx ?? Number.MAX_SAFE_INTEGER;
+      const bi = b.batch_idx ?? Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
+    return all;
+  }, [rawActivityLog]);
 
   // Cmd-K / Ctrl-K: focus the activity-log search. Esc when focused: clear.
   // Mounted only on the Pipeline Activity tab, so won't collide with the
@@ -1372,46 +1417,31 @@ export function SyncProgressV2({
   totalBatches,
   batchesCompleted,
   startedAt,
+  collapsed: collapsedProp,
+  onCollapsedChange,
 }: SyncProgressV2Props) {
   const [activeTab, setActiveTab] = useLocalStorageState<TabId>(
     "beever.monitor.activeTab",
     "activity",
   );
-  const [collapsed, setCollapsed] = useLocalStorageState<boolean>(
+  // Internal collapse state (uncontrolled mode) — used only when the
+  // caller doesn't pass ``collapsed``/``onCollapsedChange``.
+  const [internalCollapsed, setInternalCollapsed] = useLocalStorageState<boolean>(
     "beever.monitor.collapsed",
     false,
   );
-  // Panel height — user can drag the bottom edge of the activity/results
-  // body to resize. Persisted across reloads.
-  const [panelHeight, setPanelHeight] = useLocalStorageState<number>(
-    "beever.monitor.panelHeight",
-    480,
-  );
-  const resizeStartRef = useRef<{ startY: number; startH: number } | null>(null);
-  const handleResizeDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    resizeStartRef.current = { startY: e.clientY, startH: panelHeight };
-    const MIN_H = 200;
-    const MAX_H = Math.max(MIN_H, Math.floor(window.innerHeight * 0.8));
-    const move = (ev: PointerEvent) => {
-      const start = resizeStartRef.current;
-      if (!start) return;
-      const delta = ev.clientY - start.startY;
-      const next = Math.min(MAX_H, Math.max(MIN_H, start.startH + delta));
-      setPanelHeight(next);
-    };
-    const up = () => {
-      resizeStartRef.current = null;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "ns-resize";
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+  const collapsed = collapsedProp ?? internalCollapsed;
+  const setCollapsed = (next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved =
+      typeof next === "function"
+        ? (next as (p: boolean) => boolean)(collapsed)
+        : next;
+    if (onCollapsedChange) onCollapsedChange(resolved);
+    else setInternalCollapsed(resolved);
   };
+  // (Resizable activity panel was dropped — fullscreen layout supersedes
+  //  the drag-to-resize feature. Panel naturally fills the card via
+  //  flex-1 + min-h-0 on the body.)
   const activePhase = useMemo(
     () => deriveActivePhase(state, phases),
     [state, phases],
@@ -1533,7 +1563,7 @@ export function SyncProgressV2({
 
   return (
     <div
-      className="rounded-lg border border-border bg-card overflow-hidden relative"
+      className="rounded-lg border border-border bg-card overflow-hidden relative flex flex-col h-full min-h-0"
       data-testid={`sync-progress-v2-${channelId}`}
     >
       <button
@@ -1577,7 +1607,9 @@ export function SyncProgressV2({
       <div
         className={cn(
           "transition-all duration-300 ease-out overflow-hidden",
-          collapsed ? "max-h-0 opacity-0" : "max-h-[2000px] opacity-100",
+          collapsed
+            ? "max-h-0 opacity-0"
+            : "flex-1 min-h-0 flex flex-col opacity-100",
         )}
         aria-hidden={collapsed}
       >
@@ -1612,10 +1644,12 @@ export function SyncProgressV2({
         batchCount={batchCount}
         channelId={channelId}
       />
-      <div
-        className="px-3 py-2 bg-card overflow-y-auto"
-        style={{ maxHeight: `${panelHeight}px` }}
-      >
+      {/* Activity / Batch Results body — fills the remaining card height
+       *  when the monitor is rendered in fullscreen mode (wiki tab).
+       *  In compact mode (other tabs) the parent constrains height
+       *  externally, so the panel just scrolls within whatever space
+       *  it's given. */}
+      <div className="px-3 py-2 bg-card overflow-y-auto flex-1 min-h-0">
         {activeTab === "activity" ? (
           <BatchFilteredActivityLog
             stageDetails={stageDetails}
@@ -1625,17 +1659,6 @@ export function SyncProgressV2({
         ) : (
           <BatchResults results={derivedBatchResults} />
         )}
-      </div>
-      {/* Resize handle — drag the line to grow/shrink the activity panel.
-       *  Subtle by default; lights up on hover so it's discoverable. */}
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize activity panel"
-        onPointerDown={handleResizeDown}
-        className="group h-1.5 cursor-ns-resize bg-border/40 hover:bg-primary/40 transition-colors flex items-center justify-center"
-      >
-        <div className="h-0.5 w-8 rounded-full bg-muted-foreground/30 group-hover:bg-primary/60" />
       </div>
       <LiveEventsList events={events} startedAt={startedAt} />
       <div className="flex items-center flex-wrap gap-3 border-t border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
