@@ -242,15 +242,37 @@ async def check_and_supersede_for_channel(
     try:
         # ``MemoryFilters.since`` is an ISO-8601 timestamp interpreted by
         # the Weaviate store's ``list_facts`` as ``valid_at >=``. Paginate
-        # generously — a 715-msg sync produces ~700 facts, well within a
-        # single 1000-row pull.
-        result = await stores.weaviate.list_facts(
-            channel_id=channel_id,
-            filters=MemoryFilters(since=pre_check_watermark.isoformat()),
-            page=1,
-            limit=1000,
-        )
-        new_facts = list(result.memories)
+        # explicitly — a 715-msg sync produces ~700 facts but dormant
+        # channels reawakened after months may produce 2000+ in a single
+        # window. The code-reviewer flagged the prior 1000-row cap as a
+        # HIGH-severity latent risk: silently truncating + advancing the
+        # watermark past unread facts would permanently skip contradiction
+        # detection for them. Loop until we receive a partial page.
+        _PAGE_SIZE = 500
+        page = 1
+        while True:
+            result = await stores.weaviate.list_facts(
+                channel_id=channel_id,
+                filters=MemoryFilters(since=pre_check_watermark.isoformat()),
+                page=page,
+                limit=_PAGE_SIZE,
+            )
+            page_items = list(result.memories)
+            new_facts.extend(page_items)
+            if len(page_items) < _PAGE_SIZE:
+                break
+            page += 1
+            # Defensive ceiling: 50 pages × 500 rows = 25k facts. Larger
+            # channels almost certainly indicate a watermark accidentally
+            # reset to epoch on a previously-synced large dataset; log
+            # and stop to prevent runaway iteration.
+            if page > 50:
+                logger.warning(
+                    "ContradictionDetector: paginated past 25k facts channel=%s — "
+                    "stopping (likely watermark reset)",
+                    channel_id,
+                )
+                break
     except Exception:
         # Backstop: if Weaviate is down, do NOT advance the watermark.
         # The next memory_settled (or admin trigger) retries from the

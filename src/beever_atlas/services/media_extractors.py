@@ -362,6 +362,11 @@ class ImageExtractor(MediaExtractor):
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
         mime_type = self._IMAGE_MIME_MAP.get(ext, "image/png")
 
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
         if settings.media_cache_enabled:
             content_hash = _compute_media_hash(data)
             cached = await _check_media_cache(content_hash, mime_type)
@@ -378,7 +383,7 @@ class ImageExtractor(MediaExtractor):
             desc = f"[Attachment: {filename} (image, {size_kb} kB)]"
         result = MediaContent(text=desc, media_type="image")
 
-        if settings.media_cache_enabled:
+        if settings.media_cache_enabled and content_hash is not None:
             await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
 
         return result
@@ -628,6 +633,11 @@ class VideoExtractor(MediaExtractor):
         }
         mime_type = mime_map.get(ext, "video/mp4")
 
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
         if settings.media_cache_enabled:
             content_hash = _compute_media_hash(data)
             cached = await _check_media_cache(content_hash, mime_type)
@@ -643,7 +653,7 @@ class VideoExtractor(MediaExtractor):
 
         result = MediaContent(text="\n".join(parts), media_type="video")
 
-        if settings.media_cache_enabled:
+        if settings.media_cache_enabled and content_hash is not None:
             await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
 
         return result
@@ -823,6 +833,11 @@ class AudioExtractor(MediaExtractor):
         }
         mime_type = mime_map.get(ext, "audio/mpeg")
 
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
         if settings.media_cache_enabled:
             content_hash = _compute_media_hash(data)
             cached = await _check_media_cache(content_hash, mime_type)
@@ -894,7 +909,7 @@ class AudioExtractor(MediaExtractor):
 
         result = MediaContent(text="\n".join(parts), media_type="audio")
 
-        if settings.media_cache_enabled:
+        if settings.media_cache_enabled and content_hash is not None:
             await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
 
         return result
