@@ -1566,7 +1566,17 @@ class BatchProcessor:
                 batch_entities = persist_result.get("entity_count") or 0
 
                 # --- Post-pipeline: contradiction detection ---
-                # Runs AFTER persistence completes, outside the outbox transaction.
+                # Runs AFTER persistence completes, outside the outbox
+                # transaction AND outside the batch semaphore slot. The
+                # detector fires ~20-40 serial LLM calls per batch (one
+                # per fact with entity tags), which previously blocked
+                # slot release for 16-24 seconds per batch. Over ~24
+                # batches that was 6-12 minutes on the critical path.
+                # By detaching as a fire-and-forget task we free the
+                # semaphore immediately so the next batch can claim
+                # the slot, while contradiction supersession still
+                # completes eventually (it's already best-effort and
+                # eventually-consistent — exceptions are swallowed).
                 try:
                     from beever_atlas.services.contradiction_detector import check_and_supersede
 
@@ -1598,10 +1608,32 @@ class BatchProcessor:
                                     channel_id=fact_channel,
                                 )
                             )
-                        await check_and_supersede(persisted_facts, channel_id)
+
+                        async def _detached_contradiction_check(
+                            facts_snapshot: list[AtomicFact],
+                            ch: str,
+                            job: str,
+                            b_idx: int,
+                        ) -> None:
+                            try:
+                                await check_and_supersede(facts_snapshot, ch)
+                            except Exception:  # noqa: BLE001
+                                logger.debug(
+                                    "BatchProcessor: detached contradiction check failed job_id=%s batch=%d",
+                                    job,
+                                    b_idx,
+                                    exc_info=True,
+                                )
+
+                        # Fire-and-forget — does NOT block semaphore release.
+                        asyncio.create_task(
+                            _detached_contradiction_check(
+                                persisted_facts, channel_id, sync_job_id, batch_index
+                            )
+                        )
                 except Exception:  # noqa: BLE001
                     logger.debug(
-                        "BatchProcessor: contradiction detection failed job_id=%s batch=%d, continuing",
+                        "BatchProcessor: contradiction detection scheduling failed job_id=%s batch=%d, continuing",
                         sync_job_id,
                         batch_index,
                         exc_info=True,

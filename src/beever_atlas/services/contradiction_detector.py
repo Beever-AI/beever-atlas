@@ -84,6 +84,30 @@ async def check_and_supersede(
     stores = get_stores()
     sem = asyncio.Semaphore(settings.contradiction_concurrency)
 
+    # P0: Fast-path first-sync. If the channel has fewer than ~5 existing
+    # facts in Weaviate, every per-fact query below would return ~empty
+    # candidates anyway, and the ~30 facts/batch × 24 batches = ~720
+    # Weaviate round-trips become pure overhead. Skip the whole loop.
+    # This is the dominant cost on first-sync, identified by three
+    # independent OMC agents reviewing the slow tech-vnote log.
+    try:
+        sample = await stores.weaviate.list_facts(
+            channel_id=channel_id,
+            filters=MemoryFilters(),
+            limit=5,
+        )
+        if not sample.memories:
+            logger.info(
+                "ContradictionDetector: skipping (channel %s has no existing facts — first-sync fast path)",
+                channel_id,
+            )
+            return
+    except Exception:  # noqa: BLE001
+        # If the probe fails, fall through to the full check loop —
+        # we'd rather do extra work than skip contradiction detection
+        # in error paths.
+        pass
+
     async def _check_one(new_fact: AtomicFact) -> None:
         if not new_fact.entity_tags and not new_fact.topic_tags:
             return

@@ -579,6 +579,12 @@ class Settings(BaseSettings):
     # in-memory only; if the worker process crashes mid-window, pending
     # rewrites are lost and the next extraction event re-routes the affected
     # pages to a fresh dirty-set (worst-case loss = one window).
+    # P0: lowered from 60s → 10s. The debounce coalesces multiple
+    # memory_changed/memory_settled events into a single flush. With
+    # the new memory-then-wiki gate, settlement only fires once per
+    # channel-drain anyway, so a 60s coalescing window is pure dead
+    # time at sync end. 10s preserves coalescing for any straggler
+    # events without wasting the full minute waiting on nothing.
     wiki_maintainer_debounce_seconds: int = Field(
         default=60, alias="WIKI_MAINTAINER_DEBOUNCE_SECONDS"
     )
