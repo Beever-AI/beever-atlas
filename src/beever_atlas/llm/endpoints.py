@@ -286,11 +286,118 @@ class EndpointStore:
         )
 
 
+# ────────────────────────────────────────────────────────────────────────
+# /v1/models discovery — design D4.
+# ────────────────────────────────────────────────────────────────────────
+
+
+class DiscoveryResult(dict[str, Any]):
+    """Return shape from ``discover_models``: ``{ok, models, error?}``."""
+
+
+async def discover_models(
+    endpoint: Endpoint,
+    *,
+    plaintext_credential: str | None = None,
+    timeout_seconds: float = 10.0,
+) -> DiscoveryResult:
+    """Issue a discovery request against ``endpoint`` and return the model list.
+
+    Discovery shape depends on the preset:
+      * Ollama: ``GET {base_url}/api/tags`` → ``models[].name``
+        (Note: Ollama's OpenAI-compat shim doesn't expose tags, so we hit
+        the native ``/api/tags`` instead — strip the ``/v1`` suffix.)
+      * Default (OpenAI-compatible): ``GET {base_url}/models`` → ``data[].id``.
+      * Bedrock / Vertex: not implemented (preset-specific SDK call). Surfaces
+        a clear error so the UI can prompt the operator to enter models manually.
+
+    Never raises on transport error — surfaces ``{ok: False, error: ...}``.
+    """
+    import httpx
+
+    if endpoint.preset in ("bedrock", "vertex_ai"):
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            error=(
+                f"discovery_not_supported_for_preset: {endpoint.preset}. "
+                "Enter model names manually."
+            ),
+        )
+
+    if not endpoint.base_url:
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            error="discovery_no_base_url: base_url is empty",
+        )
+
+    # Resolve auth header.
+    headers = dict(endpoint.headers)
+    if plaintext_credential and endpoint.auth_type == "api_key":
+        headers["Authorization"] = f"Bearer {plaintext_credential}"
+
+    # Pick the discovery URL per preset.
+    if endpoint.preset in ("ollama", "ollama_chat"):
+        # Strip /v1 suffix — Ollama's tag list lives under the native API.
+        base = endpoint.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        url = f"{base}/api/tags"
+        list_key = "models"  # different shape: [{name, ...}]
+    else:
+        url = f"{endpoint.base_url.rstrip('/')}/models"
+        list_key = "data"  # OpenAI shape: [{id, ...}]
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            resp = await client.get(url, headers=headers)
+    except (httpx.TimeoutException,) as exc:
+        return DiscoveryResult(
+            ok=False, models=[], error=f"discovery_timeout: {timeout_seconds}s ({exc})"
+        )
+    except httpx.HTTPError as exc:
+        return DiscoveryResult(ok=False, models=[], error=f"discovery_connect_error: {exc}")
+
+    if resp.status_code != 200:
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            error=f"discovery_http_{resp.status_code}: {resp.text[:200]}",
+        )
+
+    try:
+        payload = resp.json()
+    except Exception:  # noqa: BLE001
+        return DiscoveryResult(
+            ok=False, models=[], error="discovery_invalid_json_response"
+        )
+
+    entries = payload.get(list_key)
+    if not isinstance(entries, list):
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            error=f"discovery_invalid_response_shape: expected {{{list_key}: [...]}}",
+        )
+
+    if list_key == "models":
+        # Ollama shape: extract "name" from each entry.
+        model_ids = [str(item["name"]) for item in entries if isinstance(item, dict) and "name" in item]
+    else:
+        # OpenAI shape: extract "id" from each entry.
+        model_ids = [str(item["id"]) for item in entries if isinstance(item, dict) and "id" in item]
+
+    return DiscoveryResult(ok=True, models=model_ids)
+
+
 __all__ = [
     "AuthType",
     "DEFAULT_PROVIDER_RPM",
+    "DiscoveryResult",
     "Endpoint",
     "EndpointStore",
+    "discover_models",
     "encrypt_endpoint_credential",
     "decrypt_endpoint_credential",
 ]
