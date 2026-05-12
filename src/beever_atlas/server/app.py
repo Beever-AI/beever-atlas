@@ -177,6 +177,22 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
+    # agent-llm-provider-pluggable PR-B: hydrate per-Endpoint credentials
+    # from the new ``endpoints`` collection into a process-local cache so
+    # ``dispatch_completion`` can read them per-call without round-tripping
+    # MongoDB. Best-effort — the collection may not exist on installs that
+    # haven't run the migration shim yet, and we don't want to block boot
+    # over that.
+    try:
+        from beever_atlas.llm.agent_credentials import hydrate_runtime_credentials
+
+        await hydrate_runtime_credentials(stores)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "lifespan: could not hydrate per-Endpoint credentials (non-fatal)",
+            exc_info=True,
+        )
+
     # PR-C: probe the embedding provider once + refuse to boot when the
     # configured dimension disagrees with what's already stored in
     # Weaviate. Override is `EMBEDDING_DIM_GUARD=false`.
