@@ -578,6 +578,8 @@ async def _run_generation(
     wipe_before_run: bool = False,
     force_recompile: bool = False,
 ) -> None:
+    from beever_atlas.capabilities.errors import WikiNotReadyError
+
     try:
         # Wipe is performed HERE (inside the background task) rather than
         # synchronously in the request handler. This eliminates the
@@ -607,6 +609,23 @@ async def _run_generation(
             target_lang=target_lang,
             force_restructure=force_restructure,
             force_recompile=force_recompile,
+        )
+    except WikiNotReadyError as exc:
+        # Consolidation was still in progress when the wiki refresh ran.
+        # Surface as a retriable "not ready" status so the frontend can
+        # show "Wiki generation still warming up — retry in a moment"
+        # rather than a generic failure banner.
+        logger.warning(
+            "Wiki generation not ready channel=%s: %s — consolidation still in progress",
+            channel_id,
+            exc,
+        )
+        await cache.set_generation_status(
+            channel_id,
+            status="not_ready",
+            stage="error",
+            error=str(exc),
+            target_lang=target_lang,
         )
     except Exception as exc:
         logger.error("Wiki generation failed channel=%s: %s", channel_id, exc, exc_info=True)
