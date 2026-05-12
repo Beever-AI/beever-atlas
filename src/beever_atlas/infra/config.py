@@ -93,6 +93,11 @@ class Settings(BaseSettings):
         alias="NEO4J_BATCH_NAME_VECTOR",
         description="When true, persister batches name_vector writes via a single UNWIND Cypher call. Falls back to per-entity on failure.",
     )
+    neo4j_relationship_stub_endpoints: bool = Field(
+        default=True,
+        alias="NEO4J_RELATIONSHIP_STUB_ENDPOINTS",
+        description="When true, MATCH→MERGE in upsert_relationship + batch_create_episodic_links auto-creates stub Entity nodes for unknown endpoint names. Eliminates silent relationship loss from cross-batch races. Set false to revert to legacy MATCH-and-skip behaviour.",
+    )
     mongodb_uri: str = Field(default="mongodb://localhost:27017/beever_atlas")
     redis_url: str = Field(default="redis://localhost:6379")
 

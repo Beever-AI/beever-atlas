@@ -71,6 +71,10 @@ class NullGraphStore:
     async def batch_upsert_relationships(
         self,
         rels: list[GraphRelationship],
+        *,
+        channel_id: str = "",
+        sync_job_id: str = "",
+        batch_idx: int | None = None,
     ) -> list[str]:
         return []
 

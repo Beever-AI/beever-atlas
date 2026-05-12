@@ -114,6 +114,7 @@ class Neo4jStore:
         """Verify connectivity and create required indexes/schema."""
         await self._driver.verify_connectivity()
         await self.ensure_schema()
+        await self.ensure_entity_name_type_scope_unique_constraint()
 
     async def ensure_schema(self) -> None:
         """Create indexes and backfill optional fields.  Idempotent."""
@@ -126,6 +127,72 @@ class Neo4jStore:
             await session.run("CREATE INDEX media_url IF NOT EXISTS FOR (m:Media) ON (m.url)")
             await session.run("MATCH (e:Entity) WHERE e.aliases IS NULL SET e.aliases = []")
             await session.run("MATCH (e:Entity) WHERE e.status IS NULL SET e.status = 'active'")
+
+    async def ensure_entity_name_type_scope_unique_constraint(self) -> None:
+        """Ensure the composite UNIQUE constraint over ``(name, type, scope)``.
+
+        This is the PR-2 schema migration. The constraint guarantees that the
+        in-Cypher ``MERGE`` stub-endpoint creation in :meth:`upsert_relationship`
+        and :meth:`batch_create_episodic_links` is serialised by Neo4j under
+        concurrent batches — without it, two batches racing on the same
+        unknown endpoint name would each create their own stub.
+
+        The constraint creation will fail if pre-existing duplicate
+        ``(name, type, scope)`` triples exist (past races, before the fix).
+        We therefore run the discovery query first, and if duplicates are
+        found we attempt an APOC-based dedup (``apoc.refactor.mergeNodes``).
+        If APOC is unavailable we raise a clear error pointing to the
+        :file:`runbooks/entity-dedup.md` runbook for the manual procedure.
+
+        Idempotent — ``CREATE CONSTRAINT ... IF NOT EXISTS`` is safe to call
+        repeatedly.
+        """
+        discovery_query = (
+            "MATCH (e:Entity) "
+            "WITH e.name AS n, e.type AS t, e.scope AS s, collect(e) AS dups "
+            "WHERE size(dups) > 1 "
+            "RETURN n, t, s, [d IN dups | elementId(d)] AS ids, size(dups) AS cnt"
+        )
+        async with self._driver.session() as session:
+            # 1. Discover pre-existing duplicates.
+            result = await session.run(discovery_query)
+            duplicates = await result.data()
+            if duplicates:
+                logger.warning(
+                    "Neo4jStore: found %d (name,type,scope) duplicate groups "
+                    "before constraint creation; attempting APOC dedup",
+                    len(duplicates),
+                )
+                # 2. Probe for APOC availability and dedup.
+                try:
+                    dedup_result = await session.run(
+                        "MATCH (e:Entity) "
+                        "WITH e.name AS n, e.type AS t, e.scope AS s, collect(e) AS dups "
+                        "WHERE size(dups) > 1 "
+                        "CALL apoc.refactor.mergeNodes(dups, "
+                        "{properties: 'discard', mergeRels: true}) "
+                        "YIELD node "
+                        "RETURN n, t, s, elementId(node) AS kept"
+                    )
+                    merged = await dedup_result.data()
+                    logger.info(
+                        "Neo4jStore: APOC dedup merged %d duplicate groups",
+                        len(merged),
+                    )
+                except neo4j_exc.Neo4jError as exc:
+                    raise GraphStoreError(
+                        f"Neo4jStore: cannot create composite UNIQUE constraint "
+                        f"entity_name_type_scope_unique — {len(duplicates)} "
+                        f"pre-existing (name,type,scope) duplicate groups found "
+                        f"and APOC dedup is unavailable ({exc}). See "
+                        f"runbooks/entity-dedup.md for the manual procedure."
+                    ) from exc
+
+            # 3. Create the constraint.
+            await session.run(
+                "CREATE CONSTRAINT entity_name_type_scope_unique IF NOT EXISTS "
+                "FOR (e:Entity) REQUIRE (e.name, e.type, e.scope) IS UNIQUE"
+            )
 
     async def shutdown(self) -> None:
         """Close the Neo4j driver."""
@@ -343,13 +410,110 @@ class Neo4jStore:
         """MERGE a relationship between two entities using apoc.merge.relationship.
 
         Returns the relationship element ID, or empty string when either
-        endpoint entity does not exist in the graph (the MATCH yields no
-        row, apoc.merge is skipped, and result.single() is None). Can
-        happen under concurrent batches or cross-batch validator dedup —
-        we log and skip rather than crash the whole batch.
+        endpoint entity does not exist in the graph (legacy MATCH-and-skip
+        path only — the MERGE path always returns a relationship).
+
+        Behaviour depends on the ``NEO4J_RELATIONSHIP_STUB_ENDPOINTS`` env
+        flag (PR-2):
+
+        * ``true`` (default) — uses ``MERGE`` on both endpoint entities. If
+          an endpoint name does not exist as ``(name, 'Topic', 'global')``
+          a stub Entity is auto-created with ``properties`` containing
+          ``"stub": true, "reason": "rel_endpoint"``. The composite UNIQUE
+          constraint at ``(name, type, scope)`` serialises concurrent stub
+          creation under racing batches.
+        * ``false`` — legacy ``MATCH`` semantics; relationships referencing
+          unknown endpoints are silently skipped and a warning is logged.
         """
+        eid, _stub_created = await self._upsert_relationship_with_stub_flag(rel)
+        return eid
+
+    async def _upsert_relationship_with_stub_flag(
+        self, rel: GraphRelationship
+    ) -> tuple[str, int]:
+        """Internal helper — same as :meth:`upsert_relationship` but also
+        returns the number of stub endpoint Entity nodes created (0, 1,
+        or 2). Used by :meth:`batch_upsert_relationships` to apply the
+        fail-closed stub-explosion cap per batch.
+        """
+        from beever_atlas.infra.config import get_settings
+
         now_iso = datetime.now(tz=UTC).isoformat()
+        use_merge = get_settings().neo4j_relationship_stub_endpoints
+
         async with self._driver.session() as session:
+            if use_merge:
+                # PR-2 MERGE path — auto-creates stub Entity nodes for
+                # unknown endpoints. ON CREATE returns 1 per side created.
+                stub_props = '{"stub": true, "reason": "rel_endpoint"}'
+                result = await session.run(
+                    """
+                    MERGE (a:Entity {name: $source, type: 'Topic', scope: 'global'})
+                      ON CREATE SET
+                        a.channel_id = null,
+                        a.properties = $stub_props,
+                        a.aliases    = [],
+                        a.status     = 'active',
+                        a.created_at = $now,
+                        a.updated_at = $now,
+                        a._created_by_rel_stub = true
+                    MERGE (b:Entity {name: $target, type: 'Topic', scope: 'global'})
+                      ON CREATE SET
+                        b.channel_id = null,
+                        b.properties = $stub_props,
+                        b.aliases    = [],
+                        b.status     = 'active',
+                        b.created_at = $now,
+                        b.updated_at = $now,
+                        b._created_by_rel_stub = true
+                    WITH a, b,
+                         CASE WHEN a._created_by_rel_stub = true THEN 1 ELSE 0 END AS a_new,
+                         CASE WHEN b._created_by_rel_stub = true THEN 1 ELSE 0 END AS b_new
+                    REMOVE a._created_by_rel_stub, b._created_by_rel_stub
+                    CALL apoc.merge.relationship(
+                        a,
+                        $rel_type,
+                        {},
+                        {
+                            confidence:        $confidence,
+                            valid_from:        $valid_from,
+                            valid_until:       $valid_until,
+                            context:           $context,
+                            source_message_id: $source_message_id,
+                            source_fact_id:    $source_fact_id,
+                            created_at:        $now
+                        },
+                        b,
+                        {}
+                    ) YIELD rel
+                    RETURN elementId(rel) AS eid, (a_new + b_new) AS stubs_created
+                    """,
+                    source=rel.source,
+                    target=rel.target,
+                    rel_type=rel.type,
+                    confidence=rel.confidence,
+                    valid_from=rel.valid_from,
+                    valid_until=rel.valid_until,
+                    context=rel.context,
+                    source_message_id=rel.source_message_id,
+                    source_fact_id=rel.source_fact_id,
+                    stub_props=stub_props,
+                    now=now_iso,
+                )
+                record = await result.single()
+                if record is None:
+                    # Should not happen on the MERGE path, but defensive.
+                    logger.warning(
+                        "Neo4jStore: relationship MERGE returned no row "
+                        "(source=%s target=%s type=%s)",
+                        rel.source,
+                        rel.target,
+                        rel.type,
+                    )
+                    return "", 0
+                return record["eid"], int(record["stubs_created"])
+
+            # Legacy MATCH-and-skip path.
             result = await session.run(
                 """
                 MATCH (a:Entity {name: $source})
@@ -391,10 +555,24 @@ class Neo4jStore:
                     rel.target,
                     rel.type,
                 )
-                return ""
-            return record["eid"]
+                return "", 0
+            return record["eid"], 0
 
-    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
+    # Fail-closed cap: a batch creating more than this many stub Entity
+    # nodes for unknown relationship endpoints triggers an ERROR log and
+    # the ``stub_explosion_detected`` sync_summary metric. Pollution
+    # signal — not fatal; the batch still commits. See Task 1, criterion
+    # #6 in .omc/plans/pipeline-realign-v2.md.
+    _STUB_EXPLOSION_THRESHOLD: int = 50
+
+    async def batch_upsert_relationships(
+        self,
+        rels: list[GraphRelationship],
+        *,
+        channel_id: str = "",
+        sync_job_id: str = "",
+        batch_idx: int | None = None,
+    ) -> list[str]:
         """Upsert multiple relationships in parallel.
 
         Uses return_exceptions=True so one failing relationship does not
@@ -411,14 +589,21 @@ class Neo4jStore:
         list — same rationale as ``batch_upsert_entities``: prevents
         ``mark_intent_neo4j_done`` running after a no-op write and the
         reconciler silently skipping the intent on retry.
+
+        PR-2 stub-explosion cap — when ``NEO4J_RELATIONSHIP_STUB_ENDPOINTS``
+        is true, counts the stub Entity nodes auto-created across the
+        batch. If the count exceeds :attr:`_STUB_EXPLOSION_THRESHOLD`, an
+        ERROR is logged and the ``stub_explosion_detected`` sync_summary
+        metric is set (when ``channel_id`` + ``sync_job_id`` are provided).
+        The batch still commits — pollution, not fatal.
         """
         if not rels:
             return []
         sem = asyncio.Semaphore(self._BATCH_CONCURRENCY)
 
-        async def _bounded(r: GraphRelationship) -> str:
+        async def _bounded(r: GraphRelationship) -> tuple[str, int]:
             async with sem:
-                return await self.upsert_relationship(r)
+                return await self._upsert_relationship_with_stub_flag(r)
 
         results = await asyncio.gather(
             *[_bounded(r) for r in rels],
@@ -431,6 +616,7 @@ class Neo4jStore:
                 f"first error: {first_exc!r}"
             ) from first_exc
         ids: list[str] = []
+        stubs_created = 0
         for rel, res in zip(rels, results):
             if isinstance(res, BaseException):
                 logger.warning(
@@ -442,7 +628,46 @@ class Neo4jStore:
                 )
                 ids.append("")
             else:
-                ids.append(res)
+                eid, stub_count = res
+                ids.append(eid)
+                stubs_created += stub_count
+
+        # Fail-closed cap on stub creation (PR-2 Task 1 criterion #6).
+        if stubs_created > self._STUB_EXPLOSION_THRESHOLD:
+            # Sample up to 5 (rel_type, source, target) triples for ops triage.
+            samples = [
+                (r.type, r.source, r.target) for r in rels[:5]
+            ]
+            logger.error(
+                "Neo4jStore: stub explosion detected — batch created %d stub "
+                "Entity nodes (threshold=%d); sample rel_types/endpoints=%s",
+                stubs_created,
+                self._STUB_EXPLOSION_THRESHOLD,
+                samples,
+            )
+            if channel_id and sync_job_id:
+                try:
+                    from beever_atlas.services.batch_processor import (
+                        increment_sync_metric,
+                    )
+
+                    # boolean-as-flag: set value to count for triage; the
+                    # >0 read from the metric registry signals "detected".
+                    increment_sync_metric(
+                        channel_id,
+                        sync_job_id,
+                        "stub_explosion_detected",
+                        stubs_created,
+                    )
+                except Exception:  # noqa: BLE001 — metrics must never break writes
+                    logger.debug(
+                        "Neo4jStore: stub_explosion_detected metric increment "
+                        "failed (channel=%s job=%s)",
+                        channel_id,
+                        sync_job_id,
+                        exc_info=True,
+                    )
+
         return ids
 
     # ------------------------------------------------------------------
@@ -1186,18 +1411,52 @@ class Neo4jStore:
     # ------------------------------------------------------------------
 
     async def batch_create_episodic_links(self, links: list[dict[str, Any]]) -> int:
+        """Create ``:MENTIONED_IN`` edges from Entity to Event in bulk.
+
+        Behaviour depends on the ``NEO4J_RELATIONSHIP_STUB_ENDPOINTS`` env
+        flag (PR-2):
+
+        * ``true`` (default) — MERGEs the Entity by
+          ``(name, 'Topic', 'global')`` so unknown entity_tags from a
+          fact (whose owning entity may not have committed yet) still
+          link to the Event via a stub Entity. Stubs are tagged
+          ``{"stub": true, "reason": "episodic_link"}``.
+        * ``false`` — legacy MATCH semantics; links to unknown entity
+          names are silently dropped.
+        """
+        from beever_atlas.infra.config import get_settings
+
         if not links:
             return 0
+        use_merge = get_settings().neo4j_relationship_stub_endpoints
         async with self._driver.session() as session:
-            result = await session.run(
-                "UNWIND $links AS link "
-                "MATCH (e:Entity {name: link.entity_name}) "
-                "MERGE (ep:Event {weaviate_id: link.weaviate_fact_id}) "
-                "ON CREATE SET ep.message_ts = link.message_ts, ep.channel_id = link.channel_id "
-                "MERGE (e)-[:MENTIONED_IN]->(ep) "
-                "RETURN count(*) AS created",
-                links=links,
-            )
+            if use_merge:
+                result = await session.run(
+                    "UNWIND $links AS link "
+                    "MERGE (e:Entity {name: link.entity_name, type: 'Topic', scope: 'global'}) "
+                    "  ON CREATE SET "
+                    "    e.channel_id = null, "
+                    "    e.properties = '{\"stub\": true, \"reason\": \"episodic_link\"}', "
+                    "    e.aliases    = [], "
+                    "    e.status     = 'active', "
+                    "    e.created_at = toString(datetime()), "
+                    "    e.updated_at = toString(datetime()) "
+                    "MERGE (ep:Event {weaviate_id: link.weaviate_fact_id}) "
+                    "  ON CREATE SET ep.message_ts = link.message_ts, ep.channel_id = link.channel_id "
+                    "MERGE (e)-[:MENTIONED_IN]->(ep) "
+                    "RETURN count(*) AS created",
+                    links=links,
+                )
+            else:
+                result = await session.run(
+                    "UNWIND $links AS link "
+                    "MATCH (e:Entity {name: link.entity_name}) "
+                    "MERGE (ep:Event {weaviate_id: link.weaviate_fact_id}) "
+                    "ON CREATE SET ep.message_ts = link.message_ts, ep.channel_id = link.channel_id "
+                    "MERGE (e)-[:MENTIONED_IN]->(ep) "
+                    "RETURN count(*) AS created",
+                    links=links,
+                )
             record = await result.single()
             return int(record["created"]) if record else 0
 

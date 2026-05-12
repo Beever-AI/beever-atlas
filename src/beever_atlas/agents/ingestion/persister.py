@@ -352,7 +352,12 @@ class PersisterAgent(BaseAgent):
                         len(entities),
                     )
                 if relationships:
-                    _rel_eids = await stores.graph.batch_upsert_relationships(relationships)
+                    _rel_eids = await stores.graph.batch_upsert_relationships(
+                        relationships,
+                        channel_id=channel_id,
+                        sync_job_id=sync_job_id,
+                        batch_idx=batch_num,
+                    )
                     _dropped = sum(1 for eid in _rel_eids if not eid)
                     logger.info(
                         "PersisterAgent: neo4j relationship upsert job_id=%s channel=%s batch=%s relationships=%d",
@@ -468,13 +473,18 @@ class PersisterAgent(BaseAgent):
                     logger.warning(
                         "PersisterAgent: batch_find_entities_by_name failed", exc_info=True
                     )
-                # Create stub entities for truly missing names
+                # Create stub entities for truly missing names.
+                # ``type='Topic'`` aligns with the in-Cypher MERGE default
+                # in upsert_relationship + batch_create_episodic_links
+                # (PR-2). ``Topic`` is generic; ``Project`` is
+                # domain-specific and the persister cannot infer the
+                # actual domain from a bare relationship endpoint.
                 stubs: list[GraphEntity] = []
                 for name in missing_names:
                     stubs.append(
                         GraphEntity(
                             name=name,
-                            type="Project",
+                            type="Topic",
                             scope="global",
                             properties={"stub": True},
                             source_message_id=facts[0].source_message_id if facts else "",
