@@ -143,6 +143,103 @@ def is_ollama_model(model_string: str) -> bool:
     return model_string.startswith("ollama_chat/")
 
 
+# Per-agent capability requirements. The dispatch + UI validation gate
+# rejects assignments where the model lacks every flag listed for the agent.
+# See design D5 in ``openspec/changes/agent-llm-provider-pluggable/``.
+AGENT_CAPABILITIES: dict[str, set[str]] = {
+    "qa_agent":          {"tools"},
+    "qa_router":         {"tools"},
+    "image_describer":   {"vision"},
+    "video_analyzer":    {"vision"},
+    "document_digester": {"vision"},
+    "audio_transcriber": {"audio"},
+    # ``structured-output`` is recorded for future use — no current flag.
+    "csv_mapper":        {"structured-output"},
+    "decomposer":        {"structured-output"},
+}
+
+
+def _capability_to_spec_key(capability: str) -> str:
+    """Map a capability token (``tools``) to the ``ModelSpec`` flag (``supports_tools``)."""
+    return {
+        "tools": "supports_tools",
+        "vision": "supports_vision",
+        "audio": "supports_audio",
+        "streaming": "supports_streaming",
+        "batch": "supports_batch",
+        "structured-output": None,  # not yet a flag — always passes
+    }.get(capability, "")
+
+
+def validate_assignment_compatibility(
+    consumer: str,
+    model_id: str,
+    endpoint_overrides: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Return the list of capability tokens the (consumer, model) pair lacks.
+
+    Empty list = compatible. Non-empty = a 422 should be surfaced with these
+    missing capabilities + suggested alternatives.
+
+    ``model_id`` is the fully-qualified ``provider/model`` string.
+    ``endpoint_overrides`` is the Endpoint's per-model flag override map
+    (operator-set checkboxes on the Add Endpoint form). Resolution follows
+    the three-tier precedence in :func:`capability_infer.resolve_model_spec`.
+    """
+    from beever_atlas.llm.capability_infer import resolve_model_spec
+
+    required = AGENT_CAPABILITIES.get(consumer, set())
+    if not required:
+        return []
+    spec = resolve_model_spec(endpoint_overrides, model_id)
+
+    missing: list[str] = []
+    for cap in required:
+        spec_key = _capability_to_spec_key(cap)
+        if not spec_key:
+            # Unmapped capability tokens (structured-output) always pass for now.
+            continue
+        if not bool(spec.get(spec_key, False)):
+            missing.append(cap)
+    return missing
+
+
+def suggest_compatible_assignments(
+    consumer: str,
+    candidate_models: list[tuple[str, str]],
+    n: int = 3,
+) -> list[tuple[str, str]]:
+    """Return up to ``n`` ``(endpoint_id, model_id)`` pairs satisfying the
+    capability set for ``consumer``, sorted by ascending input cost (local
+    models preferred when cost matches).
+
+    ``candidate_models`` is a flat list of ``(endpoint_id, model_id)`` from
+    the operator's existing Endpoints — caller assembles it.
+    """
+    from beever_atlas.llm.capability_infer import resolve_model_spec
+
+    required = AGENT_CAPABILITIES.get(consumer, set())
+    compatible: list[tuple[float, bool, str, str]] = []  # (cost, is_local, ep_id, model)
+    for ep_id, model_id in candidate_models:
+        spec = resolve_model_spec(None, model_id)
+        ok = True
+        for cap in required:
+            spec_key = _capability_to_spec_key(cap)
+            if spec_key and not bool(spec.get(spec_key, False)):
+                ok = False
+                break
+        if not ok:
+            continue
+        cost = float(spec.get("input_cost_per_m", 0.0))
+        is_local = bool(spec.get("local", False))
+        # Local models sort BEFORE cloud at the same nominal cost — boost via
+        # negative-rank sentinel.
+        compatible.append((cost, not is_local, ep_id, model_id))
+
+    compatible.sort(key=lambda t: (t[1], t[0]))  # local-first, then cost
+    return [(ep_id, m) for _, _, ep_id, m in compatible[:n]]
+
+
 def validate_model_string(model_string: str) -> str | None:
     """Validate a model string format. Returns error message or None if valid.
 
