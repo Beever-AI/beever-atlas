@@ -16,11 +16,12 @@ import { ManageChannelsDialog } from "@/components/settings/ManageChannelsDialog
 import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
 import { AgentModelSettings } from "@/components/settings/AgentModelSettings";
 import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
+import { AISetup } from "@/components/settings/AISetup";
 import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 type PickerOption = Platform | "file";
-type SettingsTab = "integrations" | "channels" | "embedding" | "agents";
+type SettingsTab = "integrations" | "channels" | "ai-setup" | "embedding" | "agents";
 
 function SlackIcon({ className }: { className?: string }) {
   return (
@@ -58,15 +59,21 @@ const TABS: { value: SettingsTab; label: string; description: string; Icon: Reac
   { value: "integrations", label: "Integrations", description: "Connected platforms and data sources", Icon: Plug },
   { value: "channels", label: "Channels", description: "Default sync behavior for new channels", Icon: Settings2 },
   {
+    value: "ai-setup",
+    label: "AI Setup",
+    description: "Endpoints + per-agent assignments + quick presets (unified)",
+    Icon: Cpu,
+  },
+  {
     value: "embedding",
-    label: "Embedding",
-    description: "Vector model that powers semantic search and entity matching",
+    label: "Embedding (legacy)",
+    description: "Vector model that powers semantic search — superseded by AI Setup",
     Icon: Layers,
   },
   {
     value: "agents",
-    label: "Agent Models",
-    description: "Per-agent LLM assignments and quick presets",
+    label: "Agent Models (legacy)",
+    description: "Per-agent LLM assignments — superseded by AI Setup",
     Icon: Cpu,
   },
 ];
@@ -169,6 +176,8 @@ export function SettingsPage() {
           )}
 
           {tab === "channels" && <SyncDefaultsSection />}
+
+        {tab === "ai-setup" && <AISetup />}
 
         {tab === "embedding" && <EmbeddingSettings />}
 
