@@ -18,7 +18,6 @@ Phase 5 of ``sync-pipeline-feedback-and-auto-wiki``. Provides:
 from __future__ import annotations
 
 from typing import Iterator
-from unittest.mock import patch
 
 import pytest
 

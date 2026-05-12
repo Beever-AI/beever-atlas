@@ -10,7 +10,6 @@ Covers the race between wiki refresh and an in-progress consolidation run:
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 

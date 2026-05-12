@@ -15,7 +15,6 @@ import pytest
 
 from beever_atlas.wiki.compiler import (
     _rewrite_topic_wikilinks,
-    _slugify,
     _topic_slug_for_title,
 )
 

@@ -309,7 +309,7 @@ class BatchResult:
 # sync start, drained + cleared when the 4 sync_summary: lines are emitted.
 # No Mongo persistence — these are observational only.
 
-import threading as _threading
+import threading as _threading  # noqa: E402  — intentionally local to section
 
 _sync_metrics_lock = _threading.Lock()
 # _sync_metrics[(channel_id, sync_job_id)] -> {"metric_name": int|float}

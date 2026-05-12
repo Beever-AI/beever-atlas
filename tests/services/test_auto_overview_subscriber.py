@@ -204,8 +204,6 @@ async def test_serial_qualifying_events_only_one_generate() -> None:
     class _LiveMongo(_FakeMongo):
         @property
         def db(self) -> Any:
-            outer = self
-
             class _WikiPagesCollection:
                 async def find_one(_self, query: dict, projection=None):  # noqa: ANN001
                     return {"_id": "fake"} if state["existing"] else None

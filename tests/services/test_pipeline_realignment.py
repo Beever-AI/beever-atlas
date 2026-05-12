@@ -31,7 +31,6 @@ import pytest
 
 from beever_atlas.models.domain import AtomicFact, TopicCluster
 from beever_atlas.services.consolidation import (
-    ConsolidationResult,
     ConsolidationService,
 )
 from beever_atlas.services.llm_throttle import LLMThrottle
@@ -283,8 +282,6 @@ async def test_topic_summary_empty_title_falls_through_to_synthesis():
         if getattr(agent, "_is_retry", False):
             return {"summary_result": {"title": "", "summary_text": "retry-text"}}
         return {"summary_result": {"title": "", "summary_text": "original-text"}}
-
-    import beever_atlas.services.consolidation as _mod
 
     # Pull the dynamic imports inside ``_call_topic_llm`` through stubs.
     import beever_atlas.agents.consolidation.summarizer as _summarizer_mod

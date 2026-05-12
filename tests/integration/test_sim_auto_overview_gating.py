@@ -9,12 +9,9 @@ Proves the four gate conditions on the AutoOverviewSubscriber:
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from beever_atlas.services.auto_overview_subscriber import AutoOverviewSubscriber
 from tests.integration.sim_harness import build_sim_stack
 
 

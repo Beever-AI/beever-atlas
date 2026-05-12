@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from beever_atlas.models.persistence import WikiPage
 from beever_atlas.wiki.page_store import WikiPageStore
 
 

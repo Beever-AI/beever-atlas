@@ -14,10 +14,7 @@ import pytest
 
 from beever_atlas.services.media_extractors import (
     ImageExtractor,
-    MediaContent,
     _compute_media_hash,
-    _check_media_cache,
-    _write_media_cache,
 )
 from beever_atlas.stores.media_cache_store import CachedMedia, MediaCacheStore
 
@@ -149,7 +146,6 @@ class TestImageExtractorCache:
     async def test_cache_hit_skips_gemini(self):
         """On hit: Gemini is NOT called, cached description is returned."""
         extractor = ImageExtractor()
-        cached = MediaContent(text=SAMPLE_DESCRIPTION, media_type="")
         stores = self._make_stores_with_cache(
             cached_media=CachedMedia(
                 description=SAMPLE_DESCRIPTION, model_version="gemini-2.5-flash"

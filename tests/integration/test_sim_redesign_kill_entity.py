@@ -219,7 +219,7 @@ def test_event_payload_round_trips_through_recent_for() -> None:
 # ---------------------------------------------------------------------------
 
 
-import pytest
+import pytest  # noqa: E402  — section-local import keeps test files grouped
 
 
 @pytest.mark.asyncio

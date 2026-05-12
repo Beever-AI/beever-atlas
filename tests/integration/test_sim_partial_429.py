@@ -13,8 +13,6 @@ The simulator forces a 429 on sub-batch 3 only and asserts:
 
 from __future__ import annotations
 
-import asyncio
-import time
 
 import pytest
 
