@@ -36,7 +36,11 @@ const PAGE_META: Record<string, PageMeta> = {
 export function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
   const isChannel = location.pathname.startsWith("/channels/");
-  const meta = PAGE_META[location.pathname];
+  // ``/settings`` redirects to ``/settings/<tab>`` — keep the Settings header
+  // for every sub-route, not just the bare path.
+  const meta =
+    PAGE_META[location.pathname] ??
+    (location.pathname.startsWith("/settings/") ? PAGE_META["/settings"] : undefined);
   const Icon = meta?.icon;
   const { profile } = useUserProfile();
 

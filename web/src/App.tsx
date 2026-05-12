@@ -16,7 +16,14 @@ import { Channels } from "@/pages/Channels";
 import { ChannelWorkspace } from "@/pages/ChannelWorkspace";
 import { AskPage } from "@/pages/AskPage";
 import { SharedAskPage } from "@/pages/SharedAskPage";
-import { SettingsPage } from "@/pages/SettingsPage";
+import {
+  SettingsPage,
+  IntegrationsTab,
+  AgentModelsLegacyShell,
+} from "@/pages/SettingsPage";
+import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
+import { AISetup } from "@/components/settings/AISetup";
+import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
 import { ActivityPage } from "@/pages/ActivityPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { NotFound } from "@/pages/NotFound";
@@ -103,7 +110,16 @@ function AppShell() {
               <Route path="/ask" element={<AskPage />} />
               <Route path="/ask/:sessionId" element={<AskPage />} />
               <Route path="/activity" element={<ActivityPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/settings" element={<SettingsPage />}>
+                <Route index element={<Navigate to="integrations" replace />} />
+                <Route path="integrations" element={<IntegrationsTab />} />
+                <Route path="channels" element={<SyncDefaultsSection />} />
+                <Route path="ai-setup" element={<AISetup />} />
+                <Route path="embedding" element={<EmbeddingSettings />} />
+                <Route path="agents" element={<AgentModelsLegacyShell />} />
+                {/* Unknown ``/settings/*`` sub-path → default tab, not the global 404. */}
+                <Route path="*" element={<Navigate to="/settings/integrations" replace />} />
+              </Route>
               <Route path="/admin/sources" element={<PushSources />} />
               <Route path="/admin/wiki-drift" element={<WikiDrift />} />
               <Route
