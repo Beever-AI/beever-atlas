@@ -36,6 +36,25 @@ function presetToEmbeddingProvider(preset: string): string {
   return preset;
 }
 
+// Providers the legacy ``/api/settings/embedding`` + ``/migrate`` surface
+// accepts (its ``EmbeddingProvider`` enum). An ``EMBEDDING_CAPABLE_PRESETS``
+// endpoint whose provider isn't in here (``custom`` / ``litellm_proxy``) can
+// still be *assigned* as the embedding endpoint, but can't drive the legacy
+// re-embed job — that needs the backend re-home (B-i / PR6). Until then we
+// block the "Start re-embed" action for those with a clear message rather
+// than letting the legacy ``PUT`` 422 with no guidance.
+const LEGACY_REEMBED_PROVIDERS = new Set<string>([
+  "jina_ai",
+  "openai",
+  "cohere",
+  "voyage",
+  "gemini",
+  "mistral",
+  "ollama",
+  "bedrock",
+  "vertex_ai",
+]);
+
 interface DraftState {
   endpoint_id: string;
   model: string;
@@ -117,6 +136,7 @@ export function EmbeddingTab() {
   const provider = chosenEndpoint ? presetToEmbeddingProvider(chosenEndpoint.preset) : "";
   const spec = draft && provider ? lookupModel(provider, draft.model) : null;
   const dirty = isDirty(assignment, draft);
+  const canLegacyReembed = !!provider && LEGACY_REEMBED_PROVIDERS.has(provider);
 
   function handleEndpoint(id: string) {
     const e = endpointById[id];
@@ -173,7 +193,7 @@ export function EmbeddingTab() {
       // B-i dual-write: if the provider/model/dimensions changed, also push the
       // legacy embedding config so the legacy ``/migrate`` path targets the new
       // model on the next re-embed. (Backend re-home = PR6, out of scope.)
-      if (providerOrModelOrDimChanged && provider && target.dimensions != null) {
+      if (providerOrModelOrDimChanged && canLegacyReembed && target.dimensions != null) {
         try {
           await reembed.putLegacyConfig({ provider, model: target.model, dim: target.dimensions });
         } catch {
@@ -195,6 +215,14 @@ export function EmbeddingTab() {
   async function handleStartReembed() {
     if (!draft || !provider || draft.dimensions == null) {
       setConfirmOpen(false);
+      return;
+    }
+    if (!canLegacyReembed) {
+      setConfirmOpen(false);
+      showToast(
+        `Re-embedding via a "${chosenEndpoint?.preset}" endpoint isn't supported yet — pick a direct provider (Jina, OpenAI, Gemini, Voyage, Ollama, …) to re-embed now.`,
+        "error",
+      );
       return;
     }
     setStartingMigration(true);
