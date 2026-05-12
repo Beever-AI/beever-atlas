@@ -1153,7 +1153,15 @@ export function WikiTab() {
     // CTA (sync already happened). The OverviewInFlightState renders a
     // live elapsed-time counter and a graduated Retry affordance so a
     // hung upstream call doesn't trap the user on this screen forever.
-    if (overviewState === "in_flight") {
+    //
+    // Guard: only honour the in_flight state when this channel has
+    // actually been synced (hasMemories === true). The backend's
+    // ``_attempted`` set can carry stale ``in_flight`` reports across
+    // channels in a process; rendering the spinner for never-synced
+    // channels strands the user on a misleading screen. When the
+    // channel has zero memories we drop through to the standard
+    // "No Wiki Yet" empty state instead.
+    if (overviewState === "in_flight" && hasMemories) {
       return (
         <OverviewInFlightState
           channelId={channelId}
@@ -1206,7 +1214,17 @@ export function WikiTab() {
     // phase is ``in_flight``. The SyncProgressV2 card above already
     // tells the user the wiki is being built; showing a "Generate"
     // button at the same time teases an action they can't usefully take.
-    const isPipelineInFlight = phases.some((p) => p.state === "in_flight");
+    //
+    // Guard: on never-synced channels (isNoMemory === true), ignore any
+    // ``in_flight`` phase reports. The backend's per-process subscriber
+    // state (AutoOverviewSubscriber._attempted, ExtractionWorker queue
+    // residue) can bleed stale ``in_flight`` signals onto channels that
+    // never started a pipeline. Without this guard, never-synced
+    // channels render the "Pipeline in progress" message AND lose
+    // the "Sync Channel Now" CTA, stranding the user on a screen with
+    // no actionable next step.
+    const isPipelineInFlight =
+      !isNoMemory && phases.some((p) => p.state === "in_flight");
     // Previously we ``return null`` here on the rationale that the
     // monitor card at the top of the page already shows progress. But
     // when the monitor is COLLAPSED, the user sees only a compact
