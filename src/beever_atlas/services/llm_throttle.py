@@ -43,6 +43,20 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
+
+def _make_bucket_key(provider: str, endpoint_id: str | None) -> str:
+    """Compose the throttle bucket key from provider + optional endpoint_id.
+
+    Backward compat: when ``endpoint_id`` is None the key is the provider name
+    alone (matches every PR-A dispatch site). When set, the key is
+    ``f"{provider}:{endpoint_id}"`` so two same-provider Endpoints get
+    independent buckets — see ``agent-llm-provider-pluggable`` design D7.
+    """
+    base = (provider or "unknown").strip().lower()
+    if endpoint_id:
+        return f"{base}:{endpoint_id}"
+    return base
+
 # Provider RPM/TPM defaults — public free-tier or paid-tier-1 limits as
 # documented by each vendor. Conservative on purpose; operators with
 # higher quota override per-provider via env. Sources:
@@ -163,13 +177,23 @@ class LLMThrottle:
     # ------------------------------------------------------------------
 
     @asynccontextmanager
-    async def acquire(self, provider: str, est_tokens: int) -> AsyncIterator[None]:
+    async def acquire(
+        self,
+        provider: str,
+        est_tokens: int,
+        endpoint_id: str | None = None,
+    ) -> AsyncIterator[None]:
         """Block until the bucket has capacity for one call of ``est_tokens``.
 
         The context manager records the call on entry. The body of the
         ``async with`` is the wrapped LLM call.
+
+        ``endpoint_id`` is optional — when provided, the bucket key becomes
+        ``f"{provider}:{endpoint_id}"`` so two same-provider Endpoints get
+        independent throttle state (per design D7). When ``None`` the bucket
+        is keyed on provider name (backward compat with PR-A call sites).
         """
-        provider_key = (provider or "unknown").strip().lower()
+        provider_key = _make_bucket_key(provider, endpoint_id)
         est_tokens = max(1, int(est_tokens))
         bucket = await self._get_or_create_bucket(provider_key)
 
@@ -226,7 +250,7 @@ class LLMThrottle:
             # release semantics (e.g. token-cost reconciliation).
             pass
 
-    def report_429(self, provider: str) -> None:
+    def report_429(self, provider: str, endpoint_id: str | None = None) -> None:
         """Apply the multiplicative backoff after an observed 429.
 
         Coalesces overlapping cooldowns: the cooldown end is set to
@@ -234,12 +258,15 @@ class LLMThrottle:
         end, so a burst of 429s in the same window produces a single
         recovery period that resets each time a new 429 arrives.
 
+        ``endpoint_id`` is optional — when provided, the cooldown applies to
+        the per-Endpoint bucket only (two-orgs scenario).
+
         Stays synchronous: callers in :mod:`llm_dispatch` already hold
         an :meth:`acquire` context which guarantees the bucket exists;
         the unlocked fallback below is kept only as a defensive guard
         for direct ``report_429`` callers (e.g. tests).
         """
-        provider_key = (provider or "unknown").strip().lower()
+        provider_key = _make_bucket_key(provider, endpoint_id)
         bucket = self._buckets.get(provider_key)
         if bucket is None:
             # Defensive path — should never trigger in production because

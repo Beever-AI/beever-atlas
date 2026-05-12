@@ -146,6 +146,7 @@ async def dispatch_completion(
     provider: str,
     model: str,
     messages: list[Any],
+    endpoint_id: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Throttle-gated wrapper around ``litellm.acompletion``.
@@ -153,17 +154,22 @@ async def dispatch_completion(
     Caller passes ``provider`` explicitly (the static provider prefix —
     e.g. ``"gemini"``, ``"openai"``, ``"ollama"``) so the throttle keys
     on the rate-limited entity rather than the LiteLLM model string.
+
+    ``endpoint_id`` is optional — when provided, the throttle bucket key
+    becomes ``f"{provider}:{endpoint_id}"`` so two same-provider Endpoints
+    get independent rate-limit state. Backward-compatible with PR-A callers
+    that pass only ``(provider, model, messages)``.
     """
     import litellm  # type: ignore[import-untyped]
 
     throttle = get_llm_throttle()
     est_tokens = _estimate_completion_tokens(messages)
-    async with throttle.acquire(provider, est_tokens):
+    async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
         try:
             response = await litellm.acompletion(model=model, messages=messages, **kwargs)
         except BaseException as exc:
             if _is_429(exc):
-                throttle.report_429(provider)
+                throttle.report_429(provider, endpoint_id=endpoint_id)
             elif _is_ollama_connect_error(exc, provider):
                 # Force-invalidate the Ollama health cache so the next
                 # ``resolve_model`` re-probes immediately rather than waiting
@@ -179,8 +185,70 @@ async def dispatch_completion(
         # raising. Sniff status_code on the response just in case.
         status_code = getattr(response, "status_code", None)
         if status_code == 429:
-            throttle.report_429(provider)
+            throttle.report_429(provider, endpoint_id=endpoint_id)
         return response
+
+
+async def dispatch_assignment(
+    *,
+    assignment: Any,
+    messages: list[Any],
+    **call_kwargs: Any,
+) -> Any:
+    """Preferred dispatch path for the new Endpoint+Assignment data model.
+
+    Accepts a :class:`beever_atlas.llm.assignments.ResolvedAssignment` (typed as
+    ``Any`` here to avoid a circular import) and forwards every per-call param
+    to ``dispatch_completion``:
+
+      * ``provider`` ← ``assignment.provider``
+      * ``model`` ← ``assignment.litellm_model``
+      * ``endpoint_id`` ← ``assignment.endpoint_id`` (per-Endpoint throttle key)
+      * ``api_base`` ← ``assignment.base_url`` when set
+      * ``api_key`` ← ``assignment.api_key`` when set (otherwise LiteLLM reads
+        the provider-default env var)
+      * ``aws_credentials`` / ``vertex_credentials`` ← when ``auth_type``
+        is ``aws_iam`` / ``google_sa``
+      * ``extra_headers`` ← merged from Endpoint + Assignment
+      * ``temperature`` / ``max_tokens`` / ``response_format`` ← when set
+
+    Caller-supplied ``call_kwargs`` override Assignment defaults (preserves
+    agent code that needs tight control — e.g. an agent with its own JSON
+    schema overrides the Assignment's ``response_format``).
+    """
+    kwargs: dict[str, Any] = {}
+    if assignment.base_url:
+        kwargs["api_base"] = assignment.base_url
+    if assignment.api_key:
+        kwargs["api_key"] = assignment.api_key
+    if getattr(assignment, "aws_credentials", None):
+        kwargs["aws_access_key_id"] = assignment.aws_credentials["access_key_id"]
+        kwargs["aws_secret_access_key"] = assignment.aws_credentials["secret_access_key"]
+        kwargs["aws_region_name"] = assignment.aws_credentials["region"]
+    if getattr(assignment, "vertex_credentials", None):
+        kwargs["vertex_credentials"] = assignment.vertex_credentials["sa_json"]
+    if assignment.extra_headers:
+        kwargs["extra_headers"] = dict(assignment.extra_headers)
+    if assignment.temperature is not None:
+        kwargs["temperature"] = assignment.temperature
+    if assignment.max_tokens is not None:
+        kwargs["max_tokens"] = assignment.max_tokens
+    if assignment.response_format is not None:
+        # OpenAI shape: ``{"type": "json_object"}`` for JSON mode, ``{"type": "text"}`` otherwise.
+        kwargs["response_format"] = {"type": (
+            "json_object" if assignment.response_format == "json" else "text"
+        )}
+
+    # Caller kwargs win — they're the most specific intent.
+    kwargs.update(call_kwargs)
+
+    return await dispatch_completion(
+        provider=assignment.provider,
+        model=assignment.litellm_model,
+        messages=messages,
+        endpoint_id=assignment.endpoint_id,
+        **kwargs,
+    )
 
 
 async def dispatch_embedding(
