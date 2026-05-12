@@ -172,4 +172,31 @@ describe("AISetup", () => {
       expect(screen.getByText(/legacy/i)).toBeTruthy()
     );
   });
+
+  it("reveals the advanced-params drawer when the gear toggle is clicked", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/endpoints")) return makeResponse(ONE_ENDPOINT);
+      if (url.includes("/api/settings/assignments")) return makeResponse(ASSIGNMENTS_WITH_QA);
+      return makeResponse({});
+    });
+
+    render(<AISetup />);
+    // Wait for the qa_agent row to render.
+    await waitFor(() => expect(screen.getByText("qa_agent")).toBeTruthy());
+
+    // The advanced-params labels are not present until the gear is clicked.
+    expect(screen.queryByText("temperature")).toBeNull();
+
+    // The gear toggle has the title "Advanced parameters".
+    const gear = screen.getByTitle("Advanced parameters");
+    fireEvent.click(gear);
+
+    // Drawer appears with the per-Assignment param fields.
+    await waitFor(() => expect(screen.getByText("temperature")).toBeTruthy());
+    expect(screen.getByText("max_tokens")).toBeTruthy();
+    expect(screen.getByText("response_format")).toBeTruthy();
+    expect(screen.getByText("fallback")).toBeTruthy();
+  });
 });

@@ -12,6 +12,7 @@ import {
   Plus,
   PlugZap,
   RefreshCw,
+  Settings2,
   Trash2,
   X,
 } from "lucide-react";
@@ -61,6 +62,30 @@ export function AISetup() {
   const [presetBanner, setPresetBanner] = useState<{ preset: string; preserved: string[]; changed: number } | null>(null);
   const [busyEndpointId, setBusyEndpointId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number | null; error: string | null }>>({});
+  const [expandedConsumers, setExpandedConsumers] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(consumer: string) {
+    setExpandedConsumers((prev) => {
+      const next = new Set(prev);
+      if (next.has(consumer)) next.delete(consumer);
+      else next.add(consumer);
+      return next;
+    });
+  }
+
+  // Full per-Assignment upsert (used by the advanced-params drawer).
+  async function handleAssignmentParams(
+    consumer: string,
+    endpointId: string,
+    model: string,
+    params: { temperature?: number | null; max_tokens?: number | null; response_format?: "text" | "json" | null; fallback_endpoint_id?: string | null },
+  ) {
+    try {
+      await asn.upsert(consumer, { endpoint_id: endpointId, model, ...params });
+    } catch {
+      // hook stores the error
+    }
+  }
 
   const endpointById = useMemo(
     () => Object.fromEntries(ep.endpoints.map((e) => [e.id, e])) as Record<string, Endpoint>,
@@ -284,60 +309,138 @@ export function AISetup() {
                     const currentEp = a ? endpointById[a.endpoint_id] : undefined;
                     const provPrefix = currentEp ? presetToProvider(currentEp.preset) : "";
                     const compat = a && currentEp ? isCompatible(provPrefix, a.model, required) : true;
+                    const expanded = expandedConsumers.has(consumer);
+                    const hasCustomParams =
+                      a != null &&
+                      (a.temperature != null || a.max_tokens != null || a.response_format != null || a.fallback_endpoint_id != null);
                     return (
-                      <div key={consumer} className="flex items-center gap-2 text-xs py-0.5">
-                        <span className="w-44 shrink-0 font-mono">{consumer}</span>
-                        {/* Endpoint picker */}
-                        <select
-                          className="rounded border border-border bg-background px-1.5 py-0.5"
-                          value={a?.endpoint_id ?? ""}
-                          onChange={(e) => {
-                            const newEpId = e.target.value;
-                            const newEp = endpointById[newEpId];
-                            const firstModel = newEp?.models[0] ?? a?.model ?? "";
-                            if (newEpId && firstModel) handleAssignmentChange(consumer, newEpId, firstModel);
-                          }}
-                        >
-                          <option value="">— pick endpoint —</option>
-                          {ep.endpoints.map((e) => (
-                            <option key={e.id} value={e.id}>{e.name}</option>
-                          ))}
-                        </select>
-                        {/* Model picker */}
-                        {currentEp && (
+                      <div key={consumer}>
+                        <div className="flex items-center gap-2 text-xs py-0.5">
+                          <span className="w-44 shrink-0 font-mono">{consumer}</span>
+                          {/* Endpoint picker */}
                           <select
                             className="rounded border border-border bg-background px-1.5 py-0.5"
-                            value={a?.model ?? ""}
-                            onChange={(e) => handleAssignmentChange(consumer, currentEp.id, e.target.value)}
+                            value={a?.endpoint_id ?? ""}
+                            onChange={(e) => {
+                              const newEpId = e.target.value;
+                              const newEp = endpointById[newEpId];
+                              const firstModel = newEp?.models[0] ?? a?.model ?? "";
+                              if (newEpId && firstModel) handleAssignmentChange(consumer, newEpId, firstModel);
+                            }}
                           >
-                            {currentEp.models.length === 0 && <option value="">(no models — run Discover)</option>}
-                            {currentEp.models.map((m) => {
-                              const ok = isCompatible(provPrefix, m, required);
-                              return (
-                                <option key={m} value={m} disabled={!ok}>
-                                  {m}{ok ? "" : " (incompatible)"}
-                                </option>
-                              );
-                            })}
+                            <option value="">— pick endpoint —</option>
+                            {ep.endpoints.map((e) => (
+                              <option key={e.id} value={e.id}>{e.name}</option>
+                            ))}
                           </select>
-                        )}
-                        {/* Capability badges */}
-                        {required.map((cap) => {
-                          const meta = CAPABILITY_ICON[cap];
-                          if (!meta) return null;
-                          return (
-                            <span
-                              key={cap}
-                              title={compat ? meta.label : `${meta.label} — current model is incompatible`}
-                              className={compat ? "text-muted-foreground" : "text-destructive"}
+                          {/* Model picker */}
+                          {currentEp && (
+                            <select
+                              className="rounded border border-border bg-background px-1.5 py-0.5"
+                              value={a?.model ?? ""}
+                              onChange={(e) => handleAssignmentChange(consumer, currentEp.id, e.target.value)}
                             >
-                              <meta.Icon className="h-3 w-3 inline" />
-                            </span>
-                          );
-                        })}
-                        {/* Cost hint */}
-                        {currentEp && a && (
-                          <span className="text-muted-foreground ml-auto">{costHintForModel(provPrefix, a.model)}</span>
+                              {currentEp.models.length === 0 && <option value="">(no models — run Discover)</option>}
+                              {currentEp.models.map((m) => {
+                                const ok = isCompatible(provPrefix, m, required);
+                                return (
+                                  <option key={m} value={m} disabled={!ok}>
+                                    {m}{ok ? "" : " (incompatible)"}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          )}
+                          {/* Capability badges */}
+                          {required.map((cap) => {
+                            const meta = CAPABILITY_ICON[cap];
+                            if (!meta) return null;
+                            return (
+                              <span
+                                key={cap}
+                                title={compat ? meta.label : `${meta.label} — current model is incompatible`}
+                                className={compat ? "text-muted-foreground" : "text-destructive"}
+                              >
+                                <meta.Icon className="h-3 w-3 inline" />
+                              </span>
+                            );
+                          })}
+                          {/* Advanced-params toggle */}
+                          {a && (
+                            <button
+                              onClick={() => toggleExpanded(consumer)}
+                              title="Advanced parameters"
+                              className={`rounded px-1 py-0.5 hover:bg-accent ${hasCustomParams ? "text-primary" : "text-muted-foreground"}`}
+                            >
+                              {expanded ? <ChevronDown className="h-3 w-3 inline" /> : <Settings2 className="h-3 w-3 inline" />}
+                            </button>
+                          )}
+                          {/* Cost hint */}
+                          {currentEp && a && (
+                            <span className="text-muted-foreground ml-auto">{costHintForModel(provPrefix, a.model)}</span>
+                          )}
+                        </div>
+                        {/* Advanced params drawer (inline) */}
+                        {expanded && a && currentEp && (
+                          <div className="ml-44 mt-1 mb-2 grid grid-cols-[7rem_8rem] gap-1.5 text-xs items-center bg-muted/20 rounded p-2 w-fit">
+                            <label className="text-muted-foreground">temperature</label>
+                            <input
+                              type="number" step="0.1" min="0" max="2"
+                              className="rounded border border-border bg-background px-1.5 py-0.5"
+                              defaultValue={a.temperature ?? ""}
+                              placeholder="(default)"
+                              onBlur={(e) => {
+                                const v = e.target.value === "" ? null : Number(e.target.value);
+                                handleAssignmentParams(consumer, a.endpoint_id, a.model, {
+                                  temperature: v, max_tokens: a.max_tokens, response_format: a.response_format, fallback_endpoint_id: a.fallback_endpoint_id,
+                                });
+                              }}
+                            />
+                            <label className="text-muted-foreground">max_tokens</label>
+                            <input
+                              type="number" min="1"
+                              className="rounded border border-border bg-background px-1.5 py-0.5"
+                              defaultValue={a.max_tokens ?? ""}
+                              placeholder="(default)"
+                              onBlur={(e) => {
+                                const v = e.target.value === "" ? null : Number(e.target.value);
+                                handleAssignmentParams(consumer, a.endpoint_id, a.model, {
+                                  temperature: a.temperature, max_tokens: v, response_format: a.response_format, fallback_endpoint_id: a.fallback_endpoint_id,
+                                });
+                              }}
+                            />
+                            <label className="text-muted-foreground">response_format</label>
+                            <select
+                              className="rounded border border-border bg-background px-1.5 py-0.5"
+                              value={a.response_format ?? ""}
+                              onChange={(e) => {
+                                const v = (e.target.value || null) as "text" | "json" | null;
+                                handleAssignmentParams(consumer, a.endpoint_id, a.model, {
+                                  temperature: a.temperature, max_tokens: a.max_tokens, response_format: v, fallback_endpoint_id: a.fallback_endpoint_id,
+                                });
+                              }}
+                            >
+                              <option value="">(default)</option>
+                              <option value="text">text</option>
+                              <option value="json">json</option>
+                            </select>
+                            <label className="text-muted-foreground">fallback</label>
+                            <select
+                              className="rounded border border-border bg-background px-1.5 py-0.5"
+                              value={a.fallback_endpoint_id ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value || null;
+                                handleAssignmentParams(consumer, a.endpoint_id, a.model, {
+                                  temperature: a.temperature, max_tokens: a.max_tokens, response_format: a.response_format, fallback_endpoint_id: v,
+                                });
+                              }}
+                            >
+                              <option value="">(none)</option>
+                              {ep.endpoints.filter((e) => e.id !== a.endpoint_id).map((e) => (
+                                <option key={e.id} value={e.id}>{e.name}</option>
+                              ))}
+                            </select>
+                          </div>
                         )}
                       </div>
                     );
