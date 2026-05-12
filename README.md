@@ -179,16 +179,17 @@ Optional (skip unless you know you need them):
 ./atlas
 ```
 
-The `atlas` installer walks you through a guided 4-step checklist:
+The `atlas` installer walks you through a guided 5-step checklist:
 
-1. **Required LLM keys** — prompts for `GOOGLE_API_KEY` (Gemini) and `JINA_API_KEY` (embeddings); press Enter to skip either.
-2. **Optional integrations** — Tavily web search, Ollama, MCP server for Claude Code / Cursor.
+1. **Embedding model** — pick a provider (Jina / OpenAI / Cohere / Voyage / Gemini / Mistral / Ollama), then its API key.
+2. **Agent LLM provider** — pick a provider for the 16 ADK agents (Google Gemini / OpenAI / Anthropic / Mistral / DeepSeek / Groq / MiniMax / Ollama / Custom); optional second provider for hybrid setups.
 3. **Graph backend** — Neo4j (default) or skip.
-4. **Auth tokens** — keep dev defaults or rotate now.
+4. **Optional integrations** — Tavily web search, MCP server for Claude Code / Cursor.
+5. **Auth tokens** — keep dev defaults or rotate now.
 
 Under the hood it verifies `docker` + `docker compose`, copies `.env.example` → `.env` (preserves your values on re-run, `chmod 600`), auto-generates `CREDENTIAL_MASTER_KEY` (64 hex) and `WEAVIATE_API_KEY` (32 hex), runs a port-conflict preflight, launches the stack via `docker compose up -d --build --force-recreate --remove-orphans`, and polls `/api/health` before printing the ready card.
 
-When you see **"Beever Atlas is ready"**, open **[http://localhost:3000](http://localhost:3000)**.
+When you see **"Beever Atlas is ready"**, open **[http://localhost:3000](http://localhost:3000)** — then **Settings → AI Setup** to manage providers, assign LLMs per-agent, run Test Connection, or discover models. For CI / Docker / GitOps, configure declaratively: `BEEVER_LLM_API_KEY=...` (single-provider shortcut), `BEEVER_ENDPOINTS='[...]'` + `BEEVER_PRESET=...`, or commit an `atlas.yaml` and run `atlas apply` — see [`docs/runbooks/ai-setup.md`](docs/runbooks/ai-setup.md) and [`docs/runbooks/atlas-yaml.md`](docs/runbooks/atlas-yaml.md).
 
 For CI or unattended installs — skip prompts, pre-seed keys from shell env:
 

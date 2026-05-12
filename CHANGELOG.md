@@ -8,6 +8,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Provider-agnostic LLM configuration** (`agent-llm-provider-pluggable`).
+  Unifies embedding + agent model selection behind one **Endpoint + Assignment**
+  data model: an Endpoint is a UUID-keyed object (base URL, AES-256-GCM-encrypted
+  credential, RPM budget, curated model list, auth type — `api_key` / `aws_iam` /
+  `google_sa` / `none`); an Assignment maps a consumer (the 16 ADK agents +
+  `embedding`) to an endpoint + model + optional per-call params + a fallback
+  endpoint. Add a key once, use it for both embeddings and chat.
+  - New MongoDB collections: `endpoints`, `llm_assignments`.
+  - New REST routes under `/api/settings/endpoints/*` and
+    `/api/settings/assignments/*` (12 routes, Bearer-auth-gated; credentials
+    masked on GET, never logged; Test Connection probe; `/v1/models` discovery;
+    DELETE 409s when an endpoint is still referenced).
+  - New `Settings → AI Setup` tab: Quick Start preset chips, Endpoints list
+    (Test / Discover-models / Delete), inline Add Endpoint form with preset
+    shortcuts, per-agent Assignment rows with capability badges + cost hints +
+    an advanced-params drawer (temperature / max_tokens / response_format /
+    fallback).
+  - LiteLLM single funnel for every completion (Gemini included, behind
+    `LLM_USE_LITELLM_FOR_GEMINI=true` — set `false` for emergency rollback to
+    the native `google.genai` path); the funnel is the seam for the per-Endpoint
+    throttle + future cost tracking + failover. `gemini_batch.py`,
+    `VideoExtractor`, and `AudioExtractor` are documented exceptions (no LiteLLM
+    primitive for batch / large-file upload).
+  - 19 endpoint presets + 4 apply presets (`gemini-balanced`, `openai-quality`,
+    `claude-quality-gemini-fast`, `fully-local`); per-agent capability validation
+    (e.g. `qa_agent` rejects a non-tool model with a 422 + suggested
+    alternatives); per-Endpoint circuit-breaker state for fine-grained failover.
+  - Three install modes: `atlas` Step 2 interactive picker, `BEEVER_ENDPOINTS`
+    env JSON envelope (+ `BEEVER_LLM_API_KEY` single-provider shortcut), and a
+    declarative `atlas.yaml` via `atlas apply` (idempotent, `${VAR}` interpolation).
+  - Boot-time hydration shim migrates legacy installs (env keys +
+    `agent_model_config` + `embedding_settings`) into the new collections —
+    idempotent, non-destructive.
+  - Docs: `docs/runbooks/ai-setup.md`, `docs/runbooks/atlas-yaml.md`,
+    `docs/runbooks/litellm-cutover.md`.
+
+### Deprecated
+- `Settings → Embedding` and `Settings → Agent Models` tabs (relabeled
+  `(legacy)`) — superseded by `Settings → AI Setup`.
+- The `/api/settings/embedding/*` and `/api/settings/models/*` REST routes —
+  superseded by `/api/settings/endpoints/*` and `/api/settings/assignments/*`;
+  the legacy routes now carry a `Sunset` response header and a deprecation log
+  line, and will be removed in a future release.
+- `LLM_USE_LITELLM_FOR_GEMINI` env flag — temporary cutover lever; removed after
+  the soak completes (see `docs/runbooks/litellm-cutover.md`).
+
 ## [0.1.2] - 2026-04-30
 
 ### Added

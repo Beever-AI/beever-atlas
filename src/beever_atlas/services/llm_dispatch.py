@@ -180,13 +180,44 @@ async def dispatch_completion(
                     get_llm_provider().invalidate_ollama_cache()
                 except Exception:  # noqa: BLE001
                     pass
+            # Per-Endpoint circuit breaker: a non-429 failure is a real
+            # outage signal — record it so the Endpoint's breaker can trip
+            # and the resolver can route Assignments with a fallback away
+            # from it. 429s are rate-limit, not outage — handled by the
+            # throttle cooldown above, not the breaker. Defensive.
+            if endpoint_id and not _is_429(exc):
+                await _record_breaker_failure(endpoint_id, exc)
             raise
         # Some providers return a 429 inline on the response body without
         # raising. Sniff status_code on the response just in case.
         status_code = getattr(response, "status_code", None)
         if status_code == 429:
             throttle.report_429(provider, endpoint_id=endpoint_id)
+        elif endpoint_id:
+            # Clean response — record success so a recovering Endpoint's
+            # half-open probe closes the breaker.
+            await _record_breaker_success(endpoint_id)
         return response
+
+
+async def _record_breaker_failure(endpoint_id: str, exc: BaseException) -> None:
+    """Record a failure against the per-Endpoint circuit breaker. Never raises."""
+    try:
+        from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
+
+        await get_breaker_for_endpoint(endpoint_id).record_failure(exc)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _record_breaker_success(endpoint_id: str) -> None:
+    """Record a success against the per-Endpoint circuit breaker. Never raises."""
+    try:
+        from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
+
+        await get_breaker_for_endpoint(endpoint_id).record_success()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def dispatch_assignment(

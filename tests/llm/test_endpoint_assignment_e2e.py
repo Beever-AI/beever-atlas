@@ -313,10 +313,13 @@ async def test_e2e_failover_routes_to_fallback(
         )
     )
 
-    # Force the breaker open.
-    from beever_atlas.services import circuit_breaker as cb_mod
+    # Trip the PRIMARY endpoint's breaker only — the fallback's stays closed.
+    from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
 
-    monkeypatch.setattr(cb_mod.CircuitBreaker, "is_open", lambda self: True)
+    primary_breaker = get_breaker_for_endpoint(primary.id)
+    for _ in range(primary_breaker._threshold):
+        await primary_breaker.record_failure(RuntimeError("primary outage"))
+    assert primary_breaker.is_open() is True
 
     provider = LLMProvider(_settings_stub())
     resolved = await provider.resolve_for_call("qa_agent", stores=stores)

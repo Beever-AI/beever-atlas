@@ -177,10 +177,13 @@ async def test_resolve_for_call_routes_to_fallback_when_breaker_open(
         )
     )
 
-    # Force the breaker into open state via monkeypatch on is_open.
-    from beever_atlas.services import circuit_breaker as cb_mod
+    # Trip the PRIMARY endpoint's breaker only (the fallback's stays closed).
+    from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
 
-    monkeypatch.setattr(cb_mod.CircuitBreaker, "is_open", lambda self: True)
+    primary_breaker = get_breaker_for_endpoint(primary_id)
+    for _ in range(primary_breaker._threshold):
+        await primary_breaker.record_failure(RuntimeError("primary outage"))
+    assert primary_breaker.is_open() is True
 
     provider = LLMProvider(_make_settings())
     result = await provider.resolve_for_call("qa_agent", stores=stores)

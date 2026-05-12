@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from beever_atlas.api._deprecation import deprecated_route
 from pydantic import BaseModel
 
 from beever_atlas.llm.model_resolver import (
@@ -21,7 +23,11 @@ from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/settings/models", tags=["models"])
+router = APIRouter(
+    prefix="/api/settings/models",
+    tags=["models"],
+    dependencies=[Depends(deprecated_route("/api/settings/assignments"))],
+)
 
 
 # ── Request / Response Models ────────────────────────────────────────────

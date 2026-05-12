@@ -288,7 +288,51 @@ def reset_circuit_breaker_for_tests() -> None:
 
     Replaces the autouse fixture's ad-hoc reset of ``_consecutive_503_*``
     module-globals in ``tests/test_sync_runner.py``. With this in place,
-    The new flow has no module-globals to bleed across tests.
+    The new flow has no module-globals to bleed across tests. Also clears
+    the per-Endpoint breaker registry.
     """
     global _breaker_instance
     _breaker_instance = None
+    _endpoint_breakers.clear()
+
+
+# ----------------------------------------------------------------------
+# Per-Endpoint breaker registry (agent-llm-provider-pluggable PR-H.2)
+# ----------------------------------------------------------------------
+# The global breaker above protects the ingestion pipeline's shared 503
+# storm. Per-Endpoint breakers give the new Endpoint+Assignment dispatch
+# path fine-grained failover: an outage on one Endpoint (e.g. Anthropic)
+# trips that Endpoint's breaker only, so an Assignment with a
+# ``fallback_endpoint_id`` routes around it without disturbing other
+# Endpoints. Lazily created, keyed on Endpoint UUID.
+
+_endpoint_breakers: dict[str, CircuitBreaker] = {}
+
+
+def get_breaker_for_endpoint(endpoint_id: str) -> CircuitBreaker:
+    """Return (lazily creating) the CircuitBreaker for one Endpoint.
+
+    Uses the same threshold/cooldown defaults as the global breaker. Each
+    Endpoint UUID gets its own breaker instance; state is never shared
+    across Endpoints (two same-provider Endpoints fail independently).
+    """
+    breaker = _endpoint_breakers.get(endpoint_id)
+    if breaker is None:
+        from beever_atlas.infra.config import get_settings
+
+        try:
+            threshold = get_settings().llm_outage_breaker_threshold
+        except Exception:  # noqa: BLE001 — never let config lookup crash dispatch
+            threshold = 5
+        breaker = CircuitBreaker(
+            threshold=threshold,
+            cooldown_seconds=_DEFAULT_COOLDOWN_SECONDS,
+            provider_label=f"endpoint:{endpoint_id}",
+        )
+        _endpoint_breakers[endpoint_id] = breaker
+    return breaker
+
+
+def reset_endpoint_breakers_for_tests() -> None:
+    """Test helper: clear the per-Endpoint breaker registry."""
+    _endpoint_breakers.clear()

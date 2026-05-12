@@ -159,7 +159,7 @@ class LLMProvider:
         from beever_atlas.llm.agent_credentials import get_runtime_credential
         from beever_atlas.llm.assignments import AssignmentStore, ResolvedAssignment
         from beever_atlas.llm.endpoints import EndpointStore, preset_to_provider
-        from beever_atlas.services.circuit_breaker import get_circuit_breaker
+        from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
 
         if stores is None:
             from beever_atlas.stores import get_stores
@@ -175,31 +175,33 @@ class LLMProvider:
         if primary is None:
             return None
 
-        # Failover decision — global breaker drives the per-Assignment fallback.
-        # When the per-Endpoint breaker arrives in a follow-up, the keying here
-        # changes from ``is_open()`` to ``is_open(endpoint_id=primary.id)``.
+        # Failover decision — per-Endpoint breaker drives the per-Assignment
+        # fallback. The primary Endpoint's own breaker being open means "this
+        # Endpoint is in a failure state"; we then route to the fallback
+        # Endpoint unless ITS breaker is also open (or there's no fallback),
+        # in which case we fast-fail rather than wait out a timeout.
         target_endpoint = primary
         try:
-            breaker = get_circuit_breaker()
-            if breaker.is_open():
-                if assignment.fallback_endpoint_id:
-                    fallback = await endpoint_store.get(assignment.fallback_endpoint_id)
-                    if fallback is not None:
-                        logger.warning(
-                            "LLMProvider: breaker open — failover consumer=%s "
-                            "primary=%s -> fallback=%s",
-                            consumer,
-                            primary.id,
-                            fallback.id,
-                        )
-                        target_endpoint = fallback
-                    else:
-                        raise CircuitBreakerOpenForBothPrimaryAndFallback(
-                            consumer, primary.id, assignment.fallback_endpoint_id
-                        )
+            if get_breaker_for_endpoint(primary.id).is_open():
+                fallback = (
+                    await endpoint_store.get(assignment.fallback_endpoint_id)
+                    if assignment.fallback_endpoint_id
+                    else None
+                )
+                if fallback is not None and not get_breaker_for_endpoint(fallback.id).is_open():
+                    logger.warning(
+                        "LLMProvider: breaker open — failover consumer=%s "
+                        "primary=%s -> fallback=%s",
+                        consumer,
+                        primary.id,
+                        fallback.id,
+                    )
+                    target_endpoint = fallback
                 else:
+                    # No fallback configured, fallback missing, OR fallback's
+                    # breaker is also open — fast-fail.
                     raise CircuitBreakerOpenForBothPrimaryAndFallback(
-                        consumer, primary.id, None
+                        consumer, primary.id, assignment.fallback_endpoint_id
                     )
         except CircuitBreakerOpenForBothPrimaryAndFallback:
             raise

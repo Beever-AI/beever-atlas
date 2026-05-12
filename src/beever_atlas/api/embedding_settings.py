@@ -24,7 +24,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from beever_atlas.api._deprecation import deprecated_route
 from pydantic import BaseModel, Field
 
 from beever_atlas.infra.config import get_settings
@@ -37,7 +39,11 @@ from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/settings/embedding", tags=["embedding-settings"])
+router = APIRouter(
+    prefix="/api/settings/embedding",
+    tags=["embedding-settings"],
+    dependencies=[Depends(deprecated_route("/api/settings/endpoints"))],
+)
 
 
 # ─── Request / response models ─────────────────────────────────────────────
