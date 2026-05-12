@@ -179,12 +179,32 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
+    # agent-llm-provider-pluggable PR-G: idempotent migration shim — synth
+    # ``endpoints`` + ``llm_assignments`` from legacy data (env vars +
+    # ``agent_model_config`` + ``embedding_settings``) when the new
+    # collections are empty. Re-running with non-empty endpoints is a no-op.
+    # Best-effort — never blocks boot.
+    try:
+        from scripts.migrate_to_endpoint_catalog import migrate_to_endpoint_catalog
+
+        result = await migrate_to_endpoint_catalog(stores)
+        if result.get("skipped") is None:
+            logging.getLogger(__name__).info(
+                "lifespan: hydrated %d endpoints + %d assignments from legacy data",
+                result.get("endpoints_created", 0),
+                result.get("assignments_created", 0),
+            )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "lifespan: migration_to_endpoint_catalog failed (non-fatal)",
+            exc_info=True,
+        )
+
     # agent-llm-provider-pluggable PR-B: hydrate per-Endpoint credentials
     # from the new ``endpoints`` collection into a process-local cache so
     # ``dispatch_completion`` can read them per-call without round-tripping
-    # MongoDB. Best-effort — the collection may not exist on installs that
-    # haven't run the migration shim yet, and we don't want to block boot
-    # over that.
+    # MongoDB. Runs AFTER the migration shim so freshly-synthesised
+    # endpoints get cached too.
     try:
         from beever_atlas.llm.agent_credentials import hydrate_runtime_credentials
 
