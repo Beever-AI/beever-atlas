@@ -34,13 +34,46 @@ _OLLAMA_FALLBACK = "gemini-2.5-flash-lite"
 # the cache via :meth:`LLMProvider.invalidate_ollama_cache` on a connect error.
 _OLLAMA_TTL_SECONDS: float = 30.0
 
-# Provider failover — out of OSS scope per the architecture doc.
-# Hardcoded to disabled. Enterprise tier flips ``_FAILOVER_ENABLED`` to
-# True and populates ``_FALLBACK_MAP`` with their multi-provider routing
-# (e.g. ``"gemini-2.5-pro": "claude-3-5-sonnet"``). The map shape uses
-# string keys so model resolution stays plumbing-free.
-_FAILOVER_ENABLED: bool = False
-_FALLBACK_MAP: dict[str, str] = {}
+
+def _preset_to_provider(preset: str) -> str:
+    """Translate an Endpoint preset key to a LiteLLM provider prefix.
+
+    Mirrors the helper in ``api/assignments.py`` — kept here for the
+    ``LLMProvider.resolve_for_call`` resolution path so the call site doesn't
+    cross-import an API module.
+    """
+    return {
+        "google_ai": "gemini",
+        "ollama": "ollama",
+        "vllm": "openai",
+        "lmstudio": "openai",
+        "openrouter": "openai",
+        "litellm_proxy": "openai",
+        "custom": "openai",
+    }.get(preset, preset)
+
+# Provider failover — wired through per-Assignment ``fallback_endpoint_id``
+# in the new Endpoint+Assignment data model (PR-B/H). The dead
+# ``_FAILOVER_ENABLED`` / ``_FALLBACK_MAP`` module constants from the
+# pre-cutover OSS code path have been removed; their job is now done by
+# :meth:`LLMProvider.resolve_for_call` consulting the Assignment + the
+# global circuit breaker.
+
+
+class CircuitBreakerOpenForBothPrimaryAndFallback(RuntimeError):
+    """Raised when the circuit breaker is open AND the Assignment's fallback
+    Endpoint is also in a failure state. Surfaces as a fast-fail to the caller
+    instead of a slow timeout. See design D14.
+    """
+
+    def __init__(self, consumer: str, primary_id: str, fallback_id: str | None) -> None:
+        self.consumer = consumer
+        self.primary_id = primary_id
+        self.fallback_id = fallback_id
+        super().__init__(
+            f"Circuit open for both primary ({primary_id}) and fallback ({fallback_id}) "
+            f"for consumer {consumer!r}"
+        )
 
 
 class LLMProvider:
@@ -77,14 +110,9 @@ class LLMProvider:
         """Resolve the model for a specific agent.
 
         Priority: MongoDB override → default map → LLM_FAST_MODEL env var.
-        Returns a string (Gemini) or LiteLlm instance (Ollama).
-
-        Provider failover seam: when ``_FAILOVER_ENABLED=True`` AND the
-        global CircuitBreaker is open AND the resolved model has a
-        ``_FALLBACK_MAP`` entry, the call is re-mapped to the fallback
-        model. Out of OSS scope by default — enterprise enablement flips
-        the module constants in code (NO env var since failover requires
-        multi-provider key management OSS doesn't ship).
+        Returns a string (Gemini bare strings, flag-off path) or a
+        ``LiteLlm`` instance (every other path, including Gemini when
+        ``LLM_USE_LITELLM_FOR_GEMINI=True``).
         """
         # 1. Check MongoDB overrides
         model_str = self._agent_overrides.get(agent_name)
@@ -96,36 +124,6 @@ class LLMProvider:
             model_str = self._settings.llm_fast_model
 
         model_str = self._resolve_alias(model_str, f"agent={agent_name}")
-
-        # Provider failover seam.
-        # Out of OSS scope per docs/architecture/oss-pipeline.md — multi-
-        # provider failover requires a second-provider key (Claude /
-        # OpenAI) which OSS doesn't ship. The seam is preserved as code
-        # so an enterprise tier can flip ``_FAILOVER_ENABLED = True`` and
-        # populate ``_FALLBACK_MAP`` with cross-provider entries. NO env
-        # var — operators don't get a half-wired feature they can't
-        # actually use.
-        if _FAILOVER_ENABLED and _FALLBACK_MAP:
-            try:
-                from beever_atlas.services.circuit_breaker import get_circuit_breaker
-
-                breaker = get_circuit_breaker()
-                if breaker.is_open():
-                    fallback = _FALLBACK_MAP.get(model_str)
-                    if fallback:
-                        logger.warning(
-                            "LLMProvider: breaker open — failing over agent=%s "
-                            "primary=%s fallback=%s",
-                            agent_name,
-                            model_str,
-                            fallback,
-                        )
-                        model_str = fallback
-            except Exception as exc:  # noqa: BLE001 — failover must not crash resolution
-                logger.warning(
-                    "LLMProvider: failover seam raised, using primary: %s",
-                    exc,
-                )
 
         # Ollama fallback: if model is Ollama but service is unreachable
         if is_ollama_model(model_str):
@@ -156,6 +154,114 @@ class LLMProvider:
         from beever_atlas.llm.model_resolver import AGENT_NAMES
 
         return {name: self.get_model_string(name) for name in AGENT_NAMES}
+
+    async def resolve_for_call(self, consumer: str, stores: Any = None) -> Any:
+        """Return a :class:`ResolvedAssignment` for ``consumer``, applying
+        circuit-breaker-driven failover when configured.
+
+        Resolution order:
+          1. Look up the Assignment for ``consumer`` in ``llm_assignments``.
+          2. Load the primary Endpoint by ``endpoint_id``.
+          3. When the global circuit breaker is open AND the Assignment has
+             a ``fallback_endpoint_id``, load the fallback Endpoint and
+             return a ``ResolvedAssignment`` pointing at it instead.
+          4. When the breaker is open AND no fallback is configured, raise
+             :class:`CircuitBreakerOpenForBothPrimaryAndFallback`.
+
+        Returns ``None`` when no Assignment exists for ``consumer`` (caller
+        falls back to legacy ``resolve_model`` or env defaults).
+
+        ``stores`` is the StoreClients instance; passed in to avoid a circular
+        import. When ``None``, fetches the global instance.
+        """
+        from beever_atlas.llm.agent_credentials import get_runtime_credential
+        from beever_atlas.llm.assignments import AssignmentStore, ResolvedAssignment
+        from beever_atlas.llm.endpoints import EndpointStore
+        from beever_atlas.services.circuit_breaker import get_circuit_breaker
+
+        if stores is None:
+            from beever_atlas.stores import get_stores
+
+            stores = get_stores()
+
+        assignment = await AssignmentStore(stores.mongodb).get(consumer)
+        if assignment is None:
+            return None
+
+        endpoint_store = EndpointStore(stores.mongodb)
+        primary = await endpoint_store.get(assignment.endpoint_id)
+        if primary is None:
+            return None
+
+        # Failover decision — global breaker drives the per-Assignment fallback.
+        # When the per-Endpoint breaker arrives in a follow-up, the keying here
+        # changes from ``is_open()`` to ``is_open(endpoint_id=primary.id)``.
+        target_endpoint = primary
+        try:
+            breaker = get_circuit_breaker()
+            if breaker.is_open():
+                if assignment.fallback_endpoint_id:
+                    fallback = await endpoint_store.get(assignment.fallback_endpoint_id)
+                    if fallback is not None:
+                        logger.warning(
+                            "LLMProvider: breaker open — failover consumer=%s "
+                            "primary=%s -> fallback=%s",
+                            consumer,
+                            primary.id,
+                            fallback.id,
+                        )
+                        target_endpoint = fallback
+                    else:
+                        raise CircuitBreakerOpenForBothPrimaryAndFallback(
+                            consumer, primary.id, assignment.fallback_endpoint_id
+                        )
+                else:
+                    raise CircuitBreakerOpenForBothPrimaryAndFallback(
+                        consumer, primary.id, None
+                    )
+        except CircuitBreakerOpenForBothPrimaryAndFallback:
+            raise
+        except Exception:  # noqa: BLE001 — breaker lookup must never crash resolve
+            logger.warning("LLMProvider: circuit breaker check failed", exc_info=True)
+
+        # Build the ResolvedAssignment carrying every dispatch-time param.
+        credential = get_runtime_credential(target_endpoint.id)
+        api_key: str | None = credential if isinstance(credential, str) else None
+        aws_creds: dict[str, str] | None = (
+            credential
+            if isinstance(credential, dict) and "access_key_id" in credential
+            else None
+        )
+        vertex_creds: dict[str, str] | None = (
+            credential
+            if isinstance(credential, dict) and "sa_json" in credential
+            else None
+        )
+
+        # Convert the bare ``model`` field into a fully-qualified LiteLLM id.
+        provider_prefix = _preset_to_provider(target_endpoint.preset)
+        litellm_model = (
+            assignment.model
+            if "/" in assignment.model
+            else f"{provider_prefix}/{assignment.model}"
+        )
+
+        return ResolvedAssignment(
+            consumer=consumer,
+            endpoint_id=target_endpoint.id,
+            provider=provider_prefix,
+            litellm_model=litellm_model,
+            base_url=target_endpoint.base_url or None,
+            api_key=api_key,
+            aws_credentials=aws_creds,
+            vertex_credentials=vertex_creds,
+            extra_headers={**target_endpoint.headers, **assignment.extra_headers},
+            temperature=assignment.temperature,
+            max_tokens=assignment.max_tokens,
+            response_format=assignment.response_format,
+            dimensions=assignment.dimensions,
+            task=assignment.task,
+        )
 
     def _check_ollama_cached(self) -> bool:
         """Check Ollama availability with a 30s TTL cache.

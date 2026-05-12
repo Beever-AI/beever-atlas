@@ -1,180 +1,281 @@
-"""Tests for the LLMProvider failover seam (PR-C, post env-var cleanup).
+"""PR-H: failover seam wired through per-Assignment fallback_endpoint_id.
 
-After the env-var consolidation, failover is gated by TWO module-level
-constants in ``beever_atlas.llm.provider``:
-  * ``_FAILOVER_ENABLED`` (bool, default False) — out of OSS scope
-  * ``_FALLBACK_MAP`` (dict, default empty)
+The legacy ``_FAILOVER_ENABLED`` / ``_FALLBACK_MAP`` module constants are gone
+(see ``openspec/changes/agent-llm-provider-pluggable/design.md`` D14). Failover
+is now driven by:
+  * ``Assignment.fallback_endpoint_id`` — operator-configured per-consumer
+  * ``circuit_breaker.is_open()`` — the existing global breaker state
+  * ``LLMProvider.resolve_for_call(consumer)`` — the resolution entry point
 
-Multi-provider failover requires a second-provider key (Claude / OpenAI)
-that OSS doesn't ship. Enterprise tier flips the constants in code; OSS
-operators don't get a runtime knob for a feature they can't actually use.
-
-Tests verify the seam still works when the constants are explicitly
-patched on (i.e., the enterprise enablement path).
-
-Spec: ``openspec/changes/oss-pipeline-and-wiki-redesign/specs/llm-circuit-breaker/``
+Tests:
+  * No fallback configured → primary returned regardless of breaker.
+  * Breaker closed + fallback configured → primary returned.
+  * Breaker open + fallback configured → fallback returned.
+  * Breaker open + no fallback → CircuitBreakerOpenForBothPrimaryAndFallback.
+  * Missing Assignment → resolve_for_call returns None (legacy fall-through).
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import Any
 
 import pytest
 
-from beever_atlas.llm.provider import LLMProvider
-from beever_atlas.services.circuit_breaker import (
-    CircuitBreaker,
-    init_circuit_breaker,
-    reset_circuit_breaker_for_tests,
+from beever_atlas.llm.assignments import Assignment, AssignmentStore
+from beever_atlas.llm.endpoints import EndpointStore
+from beever_atlas.llm.provider import (
+    CircuitBreakerOpenForBothPrimaryAndFallback,
+    LLMProvider,
 )
+from beever_atlas.services.circuit_breaker import reset_circuit_breaker_for_tests
 
 
-def _make_settings():
-    """Construct a minimal settings stub for LLMProvider — env vars
-    no longer carry failover config; only the basic model fields remain."""
+# ─── Fakes (inlined for isolation) ───────────────────────────────────────
+
+
+class _AsyncCursor:
+    def __init__(self, items: list[dict[str, Any]]) -> None:
+        self._items = list(items)
+
+    def __aiter__(self) -> "_AsyncCursor":
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        if not self._items:
+            raise StopAsyncIteration
+        return self._items.pop(0)
+
+
+class _Result:
+    def __init__(self, matched: int = 0) -> None:
+        self.matched_count = matched
+        self.modified_count = matched
+
+
+class _FakeCollection:
+    def __init__(self) -> None:
+        self._docs: list[dict[str, Any]] = []
+
+    def find(self, query: dict[str, Any], _proj: Any = None) -> _AsyncCursor:
+        return _AsyncCursor([d for d in self._docs if self._matches(d, query)])
+
+    async def find_one(self, query: dict[str, Any], _proj: Any = None) -> Any:
+        for d in self._docs:
+            if self._matches(d, query):
+                return d
+        return None
+
+    async def insert_one(self, doc: dict[str, Any]) -> None:
+        self._docs.append(dict(doc))
+
+    async def update_one(
+        self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False
+    ) -> _Result:
+        for d in self._docs:
+            if self._matches(d, query):
+                d.update(update.get("$set", {}))
+                return _Result(matched=1)
+        if upsert:
+            new = dict(update.get("$set", {}))
+            new.update(query)
+            self._docs.append(new)
+        return _Result(matched=0)
+
+    @staticmethod
+    def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
+        if "$or" in query:
+            return any(_FakeCollection._matches(doc, q) for q in query["$or"])
+        return all(doc.get(k) == v for k, v in query.items())
+
+
+def _make_settings() -> Any:
     return SimpleNamespace(
         llm_fast_model="gemini-2.5-flash",
         llm_quality_model="gemini-2.5-pro",
     )
 
 
-@pytest.fixture(autouse=True)
-def _reset_breaker_singleton():
-    reset_circuit_breaker_for_tests()
-    yield
-    reset_circuit_breaker_for_tests()
-
-
-@pytest.mark.asyncio
-async def test_failover_disabled_by_default_returns_primary_when_breaker_open() -> None:
-    """OSS default: ``_FAILOVER_ENABLED=False``, breaker open → primary returned.
-
-    The failover code path is preserved as a code seam for the enterprise
-    tier, but in OSS it never fires regardless of breaker state.
-    """
-    settings = _make_settings()
-    breaker = CircuitBreaker(threshold=1, cooldown_seconds=60)
-    init_circuit_breaker(breaker)
-    await breaker.record_failure()
-    assert breaker.is_open()
-
-    provider = LLMProvider(settings)
-    with patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s):
-        result = provider.resolve_model("fact_extractor")
-
-    assert "flash-lite" not in str(result), (
-        "OSS default has _FAILOVER_ENABLED=False — primary model must NOT be re-mapped"
+def _make_stores() -> Any:
+    return SimpleNamespace(
+        mongodb=SimpleNamespace(
+            db={"endpoints": _FakeCollection(), "llm_assignments": _FakeCollection()}
+        )
     )
 
 
-@pytest.mark.asyncio
-async def test_enterprise_failover_enabled_returns_fallback_when_breaker_open() -> None:
-    """Enterprise enablement path: when both constants are flipped, the
-    breaker-open state re-maps to the fallback model. Locks in that the
-    seam still works for whoever ships the multi-provider tier."""
-    settings = _make_settings()
-    breaker = CircuitBreaker(threshold=1, cooldown_seconds=60)
-    init_circuit_breaker(breaker)
-    await breaker.record_failure()
-
-    provider = LLMProvider(settings)
-    with (
-        patch("beever_atlas.llm.provider._FAILOVER_ENABLED", True),
-        patch(
-            "beever_atlas.llm.provider._FALLBACK_MAP",
-            {"gemini-2.5-flash": "gemini-2.5-flash-lite"},
-        ),
-        patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s),
-    ):
-        result = provider.resolve_model("fact_extractor")
-    assert "flash-lite" in str(result)
+@pytest.fixture(autouse=True)
+def _reset_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset the global breaker singleton + provide a master key for encryption."""
+    monkeypatch.setenv("CREDENTIAL_MASTER_KEY", "ab" * 32)
+    reset_circuit_breaker_for_tests()
 
 
-@pytest.mark.asyncio
-async def test_enterprise_failover_breaker_closed_returns_primary() -> None:
-    """Failover only fires when the breaker is actually open. A healthy
-    upstream keeps using the primary even with the constants on."""
-    settings = _make_settings()
-    breaker = CircuitBreaker(threshold=5, cooldown_seconds=60)
-    init_circuit_breaker(breaker)
-    assert not breaker.is_open()
-
-    provider = LLMProvider(settings)
-    with (
-        patch("beever_atlas.llm.provider._FAILOVER_ENABLED", True),
-        patch(
-            "beever_atlas.llm.provider._FALLBACK_MAP",
-            {"gemini-2.5-flash": "gemini-2.5-flash-lite"},
-        ),
-        patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s),
-    ):
-        result = provider.resolve_model("fact_extractor")
-    assert "flash-lite" not in str(result)
+async def _seed(stores: Any) -> tuple[str, str]:
+    """Create primary + fallback Endpoints; return their IDs."""
+    ep_store = EndpointStore(stores.mongodb)
+    primary = await ep_store.create(
+        name="primary",
+        preset="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        auth_type="api_key",
+        plaintext_credential="sk-ant",
+        models=["claude-sonnet-4-6"],
+    )
+    fallback = await ep_store.create(
+        name="fallback",
+        preset="google_ai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        auth_type="api_key",
+        plaintext_credential="AIzaSy-fallback",
+        models=["gemini-2.5-flash"],
+    )
+    return primary.id, fallback.id
 
 
 @pytest.mark.asyncio
-async def test_failover_swallows_breaker_errors_and_uses_primary() -> None:
-    """If the breaker module raises during the seam check, failover must
-    not crash resolution — the primary model is returned and a warning logged."""
-    settings = _make_settings()
-    provider = LLMProvider(settings)
-
-    with (
-        patch("beever_atlas.llm.provider._FAILOVER_ENABLED", True),
-        patch(
-            "beever_atlas.llm.provider._FALLBACK_MAP",
-            {"gemini-2.5-flash": "gemini-2.5-flash-lite"},
-        ),
-        patch(
-            "beever_atlas.services.circuit_breaker.get_circuit_breaker",
-            side_effect=RuntimeError("breaker module exploded"),
-        ),
-        patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s),
-    ):
-        result = provider.resolve_model("fact_extractor")
-        assert result is not None
+async def test_resolve_for_call_returns_primary_when_no_assignment() -> None:
+    """No Assignment → resolve_for_call returns None (caller falls back to legacy)."""
+    stores = _make_stores()
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("qa_agent", stores=stores)
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_enterprise_failover_uses_primary_when_no_fallback_configured() -> None:
-    """Even with `_FAILOVER_ENABLED=True`, a model not in the fallback map
-    is left alone. We never invent fallbacks; missing entries are a
-    deliberate no-op."""
-    settings = _make_settings()
-    breaker = CircuitBreaker(threshold=1, cooldown_seconds=60)
-    init_circuit_breaker(breaker)
-    await breaker.record_failure()
+async def test_resolve_for_call_returns_primary_when_breaker_closed() -> None:
+    """Healthy circuit + Assignment → primary Endpoint resolved."""
+    stores = _make_stores()
+    primary_id, _fallback_id = await _seed(stores)
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="qa_agent", endpoint_id=primary_id, model="claude-sonnet-4-6")
+    )
 
-    provider = LLMProvider(settings)
-    provider._agent_overrides["fact_extractor"] = "gemini-2.5-pro"
-    with (
-        patch("beever_atlas.llm.provider._FAILOVER_ENABLED", True),
-        patch(
-            "beever_atlas.llm.provider._FALLBACK_MAP",
-            {"some-other-model": "some-fallback"},
-        ),
-        patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s),
-    ):
-        result = provider.resolve_model("fact_extractor")
-    assert str(result) == "gemini-2.5-pro"
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("qa_agent", stores=stores)
+    assert result is not None
+    assert result.endpoint_id == primary_id
+    assert result.provider == "anthropic"
+    assert result.litellm_model == "anthropic/claude-sonnet-4-6"
 
 
 @pytest.mark.asyncio
-async def test_oss_default_with_empty_map_does_not_attempt_breaker_lookup() -> None:
-    """When ``_FALLBACK_MAP`` is empty (OSS default), the seam short-circuits
-    BEFORE consulting the breaker. Verifies we don't pay any breaker
-    lookup cost in the steady-state OSS path."""
-    settings = _make_settings()
-    provider = LLMProvider(settings)
+async def test_resolve_for_call_routes_to_fallback_when_breaker_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaker open + fallback configured → resolve returns fallback Endpoint."""
+    stores = _make_stores()
+    primary_id, fallback_id = await _seed(stores)
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(
+            consumer="qa_agent",
+            endpoint_id=primary_id,
+            model="claude-sonnet-4-6",
+            fallback_endpoint_id=fallback_id,
+        )
+    )
 
-    with (
-        patch("beever_atlas.llm.provider._FAILOVER_ENABLED", False),
-        patch("beever_atlas.llm.provider._FALLBACK_MAP", {}),
-        patch(
-            "beever_atlas.services.circuit_breaker.get_circuit_breaker",
-        ) as breaker_lookup,
-        patch("beever_atlas.llm.provider.resolve_model_object", side_effect=lambda s: s),
-    ):
-        provider.resolve_model("fact_extractor")
-        breaker_lookup.assert_not_called()
+    # Force the breaker into open state via monkeypatch on is_open.
+    from beever_atlas.services import circuit_breaker as cb_mod
+
+    monkeypatch.setattr(cb_mod.CircuitBreaker, "is_open", lambda self: True)
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("qa_agent", stores=stores)
+    assert result is not None
+    assert result.endpoint_id == fallback_id
+    assert result.provider == "gemini"
+    # Model name from Assignment is preserved on fallback (operator's choice).
+    assert result.litellm_model == "gemini/claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_raises_when_breaker_open_and_no_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Breaker open + no fallback → CircuitBreakerOpenForBothPrimaryAndFallback."""
+    stores = _make_stores()
+    primary_id, _ = await _seed(stores)
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="qa_agent", endpoint_id=primary_id, model="claude-sonnet-4-6")
+    )
+
+    from beever_atlas.services import circuit_breaker as cb_mod
+
+    monkeypatch.setattr(cb_mod.CircuitBreaker, "is_open", lambda self: True)
+
+    provider = LLMProvider(_make_settings())
+    with pytest.raises(CircuitBreakerOpenForBothPrimaryAndFallback) as exc:
+        await provider.resolve_for_call("qa_agent", stores=stores)
+    assert exc.value.consumer == "qa_agent"
+    assert exc.value.primary_id == primary_id
+    assert exc.value.fallback_id is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_forwards_per_assignment_params() -> None:
+    """The Assignment's temperature / max_tokens / response_format flow into
+    the ResolvedAssignment."""
+    stores = _make_stores()
+    primary_id, _ = await _seed(stores)
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(
+            consumer="csv_mapper",
+            endpoint_id=primary_id,
+            model="claude-haiku-4-5",
+            temperature=0.0,
+            max_tokens=1024,
+            response_format="json",
+        )
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("csv_mapper", stores=stores)
+    assert result is not None
+    assert result.temperature == 0.0
+    assert result.max_tokens == 1024
+    assert result.response_format == "json"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_combines_endpoint_and_assignment_headers() -> None:
+    stores = _make_stores()
+    ep_store = EndpointStore(stores.mongodb)
+    primary = await ep_store.create(
+        name="custom",
+        preset="custom",
+        base_url="https://proxy.internal/v1",
+        auth_type="api_key",
+        plaintext_credential="sk",
+        models=["model-x"],
+        headers={"X-Endpoint-Header": "yes"},
+    )
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(
+            consumer="fact_extractor",
+            endpoint_id=primary.id,
+            model="model-x",
+            extra_headers={"X-Assignment-Header": "yes"},
+        )
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("fact_extractor", stores=stores)
+    assert result is not None
+    assert result.extra_headers["X-Endpoint-Header"] == "yes"
+    assert result.extra_headers["X-Assignment-Header"] == "yes"
+
+
+@pytest.mark.asyncio
+async def test_legacy_failover_constants_removed() -> None:
+    """The legacy ``_FAILOVER_ENABLED`` / ``_FALLBACK_MAP`` module constants
+    are gone — design D14 explicitly removes them."""
+    import beever_atlas.llm.provider as provider_mod
+
+    assert not hasattr(provider_mod, "_FAILOVER_ENABLED")
+    assert not hasattr(provider_mod, "_FALLBACK_MAP")
