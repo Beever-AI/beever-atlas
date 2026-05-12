@@ -1480,6 +1480,7 @@ async def compile_folder_page_modular(
     descendants: list[dict],
     children: list[dict],
     llm: LLMCallable,
+    compiled_topic_titles: list[str] | None = None,
 ) -> ModularPageOutput:
     """Single-call folder index compilation.
 
@@ -1586,6 +1587,7 @@ async def compile_folder_page_modular(
         top_facts=top_facts_for_prompt,
         open_questions=aggregated_open_questions,
         archetype_hint_block=archetype_hint,
+        compiled_topic_titles=compiled_topic_titles,
     )
 
     try:

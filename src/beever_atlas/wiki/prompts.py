@@ -106,7 +106,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 8. **Tools & resources** — if technologies/tools exist, bullet list. Skip if none.
 9. **Current state & open questions** — what's resolved vs. still open. Use bullet points. Each open question MUST include when it was first raised (e.g., "(raised Jan 2026)") so readers can assess staleness.
 10. **Media & Resources** — if media exists, each item MUST have a brief description line explaining what it shows/contains BEFORE the embed/link. **For IMAGES** (URLs ending in .png/.jpg/.jpeg/.gif/.webp/.svg, OR URLs from `files.mattermost.com` / `files.slack.com` / image-hosting domains), use IMAGE syntax `![Alt text](url)` — NOT link syntax `[Title](url)` — so the wiki renders an inline preview. **For PDFs and links**, use link syntax `[Title](url)`. **For VIDEOS** (URLs from youtube.com / vimeo.com or ending in .mp4/.webm), use link syntax `[Video title](url)` and the renderer will detect + embed. Do NOT use bare bullet points with just a link. Skip if none.
-11. **See Also / Cross-references** — if related topics exist (use the `related_topics` data block — each entry has `title` and `id`), list them as MARKDOWN LINKS so the UI can route to the destination. **MAX 5 entries.** Each line: `- **[Title](/wiki/<slug>)** — one-line reason this topic is related (shared people, shared entities, downstream dependency, etc.)`. The `<slug>` is the part of the related topic's id AFTER the `topic-` prefix (e.g., id `topic-auth-migration` → `[Title](/wiki/auth-migration)`). When you reference a related Topic, People, or Glossary page in any prose section above, ALSO inline a `[[Page Title]]` wikilink so the cross-reference resolver picks it up for the wiki graph. Pick the 5 most strongly related — DO NOT dump every other topic in the wiki. Skip the section entirely when no truly related topics exist (a wall of weakly-related links is worse than no links).
+11. **See Also / Cross-references** — if related topics exist (use the `related_topics` data block — each entry has `title` and `id`), list them as MARKDOWN LINKS so the UI can route to the destination. **MAX 5 entries.** Each line: `- **[Title](/wiki/<slug>)** — one-line reason this topic is related (shared people, shared entities, downstream dependency, etc.)`. The `<slug>` is the part of the related topic's id AFTER the `topic-` prefix (e.g., id `topic-auth-migration` → `[Title](/wiki/auth-migration)`). When you reference a related Topic, People, or Glossary page in any prose section above, ALSO inline a `[[Page Title]]` wikilink so the cross-reference resolver picks it up for the wiki graph. **ONLY emit `[[Page Title]]` wikilinks for titles in the `compiled_topic_titles_json` list below — every other topic was dropped by the threshold gate and has no page; pointing at it produces a red broken link.** Pick the 5 most strongly related — DO NOT dump every other topic in the wiki. Skip the section entirely when no truly related topics exist (a wall of weakly-related links is worse than no links).
 
 ## Writing style
 - **Synthesize, don't narrate.** Write "The team adopted a wiki-first architecture for 10x cost reduction [1]" — NOT "Thomas Chong shared that the wiki-first architecture offers cost reduction [1]".
@@ -160,6 +160,8 @@ Knowledge graph relationships in this topic: {key_relationships_json}
 All facts (for citation sourcing): {member_facts_json}
 Media: {media_json}
 Related topics (for "See Also" section): {related_topics_json}
+
+Compiled topic titles (the ONLY valid targets for `[[Page Title]]` wikilinks — any other title was dropped by the threshold gate and has no page; pointing at it produces a red broken link): {compiled_topic_titles_json}
 """
 
 # ---------------------------------------------------------------------------
@@ -517,7 +519,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 
 ## Content structure (follow this order strictly — TL;DR FIRST, then PARENT CONTEXT, then DIAGRAM, then text)
 1. **TL;DR** — A single bold sentence summarizing the key insight of this sub-topic. THIS MUST BE THE VERY FIRST LINE.
-2. **Parent context** — A SHORT paragraph (1-2 sentences) anchored to the parent topic via `[[Parent Title]]` wikilink. Use the `parent_title` data block as the wikilink target. Example: `This sub-topic deep-dives into one slice of [[Parent Title]] — specifically <what this slice covers>.`
+2. **Parent context** — A SHORT paragraph (1-2 sentences) anchored to the parent topic via `[[Parent Title]]` wikilink. Use the `parent_title` data block as the wikilink target. Example: `This sub-topic deep-dives into one slice of [[Parent Title]] — specifically <what this slice covers>.` **ONLY emit `[[Title]]` wikilinks for titles in the `compiled_topic_titles_json` list below — any other title was dropped by the threshold gate and has no page; pointing at it produces a red broken link.** When the `parent_title` itself is not in that list, write the parent name as plain text instead of a wikilink.
 3. **Sub-topic scope** — A short paragraph stating what this sub-topic covers vs. its siblings. Be explicit about boundaries: what's IN scope, what's OUT (covered by sibling sub-topics or the parent). Example: `Scope: <X>. Out of scope (covered elsewhere): <Y> (parent), <Z> (sibling sub-topic).`
 4. **Concept diagram** — ```mermaid diagram showing key entities and relationships within this sub-topic.
 5. **Key Facts** — GFM table with columns: Fact, Source, Type, Importance — the most important facts with [N] citations
@@ -550,6 +552,8 @@ Fact count: {fact_count}
 ## Facts (for this sub-topic only)
 {member_facts_json}
 Media: {media_json}
+
+Compiled topic titles (the ONLY valid targets for `[[Title]]` wikilinks — any other title was dropped by the threshold gate and has no page): {compiled_topic_titles_json}
 """
 
 # Phase 4 v2 variant of SUBTOPIC_PROMPT.
@@ -1151,6 +1155,8 @@ Top decisions across descendants (pre-aggregated): {top_decisions_json}
 Top facts across descendants (for synthesis + citation): {top_facts_json}
 Open questions across descendants: {open_questions_json}
 
+Compiled topic titles (the ONLY valid targets for `[[Page Title]]` wikilinks inside narrative paragraphs — any other title was dropped by the threshold gate and has no page; pointing at it produces a red broken link): {compiled_topic_titles_json}
+
 {archetype_hint_block}
 
 ## Output
@@ -1276,6 +1282,7 @@ def build_module_compile_folder_prompt(
     top_facts: list[dict] | None = None,
     open_questions: list[dict] | None = None,
     archetype_hint_block: str = "",
+    compiled_topic_titles: list[str] | None = None,
 ) -> str:
     """Render ``MODULE_COMPILE_FOLDER_PROMPT`` with the folder data.
 
@@ -1349,6 +1356,7 @@ def build_module_compile_folder_prompt(
         top_decisions_json=_json.dumps(decisions_payload, indent=2),
         top_facts_json=_json.dumps(facts_payload, indent=2, default=str),
         open_questions_json=_json.dumps(open_questions_payload, indent=2, default=str),
+        compiled_topic_titles_json=_json.dumps(list(compiled_topic_titles or []), default=str),
         archetype_hint_block=archetype_hint_block or "",
     )
 

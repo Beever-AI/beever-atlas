@@ -3736,6 +3736,14 @@ class WikiCompiler:
     async def _compile_overview(self, gathered: dict) -> WikiPage:
         summary = gathered["channel_summary"]
         clusters = gathered["clusters"]
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets for the Overview's prose / cross-references. ``compile()``
+        # stashes the list under ``_compiled_topic_titles``; fall back to
+        # every cluster title when the key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in clusters or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         # Use `memory_count` (not `member_count`) as the JSON key so the LLM
         # emits "N memories" instead of "N members" in Topics-at-a-Glance.
         clusters_data = [
@@ -3933,6 +3941,11 @@ class WikiCompiler:
             recent_activity_summary=getattr(summary, "recent_activity_summary", {}) or {},
             lang=splicer_lang,
         )
+        # Final pass: rewrite any ``[[Title]]`` references into native
+        # markdown links (compiled topics) or plain text (skipped /
+        # unknown topics). Runs AFTER all splicers so deterministic content
+        # added by the splicer is also covered.
+        post_content = _rewrite_topic_wikilinks(post_content, compiled_topic_titles)
         return WikiPage(
             id="overview",
             slug="overview",
@@ -4007,8 +4020,20 @@ class WikiCompiler:
         parent_title: str,
         sub_info: dict,
         all_sorted_facts: list[AtomicFact],
+        compiled_topic_titles: list[str] | None = None,
     ) -> WikiPage:
-        """Compile a single sub-topic page from a subset of facts."""
+        """Compile a single sub-topic page from a subset of facts.
+
+        ``compiled_topic_titles`` is the list of topic titles the threshold
+        gate kept — wikilinks (including the ``[[Parent Title]]`` parent
+        anchor) are constrained to that set so the page never emits a red
+        broken link. ``None`` (legacy callers / tests) disables the
+        constraint and treats every topic as valid.
+        """
+        # Coerce ``None`` to empty list — the rewrite helper treats both as
+        # "no compiled set known" but downstream JSON serialisation needs a
+        # concrete list.
+        compiled_topic_titles_safe: list[str] = [t for t in (compiled_topic_titles or []) if t]
         fact_indices = sub_info.get("fact_indices", [])
         sub_facts = [all_sorted_facts[i] for i in fact_indices if i < len(all_sorted_facts)]
         facts_data = [
@@ -4039,6 +4064,7 @@ class WikiCompiler:
             fact_count=fact_count,
             member_facts_json=json.dumps(facts_data, default=str),
             media_json=json.dumps(media_data, default=str),
+            compiled_topic_titles_json=json.dumps(compiled_topic_titles_safe, default=str),
         )
         try:
             # Require Key Facts + Overview so thin sub-topic pages (TL;DR +
@@ -4088,6 +4114,10 @@ class WikiCompiler:
             content = fb_content
             if not result_summary:
                 result_summary = fb_summary
+        # Rewrite ``[[Title]]`` references (including the ``[[Parent Title]]``
+        # anchor the prompt asks for) into native links (compiled topics) or
+        # plain text (skipped / unknown topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles_safe)
         page_id = f"topic-{parent_slug}--{sub_slug}"
         return WikiPage(
             id=page_id,
@@ -4106,6 +4136,13 @@ class WikiCompiler:
         """Phase 4 thin-topic path — TL;DR + table + 3-sentence summary only."""
         member_facts: list[AtomicFact] = gathered["cluster_facts"].get(cluster.id, [])
         sorted_facts = sorted(member_facts, key=lambda f: f.quality_score, reverse=True)
+        # Defensive: thin-topic prompt does not currently emit ``[[Title]]``
+        # wikilinks, but the LLM may invent them. Source the compiled-topic
+        # set from ``gathered`` so the rewrite never emits broken links.
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         facts_data = [
             {
                 "memory_text": wrap_untrusted(f.memory_text),
@@ -4136,6 +4173,9 @@ class WikiCompiler:
         content = _splice_key_facts_table(content, cluster.key_facts)
         if not content or len(content.strip()) < 50:
             content = _facts_fallback_content(sorted_facts)
+        # Defensive rewrite — thin-topic prompt doesn't emit wikilinks but
+        # protect against LLM drift.
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id=f"topic-{slug}",
             slug=slug,
@@ -4448,17 +4488,25 @@ class WikiCompiler:
                     memory_count=sp.memory_count,
                 )
             )
+        # Rewrite any ``[[Title]]`` references the modular path's narrative
+        # may have produced into native markdown links (compiled topics) or
+        # plain text (skipped / unknown topics).
+        compiled_topic_titles_for_rewrite: list[str] = gathered.get(
+            "_compiled_topic_titles"
+        ) or [getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []]
+        compiled_topic_titles_for_rewrite = [t for t in compiled_topic_titles_for_rewrite if t]
+        modular_content = _rewrite_topic_wikilinks(out.content, compiled_topic_titles_for_rewrite)
         return WikiPage(
             id=f"topic-{slug}",
             slug=slug,
             title=cluster.title,
             page_type="topic",
-            content=out.content,
+            content=modular_content,
             summary=out.summary or getattr(cluster, "summary", "") or "",
             memory_count=cluster.member_count,
             size_tier=_compute_size_tier(cluster.member_count),
             citations=self._filter_citations_to_body(
-                out.content, _build_citations(sorted_facts[:20])
+                modular_content, _build_citations(sorted_facts[:20])
             ),
             modules=out.modules,
             # ``wiki-narrative-articles`` — propagate the validated
@@ -4492,6 +4540,14 @@ class WikiCompiler:
         topics that needed splitting.
         """
         member_facts: list[AtomicFact] = gathered["cluster_facts"].get(cluster.id, [])
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets for See Also / inline `[[Title]]` refs. ``compile()``
+        # stashes the list under ``_compiled_topic_titles``; fall back to
+        # every cluster title when the key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         from beever_atlas.infra.config import get_settings
 
         v2 = get_settings().wiki_compiler_v2
@@ -4542,7 +4598,13 @@ class WikiCompiler:
                     # ``SUBTOPIC_PROMPT_V2`` flow; only the parent
                     # changes routing.
                     sub_coros = [
-                        self._compile_subtopic_page(slug, cluster.title, sub_info, sorted_facts)
+                        self._compile_subtopic_page(
+                            slug,
+                            cluster.title,
+                            sub_info,
+                            sorted_facts,
+                            compiled_topic_titles=compiled_topic_titles,
+                        )
                         for sub_info in analysis["subpages"]
                     ]
                     sub_results = await asyncio.gather(*sub_coros, return_exceptions=True)
@@ -4668,12 +4730,21 @@ class WikiCompiler:
                         member_facts_json=json.dumps(facts_data, default=str),
                         media_json=json.dumps(media_data, default=str),
                         related_topics_json=related_topics_json,
+                        compiled_topic_titles_json=json.dumps(
+                            list(compiled_topic_titles), default=str
+                        ),
                     )
                     parent_result = await self._call_llm(parent_prompt, page_kind="topic")
                     parent_content = parent_result.content
                     if v2:
                         parent_content = self._postprocess_content(parent_content)
                         parent_content = _splice_key_facts_table(parent_content, cluster.key_facts)
+                    # Rewrite any ``[[Title]]`` references the LLM emitted in
+                    # See Also / inline prose into native links (compiled
+                    # topics) or plain text (skipped / unknown topics).
+                    parent_content = _rewrite_topic_wikilinks(
+                        parent_content, compiled_topic_titles
+                    )
                     children_refs = [
                         WikiPageRef(
                             id=sp.id,
@@ -4684,7 +4755,16 @@ class WikiCompiler:
                         )
                         for sp in sub_pages
                     ]
-                    final_parent_content = parent_content if v2 else parent_result.content
+                    # ``parent_content`` already had the rewrite applied above
+                    # for the v2 path; apply it to the non-v2 raw content too
+                    # so both branches use compiled-topic-resolved wikilinks.
+                    final_parent_content = (
+                        parent_content
+                        if v2
+                        else _rewrite_topic_wikilinks(
+                            parent_result.content, compiled_topic_titles
+                        )
+                    )
                     parent_page = WikiPage(
                         id=f"topic-{slug}",
                         slug=slug,
@@ -4730,6 +4810,7 @@ class WikiCompiler:
             member_facts_json=json.dumps(facts_data, default=str),
             media_json=json.dumps(media_data, default=str),
             related_topics_json=related_topics_json,
+            compiled_topic_titles_json=json.dumps(list(compiled_topic_titles), default=str),
         )
         result = await self._call_llm(
             prompt,
@@ -4741,6 +4822,10 @@ class WikiCompiler:
             content = _splice_key_facts_table(content, cluster.key_facts)
         if not content or len(content.strip()) < 50:
             content = _facts_fallback_content(sorted_facts)
+        # Rewrite any ``[[Title]]`` references the LLM emitted in See Also /
+        # inline prose into native links (compiled topics) or plain text
+        # (skipped / unknown topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id=f"topic-{slug}",
             slug=slug,
@@ -4801,6 +4886,14 @@ class WikiCompiler:
 
     async def _compile_decisions(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets in Decisions prose. ``compile()`` stashes the list under
+        # ``_compiled_topic_titles``; fall back to every cluster title when
+        # the key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
 
         # Augment graph decisions with facts typed as 'decision' from cluster_facts.
         # This ensures Decisions page is non-empty even when entity_extractor misses
@@ -4838,12 +4931,16 @@ class WikiCompiler:
             top_decisions_json=json.dumps(channel_summary.top_decisions, default=str),
         )
         result = await self._call_llm(prompt, page_kind="decisions")
+        content = self._postprocess_content(result.content)
+        # Defensive: rewrite any ``[[Title]]`` references into native links
+        # (compiled topics) or plain text (skipped / unknown topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="decisions",
             slug="decisions",
             title=self._page_title("decisions"),
             page_type="fixed",
-            content=self._postprocess_content(result.content),
+            content=content,
             summary=result.summary,
             memory_count=len(existing_decisions),
         )
@@ -4851,6 +4948,14 @@ class WikiCompiler:
     async def _compile_faq(self, gathered: dict) -> WikiPage:
         """Compile FAQ page from aggregated faq_candidates across all TopicClusters."""
         clusters = gathered["clusters"]
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets in FAQ "Related pages" / inline prose. ``compile()``
+        # stashes the list under ``_compiled_topic_titles``; fall back to
+        # every cluster title when the key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in clusters or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         # Aggregate faq_candidates grouped by topic
         faq_by_topic: list[dict] = []
         topic_names: list[str] = []
@@ -4922,12 +5027,16 @@ class WikiCompiler:
         # and downstream consumers (search, MCP read tools) see a
         # single shape regardless of LLM drift.
         content = _normalize_faq_content(content)
+        content = self._postprocess_content(content)
+        # Defensive: rewrite any ``[[Title]]`` references into native links
+        # (compiled topics) or plain text (skipped / unknown topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="faq",
             slug="faq",
             title=self._page_title("faq"),
             page_type="fixed",
-            content=self._postprocess_content(content),
+            content=content,
             summary=summary,
             memory_count=sum(len(c.faq_candidates) for c in clusters),
         )
@@ -5071,6 +5180,14 @@ class WikiCompiler:
 
     async def _compile_activity(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets in Activity prose. ``compile()`` stashes the list under
+        # ``_compiled_topic_titles``; fall back to every cluster title when
+        # the key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         recent_data = [
             {
                 "memory_text": wrap_untrusted(f.memory_text),
@@ -5109,12 +5226,16 @@ class WikiCompiler:
                 channel_summary.recent_activity_summary or {},
                 gathered.get("clusters", []),
             )
+        content = self._postprocess_content(content)
+        # Defensive: rewrite any ``[[Title]]`` references into native links
+        # (compiled topics) or plain text (skipped / unknown topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="activity",
             slug="activity",
             title=self._page_title("activity"),
             page_type="fixed",
-            content=self._postprocess_content(content),
+            content=content,
             summary=summary_text,
             memory_count=len(gathered["recent_facts"]),
         )
@@ -5603,6 +5724,7 @@ class WikiCompiler:
         folder_slug: str,
         folder_title: str,
         children_pages: list[WikiPage],
+        compiled_topic_titles: list[str] | None = None,
     ) -> WikiPage:
         """Synthesize a folder index page from its already-compiled children.
 
@@ -5772,6 +5894,14 @@ class WikiCompiler:
         async def _modular_llm(prompt: str) -> str:
             return await self._llm_generate_json(prompt, page_kind="topic")
 
+        # Resolve the wikilink-target set once — used for both the prompt's
+        # ``compiled_topic_titles_json`` placeholder and the post-render
+        # rewrite. ``None`` (legacy callers) falls back to the children's
+        # titles so the rewrite still resolves intra-folder references.
+        compiled_topic_titles_safe: list[str] = [
+            t for t in (compiled_topic_titles or []) if t
+        ] or [c.title for c in children_pages if c.title]
+
         try:
             modular_out = await compile_folder_page_modular(
                 folder_title=folder_title,
@@ -5779,6 +5909,7 @@ class WikiCompiler:
                 descendants=descendants_payload,
                 children=children_payload_modular,
                 llm=_modular_llm,
+                compiled_topic_titles=compiled_topic_titles_safe,
             )
         except Exception as exc:  # noqa: BLE001 — modular path is best-effort
             logger.warning(
@@ -5812,6 +5943,11 @@ class WikiCompiler:
                 modular_out.planner_module_count,
                 modular_out.rendered_module_count,
             )
+            # Rewrite any ``[[Title]]`` references the modular narrative
+            # produced into native links (compiled topics) or plain text.
+            folder_content = _rewrite_topic_wikilinks(
+                modular_out.content, compiled_topic_titles_safe
+            )
             return WikiPage(
                 id=f"folder-{folder_slug}",
                 slug=folder_slug,
@@ -5819,7 +5955,7 @@ class WikiCompiler:
                 page_type="folder",
                 parent_id=None,
                 section_number="",
-                content=modular_out.content,
+                content=folder_content,
                 summary=modular_out.summary
                 or f"{folder_title} — folder containing {len(children_pages)} pages.",
                 memory_count=sum(c.memory_count for c in children_pages),
@@ -5914,6 +6050,9 @@ class WikiCompiler:
             for c in children_pages
         ]
         rendered_content = apply_children_toc_marker(content, children_for_toc)
+        # Defensive: rewrite any ``[[Title]]`` references from the LLM body
+        # into native links (compiled topics) or plain text.
+        rendered_content = _rewrite_topic_wikilinks(rendered_content, compiled_topic_titles_safe)
 
         # children_fingerprint is the SHA-256 of sorted slugs — used by
         # the maintainer (Phase E) to skip re-synthesis when membership
@@ -5959,6 +6098,7 @@ class WikiCompiler:
         *,
         plan: Any,
         leaves_by_slug: dict[str, WikiPage],
+        compiled_topic_titles: list[str] | None = None,
     ) -> dict[str, WikiPage]:
         """Synthesize all folder pages from the planner output.
 
@@ -6085,6 +6225,7 @@ class WikiCompiler:
                         folder_slug=f_slug,
                         folder_title=f_title,
                         children_pages=children,
+                        compiled_topic_titles=compiled_topic_titles,
                     )
                     return f_slug, page
 

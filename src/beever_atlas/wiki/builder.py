@@ -487,8 +487,24 @@ class WikiBuilder:
                         for p in pages.values():
                             if getattr(p, "slug", None):
                                 leaves_by_slug[p.slug] = p
+                        # Surface the compiled-topic set so the folder
+                        # synthesis path can constrain ``[[Title]]`` wikilink
+                        # targets the same way Glossary / People / Topic do.
+                        # Fall back to every cluster title when the key is
+                        # absent (legacy/test entry points).
+                        compiled_topic_titles_for_folders = data.get(
+                            "_compiled_topic_titles"
+                        ) or [
+                            getattr(c, "title", "") or ""
+                            for c in data.get("clusters", []) or []
+                        ]
+                        compiled_topic_titles_for_folders = [
+                            t for t in compiled_topic_titles_for_folders if t
+                        ]
                         folder_pages = await compiler.compile_folders(
-                            plan=plan, leaves_by_slug=leaves_by_slug
+                            plan=plan,
+                            leaves_by_slug=leaves_by_slug,
+                            compiled_topic_titles=compiled_topic_titles_for_folders,
                         )
                         # Add folder pages to the page dict so they
                         # round-trip through the cache.
