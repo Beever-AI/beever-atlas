@@ -16,7 +16,7 @@
   "//overrides": "dompurify ^3.4.0 covers GHSA-39q2-94rc-95cp (ADD_TAGS bypass) until mermaid ships a newer dompurify range; hono ^4.12.14 covers GHSA-458j-xx4x-4375 (JSX HTML injection) until @modelcontextprotocol/sdk bumps its hono pin. Removal trigger: when `npm ls dompurify` / `npm ls hono` shows the parent natively resolves a satisfying version, delete that entry and re-run `npm install`. The `verify-overrides` script (wired via prebuild) guards against silent regression.",
   "overrides": {
     "dompurify": "^3.4.0",
-    "hono": "^4.12.14"
+    "hono": "^4.12.18"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
