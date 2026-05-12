@@ -43,6 +43,8 @@ from beever_atlas.api.config import router as config_router
 from beever_atlas.api.policies import router as policies_router
 from beever_atlas.api.models import router as models_router
 from beever_atlas.api.embedding_settings import router as embedding_settings_router
+from beever_atlas.api.endpoints import router as endpoints_router
+from beever_atlas.api.assignments import router as assignments_router
 from beever_atlas.api.dev import router as dev_router
 from beever_atlas.api.loader_token import router as loader_token_router
 from beever_atlas.api.loaders import router as loader_router
@@ -950,6 +952,9 @@ app.include_router(topics_router, dependencies=_auth)
 app.include_router(policies_router, dependencies=_auth)
 app.include_router(models_router, dependencies=_auth)
 app.include_router(embedding_settings_router, dependencies=_auth)
+# agent-llm-provider-pluggable PR-E: Endpoint + Assignment catalog APIs.
+app.include_router(endpoints_router, dependencies=_auth)
+app.include_router(assignments_router, dependencies=_auth)
 # Dev router: only mounted in development; its own endpoints require admin token.
 if _settings.beever_env == "development":
     app.include_router(dev_router)
