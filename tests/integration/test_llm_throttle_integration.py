@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -21,7 +22,7 @@ from beever_atlas.services.llm_throttle import reset_llm_throttle_for_tests
 
 
 @pytest.fixture(autouse=True)
-def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
+def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     reset_llm_throttle_for_tests()
     for key in list(os.environ):
         if key.startswith("LLM_RPM_OVERRIDE_") or key.startswith("LLM_TPM_OVERRIDE_"):
