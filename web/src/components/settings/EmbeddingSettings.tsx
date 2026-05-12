@@ -86,25 +86,56 @@ export function EmbeddingSettings() {
     if (config && !draft) setDraft(draftFromConfig(config));
   }, [config, draft]);
 
-  // Poll migration status while running.
+  // Poll migration status while running. When the job transitions from
+  // running → not-running, refetch the main settings doc so the
+  // "Re-embed required" banner (driven by migration_required) re-evaluates
+  // against the now-up-to-date ``embedding_meta`` — otherwise the banner
+  // sticks around stale until the user manually refreshes.
+  //
+  // The poll loop is intentionally resilient: a transient error MUST NOT
+  // freeze the UI at the last good state. Earlier the catch block silently
+  // swallowed and skipped the next-poll schedule, so a single 5xx mid-
+  // migration left "Re-embedding in progress · 28%" stuck on screen even
+  // after the backend reached 100%. Now we always schedule a follow-up
+  // poll until we have an authoritative ``running: false`` response. On
+  // errors we back off slightly (4s instead of 2s) to avoid hammering a
+  // wedged backend.
   useEffect(() => {
+    let cancelled = false;
     let timer: number | undefined;
+    let lastRunning = false;
+    let pollUntilExplicitlyDone = true;
+
     async function poll() {
+      if (cancelled) return;
+      let nextDelay = 2000;
       try {
         const status = await getMigrationStatus();
+        if (cancelled) return;
         setMigrationStatus(status);
-        if (status.running) {
-          timer = window.setTimeout(poll, 2000);
+        if (lastRunning && !status.running) {
+          // Just completed (or failed). Refresh the settings card.
+          refetch();
         }
+        lastRunning = status.running;
+        // Stop polling only when the server explicitly says "not running"
+        // — never on transient errors / undefined results.
+        pollUntilExplicitlyDone = status.running;
       } catch {
-        // best-effort polling; surface error in UI on the next refetch.
+        // Transient — back off slightly and retry. Do NOT stop the loop.
+        nextDelay = 4000;
+      }
+      if (!cancelled && pollUntilExplicitlyDone) {
+        timer = window.setTimeout(poll, nextDelay);
       }
     }
+
     poll();
     return () => {
+      cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [getMigrationStatus]);
+  }, [getMigrationStatus, refetch]);
 
   if (isLoading && !config) {
     return (
@@ -295,6 +326,29 @@ export function EmbeddingSettings() {
         );
       })()}
 
+      {/* Migration-failed banner — fires when the most recent migration
+          job ended with an error. Without this the failure was silent:
+          ``running`` flipped to false, the in-progress banner disappeared,
+          and the user had no signal beyond the ``Re-embed required``
+          banner reappearing. */}
+      {migrationStatus &&
+        !migrationStatus.running &&
+        migrationStatus.error && (
+          <div className="px-4 py-3 bg-destructive/10 border-b border-destructive/30 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+            <div className="text-xs text-destructive space-y-1 flex-1">
+              <div className="font-medium">Re-embed failed</div>
+              <div className="font-mono text-[11px] break-all">
+                {migrationStatus.error}
+              </div>
+              <div className="text-destructive/80">
+                Check the backend log for a full traceback. Click "Start re-embed"
+                to retry — the migration is idempotent.
+              </div>
+            </div>
+          </div>
+        )}
+
       {dimMismatchPersisted && !migrationStatus?.running && (
         <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/30 flex items-start gap-3">
           <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5" />
@@ -310,6 +364,42 @@ export function EmbeddingSettings() {
               View runbook
             </a>
           </div>
+        </div>
+      )}
+
+      {/* Pending migration banner — fires when SAVED config differs from
+          what's in storage (e.g. user switched provider via UI but the
+          re-embed never completed). Without this, the only paths to start
+          a re-embed were the dim-mismatch modal (which requires making a
+          config change) or POST /migrate directly. */}
+      {config.migration_required && !migrationStatus?.running && (
+        <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/30 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1">
+            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+            <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
+              <div className="font-medium">Re-embed required</div>
+              <div className="text-amber-600/90 dark:text-amber-400/90">
+                Saved config is{" "}
+                <code className="font-mono">
+                  {config.provider}/{config.model} @ {config.dimensions}d
+                </code>{" "}
+                but {config.fact_count?.toLocaleString() ?? "0"} stored vectors are still at{" "}
+                <code className="font-mono">
+                  {config.persisted_provider}/{config.persisted_model} @{" "}
+                  {config.persisted_dimensions}d
+                </code>
+                . Search will fall back to BM25-only until the re-embed completes.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleStartMigration}
+            disabled={saving}
+            className="text-xs px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium shrink-0"
+          >
+            Start re-embed
+          </button>
         </div>
       )}
 

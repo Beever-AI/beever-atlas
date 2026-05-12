@@ -172,6 +172,54 @@ def _build_effective(base: Settings, overrides: dict[str, Any]) -> EffectiveEmbe
     )
 
 
+async def resolve_effective_settings(base: Settings | None = None) -> Settings:
+    """Return a ``Settings`` clone with the live DB override doc applied
+    over ``base`` (defaults to :func:`get_settings`).
+
+    Used by both the runtime ``embed_texts`` path and the boot-time dim
+    guard so the two code paths can't drift: every probe and every
+    production embed call resolves provider/model/dimensions/api_key
+    through the same merge, on top of the *same* env baseline that the
+    caller chose.
+
+    Pivots on the passed-in ``base`` (NOT the cached env Settings), so
+    tests injecting a custom ``Settings`` get DB overrides applied to
+    THEIR baseline rather than to the process env. Falls back to ``base``
+    unchanged when DB resolution fails (Mongo unreachable, master key
+    missing, etc.) so boot still proceeds.
+    """
+    if base is None:
+        base = get_settings()
+    try:
+        overrides = await _load_db_overrides()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "embedding_runtime: resolve_effective_settings failed — falling back to env Settings",
+            exc_info=True,
+        )
+        return base
+    if not overrides:
+        return base
+    update: dict[str, Any] = {}
+    if "provider" in overrides:
+        update["embedding_provider"] = overrides["provider"]
+    if "model" in overrides:
+        update["embedding_model"] = overrides["model"]
+    if "dimensions" in overrides:
+        update["embedding_dimensions"] = int(overrides["dimensions"])
+    if "rpm" in overrides:
+        update["embedding_rpm"] = int(overrides["rpm"])
+    if "api_base" in overrides:
+        update["embedding_api_base"] = overrides["api_base"]
+    if "task" in overrides:
+        update["embedding_task"] = overrides["task"]
+    if "api_key" in overrides:
+        update["embedding_api_key"] = overrides["api_key"]
+    if not update:
+        return base
+    return base.model_copy(update=update)
+
+
 async def get_effective_embedding_settings() -> EffectiveEmbeddingConfig:
     """Return the live effective embedding configuration.
 
@@ -278,5 +326,6 @@ __all__ = [
     "in_migration_context",
     "is_migration_in_progress",
     "reset_migration_context",
+    "resolve_effective_settings",
     "set_migration_context",
 ]

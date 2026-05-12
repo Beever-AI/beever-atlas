@@ -611,6 +611,107 @@ class WeaviateStore:
 
         return await asyncio.to_thread(_walk)
 
+    async def snapshot_all_facts_for_reembed(self) -> "list[dict[str, Any]]":
+        """Snapshot every row in MemoryFact for an upcoming dim-change rebuild.
+
+        Returns a list of ``{"uuid": str, "memory_text": str, "properties":
+        dict}`` records for every row that has a non-empty ``memory_text``.
+        Used by the re-embed migration when the new model has a different
+        vector dimension than the existing collection — Weaviate's HNSW
+        index dim is locked at collection creation, so an in-place
+        ``data.update(vector=...)`` returns HTTP 500 (``new node has a
+        vector with length X. Existing nodes have vectors with length Y``).
+        The fix is to snapshot rows, drop the collection, recreate it,
+        and bulk-insert each row with a new vector under the same UUID.
+
+        Includes every tier (atomic / cluster / summary) so the rebuild is
+        complete. Rows without ``memory_text`` are skipped — they have
+        nothing to re-embed and are typically schema placeholders.
+        """
+
+        def _walk() -> list[dict[str, Any]]:
+            collection = self._collection()
+            out: list[dict[str, Any]] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=False,
+            ):
+                props = dict(getattr(obj, "properties", {}) or {})
+                memory_text = props.get("memory_text") or ""
+                if not memory_text:
+                    continue
+                out.append(
+                    {
+                        "uuid": str(obj.uuid),
+                        "memory_text": memory_text,
+                        "properties": props,
+                    }
+                )
+            return out
+
+        return await asyncio.to_thread(_walk)
+
+    async def drop_and_recreate_memoryfact(self) -> None:
+        """Drop the MemoryFact collection and recreate it with the current
+        schema. Used by the re-embed migration to clear a locked-in HNSW
+        dim before reinserting rows at a new dim.
+
+        Idempotent on the recreate side — ``ensure_schema`` handles both
+        the missing-collection and existing-collection cases.
+        """
+
+        def _drop() -> None:
+            assert self._client is not None, "WeaviateStore not started"
+            if self._client.collections.exists(COLLECTION_NAME):
+                self._client.collections.delete(COLLECTION_NAME)
+            # Recreate via the same path ``ensure_schema`` uses to keep
+            # the property list / vector index config single-sourced.
+            self._ensure_schema_sync()
+
+        await asyncio.to_thread(_drop)
+
+    async def bulk_reinsert_with_vectors(
+        self,
+        records: "list[dict[str, Any]]",
+    ) -> int:
+        """Bulk-insert records into MemoryFact with explicit per-row vectors.
+
+        Each record is ``{"uuid": str, "vector": list[float], "properties":
+        dict}``. Uses Weaviate v4 ``collection.batch.dynamic()`` for
+        throughput.
+
+        Companion to :meth:`drop_and_recreate_memoryfact` — call after the
+        collection has been recreated so the first insert sets the HNSW
+        dim from the new vector length.
+
+        Returns the count of records submitted (provider may still
+        partial-fail; partial failures surface via ``batch.number_errors``).
+        """
+
+        def _insert() -> int:
+            collection = self._collection()
+            count = 0
+            with collection.batch.dynamic() as batch:
+                for rec in records:
+                    batch.add_object(
+                        properties=rec.get("properties") or {},
+                        uuid=rec["uuid"],
+                        vector=rec["vector"],
+                    )
+                    count += 1
+            # Inspect batch-level errors so partial failures don't go silent.
+            failed = collection.batch.failed_objects
+            if failed:
+                # Re-raise the first failure with a clear message. The
+                # migration's outer error handler logs and bails.
+                err_msg = getattr(failed[0], "message", str(failed[0]))
+                raise RuntimeError(
+                    f"WeaviateStore.bulk_reinsert_with_vectors: {len(failed)} "
+                    f"of {count} inserts failed. First error: {err_msg}"
+                )
+            return count
+
+        return await asyncio.to_thread(_insert)
+
     async def update_fact_vector(self, weaviate_uuid: str, vector: list[float]) -> None:
         """Replace the vector on an existing AtomicFact row in place.
 

@@ -140,21 +140,47 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
 
     The ``stores`` argument is the ``StoreClients`` bundle so this module
     can stay testable without spinning up the singleton.
+
+    The ``settings`` argument is the env-derived :class:`Settings` snapshot.
+    Internally we resolve the *effective* settings (env merged with the
+    MongoDB ``embedding_settings`` override doc) so a user who switched
+    provider via the UI doesn't have to also edit ``.env`` for boot to
+    pass. The runtime ``embed_texts`` path uses the same resolver, so the
+    probe and production embed calls cannot diverge.
     """
-    health = await _run_probe(settings)
+    from beever_atlas.llm.embedding_runtime import resolve_effective_settings
+
+    effective_settings = await resolve_effective_settings(settings)
+    if (
+        effective_settings.embedding_provider != settings.embedding_provider
+        or effective_settings.embedding_model != settings.embedding_model
+        or effective_settings.embedding_dimensions != settings.embedding_dimensions
+    ):
+        logger.info(
+            "embedding_health: probing effective config (env+DB merged): "
+            "%s/%s @ %d  (env baseline was %s/%s @ %d)",
+            effective_settings.embedding_provider,
+            effective_settings.embedding_model,
+            effective_settings.embedding_dimensions,
+            settings.embedding_provider,
+            settings.embedding_model,
+            settings.embedding_dimensions,
+        )
+
+    health = await _run_probe(effective_settings)
 
     if not health.ok:
         # Probe failure: persist the failure for diagnosis. Re-raise unless
         # the operator opted out of the guard.
         await _safe_set_meta(
             stores,
-            provider=settings.embedding_provider,
-            model=settings.embedding_model,
-            dimensions=settings.embedding_dimensions,
+            provider=effective_settings.embedding_provider,
+            model=effective_settings.embedding_model,
+            dimensions=effective_settings.embedding_dimensions,
             ok=False,
             error=health.error,
         )
-        if not settings.embedding_dim_guard:
+        if not effective_settings.embedding_dim_guard:
             logger.warning(
                 "embedding_health: probe failed but EMBEDDING_DIM_GUARD=false — "
                 "continuing despite error: %s",
@@ -166,15 +192,15 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
             "Fix credentials/network or set EMBEDDING_DIM_GUARD=false to bypass." % health.error
         )
 
-    # Probe succeeded with some dimension. Compare against config.
-    if health.dim != settings.embedding_dimensions:
+    # Probe succeeded with some dimension. Compare against effective config.
+    if health.dim != effective_settings.embedding_dimensions:
         msg = (
             f"Provider returned vectors of length {health.dim} but "
-            f"EMBEDDING_DIMENSIONS={settings.embedding_dimensions}. "
+            f"EMBEDDING_DIMENSIONS={effective_settings.embedding_dimensions}. "
             f"Update EMBEDDING_DIMENSIONS to {health.dim} or pick a model "
-            f"that produces {settings.embedding_dimensions}-dim vectors."
+            f"that produces {effective_settings.embedding_dimensions}-dim vectors."
         )
-        if not settings.embedding_dim_guard:
+        if not effective_settings.embedding_dim_guard:
             logger.warning("embedding_health: %s (DIM_GUARD off — continuing)", msg)
         else:
             raise EmbeddingDimensionMismatch(msg)
@@ -183,12 +209,21 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
     persisted = await _safe_get_meta(stores)
     fact_count = await _safe_count_facts(stores)
 
+    ui_initiated_migration = (
+        effective_settings.embedding_provider != settings.embedding_provider
+        or effective_settings.embedding_model != settings.embedding_model
+        or effective_settings.embedding_dimensions != settings.embedding_dimensions
+    )
+
     if persisted is not None and fact_count is not None and fact_count > 0:
         persisted_dim = persisted.get("dimensions")
-        if persisted_dim is not None and persisted_dim != settings.embedding_dimensions:
+        if (
+            persisted_dim is not None
+            and persisted_dim != effective_settings.embedding_dimensions
+        ):
             msg = (
                 f"EmbeddingDimensionMismatch:\n"
-                f"  Configured:  {settings.embedding_provider}/{settings.embedding_model} @ {settings.embedding_dimensions}\n"
+                f"  Configured:  {effective_settings.embedding_provider}/{effective_settings.embedding_model} @ {effective_settings.embedding_dimensions}\n"
                 f"  Persisted:   {persisted.get('provider')}/{persisted.get('model')} @ {persisted_dim}\n"
                 f"  Weaviate has {fact_count:,} stored facts at the persisted dimension.\n\n"
                 f"  Mixing dimensions will silently corrupt hybrid search.\n"
@@ -198,29 +233,50 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
                 f"  See docs/runbooks/embedding-migration.md\n"
                 f"  Override at your own risk: EMBEDDING_DIM_GUARD=false"
             )
-            if not settings.embedding_dim_guard:
+            if not effective_settings.embedding_dim_guard:
                 logger.warning(
                     "embedding_health: dim mismatch with %d stored facts — "
                     "continuing because EMBEDDING_DIM_GUARD=false: %s",
                     fact_count,
                     msg,
                 )
+            elif ui_initiated_migration:
+                # The user already went through the UI confirm-migration
+                # flow (env baseline differs from effective settings, which
+                # means a UI-saved override is active and the PUT handler's
+                # `_check_dim_change_requires_migration` gate enforced
+                # `confirm_migration: true` before persisting the override).
+                # The runtime `is_migration_in_progress` gate already blocks
+                # query/ingest embed calls until the re-embed completes,
+                # so boot can proceed — operators need to reach the UI to
+                # finish the migration. We deliberately do NOT update
+                # ``embedding_meta`` here: persisted state stays pinned to
+                # the old (still-on-disk) vectors so the runtime gate keeps
+                # firing until the migration job calls ``set_embedding_meta``
+                # itself at completion.
+                logger.warning(
+                    "embedding_health: UI-initiated migration pending — "
+                    "boot allowed, queries will degrade to BM25 until "
+                    "re-embed completes. %s",
+                    msg,
+                )
+                return health
             else:
                 raise EmbeddingDimensionMismatch(msg)
 
     # Everything checks out — update the persisted meta and let startup proceed.
     await _safe_set_meta(
         stores,
-        provider=settings.embedding_provider,
-        model=settings.embedding_model,
-        dimensions=settings.embedding_dimensions,
+        provider=effective_settings.embedding_provider,
+        model=effective_settings.embedding_model,
+        dimensions=effective_settings.embedding_dimensions,
         ok=True,
         error=None,
     )
     logger.info(
         "embedding_health: probe ok provider=%s model=%s dim=%d latency_ms=%d",
-        settings.embedding_provider,
-        settings.embedding_model,
+        effective_settings.embedding_provider,
+        effective_settings.embedding_model,
         health.dim,
         health.latency_ms,
     )

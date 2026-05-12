@@ -274,9 +274,9 @@ async def embed_texts(
     else:
         from beever_atlas.llm.embedding_runtime import (
             EmbeddingMigrationInProgress,
-            get_effective_embedding_settings,
             in_migration_context,
             is_migration_in_progress,
+            resolve_effective_settings,
         )
 
         # Migration gate — bypassed only by the re-embed script itself.
@@ -285,20 +285,7 @@ async def embed_texts(
                 "Embedding migration is running; switch to BM25 fallback or retry after completion."
             )
 
-        eff = await get_effective_embedding_settings()
-        # Build a one-off Settings view with the live overrides applied.
-        cfg = get_settings().model_copy(
-            update={
-                "embedding_provider": eff.provider,
-                "embedding_model": eff.model,
-                "embedding_dimensions": eff.dimensions,
-                "embedding_rpm": eff.rpm,
-                "embedding_api_base": eff.api_base,
-                "embedding_api_key": eff.api_key,
-                "embedding_task": eff.task,
-                "embedding_dim_guard": eff.dim_guard_enabled,
-            }
-        )
+        cfg = await resolve_effective_settings()
 
     if not _runtime_initialised:
         # Defensive — covers test paths that import the shim before app boot.
@@ -393,6 +380,52 @@ async def embed_texts(
                     model=cfg.embedding_model,
                     chunk=f"{chunk_index}/{total_chunks}",
                     status=http_err.response.status_code,
+                    retry_in=round(wait, 2),
+                    attempt=attempt,
+                    max_retries=_MAX_RETRIES,
+                )
+                await asyncio.sleep(wait)
+                continue
+            except Exception as litellm_err:
+                # litellm wraps provider rate-limits as
+                # ``litellm.RateLimitError`` — NOT ``httpx.HTTPStatusError`` —
+                # so the previous branch never caught Jina/Gemini 429s and
+                # they propagated out, hanging the re-embed migration on
+                # the first burst that tripped provider limits. Catch the
+                # broad ``Exception`` and let the dispatch layer's
+                # ``_is_429`` predicate decide if we should retry; any
+                # non-429 ``Exception`` re-raises and surfaces the real
+                # cause.
+                try:
+                    from beever_atlas.services.llm_dispatch import _is_429
+                except Exception:  # noqa: BLE001
+                    raise litellm_err
+                if not _is_429(litellm_err):
+                    raise
+                attempt += 1
+                if attempt > _MAX_RETRIES:
+                    embed_log(
+                        logger,
+                        "chunk failed",
+                        level="error",
+                        provider=cfg.embedding_provider,
+                        model=cfg.embedding_model,
+                        chunk=f"{chunk_index}/{total_chunks}",
+                        status=429,
+                        error=type(litellm_err).__name__,
+                        attempts=attempt,
+                    )
+                    raise
+                wait = _backoff_seconds(attempt)
+                embed_log(
+                    logger,
+                    "chunk retryable status",
+                    level="warning",
+                    provider=cfg.embedding_provider,
+                    model=cfg.embedding_model,
+                    chunk=f"{chunk_index}/{total_chunks}",
+                    status=429,
+                    error=type(litellm_err).__name__,
                     retry_in=round(wait, 2),
                     attempt=attempt,
                     max_retries=_MAX_RETRIES,

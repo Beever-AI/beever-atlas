@@ -794,6 +794,14 @@ export interface EmbeddingSettings {
   last_probe_at: string | null;
   last_probe_ok: boolean | null;
   last_probe_error: string | null;
+  // Surface the persisted (Weaviate-current) embedding meta so the UI
+  // can show a "Re-embed required" banner when configured config !=
+  // what's actually in storage.
+  persisted_provider: string | null;
+  persisted_model: string | null;
+  persisted_dimensions: number | null;
+  fact_count: number | null;
+  migration_required: boolean;
 }
 
 export interface EmbeddingUpdateRequest {

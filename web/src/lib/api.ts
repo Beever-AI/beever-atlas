@@ -62,12 +62,14 @@ export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise
 class ApiError extends Error {
   status: number;
   code: string;
+  detail: unknown;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, detail?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -97,10 +99,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const error = body?.error || {};
+    // FastAPI puts structured payloads under ``body.detail``. Preserve that
+    // object on the thrown ApiError so callers can branch on detail.error
+    // (e.g. dim_mismatch_requires_migration → open re-embed modal).
+    const detail = body?.detail;
+    let message = error.message || response.statusText;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail && typeof detail === "object" && typeof (detail as { message?: unknown }).message === "string") {
+      message = (detail as { message: string }).message;
+    }
     throw new ApiError(
       response.status,
-      error.code || "UNKNOWN",
-      error.message || body?.detail || response.statusText,
+      error.code || (detail && typeof detail === "object" && typeof (detail as { error?: unknown }).error === "string" ? (detail as { error: string }).error : "UNKNOWN"),
+      message,
+      detail,
     );
   }
 

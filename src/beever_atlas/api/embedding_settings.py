@@ -57,6 +57,16 @@ class EmbeddingSettingsResponse(BaseModel):
     last_probe_at: str | None = None
     last_probe_ok: bool | None = None
     last_probe_error: str | None = None
+    # The state needed by the UI's "Re-embed required" banner — surfaces
+    # the case where effective config differs from what's actually in
+    # Weaviate, which previously had no UI affordance and forced
+    # operators to either pop the dim-mismatch modal by editing config
+    # or hit the migrate endpoint manually.
+    persisted_provider: str | None = None
+    persisted_model: str | None = None
+    persisted_dimensions: int | None = None
+    fact_count: int | None = None
+    migration_required: bool = False
 
 
 class UpdateEmbeddingRequest(BaseModel):
@@ -247,6 +257,27 @@ async def _get_meta() -> dict[str, Any]:
 async def get_embedding_settings() -> EmbeddingSettingsResponse:
     view, source, masked_key = await _resolve_effective_settings()
     meta = await _get_meta()
+
+    # Compute migration_required: configured dim differs from what's in
+    # storage AND there's actually data to re-embed. Best-effort — if
+    # Weaviate is unreachable, the GET response still works (UI just
+    # won't show the banner).
+    persisted_dim = meta.get("dimensions") if meta else None
+    fact_count: int | None = None
+    try:
+        fact_count = await get_stores().weaviate.count_facts()
+    except Exception:  # noqa: BLE001
+        logger.debug(
+            "embedding_settings: count_facts failed during GET (non-fatal)",
+            exc_info=True,
+        )
+    migration_required = bool(
+        persisted_dim is not None
+        and persisted_dim != view["dimensions"]
+        and fact_count is not None
+        and fact_count > 0
+    )
+
     return EmbeddingSettingsResponse(
         provider=view["provider"],
         model=view["model"],
@@ -261,6 +292,11 @@ async def get_embedding_settings() -> EmbeddingSettingsResponse:
         last_probe_at=meta.get("last_probe_at"),
         last_probe_ok=meta.get("last_probe_ok"),
         last_probe_error=meta.get("last_probe_error"),
+        persisted_provider=meta.get("provider"),
+        persisted_model=meta.get("model"),
+        persisted_dimensions=persisted_dim,
+        fact_count=fact_count,
+        migration_required=migration_required,
     )
 
 
@@ -484,13 +520,31 @@ async def start_migration(req: MigrateRequest) -> MigrateResponse:
         from scripts.reembed_facts import main as reembed_main
 
         try:
-            await reembed_main()
-        except SystemExit:
-            # ``main`` uses argparse — SystemExit on bad flags. Treat as error.
-            _active_migration["error"] = "argparse exit"
-            raise
+            # Reuse the server's stores singleton so the migration job
+            # does NOT call init_stores/startup/shutdown on a competing
+            # StoreClients instance — closing the migration's stores in
+            # ``finally`` previously also closed the server's MongoClient
+            # (singleton was overwritten), tripping every subsequent
+            # request with ``Cannot use MongoClient after close``.
+            await reembed_main(stores=get_stores())
+        except SystemExit as exc:
+            # Defensive: ``main`` no longer parses argv (that lived in the CLI
+            # wrapper), so SystemExit should not fire here. If it ever does
+            # (e.g. transitively-imported code calling sys.exit), trap it —
+            # bare ``raise`` would propagate through the Task and kill uvicorn.
+            _active_migration["error"] = f"SystemExit({exc.code})"
+            logger.error("reembed: SystemExit trapped to protect uvicorn: %s", exc)
         except Exception as exc:  # noqa: BLE001
-            _active_migration["error"] = str(exc)
+            # Log the full traceback so the operator can see why the
+            # migration died. Without ``exc_info=True`` the only signal
+            # was the GET /migrate/status ``error`` field, which the UI
+            # currently silently drops — leaving silent failures.
+            _active_migration["error"] = f"{type(exc).__name__}: {exc}"
+            logger.error(
+                "reembed: migration task failed — %s",
+                exc,
+                exc_info=True,
+            )
             raise
 
     _active_migration["task"] = asyncio.create_task(_run())

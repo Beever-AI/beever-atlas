@@ -70,7 +70,24 @@ def _is_429(exc: BaseException) -> bool:
     if status_code == 429:
         return True
     msg = str(exc).lower()
-    return "429" in msg or "rate limit" in msg or "rate_limit" in msg or "rate-limit" in msg
+    # ``rate_concurrency_limit_exceeded`` is Jina's per-tier cap on
+    # in-flight requests (returned as a non-429 HTTP status with a
+    # provider-specific code). It is functionally a rate-limit signal
+    # — wait for in-flight requests to complete, then retry. Without
+    # this branch the re-embed migration died silently the moment we
+    # exceeded the free-tier ceiling of 2 concurrent embed calls.
+    rate_limit_phrases = (
+        "429",
+        "rate limit",
+        "rate_limit",
+        "rate-limit",
+        "concurrency limit",
+        "concurrency_limit",
+        "concurrency-limit",
+        "too many requests",
+        "rate_concurrency",
+    )
+    return any(phrase in msg for phrase in rate_limit_phrases)
 
 
 async def dispatch_completion(
