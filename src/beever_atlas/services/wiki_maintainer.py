@@ -2048,51 +2048,29 @@ class WikiMaintainer:
         """Single LLM call for ``apply_update``. Override in tests.
 
         Production path: resolve the ``wiki_maintainer`` model via
-        ``LLMProvider``, then issue an ``application/json``-typed
-        ``generate_content`` request mirroring the WikiCompiler call shape.
+        ``LLMProvider``, then issue a JSON-mode completion via
+        ``dispatch_completion`` (which gates on the per-provider throttle).
         Returns the raw JSON text (parsed by the caller).
         """
         from beever_atlas.llm.provider import get_llm_provider
-        from google.genai import types
+        from beever_atlas.services.llm_dispatch import (
+            dispatch_completion,
+            normalize_litellm_model,
+            sniff_provider,
+        )
 
         provider = self._llm_provider or get_llm_provider()
         model_name = provider.get_model_string("wiki_maintainer")
 
-        from beever_atlas.services.llm_throttle import get_llm_throttle
-
-        client = self._get_genai_client()
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            max_output_tokens=4096,
+        response = await dispatch_completion(
+            provider=sniff_provider(model_name),
+            model=normalize_litellm_model(model_name),
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=4096,
             temperature=0.2,
         )
-        throttle = get_llm_throttle()
-        response = await throttle.throttled_call(
-            "gemini",
-            4096,
-            client.aio.models.generate_content,
-            model=model_name,
-            contents=prompt,
-            config=config,
-        )
-        return response.text or "{}"
-
-    def _get_genai_client(self) -> Any:
-        """Lazy-init + cache the Google GenAI client on the instance.
-
-        The Google AI client is intended to be reused. In auto mode an
-        extraction batch can fan out to N affected pages; constructing a
-        fresh client per page would burn a connection pool slot each time.
-        The client is created on first use rather than at ``__init__`` so
-        unit tests that don't exercise the LLM path never touch the SDK.
-        """
-        cached = getattr(self, "_genai_client", None)
-        if cached is None:
-            from google import genai
-
-            cached = genai.Client()
-            self._genai_client = cached
-        return cached
+        return response.choices[0].message.content or "{}"  # type: ignore[index, union-attr]
 
     async def _resolve_first_touch_title(self, page_id: str, channel_id: str) -> str:
         """Look up the human-friendly title for a brand-new page.

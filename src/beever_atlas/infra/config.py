@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     llm_fast_model: str = Field(default="gemini-2.5-flash")
     llm_quality_model: str = Field(default="gemini-2.5-flash")
 
+    # Cutover flag for the agent-llm-provider-pluggable change. When True,
+    # every provider — including Gemini — is wrapped in ``LiteLlm(...)`` inside
+    # ``resolve_model_object``, so completions flow through ``litellm.acompletion``
+    # (and therefore through ``dispatch_completion`` + ``LLMThrottle``) instead of
+    # ADK's native ``google.genai`` client. Flag-off preserves the legacy native
+    # path for emergency rollback. Defaults to True; will be removed after the
+    # cutover soak completes.
+    llm_use_litellm_for_gemini: bool = Field(default=True)
+
     # Pipeline config
     # memory-then-wiki-pipeline-realignment perf P0 — bumped from 10 to 25.
     # Combined with default ``ingest_batch_concurrency=4`` this gives the

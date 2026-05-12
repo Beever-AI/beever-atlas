@@ -3522,41 +3522,37 @@ class WikiCompiler:
                 )
             return resp.choices[0].message.content or "{}"  # pyright: ignore[reportAttributeAccessIssue]
         else:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client()
-            if use_delimited:
-                config = types.GenerateContentConfig(
-                    max_output_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                contents = prompt + _DELIMITED_RESPONSE_SUFFIX
-            else:
-                config = types.GenerateContentConfig(
-                    # response_mime_type alone nudges Gemini toward JSON without
-                    # forcing a schema. response_schema was tried but caused
-                    # instability on very long outputs (Resources page), where
-                    # the model got stuck escaping a multi-KB markdown string
-                    # and emitted corrupted JSON. _parse_llm_json handles minor
-                    # malformation; keep the nudge, skip the hard schema.
-                    response_mime_type="application/json",
-                    max_output_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                contents = prompt
-            from beever_atlas.services.llm_throttle import get_llm_throttle
-
-            throttle = get_llm_throttle()
-            response = await throttle.throttled_call(
-                "gemini",
-                max_tokens,
-                client.aio.models.generate_content,
-                model=self._model_name,
-                contents=contents,
-                config=config,
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
             )
-            return response.text or "{}"
+
+            if use_delimited:
+                # Plain-text completion — the delimited response suffix
+                # instructs the model to emit a custom-delimited payload that
+                # ``_parse_llm_json`` will unpack. No JSON mode requested.
+                kwargs: dict[str, Any] = {}
+                content = prompt + _DELIMITED_RESPONSE_SUFFIX
+            else:
+                # response_format=json_object nudges Gemini (via LiteLLM) toward
+                # valid JSON without forcing a schema. A hard schema was tried
+                # and caused instability on very long outputs (Resources page):
+                # the model got stuck escaping a multi-KB markdown string and
+                # emitted corrupted JSON. ``_parse_llm_json`` handles minor
+                # malformation; keep the nudge, skip the hard schema.
+                kwargs = {"response_format": {"type": "json_object"}}
+                content = prompt
+
+            response = await dispatch_completion(
+                provider=sniff_provider(self._model_name),
+                model=normalize_litellm_model(self._model_name),
+                messages=[{"role": "user", "content": content}],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                **kwargs,
+            )
+            return response.choices[0].message.content or "{}"  # type: ignore[index, union-attr]
 
     async def _call_llm(
         self,

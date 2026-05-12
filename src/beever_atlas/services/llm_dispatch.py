@@ -49,6 +49,57 @@ def _estimate_embedding_tokens(payload: str | list[Any]) -> int:
         return 100
 
 
+def normalize_litellm_model(model_string: str) -> str:
+    """Return a LiteLLM-compatible model identifier.
+
+    Bare ``gemini-*`` strings (the legacy format read from ``LLM_FAST_MODEL`` /
+    ``agent_model_config``) get normalised to ``gemini/<model>``. Already-prefixed
+    strings (``openai/...``, ``anthropic/...``, ``ollama_chat/...``) pass through.
+
+    Mirrors the inline normalisation inside
+    :func:`beever_atlas.llm.model_resolver.resolve_model_object` so call sites
+    that build their own ``dispatch_completion`` request can share the same
+    prefix logic without depending on the resolver's LiteLlm wrapping path.
+    """
+    if "/" in model_string:
+        return model_string
+    if model_string.startswith("gemini-"):
+        return f"gemini/{model_string}"
+    return model_string
+
+
+def sniff_provider(model_string: str) -> str:
+    """Extract the LiteLLM provider prefix from a model identifier.
+
+    For prefixed strings (``openai/gpt-4o-mini``) returns ``openai``. For bare
+    ``gemini-*`` strings returns ``gemini``. Other unprefixed strings default
+    to ``gemini`` (the historical Atlas default; this matches the behaviour of
+    the throttle which keyed on provider name before the per-Endpoint rework
+    in PR-B).
+    """
+    if "/" in model_string:
+        return model_string.split("/", 1)[0]
+    if model_string.startswith("gemini-"):
+        return "gemini"
+    return "gemini"
+
+
+def _is_ollama_connect_error(exc: BaseException, provider: str) -> bool:
+    """Detect a connection failure against an Ollama Endpoint.
+
+    Triggers a force-invalidation of ``LLMProvider._check_ollama_cached`` so
+    a restarted daemon recovers without waiting the full 30s TTL window.
+    See `agent-llm-provider-pluggable` design D8.
+    """
+    if not provider.startswith("ollama"):
+        return False
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout))
+
+
 def _is_429(exc: BaseException) -> bool:
     """Detect rate-limit errors from LiteLLM and from raw HTTP responses.
 
@@ -113,6 +164,16 @@ async def dispatch_completion(
         except BaseException as exc:
             if _is_429(exc):
                 throttle.report_429(provider)
+            elif _is_ollama_connect_error(exc, provider):
+                # Force-invalidate the Ollama health cache so the next
+                # ``resolve_model`` re-probes immediately rather than waiting
+                # out the 30s TTL. Defensive: never let this crash dispatch.
+                try:
+                    from beever_atlas.llm.provider import get_llm_provider
+
+                    get_llm_provider().invalidate_ollama_cache()
+                except Exception:  # noqa: BLE001
+                    pass
             raise
         # Some providers return a 429 inline on the response body without
         # raising. Sniff status_code on the response just in case.

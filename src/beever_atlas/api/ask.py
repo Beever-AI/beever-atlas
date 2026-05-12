@@ -951,13 +951,18 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
             return f"[Could not extract text from {filename}]"
 
     if mime_type.startswith("image/"):
-        # Use Gemini vision for image description. The project uses the
-        # `google.genai` SDK (not the older `google.generativeai`); see
-        # media_extractors.py for the canonical call pattern.
+        # Use Gemini vision for image description via the LiteLLM funnel —
+        # images pass through ``dispatch_completion`` using OpenAI's
+        # multimodal messages shape (data-URL image_url + text).
         try:
-            from google import genai
-            from google.genai import types as genai_types
+            import base64
+
             from beever_atlas.infra.config import get_settings
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             settings = get_settings()
             api_key = getattr(settings, "google_api_key", "") or ""
@@ -969,30 +974,34 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
                 )
                 return f"[Image: {filename}]"
 
-            client = genai.Client(api_key=api_key)
+            model_name = settings.media_vision_model
+            data_url = f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_bytes(data=content, mime_type=mime_type),
-                                genai_types.Part.from_text(
-                                    text=(
+                dispatch_completion(
+                    provider=sniff_provider(model_name),
+                    model=normalize_litellm_model(model_name),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                                {
+                                    "type": "text",
+                                    "text": (
                                         "Describe this image in detail for a "
                                         "knowledge base assistant. Include any "
                                         "visible text, people, objects, charts, "
                                         "diagrams, and overall context."
-                                    )
-                                ),
+                                    ),
+                                },
                             ],
-                        )
+                        }
                     ],
                 ),
                 timeout=60,
             )
-            text = (getattr(response, "text", None) or "").strip()
+            text = (response.choices[0].message.content or "").strip()  # type: ignore[index, union-attr]
             if text:
                 return text
             logger.warning(

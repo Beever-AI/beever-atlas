@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from beever_atlas.infra.config import Settings
 from beever_atlas.llm.model_resolver import (
+    AGENT_NAMES,
     DEFAULT_AGENT_MODELS,
     is_ollama_model,
     resolve_model_object,
@@ -26,6 +28,12 @@ _MODEL_ALIASES: dict[str, str] = {
 # Ollama fallback model when local service is unreachable
 _OLLAMA_FALLBACK = "gemini-2.5-flash-lite"
 
+# Ollama health-check cache TTL — see design D8. A fixed cached "down" used to
+# stick forever; the TTL lets a restarted daemon recover within the window
+# without an Atlas restart. ``dispatch_completion`` can also force-invalidate
+# the cache via :meth:`LLMProvider.invalidate_ollama_cache` on a connect error.
+_OLLAMA_TTL_SECONDS: float = 30.0
+
 # Provider failover — out of OSS scope per the architecture doc.
 # Hardcoded to disabled. Enterprise tier flips ``_FAILOVER_ENABLED`` to
 # True and populates ``_FALLBACK_MAP`` with their multi-provider routing
@@ -41,7 +49,9 @@ class LLMProvider:
         self._logged_deprecations: set[str] = set()
         # Per-agent model overrides loaded from MongoDB (empty until reload)
         self._agent_overrides: dict[str, str] = {}
-        self._ollama_available: bool | None = None  # cached health status
+        # Ollama health cache: (reachable, monotonic_timestamp). ``None`` = never
+        # probed (or force-invalidated). See _OLLAMA_TTL_SECONDS for refresh window.
+        self._ollama_cache: tuple[bool, float] | None = None
 
     def _resolve_alias(self, model: str, context: str) -> str:
         resolved = _MODEL_ALIASES.get(model, model)
@@ -148,12 +158,22 @@ class LLMProvider:
         return {name: self.get_model_string(name) for name in AGENT_NAMES}
 
     def _check_ollama_cached(self) -> bool:
-        """Check Ollama availability with simple caching."""
-        if self._ollama_available is not None:
-            return self._ollama_available
+        """Check Ollama availability with a 30s TTL cache.
+
+        Returns the cached value when fresh; re-probes ``/api/tags`` otherwise.
+        Force-invalidation (e.g. on a dispatch-detected connect error) flips the
+        cache to ``None`` so the next call re-probes immediately.
+        """
+        now = time.monotonic()
+        if self._ollama_cache is not None:
+            value, ts = self._ollama_cache
+            if now - ts < _OLLAMA_TTL_SECONDS:
+                return value
+
         if not self._settings.ollama_enabled:
-            self._ollama_available = False
+            self._ollama_cache = (False, now)
             return False
+
         try:
             import httpx
 
@@ -161,10 +181,21 @@ class LLMProvider:
                 f"{self._settings.ollama_api_base}/api/tags",
                 timeout=3,
             )
-            self._ollama_available = resp.status_code == 200
+            value = resp.status_code == 200
         except Exception:
-            self._ollama_available = False
-        return self._ollama_available
+            value = False
+
+        self._ollama_cache = (value, now)
+        return value
+
+    def invalidate_ollama_cache(self) -> None:
+        """Force a re-probe on the next ``_check_ollama_cached`` call.
+
+        Called from ``services.llm_dispatch.dispatch_completion`` when a
+        connect error is detected against ``OLLAMA_API_BASE``. Lets the cache
+        recover from a transient outage faster than the 30s TTL.
+        """
+        self._ollama_cache = None
 
     def reload(self, overrides: dict[str, str] | None = None) -> None:
         """Refresh per-agent model overrides.
@@ -176,7 +207,7 @@ class LLMProvider:
         if overrides is not None:
             self._agent_overrides = dict(overrides)
         # Reset Ollama cache so next resolve re-checks
-        self._ollama_available = None
+        self._ollama_cache = None
         logger.info(
             "LLMProvider: reloaded with %d agent overrides",
             len(self._agent_overrides),
@@ -227,13 +258,18 @@ _provider: LLMProvider | None = None
 
 
 def _validate_model_resolution(provider: LLMProvider) -> None:
-    """Fail fast when configured ADK models cannot be resolved.
+    """Fail fast when ANY configured ADK model cannot be resolved.
 
-    This catches missing/incompatible LiteLLM installations and invalid model
-    names during app startup instead of during background sync jobs.
+    Runs at app startup so a typo in ``LLM_FAST_MODEL`` or a per-agent override
+    pointing at an unresolvable LiteLLM prefix surfaces immediately instead of
+    during a background sync job. Loops over every agent in ``AGENT_NAMES`` —
+    the legacy ``fast``/``quality`` tier check is included (those still feed
+    into agents whose default is the fast tier).
     """
     from google.adk.models.registry import LLMRegistry
 
+    # Tier-level sanity check kept for callers that read ``provider.fast`` /
+    # ``provider.quality`` directly outside the per-agent path.
     for tier, model_name in (
         ("fast", provider.fast),
         ("quality", provider.quality),
@@ -247,6 +283,20 @@ def _validate_model_resolution(provider: LLMProvider) -> None:
                 % (tier, model_name)
             ) from exc
         logger.info("LLMProvider: validated tier=%s model=%s", tier, model_name)
+
+    # Per-agent resolution check — catches misconfigured DB overrides or any
+    # agent whose default points at a model the registry can't resolve.
+    for agent_name in AGENT_NAMES:
+        model_name = provider.get_model_string(agent_name)
+        try:
+            LLMRegistry.resolve(model_name)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Invalid LLM config: agent={agent_name} model={model_name} "
+                f"cannot be resolved by ADK. Ensure LiteLLM is installed "
+                f"(litellm>=1.75.5) and the model prefix is supported."
+            ) from exc
+        logger.debug("LLMProvider: validated agent=%s model=%s", agent_name, model_name)
 
 
 def init_llm_provider(settings: Settings) -> None:

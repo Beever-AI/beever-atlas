@@ -76,22 +76,66 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
 }
 
 
+# Every LiteLLM completion provider prefix Atlas supports for agent assignments.
+# Keep in sync with the proposal §"What Changes" — `agent-llm-provider-pluggable`.
+SUPPORTED_PROVIDERS: tuple[str, ...] = (
+    "gemini",
+    "openai",
+    "anthropic",
+    "mistral",
+    "deepseek",
+    "groq",
+    "together_ai",
+    "xai",
+    "minimax",
+    "cohere",
+    "ollama_chat",
+    "vertex_ai",
+    "bedrock",
+)
+
+
 def resolve_model_object(model_string: str) -> Any:
     """Convert a model string to an ADK-compatible model object.
 
-    - ``gemini-*`` or other plain strings → returned as-is (Gemini API)
-    - ``ollama_chat/*`` → wrapped in ``LiteLlm(model=...)``
+    Behaviour depends on ``settings.llm_use_litellm_for_gemini``:
 
-    Returns:
-        A string (for Gemini) or LiteLlm instance (for Ollama).
+    Flag ON (default, post-cutover):
+        Every provider — Gemini included — is wrapped in ``LiteLlm(...)``.
+        Bare ``gemini-*`` strings are normalised to ``gemini/gemini-*``
+        before wrapping so the LiteLLM router resolves them correctly.
+
+    Flag OFF (emergency rollback):
+        Gemini bare strings pass through to ADK's native ``google.genai`` path
+        as before this change. Other prefixed strings still wrap in LiteLLM.
+
+    Ollama always wraps regardless of the flag (its current behaviour).
     """
+    settings = get_settings()
+
     if model_string.startswith("ollama_chat/"):
-        settings = get_settings()
         os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
         from google.adk.models.lite_llm import LiteLlm
 
         return LiteLlm(model=model_string)
-    return model_string
+
+    if not settings.llm_use_litellm_for_gemini:
+        # Legacy native path — bare Gemini strings consumed by ADK directly.
+        return model_string
+
+    # Cutover-on: wrap every provider in LiteLLM so dispatch funnels through
+    # litellm.acompletion. Normalise bare gemini-* to a fully-prefixed form first.
+    if model_string.startswith("gemini-"):
+        model_string = f"gemini/{model_string}"
+
+    if "/" not in model_string:
+        # No provider prefix and not a bare gemini-* — let it through unchanged.
+        # ``validate_model_string`` should have caught this upstream.
+        return model_string
+
+    from google.adk.models.lite_llm import LiteLlm
+
+    return LiteLlm(model=model_string)
 
 
 def is_ollama_model(model_string: str) -> bool:
@@ -100,12 +144,24 @@ def is_ollama_model(model_string: str) -> bool:
 
 
 def validate_model_string(model_string: str) -> str | None:
-    """Validate a model string format. Returns error message or None if valid."""
+    """Validate a model string format. Returns error message or None if valid.
+
+    Accepts either a bare ``gemini-*`` (back-compat — implicitly the ``gemini/``
+    prefix) or a fully-qualified ``<provider>/<model>`` where ``<provider>`` is
+    in :data:`SUPPORTED_PROVIDERS`.
+    """
     if model_string.startswith("gemini-"):
         return None
-    if model_string.startswith("ollama_chat/"):
-        return None
-    return (
-        f"Invalid model '{model_string}'. Must start with 'gemini-' "
-        f"(Gemini API) or 'ollama_chat/' (Ollama local)."
-    )
+    if "/" not in model_string:
+        return (
+            f"Model {model_string!r} must be prefixed with a provider "
+            f"(e.g. 'openai/gpt-4o-mini'). Bare 'gemini-2.5-flash' is also accepted "
+            f"for backward compatibility."
+        )
+    prefix = model_string.split("/", 1)[0]
+    if prefix not in SUPPORTED_PROVIDERS:
+        return (
+            f"Unsupported provider {prefix!r}. Supported: "
+            f"{', '.join(SUPPORTED_PROVIDERS)}."
+        )
+    return None

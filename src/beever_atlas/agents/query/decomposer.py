@@ -92,37 +92,32 @@ async def _decompose_complex(question: str) -> QueryPlan:
         from beever_atlas.llm.provider import get_llm_provider
 
         provider = get_llm_provider()
-        model_name = provider.resolve_model("qa_router")
+        # ``get_model_string`` always returns a plain string. The Ollama
+        # fallback was needed only when ``resolve_model`` returned a LiteLlm
+        # object for the local path — since every provider now flows through
+        # LiteLLM via ``dispatch_completion`` the path is uniform.
+        model_name = provider.get_model_string("qa_router")
 
-        # Ollama models return a LiteLlm object — fall back to single query
-        if not isinstance(model_name, str):
-            logger.warning(
-                "QueryDecomposer: Ollama/non-string model %r, skipping LLM decomposition (degraded)",
-                type(model_name).__name__,
-            )
-            return QueryPlan(
-                original=question,
-                is_simple=False,
-                internal_queries=[SubQuery(query=question, focus="main")],
-            )
-
-        from google import genai  # type: ignore[import-untyped]
-        from beever_atlas.infra.config import get_settings
+        from beever_atlas.services.llm_dispatch import (
+            dispatch_completion,
+            normalize_litellm_model,
+            sniff_provider,
+        )
 
         prompt = DECOMPOSITION_PROMPT.format(question=question)
-        client = genai.Client(api_key=get_settings().google_api_key)
 
-        # Use the async client so asyncio.wait_for cancellation actually
+        # Use the async dispatch so asyncio.wait_for cancellation actually
         # propagates to the underlying HTTP request (threads cannot be
         # cancelled in Python — a thread-based path would leak on timeout).
         response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=model_name,
-                contents=prompt,
+            dispatch_completion(
+                provider=sniff_provider(model_name),
+                model=normalize_litellm_model(model_name),
+                messages=[{"role": "user", "content": prompt}],
             ),
             timeout=10.0,
         )
-        text = (response.text or "").strip()
+        text = (response.choices[0].message.content or "").strip()  # type: ignore[index, union-attr]
 
         # Strip markdown fences if present
         text = re.sub(r"^```[a-z]*\n?", "", text)

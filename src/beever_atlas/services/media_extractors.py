@@ -170,31 +170,30 @@ class MediaExtractor(ABC):
         """Extract content from file bytes."""
 
     async def _digest_document(self, text: str) -> str:
-        """Digest a document into a concise summary using direct Gemini API."""
+        """Digest a document into a concise summary via the LiteLLM funnel."""
         settings = get_settings()
         if not settings.google_api_key:
             return text[:4000] + ("\n[...truncated]" if len(text) > 4000 else "")
         try:
-            from google.genai import types as genai_types
-
-            client = await _get_gemini_client()
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             prompt = DOCUMENT_DIGEST_PROMPT.format(document_text=text[:8000])
+            model_name = settings.media_vision_model
 
             async with GEMINI_LIMITER:
                 response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=settings.media_vision_model,
-                        contents=[
-                            genai_types.Content(
-                                role="user",
-                                parts=[genai_types.Part.from_text(text=prompt)],
-                            )
-                        ],
+                    dispatch_completion(
+                        provider=sniff_provider(model_name),
+                        model=normalize_litellm_model(model_name),
+                        messages=[{"role": "user", "content": prompt}],
                     ),
                     timeout=60,
                 )
-            return response.text or text[:4000]
+            return response.choices[0].message.content or text[:4000]  # type: ignore[index, union-attr]
         except Exception:
             logger.warning("Document digestion failed", exc_info=True)
             return text[:4000] + ("\n[...truncated]" if len(text) > 4000 else "")
@@ -407,7 +406,7 @@ class ImageExtractor(MediaExtractor):
     }
 
     async def _describe_image(self, data: bytes, message_context: str, filename: str = "") -> str:
-        """Describe an image using direct Gemini API with multimodal parts."""
+        """Describe an image via the LiteLLM funnel using OpenAI multimodal shape."""
         settings = get_settings()
         if not settings.google_api_key:
             return ""
@@ -416,13 +415,20 @@ class ImageExtractor(MediaExtractor):
         mime_type = self._IMAGE_MIME_MAP.get(ext, "image/png")
 
         try:
-            from google.genai import types as genai_types
+            import base64
 
-            client = await _get_gemini_client()
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             prompt = IMAGE_DESCRIPTION_PROMPT
             if message_context:
                 prompt += f"\n\nMessage context: {message_context[:200]}"
+
+            model_name = settings.media_vision_model
+            data_url = f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"
 
             logger.info(
                 "ImageExtractor: calling generate_content for %s (%s, %d bytes)",
@@ -433,24 +439,22 @@ class ImageExtractor(MediaExtractor):
             async with _get_image_semaphore():
                 async with GEMINI_LIMITER:
                     response = await asyncio.wait_for(
-                        client.aio.models.generate_content(
-                            model=settings.media_vision_model,
-                            contents=[
-                                genai_types.Content(
-                                    role="user",
-                                    parts=[
-                                        genai_types.Part.from_bytes(
-                                            data=data,
-                                            mime_type=mime_type,
-                                        ),
-                                        genai_types.Part.from_text(text=prompt),
+                        dispatch_completion(
+                            provider=sniff_provider(model_name),
+                            model=normalize_litellm_model(model_name),
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "image_url", "image_url": {"url": data_url}},
+                                        {"type": "text", "text": prompt},
                                     ],
-                                )
+                                }
                             ],
                         ),
                         timeout=60,
                     )
-            result = response.text or ""
+            result = response.choices[0].message.content or ""  # type: ignore[index, union-attr]
             logger.info(
                 "ImageExtractor: result for %s — %d chars",
                 filename,
@@ -601,7 +605,17 @@ class OfficeExtractor(MediaExtractor):
 
 
 class VideoExtractor(MediaExtractor):
-    """Extract content from video files via combined audio + visual analysis."""
+    """Extract content from video files via combined audio + visual analysis.
+
+    DOCUMENTED EXCEPTION — agent-llm-provider-pluggable design D8 / D10.
+    This extractor uses the native ``google.genai`` Files API
+    (``client.aio.files.upload`` → ``Part.from_uri``) because LiteLLM has no
+    equivalent primitive for large-file upload-and-reference under Gemini.
+    The image-only extractor migrated to ``dispatch_completion`` with inline
+    data URLs (under 20 MB); video files routinely exceed that ceiling and
+    must use the upload-and-poll Files API path. Migration becomes viable
+    once LiteLLM exposes a unified file-upload abstraction across providers.
+    """
 
     @property
     def supported_mime_types(self) -> list[str]:
@@ -785,7 +799,14 @@ class VideoExtractor(MediaExtractor):
 
 
 class AudioExtractor(MediaExtractor):
-    """Transcribe audio files using Gemini multimodal API."""
+    """Transcribe audio files using Gemini multimodal API.
+
+    DOCUMENTED EXCEPTION — agent-llm-provider-pluggable design D8 / D10.
+    Same justification as :class:`VideoExtractor` above: audio uploads exceed
+    inline-data size limits and require Gemini's Files API (upload → URI ref
+    → generate_content), for which LiteLLM has no normalised abstraction.
+    Migration unblocks when LiteLLM exposes a unified file-upload primitive.
+    """
 
     @property
     def supported_mime_types(self) -> list[str]:
