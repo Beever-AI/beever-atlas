@@ -345,22 +345,8 @@ async def diff_and_apply(
     return diff
 
 
-_BASE_URL_BY_PRESET: dict[str, str] = {
-    "google_ai": "https://generativelanguage.googleapis.com/v1beta/openai/",
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "mistral": "https://api.mistral.ai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "xai": "https://api.x.ai/v1",
-    "minimax": "https://api.minimax.chat/v1",
-    "cohere": "https://api.cohere.ai/v1",
-    "voyage": "https://api.voyageai.com/v1",
-    "jina_ai": "https://api.jina.ai/v1",
-    "ollama": "http://localhost:11434/v1",
-    "vllm": "http://localhost:8000/v1",
-    "lmstudio": "http://localhost:1234/v1",
-}
+# Single source of truth lives in ``llm/presets.py`` (derived from ENDPOINT_PRESETS).
+from beever_atlas.llm.presets import BASE_URL_BY_PRESET as _BASE_URL_BY_PRESET
 
 
 def format_diff(diff: list[_DiffEntry]) -> str:

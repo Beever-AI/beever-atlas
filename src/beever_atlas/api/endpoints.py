@@ -113,7 +113,9 @@ def _mask_credential(envelope: dict[str, str] | None) -> tuple[bool, str]:
     except Exception:  # noqa: BLE001
         return True, "***"
     if isinstance(decrypted, str):
-        if len(decrypted) < 8:
+        # 16 chars is the shortest real API-key format across supported
+        # providers; below that, showing 8 of N characters leaks too much.
+        if len(decrypted) < 16:
             return True, "***"
         return True, f"{decrypted[:4]}...{decrypted[-4:]}"
     if isinstance(decrypted, dict):
@@ -393,7 +395,16 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
             **extra_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
-        error_msg = f"{type(exc).__name__}: {str(exc)[:200]}"
+        # Sanitise the error before returning it — some LiteLLM SDK exceptions
+        # embed the full request kwargs (including ``api_key``) in their repr.
+        # When the message looks like it could carry credential fragments, drop
+        # the body and return only the exception class + a generic note.
+        raw = str(exc)[:200]
+        lowered = raw.lower()
+        if any(s in lowered for s in ("api_key", "bearer ", "sk-", "aizasy", "secret", "token=")):
+            error_msg = f"{type(exc).__name__}: authentication or connection error (details redacted)"
+        else:
+            error_msg = f"{type(exc).__name__}: {raw}"
         await _store().record_test_result(endpoint_id, ok=False, error=error_msg)
         return TestConnectionResponse(ok=False, error=error_msg)
 

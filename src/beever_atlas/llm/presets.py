@@ -204,6 +204,18 @@ def get_endpoint_preset(key: str) -> EndpointPreset | None:
     return next((p for p in ENDPOINT_PRESETS if p.get("key") == key), None)
 
 
+# Derived from ENDPOINT_PRESETS — single source of truth for "preset key →
+# default base URL". Imported by ``scripts/migrate_to_endpoint_catalog.py`` and
+# ``scripts/atlas_apply.py`` so the URL table never drifts across three files.
+BASE_URL_BY_PRESET: dict[str, str] = {
+    key: url
+    for key, url in (
+        (p.get("key", ""), p.get("base_url", "")) for p in ENDPOINT_PRESETS
+    )
+    if key and url
+}
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Assignment presets — full 17-consumer Assignment seeds.
 # ────────────────────────────────────────────────────────────────────────
@@ -444,6 +456,7 @@ def apply_preset(preset_key: str, endpoints: list[Endpoint]) -> dict[str, Assign
 
 __all__ = [
     "APPLY_PRESETS",
+    "BASE_URL_BY_PRESET",
     "ENDPOINT_PRESETS",
     "EndpointPreset",
     "PresetRequirementsNotMet",

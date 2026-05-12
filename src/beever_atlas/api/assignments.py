@@ -23,7 +23,7 @@ from beever_atlas.llm.assignments import (
     DEFAULT_CONSUMERS,
     ResponseFormat,
 )
-from beever_atlas.llm.endpoints import EndpointStore
+from beever_atlas.llm.endpoints import EndpointStore, preset_to_provider
 from beever_atlas.llm.model_resolver import (
     AGENT_CAPABILITIES,
     suggest_compatible_assignments,
@@ -170,9 +170,15 @@ async def get_assignment(consumer: str) -> AssignmentResponse:
 
 @router.put("/{consumer}", response_model=AssignmentResponse)
 async def upsert_assignment(consumer: str, req: UpdateAssignmentRequest) -> AssignmentResponse:
-    """Insert-or-update an Assignment. Validates the Endpoint exists, the model
-    is in the Endpoint's curated list, and the (consumer, model) pair satisfies
-    every required capability."""
+    """Insert-or-update an Assignment. Validates the consumer name is one of the
+    known consumers, the Endpoint exists, the model is in the Endpoint's curated
+    list, and the (consumer, model) pair satisfies every required capability."""
+    # Reject arbitrary consumer names — only the 16 agents + ``embedding`` are valid.
+    if consumer not in DEFAULT_CONSUMERS:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "unknown_consumer", "consumer": consumer, "valid": list(DEFAULT_CONSUMERS)},
+        )
     # Verify Endpoint exists.
     endpoint = await _endpoint_store().get(req.endpoint_id)
     if endpoint is None:
@@ -315,20 +321,7 @@ async def apply_preset_handler(req: PresetRequest) -> PresetResponse:
 # ─── Helpers (private) ────────────────────────────────────────────────────
 
 
-def _preset_to_provider(preset: str) -> str:
-    """Translate an Endpoint preset key to a LiteLLM provider prefix.
-
-    Most presets are 1:1 (``openai`` → ``openai``, ``anthropic`` → ``anthropic``).
-    A few diverge: ``google_ai`` → ``gemini``, ``ollama`` (embedding) →
-    ``ollama``, ``litellm_proxy`` / ``openrouter`` / ``vllm`` / ``lmstudio``
-    → ``openai`` (they implement the OpenAI shape).
-    """
-    return {
-        "google_ai": "gemini",
-        "ollama": "ollama",
-        "vllm": "openai",
-        "lmstudio": "openai",
-        "openrouter": "openai",
-        "litellm_proxy": "openai",
-        "custom": "openai",
-    }.get(preset, preset)
+# Single source of truth for "Endpoint preset key → LiteLLM provider prefix"
+# lives in ``llm/endpoints.py``. Re-bound here under the historical private
+# name so the existing call sites in this module keep working.
+_preset_to_provider = preset_to_provider

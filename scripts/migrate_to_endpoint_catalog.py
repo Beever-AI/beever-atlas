@@ -49,20 +49,8 @@ _ENV_VAR_BY_PROVIDER: dict[str, tuple[str, str, AuthType]] = {
 }
 
 
-_BASE_URL_BY_PRESET: dict[str, str] = {
-    "google_ai": "https://generativelanguage.googleapis.com/v1beta/openai/",
-    "openai": "https://api.openai.com/v1",
-    "anthropic": "https://api.anthropic.com/v1",
-    "mistral": "https://api.mistral.ai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "xai": "https://api.x.ai/v1",
-    "together_ai": "https://api.together.xyz/v1",
-    "minimax": "https://api.minimax.chat/v1",
-    "cohere": "https://api.cohere.ai/v1",
-    "voyage": "https://api.voyageai.com/v1",
-    "jina_ai": "https://api.jina.ai/v1",
-}
+# Single source of truth lives in ``llm/presets.py`` (derived from ENDPOINT_PRESETS).
+from beever_atlas.llm.presets import BASE_URL_BY_PRESET as _BASE_URL_BY_PRESET
 
 
 async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
@@ -86,8 +74,10 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
     endpoints_created: dict[str, str] = {}  # preset → endpoint_id
     assignments_created = 0
 
+    encryptor_unavailable = False
+
     # ── Step 1: synthesise Endpoints from env credentials ──────────────
-    for preset, (env_var, _preset_key, auth_type) in _ENV_VAR_BY_PROVIDER.items():
+    for preset, (env_var, _unused_preset_key, auth_type) in _ENV_VAR_BY_PROVIDER.items():
         env_value = os.environ.get(env_var, "").strip()
         if not env_value:
             continue
@@ -110,13 +100,16 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
                 env_var,
             )
         except RuntimeError:
-            # CREDENTIAL_MASTER_KEY unconfigured — skip silently; the operator
-            # sees the existing env-based path keep working.
+            # CREDENTIAL_MASTER_KEY unconfigured — skip this provider but keep
+            # going. A no-auth Ollama endpoint (Step 2) needs no encryption, so
+            # it can still be created. We only report the "skipped" status at the
+            # end if NOTHING was created.
+            encryptor_unavailable = True
             logger.debug(
                 "migrate_to_endpoint_catalog: master key unavailable, skipping %s",
                 preset,
             )
-            return {"skipped": "credential_encryptor_unavailable"}
+            continue
 
     # ── Step 2: synthesise an Ollama Endpoint when enabled ──────────────
     if os.environ.get("OLLAMA_ENABLED", "").strip().lower() == "true":
@@ -204,6 +197,12 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
             Assignment(consumer=consumer, endpoint_id=target_ep_id, model=model_bare)
         )
         assignments_created += 1
+
+    if not endpoints_created and encryptor_unavailable:
+        # We had env credentials to migrate but couldn't encrypt any of them,
+        # and no no-auth endpoint was created either — report the skip so the
+        # operator knows the legacy env path is still the only one wired.
+        return {"skipped": "credential_encryptor_unavailable"}
 
     logger.info(
         "migrate_to_endpoint_catalog: created %d endpoints + %d assignments",

@@ -34,24 +34,6 @@ _OLLAMA_FALLBACK = "gemini-2.5-flash-lite"
 # the cache via :meth:`LLMProvider.invalidate_ollama_cache` on a connect error.
 _OLLAMA_TTL_SECONDS: float = 30.0
 
-
-def _preset_to_provider(preset: str) -> str:
-    """Translate an Endpoint preset key to a LiteLLM provider prefix.
-
-    Mirrors the helper in ``api/assignments.py`` — kept here for the
-    ``LLMProvider.resolve_for_call`` resolution path so the call site doesn't
-    cross-import an API module.
-    """
-    return {
-        "google_ai": "gemini",
-        "ollama": "ollama",
-        "vllm": "openai",
-        "lmstudio": "openai",
-        "openrouter": "openai",
-        "litellm_proxy": "openai",
-        "custom": "openai",
-    }.get(preset, preset)
-
 # Provider failover — wired through per-Assignment ``fallback_endpoint_id``
 # in the new Endpoint+Assignment data model (PR-B/H). The dead
 # ``_FAILOVER_ENABLED`` / ``_FALLBACK_MAP`` module constants from the
@@ -176,7 +158,7 @@ class LLMProvider:
         """
         from beever_atlas.llm.agent_credentials import get_runtime_credential
         from beever_atlas.llm.assignments import AssignmentStore, ResolvedAssignment
-        from beever_atlas.llm.endpoints import EndpointStore
+        from beever_atlas.llm.endpoints import EndpointStore, preset_to_provider
         from beever_atlas.services.circuit_breaker import get_circuit_breaker
 
         if stores is None:
@@ -239,7 +221,7 @@ class LLMProvider:
         )
 
         # Convert the bare ``model`` field into a fully-qualified LiteLLM id.
-        provider_prefix = _preset_to_provider(target_endpoint.preset)
+        provider_prefix = preset_to_provider(target_endpoint.preset)
         litellm_model = (
             assignment.model
             if "/" in assignment.model

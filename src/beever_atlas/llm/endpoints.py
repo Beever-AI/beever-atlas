@@ -27,6 +27,28 @@ logger = logging.getLogger(__name__)
 AuthType = Literal["api_key", "aws_iam", "google_sa", "none", "oauth"]
 
 
+# Endpoint preset key → LiteLLM provider prefix. Most are 1:1; a few diverge:
+# ``google_ai`` is the operator-facing label but LiteLLM uses ``gemini/``;
+# the OpenAI-compatible proxies (vLLM, LM Studio, OpenRouter, LiteLLM Proxy,
+# Custom) all implement the OpenAI request shape. SINGLE SOURCE OF TRUTH —
+# imported by ``llm/provider.py`` (resolve_for_call) and ``api/assignments.py``
+# (capability validation) so dispatch + validation never disagree.
+_PRESET_TO_PROVIDER: dict[str, str] = {
+    "google_ai": "gemini",
+    "ollama": "ollama",
+    "vllm": "openai",
+    "lmstudio": "openai",
+    "openrouter": "openai",
+    "litellm_proxy": "openai",
+    "custom": "openai",
+}
+
+
+def preset_to_provider(preset: str) -> str:
+    """Translate an Endpoint preset key to its LiteLLM provider prefix."""
+    return _PRESET_TO_PROVIDER.get(preset, preset)
+
+
 # Default per-preset RPM budgets — conservative free-tier-safe values.
 # Operators raise via env (``LLM_PROVIDER_RPM_<PROVIDER>``) or via the UI on
 # the Endpoint document. See design D7. PR-B.2 wires these into ``LLMThrottle``;
@@ -400,4 +422,5 @@ __all__ = [
     "discover_models",
     "encrypt_endpoint_credential",
     "decrypt_endpoint_credential",
+    "preset_to_provider",
 ]
