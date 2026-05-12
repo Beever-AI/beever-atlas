@@ -6,14 +6,14 @@ import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
 vi.mock("@/components/settings/SyncDefaultsSection", () => ({
   SyncDefaultsSection: () => <div>SYNC_DEFAULTS_TAB</div>,
 }));
-vi.mock("@/components/settings/AISetup", () => ({
-  AISetup: () => <div>AI_SETUP_TAB</div>,
+vi.mock("@/components/settings/EndpointsTab", () => ({
+  EndpointsTab: () => <div>ENDPOINTS_TAB</div>,
 }));
-vi.mock("@/components/settings/EmbeddingSettings", () => ({
-  EmbeddingSettings: () => <div>EMBEDDING_LEGACY_TAB</div>,
+vi.mock("@/components/settings/EmbeddingTab", () => ({
+  EmbeddingTab: () => <div>EMBEDDING_TAB</div>,
 }));
-vi.mock("@/components/settings/AgentModelSettings", () => ({
-  AgentModelSettings: () => <div>AGENT_MODELS_LEGACY_TAB</div>,
+vi.mock("@/components/settings/AgentModelsTab", () => ({
+  AgentModelsTab: () => <div>AGENT_MODELS_TAB</div>,
 }));
 vi.mock("@/components/settings/PlatformCard", () => ({
   PlatformCard: ({ connection }: { connection: { id: string } }) => (
@@ -31,13 +31,10 @@ vi.mock("@/hooks/useConnections", () => ({
   useDeleteConnection: () => ({ remove: vi.fn(), loading: false, error: null }),
 }));
 
-import {
-  SettingsPage,
-  IntegrationsTab,
-  AgentModelsLegacyShell,
-} from "../SettingsPage";
-import { AISetup } from "@/components/settings/AISetup";
-import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
+import { SettingsPage, IntegrationsTab } from "../SettingsPage";
+import { EndpointsTab } from "@/components/settings/EndpointsTab";
+import { EmbeddingTab } from "@/components/settings/EmbeddingTab";
+import { AgentModelsTab } from "@/components/settings/AgentModelsTab";
 import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
 
 function renderAt(path: string) {
@@ -48,9 +45,10 @@ function renderAt(path: string) {
           <Route index element={<Navigate to="integrations" replace />} />
           <Route path="integrations" element={<IntegrationsTab />} />
           <Route path="channels" element={<SyncDefaultsSection />} />
-          <Route path="ai-setup" element={<AISetup />} />
-          <Route path="embedding" element={<EmbeddingSettings />} />
-          <Route path="agents" element={<AgentModelsLegacyShell />} />
+          <Route path="endpoints" element={<EndpointsTab />} />
+          <Route path="embedding" element={<EmbeddingTab />} />
+          <Route path="agents" element={<AgentModelsTab />} />
+          <Route path="ai-setup" element={<Navigate to="/settings/endpoints" replace />} />
           <Route path="*" element={<Navigate to="/settings/integrations" replace />} />
         </Route>
       </Routes>
@@ -70,18 +68,37 @@ describe("SettingsPage routing", () => {
   it("redirects /settings to the Integrations tab", async () => {
     renderAt("/settings");
     await waitFor(() => expect(screen.getByText("No connections yet")).toBeTruthy());
-    // The Settings page chrome is present.
     expect(screen.getByRole("heading", { name: "Settings" })).toBeTruthy();
   });
 
-  it("renders the embedding tab content at /settings/embedding", async () => {
-    renderAt("/settings/embedding");
-    await waitFor(() => expect(screen.getByText("EMBEDDING_LEGACY_TAB")).toBeTruthy());
+  it("renders the Endpoints tab content at /settings/endpoints", async () => {
+    renderAt("/settings/endpoints");
+    await waitFor(() => expect(screen.getByText("ENDPOINTS_TAB")).toBeTruthy());
   });
 
-  it("renders the AI Setup tab content at /settings/ai-setup", async () => {
+  it("renders the Embedding tab content at /settings/embedding", async () => {
+    renderAt("/settings/embedding");
+    await waitFor(() => expect(screen.getByText("EMBEDDING_TAB")).toBeTruthy());
+  });
+
+  it("renders the Agent models tab content at /settings/agents", async () => {
+    renderAt("/settings/agents");
+    await waitFor(() => expect(screen.getByText("AGENT_MODELS_TAB")).toBeTruthy());
+  });
+
+  it("redirects /settings/ai-setup to /settings/endpoints", async () => {
     renderAt("/settings/ai-setup");
-    await waitFor(() => expect(screen.getByText("AI_SETUP_TAB")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("ENDPOINTS_TAB")).toBeTruthy());
+  });
+
+  it("shows the new tab labels in the tab bar", async () => {
+    renderAt("/settings/integrations");
+    await waitFor(() => expect(screen.getByText("No connections yet")).toBeTruthy());
+    expect(screen.getByRole("link", { name: /Endpoints/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Embedding/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Agent models/i })).toBeTruthy();
+    // The old "AI Setup" tab is gone.
+    expect(screen.queryByRole("link", { name: /AI Setup/i })).toBeNull();
   });
 
   it("falls back to Integrations for an unknown /settings/* sub-path", async () => {
@@ -92,7 +109,7 @@ describe("SettingsPage routing", () => {
   it("navigates between tabs when a tab link is clicked", async () => {
     renderAt("/settings/integrations");
     await waitFor(() => expect(screen.getByText("No connections yet")).toBeTruthy());
-    fireEvent.click(screen.getByRole("link", { name: /Agent Models \(legacy\)/i }));
-    await waitFor(() => expect(screen.getByText("AGENT_MODELS_LEGACY_TAB")).toBeTruthy());
+    fireEvent.click(screen.getByRole("link", { name: /Agent models/i }));
+    await waitFor(() => expect(screen.getByText("AGENT_MODELS_TAB")).toBeTruthy());
   });
 });

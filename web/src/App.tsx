@@ -19,11 +19,11 @@ import { SharedAskPage } from "@/pages/SharedAskPage";
 import {
   SettingsPage,
   IntegrationsTab,
-  AgentModelsLegacyShell,
 } from "@/pages/SettingsPage";
 import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
-import { AISetup } from "@/components/settings/AISetup";
-import { EmbeddingSettings } from "@/components/settings/EmbeddingSettings";
+import { EndpointsTab } from "@/components/settings/EndpointsTab";
+import { EmbeddingTab } from "@/components/settings/EmbeddingTab";
+import { AgentModelsTab } from "@/components/settings/AgentModelsTab";
 import { ActivityPage } from "@/pages/ActivityPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { NotFound } from "@/pages/NotFound";
@@ -114,9 +114,12 @@ function AppShell() {
                 <Route index element={<Navigate to="integrations" replace />} />
                 <Route path="integrations" element={<IntegrationsTab />} />
                 <Route path="channels" element={<SyncDefaultsSection />} />
-                <Route path="ai-setup" element={<AISetup />} />
-                <Route path="embedding" element={<EmbeddingSettings />} />
-                <Route path="agents" element={<AgentModelsLegacyShell />} />
+                <Route path="endpoints" element={<EndpointsTab />} />
+                <Route path="embedding" element={<EmbeddingTab />} />
+                <Route path="agents" element={<AgentModelsTab />} />
+                {/* Legacy redirect — ``/settings/ai-setup`` is the old unified
+                    tab; its concerns split into Endpoints + Embedding + Agents. */}
+                <Route path="ai-setup" element={<Navigate to="/settings/endpoints" replace />} />
                 {/* Unknown ``/settings/*`` sub-path → default tab, not the global 404. */}
                 <Route path="*" element={<Navigate to="/settings/integrations" replace />} />
               </Route>

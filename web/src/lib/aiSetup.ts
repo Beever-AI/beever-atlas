@@ -279,6 +279,35 @@ export function getEndpointPreset(key: string): EndpointPreset | undefined {
   return ENDPOINT_PRESETS.find((p) => p.key === key);
 }
 
+/**
+ * Presets whose providers ship an embeddings endpoint. Used by the Embedding
+ * tab to (a) filter which existing endpoints can be picked as the embedding
+ * source and (b) restrict the "Add embedding endpoint" preset chips.
+ *
+ * Heuristic on ``e.preset`` — ``litellm_proxy`` is included because a LiteLLM
+ * proxy can front any embedding-capable backend.
+ */
+export const EMBEDDING_CAPABLE_PRESETS = new Set<string>([
+  "jina_ai",
+  "voyage",
+  "openai",
+  "gemini",
+  "google_ai",
+  "ollama",
+  "custom",
+  "litellm_proxy",
+]);
+
+/** True when an endpoint's preset is one we know can serve embeddings. */
+export function endpointSupportsEmbedding(e: Pick<Endpoint, "preset">): boolean {
+  return EMBEDDING_CAPABLE_PRESETS.has(e.preset);
+}
+
+/** True for ``EndpointPreset``s we offer in the "Add embedding endpoint" picker. */
+export function presetSupportsEmbedding(p: EndpointPreset): boolean {
+  return EMBEDDING_CAPABLE_PRESETS.has(p.key);
+}
+
 export function formatCost(spec: { input_cost_per_m?: number; output_cost_per_m?: number; cost_per_m?: number }): string {
   if (typeof spec.cost_per_m === "number") {
     return spec.cost_per_m === 0 ? "free" : `~$${spec.cost_per_m.toFixed(2)}/M`;

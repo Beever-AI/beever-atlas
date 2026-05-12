@@ -8,20 +8,20 @@ import {
   Plug,
   Cpu,
   Layers,
+  KeyRound,
 } from "lucide-react";
 import { useConnections, useDeleteConnection } from "@/hooks/useConnections";
 import { PlatformCard } from "@/components/settings/PlatformCard";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
 import { FileImportWizard } from "@/components/settings/FileImportWizard";
 import { ManageChannelsDialog } from "@/components/settings/ManageChannelsDialog";
-import { AgentModelSettings } from "@/components/settings/AgentModelSettings";
 import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 type PickerOption = Platform | "file";
 
 /** Tab slug as it appears in the URL: ``/settings/<slug>``. */
-export type SettingsTab = "integrations" | "channels" | "ai-setup" | "embedding" | "agents";
+export type SettingsTab = "integrations" | "channels" | "endpoints" | "embedding" | "agents";
 
 /** Shape passed down to tab route elements via ``<Outlet context>``. */
 export type SettingsOutletContext = {
@@ -69,21 +69,21 @@ const TABS: { value: SettingsTab; label: string; description: string; Icon: Reac
   { value: "integrations", label: "Integrations", description: "Connected platforms and data sources", Icon: Plug },
   { value: "channels", label: "Channels", description: "Default sync behavior for new channels", Icon: Settings2 },
   {
-    value: "ai-setup",
-    label: "AI Setup",
-    description: "Endpoints + per-agent assignments + quick presets (unified)",
-    Icon: Cpu,
+    value: "endpoints",
+    label: "Endpoints",
+    description: "Model providers you've connected — API endpoints, local Ollama, credentials",
+    Icon: KeyRound,
   },
   {
     value: "embedding",
-    label: "Embedding (legacy)",
-    description: "Vector model that powers semantic search — superseded by AI Setup",
+    label: "Embedding",
+    description: "Vector model for semantic search — changing it re-embeds everything",
     Icon: Layers,
   },
   {
     value: "agents",
-    label: "Agent Models (legacy)",
-    description: "Per-agent LLM assignments — superseded by AI Setup",
+    label: "Agent models",
+    description: "Which model each ingestion / wiki / Ask agent uses",
     Icon: Cpu,
   },
 ];
@@ -317,16 +317,5 @@ export function IntegrationsTab() {
         </div>
       )}
     </>
-  );
-}
-
-/** The legacy Agent Models tab — wraps ``AgentModelSettings`` in the card chrome
- *  that ``SettingsPage`` used to apply inline. Route element for ``/settings/agents``.
- *  (Goes away in PR4 when ``/settings/agents`` switches to the new ``AgentModelsTab``.) */
-export function AgentModelsLegacyShell() {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-5">
-      <AgentModelSettings />
-    </div>
   );
 }
