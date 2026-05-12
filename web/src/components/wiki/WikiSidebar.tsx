@@ -28,14 +28,6 @@ const INDENT_PX = 10; // per-level horizontal step (was 14 — too greedy at dep
 const ROW_BASE_PADDING = 8;
 const AUTO_EXPAND_MAX_DEPTH = 2; // root + first level of nesting expand by default
 
-// Renumber topic section_numbers for sidebar display.
-function displaySectionNumber(num: string): string {
-  if (!num) return num;
-  if (num === "2") return "1";
-  if (num.startsWith("2.")) return "1" + num.slice(1);
-  return num;
-}
-
 function iconForFixedPage(node: WikiPageNode): LucideIcon {
   const key = (node.slug || node.id || "").toLowerCase();
   if (key.includes("overview")) return BookOpen;
@@ -127,7 +119,7 @@ function SidebarItem({ node, isActive, onClick, indent = 0, displayTitle }: Side
           >
             {!isFixed && node.section_number && (
               <span className="shrink-0 mt-0.5 text-[10.5px] text-muted-foreground/70 font-mono font-semibold tabular-nums">
-                {displaySectionNumber(node.section_number)}
+                {node.section_number}
               </span>
             )}
             {FixedIcon ? (
