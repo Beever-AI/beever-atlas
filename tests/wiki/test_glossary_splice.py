@@ -14,11 +14,14 @@ from beever_atlas.wiki.compiler import (
     _collect_glossary_entries,
     _render_glossary_terms_table,
     _resolve_topic_compile_threshold,
-    _rewrite_glossary_wikilinks,
+    _rewrite_topic_wikilinks,
     _slugify,
     _splice_glossary_sections,
     _topic_slug_for_title,
 )
+
+# Back-compat alias so existing test bodies keep working
+_rewrite_glossary_wikilinks = _rewrite_topic_wikilinks
 
 
 def _cluster(title, entities):

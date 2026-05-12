@@ -1017,11 +1017,11 @@ def _build_compiled_topic_slug_index(
 _GLOSSARY_WIKILINK_RE = re.compile(r"\[\[([^\[\]\n]+?)\]\]")
 
 
-def _rewrite_glossary_wikilinks(
+def _rewrite_topic_wikilinks(
     content: str,
     compiled_topic_titles: list[str] | set[str] | None,
 ) -> str:
-    """Convert ``[[Title]]`` references in glossary content to native links.
+    """Convert ``[[Title]]`` references in wiki content to native links.
 
     For each match:
       * if ``Title`` (case-insensitively) matches a compiled topic, emit
@@ -1029,11 +1029,11 @@ def _rewrite_glossary_wikilinks(
         passes through without consulting the ``cross_links`` map (which
         the compiler-built cache doesn't populate).
       * otherwise drop the brackets and keep the plain title text so the
-        Glossary stops surfacing red broken links to topics that were
-        skipped by the relevance/thresh​old gate.
+        page stops surfacing red broken links to topics that were
+        skipped by the relevance/threshold gate.
 
     Operates on the raw markdown string — both inside table cells and in
-    the inline ``Used in`` lines the LLM emits for term details.
+    the inline ``Used in`` / ``Topic activity`` lines the LLM emits.
     """
     if not content:
         return content
@@ -4756,6 +4756,14 @@ class WikiCompiler:
     async def _compile_people(self, gathered: dict) -> WikiPage:
         channel_summary = gathered["channel_summary"]
         persons = gathered["persons"]
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets for the People page. ``compile()`` stashes the list under
+        # ``_compiled_topic_titles``; fall back to every cluster title when the
+        # key is absent (legacy/test callers).
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
         try:
             relationship_edges = _format_relationship_edges(persons)
             prompt = self._fmt_prompt(
@@ -4763,6 +4771,7 @@ class WikiCompiler:
                 persons_json=json.dumps(persons, default=str),
                 top_people_json=json.dumps(channel_summary.top_people, default=str),
                 relationship_edges_json=json.dumps(relationship_edges, default=str),
+                compiled_topic_titles_json=json.dumps(compiled_topic_titles, default=str),
             )
             result = await self._call_llm(prompt, page_kind="people")
             content = result.content if result is not None else ""
@@ -4776,12 +4785,16 @@ class WikiCompiler:
                 "WikiCompiler: people content empty/degenerate, using deterministic fallback"
             )
             content, summary_text = _people_fallback(persons, channel_summary.top_people or [])
+        content = self._postprocess_content(content)
+        # Post-process: rewrite any ``[[Title]]`` references into native
+        # markdown links (compiled topics) or plain text (skipped topics).
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="people",
             slug="people",
             title=self._page_title("people"),
             page_type="fixed",
-            content=self._postprocess_content(content),
+            content=content,
             summary=summary_text,
             memory_count=len(persons),
         )
@@ -5006,7 +5019,7 @@ class WikiCompiler:
         # native markdown links (compiled topics) or plain text (skipped /
         # unknown topics). Runs AFTER the splice so deterministic-fallback
         # rows added by the splicer are also covered.
-        content = _rewrite_glossary_wikilinks(content, compiled_topic_titles)
+        content = _rewrite_topic_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="glossary",
             slug="glossary",

@@ -224,8 +224,8 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 1. **Contributor network** — ```mermaid diagram showing key people and their connections. Use relationship edges to show who collaborates with whom, who made which decisions, and expertise areas. THIS MUST BE THE VERY FIRST CONTENT ELEMENT.
 2. **Activity chart** — ```chart bar chart showing contribution level per person
 3. **Overview** — 1-2 sentences describing the contributor landscape in this channel (AFTER the diagram and chart)
-4. **Contributors table** — GFM table with columns: Name, Role/Expertise, Topics Active In, Key Contributions, Decisions Made
-5. **Profiles** — for each top contributor (max 8), a `### <Name>` sub-section containing FOUR labelled bullets: **Owns** (systems/projects/docs they own), **Decides** (decisions they have made), **Contributes** (artifacts/RFCs/contributions), **Topic activity** (per-topic counts as a one-line list, e.g. "GPU Procurement: 12 · AI Solutions: 3 · Confidential Containers: 1"). Each bullet should answer the reader's question "what does this person OWN, DECIDE, and CONTRIBUTE?" — not "what facts mention them". If a person has nothing in a category, omit that bullet (do not pad). Wikilink topic names with `[[Topic Title]]` so navigation lands on the right Topic page.
+4. **Contributors table** — GFM table with columns: Name, Role/Expertise, Topics Active In, Key Contributions, Decisions Made. In the "Topics Active In" column use `[[Topic Title]]` wikilinks. **ONLY reference topic titles from the `compiled_topic_titles` list below — any other title has no page and will appear as a red broken link.**
+5. **Profiles** — for each top contributor (max 8), a `### <Name>` sub-section containing FOUR labelled bullets: **Owns** (systems/projects/docs they own), **Decides** (decisions they have made), **Contributes** (artifacts/RFCs/contributions), **Topic activity** (per-topic counts as a one-line list, e.g. "GPU Procurement: 12 · AI Solutions: 3 · Confidential Containers: 1"). Each bullet should answer the reader's question "what does this person OWN, DECIDE, and CONTRIBUTE?" — not "what facts mention them". If a person has nothing in a category, omit that bullet (do not pad). Wikilink topic names with `[[Topic Title]]` so navigation lands on the right Topic page. **ONLY use topic titles from the `compiled_topic_titles` list below — every other topic was dropped by the threshold gate and has no page; using it produces a red broken link.**
 6. **Collaboration patterns** — bullet points on notable collaboration patterns, expertise clusters, and knowledge areas
 
 ## Writing style
@@ -254,6 +254,8 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 People (with relationship edges): {persons_json}
 Contributor context: {top_people_json}
 Relationship edges (from knowledge graph): {relationship_edges_json}
+
+Compiled topic titles (the ONLY valid targets for `[[Topic Title]]` wikilinks — any other title was dropped by the threshold gate and has no page; pointing at it produces a red broken link): {compiled_topic_titles_json}
 """
 
 DECISIONS_PROMPT = """You are a knowledge wiki compiler. Create a **Decisions** page.
