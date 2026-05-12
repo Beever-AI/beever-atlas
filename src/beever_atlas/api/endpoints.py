@@ -19,6 +19,7 @@ from beever_atlas.llm.endpoints import (
     AuthType,
     Endpoint,
     EndpointStore,
+    _redact_credential_fragments,
     decrypt_endpoint_credential,
     discover_models,
 )
@@ -185,9 +186,7 @@ def _store() -> EndpointStore:
 async def list_endpoints() -> EndpointListResponse:
     """Enumerate every Endpoint. Plaintext credentials NEVER appear."""
     endpoints = await _store().list()
-    return EndpointListResponse(
-        endpoints=[_endpoint_to_response(e) for e in endpoints]
-    )
+    return EndpointListResponse(endpoints=[_endpoint_to_response(e) for e in endpoints])
 
 
 @router.get("/{endpoint_id}", response_model=EndpointResponse)
@@ -201,8 +200,11 @@ async def get_endpoint(endpoint_id: str) -> EndpointResponse:
 @router.post("", response_model=EndpointResponse, status_code=201)
 async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
     """Insert a new Endpoint document. Validates provider against ``SUPPORTED_PROVIDERS``."""
-    if req.preset != "custom" and req.preset not in SUPPORTED_PROVIDERS and req.preset not in (
-        "google_ai", "ollama", "vllm", "lmstudio", "openrouter", "litellm_proxy"
+    if (
+        req.preset != "custom"
+        and req.preset not in SUPPORTED_PROVIDERS
+        and req.preset
+        not in ("google_ai", "ollama", "vllm", "lmstudio", "openrouter", "litellm_proxy")
     ):
         # Allow the established preset keys (which differ from LiteLLM prefixes
         # in a few places — ``google_ai`` resolves to ``gemini/`` at dispatch
@@ -217,8 +219,7 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
             detail={
                 "error": "oauth_not_yet_supported",
                 "message": (
-                    "OAuth-based endpoints are reserved for a future release. "
-                    "Use api_key for now."
+                    "OAuth-based endpoints are reserved for a future release. Use api_key for now."
                 ),
             },
         )
@@ -247,9 +248,15 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
         )
     except RuntimeError as exc:
         # ``CredentialEncryptor`` raises when ``CREDENTIAL_MASTER_KEY`` is unset.
+        # Don't echo the internal error string (it names the env var + the
+        # generation command) — log it server-side, return a generic note.
+        logger.error("endpoint create: credential encryptor unavailable: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail={"error": "credential_encryptor_unavailable", "message": str(exc)},
+            detail={
+                "error": "credential_encryptor_unavailable",
+                "message": "Credential encryption is not configured — contact your administrator.",
+            },
         ) from exc
 
     # Hot-reload the runtime cache so dispatch sees the new credential.
@@ -301,9 +308,13 @@ async def update_endpoint(endpoint_id: str, req: UpdateEndpointRequest) -> Endpo
             tags=req.tags,
         )
     except RuntimeError as exc:
+        logger.error("endpoint update: credential encryptor unavailable: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail={"error": "credential_encryptor_unavailable", "message": str(exc)},
+            detail={
+                "error": "credential_encryptor_unavailable",
+                "message": "Credential encryption is not configured — contact your administrator.",
+            },
         ) from exc
 
     if updated is None:
@@ -314,9 +325,7 @@ async def update_endpoint(endpoint_id: str, req: UpdateEndpointRequest) -> Endpo
         if plaintext is None:
             set_runtime_credential(endpoint_id, None)
         elif updated.encrypted_key is not None:
-            set_runtime_credential(
-                endpoint_id, decrypt_endpoint_credential(updated.encrypted_key)
-            )
+            set_runtime_credential(endpoint_id, decrypt_endpoint_credential(updated.encrypted_key))
 
     return _endpoint_to_response(updated)
 
@@ -384,6 +393,20 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
         extra_kwargs["api_key"] = credential
     if endpoint.base_url:
         extra_kwargs["api_base"] = endpoint.base_url
+        # Opt-in SSRF guard — refuse private/link-local/metadata targets before
+        # we attach the credential and probe. Off by default (local presets
+        # legitimately point at localhost); see ``llm_endpoint_ssrf_guard``.
+        from beever_atlas.infra.config import get_settings
+
+        if get_settings().llm_endpoint_ssrf_guard:
+            from beever_atlas.infra.http_safe import resolve_and_validate
+
+            try:
+                resolve_and_validate(endpoint.base_url)
+            except (ValueError, PermissionError) as exc:
+                msg = f"base_url_blocked: {exc}"
+                await _store().record_test_result(endpoint_id, ok=False, error=msg)
+                return TestConnectionResponse(ok=False, error=msg)
 
     started = time.monotonic()
     try:
@@ -399,12 +422,8 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
         # embed the full request kwargs (including ``api_key``) in their repr.
         # When the message looks like it could carry credential fragments, drop
         # the body and return only the exception class + a generic note.
-        raw = str(exc)[:200]
-        lowered = raw.lower()
-        if any(s in lowered for s in ("api_key", "bearer ", "sk-", "aizasy", "secret", "token=")):
-            error_msg = f"{type(exc).__name__}: authentication or connection error (details redacted)"
-        else:
-            error_msg = f"{type(exc).__name__}: {raw}"
+        raw = _redact_credential_fragments(str(exc)[:200])
+        error_msg = f"{type(exc).__name__}: {raw}"
         await _store().record_test_result(endpoint_id, ok=False, error=error_msg)
         return TestConnectionResponse(ok=False, error=error_msg)
 

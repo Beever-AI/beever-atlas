@@ -49,6 +49,38 @@ def preset_to_provider(preset: str) -> str:
     return _PRESET_TO_PROVIDER.get(preset, preset)
 
 
+# Substrings that, if present in an upstream error body or an SDK exception
+# repr, mean the text may carry a credential fragment (Bearer token, OpenAI
+# ``sk-`` key, Google ``AIzaSy`` key, AWS ``AKIA`` id / secret, a service-
+# account ``private_key``/``client_email``, etc.). Such text is replaced with
+# a generic note before it crosses an API boundary or hits a log line. Match
+# against the LOWER-cased haystack.
+_CREDENTIAL_MARKERS: tuple[str, ...] = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer ",
+    "sk-",
+    "aizasy",
+    "akia",
+    "aws_secret",
+    "access_key",
+    "secret",
+    "token=",
+    "private_key",
+    "client_email",
+    "password",
+    "credential",
+)
+
+
+def _redact_credential_fragments(text: str) -> str:
+    """Return ``text`` unchanged unless it looks like it carries a secret."""
+    if any(m in text.lower() for m in _CREDENTIAL_MARKERS):
+        return "(redacted — upstream text may contain credential fragments)"
+    return text
+
+
 # Default per-preset RPM budgets — conservative free-tier-safe values.
 # Operators raise via env (``LLM_PROVIDER_RPM_<PROVIDER>``) or via the UI on
 # the Endpoint document. See design D7. PR-B.2 wires these into ``LLMThrottle``;
@@ -371,6 +403,19 @@ async def discover_models(
         url = f"{endpoint.base_url.rstrip('/')}/models"
         list_key = "data"  # OpenAI shape: [{id, ...}]
 
+    # Opt-in SSRF guard: refuse private/link-local/metadata targets before
+    # we attach the credential and call out. Off by default so local presets
+    # (Ollama/vLLM/LM Studio at localhost) keep working — see settings.
+    from beever_atlas.infra.config import get_settings
+
+    if get_settings().llm_endpoint_ssrf_guard:
+        from beever_atlas.infra.http_safe import resolve_and_validate
+
+        try:
+            resolve_and_validate(url)
+        except (ValueError, PermissionError) as exc:
+            return DiscoveryResult(ok=False, models=[], error=f"discovery_url_blocked: {exc}")
+
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             resp = await client.get(url, headers=headers)
@@ -382,18 +427,17 @@ async def discover_models(
         return DiscoveryResult(ok=False, models=[], error=f"discovery_connect_error: {exc}")
 
     if resp.status_code != 200:
+        body = _redact_credential_fragments(resp.text[:200])
         return DiscoveryResult(
             ok=False,
             models=[],
-            error=f"discovery_http_{resp.status_code}: {resp.text[:200]}",
+            error=f"discovery_http_{resp.status_code}: {body}",
         )
 
     try:
         payload = resp.json()
     except Exception:  # noqa: BLE001
-        return DiscoveryResult(
-            ok=False, models=[], error="discovery_invalid_json_response"
-        )
+        return DiscoveryResult(ok=False, models=[], error="discovery_invalid_json_response")
 
     entries = payload.get(list_key)
     if not isinstance(entries, list):
@@ -405,7 +449,9 @@ async def discover_models(
 
     if list_key == "models":
         # Ollama shape: extract "name" from each entry.
-        model_ids = [str(item["name"]) for item in entries if isinstance(item, dict) and "name" in item]
+        model_ids = [
+            str(item["name"]) for item in entries if isinstance(item, dict) and "name" in item
+        ]
     else:
         # OpenAI shape: extract "id" from each entry.
         model_ids = [str(item["id"]) for item in entries if isinstance(item, dict) and "id" in item]

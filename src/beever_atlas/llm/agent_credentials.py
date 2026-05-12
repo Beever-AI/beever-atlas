@@ -80,12 +80,16 @@ async def hydrate_runtime_credentials(stores: Any) -> int:
             continue
         try:
             plaintext = decrypt_endpoint_credential(endpoint.encrypted_key)
-        except Exception:  # noqa: BLE001 — never crash boot on a bad envelope
+        except Exception as exc:  # noqa: BLE001 — never crash boot on a bad envelope
+            # Log the exception class + message only, NOT a full traceback —
+            # frames from the decrypt path hold ciphertext (and potentially
+            # partially-decrypted plaintext) in locals.
             logger.warning(
-                "agent_credentials: failed to decrypt endpoint id=%s name=%s — skipping",
+                "agent_credentials: failed to decrypt endpoint id=%s name=%s — skipping (%s: %s)",
                 endpoint.id,
                 endpoint.name,
-                exc_info=True,
+                type(exc).__name__,
+                exc,
             )
             continue
         if plaintext is not None:

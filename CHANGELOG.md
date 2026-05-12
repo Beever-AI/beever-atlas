@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     idempotent, non-destructive.
   - Docs: `docs/runbooks/ai-setup.md`, `docs/runbooks/atlas-yaml.md`,
     `docs/runbooks/litellm-cutover.md`.
+  - Security hardening: credential-fragment redaction on the Endpoint
+    "Test connection" / "Discover models" error paths; opt-in SSRF guard
+    (`LLM_ENDPOINT_SSRF_GUARD`, default off) that refuses private /
+    metadata `base_url` targets before any operator-triggered probe;
+    generic (non-leaking) 503 when the credential encryptor is unconfigured.
 
 ### Deprecated
 - `Settings → Embedding` and `Settings → Agent Models` tabs (relabeled

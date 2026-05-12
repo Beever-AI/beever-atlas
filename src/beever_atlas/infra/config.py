@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     # cutover soak completes.
     llm_use_litellm_for_gemini: bool = Field(default=True)
 
+    # SSRF guard for the operator-facing Endpoint Test/Discover routes. When
+    # True, ``base_url`` is resolved + validated against ``infra.http_safe``
+    # before any outbound probe — private/link-local/metadata IPs are refused.
+    # Default False so the first-class "fully local (Ollama/vLLM/LM Studio)"
+    # presets (which point at ``localhost``) keep working out of the box;
+    # turn it on for hardened multi-operator deployments.
+    llm_endpoint_ssrf_guard: bool = Field(default=False)
+
     # Pipeline config
     # memory-then-wiki-pipeline-realignment perf P0 — bumped from 10 to 25.
     # Combined with default ``ingest_batch_concurrency=4`` this gives the
