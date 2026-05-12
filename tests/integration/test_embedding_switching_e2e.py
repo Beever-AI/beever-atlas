@@ -166,10 +166,26 @@ def _isolate_env(monkeypatch):
     # CI runners don't have one set; without this, ``encrypt_credentials``
     # raises and the API-key encryption scenario returns 503.
     monkeypatch.setenv("CREDENTIAL_MASTER_KEY", "ab" * 32)
+    # Pydantic Settings ALSO reads ``.env`` from cwd; ``delenv`` only
+    # affects ``os.environ``. A dev machine whose ``.env`` contains
+    # ``EMBEDDING_PROVIDER=gemini`` leaks through Settings even after
+    # ``delenv`` because Pydantic reconstructs from the file.
+    # ``chdir`` into a tempdir so Settings can't find ``.env`` from cwd.
+    import os
+    import tempfile
+
+    _tmp = tempfile.TemporaryDirectory()
+    _prev_cwd = os.getcwd()
+    os.chdir(_tmp.name)
     from beever_atlas.infra.config import get_settings as _gs
 
     _gs.cache_clear()
     Settings._DEPRECATED_LEGACY_WARNED.clear()
+    try:
+        yield
+    finally:
+        os.chdir(_prev_cwd)
+        _tmp.cleanup()
 
 
 @pytest.fixture
@@ -183,7 +199,13 @@ def fake_provider(monkeypatch):
     calls: list[dict[str, Any]] = []
     state = {"dim": 2048, "ok": True, "error": None}
 
-    async def fake_call(*, model, chunk, extra_kwargs):
+    async def fake_call(*, model, chunk, extra_kwargs, **_kw):
+        # ``_kw`` swallows the ``provider`` kwarg (and any future
+        # additions) that the production ``_aembedding_call`` passes
+        # through to ``dispatch_embedding``. Without this, the fake's
+        # rigid signature breaks the moment the shim grows another
+        # named arg, leading to opaque ``unexpected keyword argument``
+        # failures in unrelated tests.
         calls.append({"model": model, "chunk": list(chunk), "extra": dict(extra_kwargs)})
         if not state["ok"]:
             raise RuntimeError(state["error"] or "fake provider failure")
