@@ -217,10 +217,7 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
 
     if persisted is not None and fact_count is not None and fact_count > 0:
         persisted_dim = persisted.get("dimensions")
-        if (
-            persisted_dim is not None
-            and persisted_dim != effective_settings.embedding_dimensions
-        ):
+        if persisted_dim is not None and persisted_dim != effective_settings.embedding_dimensions:
             msg = (
                 f"EmbeddingDimensionMismatch:\n"
                 f"  Configured:  {effective_settings.embedding_provider}/{effective_settings.embedding_model} @ {effective_settings.embedding_dimensions}\n"

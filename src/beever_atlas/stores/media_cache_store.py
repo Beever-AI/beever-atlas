@@ -50,9 +50,7 @@ class MediaCacheStore:
             name="media_cache_hash_mime_unique",
         )
 
-    async def get_cached(
-        self, content_hash: str, mime_type: str
-    ) -> Optional[CachedMedia]:
+    async def get_cached(self, content_hash: str, mime_type: str) -> Optional[CachedMedia]:
         """Return a cached result or ``None`` on miss."""
         doc = await self._col.find_one(
             {"hash": content_hash, "mime_type": mime_type},

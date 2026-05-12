@@ -63,15 +63,11 @@ async def test_retrigger_does_not_regenerate() -> None:
     stack.mongo.messages.extend(msgs)
 
     # First trigger creates the overview.
-    await stack.subscriber.on_extraction_done(
-        "ch-redo", [f"f{i}" for i in range(10)]
-    )
+    await stack.subscriber.on_extraction_done("ch-redo", [f"f{i}" for i in range(10)])
     assert len(stack.wiki_pages_added) == 1
 
     # Second trigger must short-circuit on gate 5 (overview exists).
-    await stack.subscriber.on_extraction_done(
-        "ch-redo", [f"f{i}" for i in range(10, 20)]
-    )
+    await stack.subscriber.on_extraction_done("ch-redo", [f"f{i}" for i in range(10, 20)])
     assert len(stack.wiki_pages_added) == 1, (
         "subsequent qualifying events must not regenerate the overview"
     )
@@ -80,9 +76,7 @@ async def test_retrigger_does_not_regenerate() -> None:
 @pytest.mark.asyncio
 async def test_feature_flag_off_skips_overview() -> None:
     """5.7.4 — AUTO_OVERVIEW_WIKI=false → no overview ever generated."""
-    stack = build_sim_stack(
-        auto_overview_min_facts=5, auto_overview_enabled=False
-    )
+    stack = build_sim_stack(auto_overview_min_facts=5, auto_overview_enabled=False)
     from tests.integration.sim_harness import make_messages
 
     msgs = make_messages("ch-off", 50)
@@ -90,9 +84,7 @@ async def test_feature_flag_off_skips_overview() -> None:
         m.extraction_status = "done"
     stack.mongo.messages.extend(msgs)
 
-    await stack.subscriber.on_extraction_done(
-        "ch-off", [f"f{i}" for i in range(50)]
-    )
+    await stack.subscriber.on_extraction_done("ch-off", [f"f{i}" for i in range(50)])
     assert len(stack.wiki_pages_added) == 0
 
 

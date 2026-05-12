@@ -391,9 +391,7 @@ async def lifespan(app: FastAPI):
                 except Exception:  # noqa: BLE001
                     return "en"
 
-            async def _resolve_and_run_memory_changed(
-                channel_id: str, fact_ids: list[str]
-            ) -> None:
+            async def _resolve_and_run_memory_changed(channel_id: str, fact_ids: list[str]) -> None:
                 try:
                     target_lang = await _resolve_channel_lang(channel_id)
                     await maintainer.on_memory_changed(
@@ -412,9 +410,7 @@ async def lifespan(app: FastAPI):
                     # to memory_settled separately. Here the maintainer
                     # only schedules the debounced page-flush.
                     target_lang = await _resolve_channel_lang(channel_id)
-                    await maintainer.on_memory_settled(
-                        channel_id, target_lang=target_lang
-                    )
+                    await maintainer.on_memory_settled(channel_id, target_lang=target_lang)
                 except Exception:  # noqa: BLE001
                     logging.getLogger(__name__).exception(
                         "wiki_maintainer.on_memory_settled crashed channel=%s",
@@ -422,15 +418,11 @@ async def lifespan(app: FastAPI):
                     )
 
             def _on_memory_changed(channel_id: str, fact_ids: list[str]):
-                task = _asyncio.create_task(
-                    _resolve_and_run_memory_changed(channel_id, fact_ids)
-                )
+                task = _asyncio.create_task(_resolve_and_run_memory_changed(channel_id, fact_ids))
                 task.add_done_callback(_on_done_log_exc)
 
             def _on_memory_settled(channel_id: str):
-                task = _asyncio.create_task(
-                    _resolve_and_run_memory_settled(channel_id)
-                )
+                task = _asyncio.create_task(_resolve_and_run_memory_settled(channel_id))
                 task.add_done_callback(_on_done_log_exc)
 
             worker.subscribe_memory_changed(_on_memory_changed)
@@ -498,9 +490,7 @@ async def lifespan(app: FastAPI):
             _auto_overview = AutoOverviewSubscriber()
             init_auto_overview_subscriber(_auto_overview)
 
-            def _on_extraction_done_aov(
-                channel_id: str, fact_ids: list[str]
-            ) -> None:
+            def _on_extraction_done_aov(channel_id: str, fact_ids: list[str]) -> None:
                 # Fire-and-forget — never block the worker batch loop on
                 # the overview LLM build (can take 30-60s). The
                 # subscriber's own ``on_extraction_done`` swallows
@@ -516,8 +506,7 @@ async def lifespan(app: FastAPI):
                     exc = t.exception()
                     if exc is not None:
                         logging.getLogger(__name__).warning(
-                            "auto_overview_subscriber fan-out task raised "
-                            "channel=%s: %s",
+                            "auto_overview_subscriber fan-out task raised channel=%s: %s",
                             channel_id,
                             exc,
                             exc_info=exc,
@@ -535,9 +524,7 @@ async def lifespan(app: FastAPI):
                 # still expects ``(channel_id, fact_ids)``; pass an empty
                 # fact-id list since the trigger no longer carries them
                 # (it doesn't need them — the gate checks Weaviate counts).
-                task = _asyncio_aov.create_task(
-                    _auto_overview.on_extraction_done(channel_id, [])
-                )
+                task = _asyncio_aov.create_task(_auto_overview.on_extraction_done(channel_id, []))
 
                 def _log_exc(t: _asyncio_aov.Task) -> None:
                     if t.cancelled():
@@ -545,8 +532,7 @@ async def lifespan(app: FastAPI):
                     exc = t.exception()
                     if exc is not None:
                         logging.getLogger(__name__).warning(
-                            "auto_overview_subscriber fan-out task raised "
-                            "channel=%s: %s",
+                            "auto_overview_subscriber fan-out task raised channel=%s: %s",
                             channel_id,
                             exc,
                             exc_info=exc,
@@ -596,9 +582,7 @@ async def lifespan(app: FastAPI):
                     )
 
             def _on_memory_settled_contradiction(channel_id: str) -> None:
-                task = _asyncio_contradiction.create_task(
-                    _run_post_sync_contradiction(channel_id)
-                )
+                task = _asyncio_contradiction.create_task(_run_post_sync_contradiction(channel_id))
 
                 def _log_exc(t: _asyncio_contradiction.Task) -> None:
                     if t.cancelled():
@@ -606,8 +590,7 @@ async def lifespan(app: FastAPI):
                     exc = t.exception()
                     if exc is not None:
                         logging.getLogger(__name__).warning(
-                            "post-sync contradiction fan-out task raised "
-                            "channel=%s: %s",
+                            "post-sync contradiction fan-out task raised channel=%s: %s",
                             channel_id,
                             exc,
                             exc_info=exc,
@@ -615,13 +598,10 @@ async def lifespan(app: FastAPI):
 
                 task.add_done_callback(_log_exc)
 
-            _contradiction_worker.subscribe_memory_settled(
-                _on_memory_settled_contradiction
-            )
+            _contradiction_worker.subscribe_memory_settled(_on_memory_settled_contradiction)
     except Exception as exc:
         logging.getLogger(__name__).warning(
-            "post-sync ContradictionDetector subscriber init failed "
-            "(non-fatal): %s",
+            "post-sync ContradictionDetector subscriber init failed (non-fatal): %s",
             exc,
         )
 
@@ -791,9 +771,7 @@ async def lifespan(app: FastAPI):
                     try:
                         from beever_atlas.stores import get_stores as _gs
 
-                        _state = await _gs().mongodb.get_channel_sync_state(
-                            channel_id
-                        )
+                        _state = await _gs().mongodb.get_channel_sync_state(channel_id)
                         if _state is not None:
                             _primary = getattr(_state, "primary_language", None)
                             if _primary:
@@ -806,9 +784,7 @@ async def lifespan(app: FastAPI):
                         except Exception:  # noqa: BLE001
                             _target_lang = "en"
                     try:
-                        await _maintainer.on_memory_settled(
-                            channel_id, target_lang=_target_lang
-                        )
+                        await _maintainer.on_memory_settled(channel_id, target_lang=_target_lang)
                     except Exception:  # noqa: BLE001
                         logging.getLogger(__name__).exception(
                             "wiki_maintainer.on_memory_settled crashed channel=%s "
@@ -833,9 +809,7 @@ async def lifespan(app: FastAPI):
 
                     task.add_done_callback(_log_exc)
 
-                _consolidation_worker.subscribe_memory_settled(
-                    _on_memory_settled_consolidation
-                )
+                _consolidation_worker.subscribe_memory_settled(_on_memory_settled_consolidation)
         except Exception as exc:
             logging.getLogger(__name__).warning(
                 "Consolidation-after-extraction wiring failed (non-fatal): %s", exc

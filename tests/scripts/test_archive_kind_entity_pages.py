@@ -258,9 +258,7 @@ async def test_archive_unarchive_reverses() -> None:
     from beever_atlas.scripts import archive_kind_entity_pages as script
 
     fake = _FakeStores()
-    fake.mongodb._db["wiki_pages"].docs.extend(
-        _make_entity_pages("C1", 3, archived=True)
-    )
+    fake.mongodb._db["wiki_pages"].docs.extend(_make_entity_pages("C1", 3, archived=True))
 
     with patch("beever_atlas.stores.get_stores", lambda: fake):
         stats = await script.archive_kind_entity_pages(

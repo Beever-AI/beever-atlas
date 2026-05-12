@@ -261,7 +261,9 @@ async def get_sync_status(
         else:
             since_iso = None
         merged_log = await stores.mongodb.list_recent_activity_log(
-            channel_id=channel_id, since_iso=since_iso, limit=200,
+            channel_id=channel_id,
+            since_iso=since_iso,
+            limit=200,
         )
         if merged_log:
             existing = list(merged_stage_details.get("activity_log") or [])

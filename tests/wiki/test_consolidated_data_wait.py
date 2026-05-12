@@ -25,6 +25,7 @@ from beever_atlas.wiki.data_gatherer import WikiDataGatherer
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_cluster(summary: str = "") -> SimpleNamespace:
     """Return a minimal cluster-like object."""
     return SimpleNamespace(
@@ -113,8 +114,8 @@ async def test_consolidation_completes_within_window():
     # get_channel_summary: first two calls return None, third returns real object
     weaviate.get_channel_summary = AsyncMock(
         side_effect=[
-            None,   # initial asyncio.gather call
-            None,   # poll 1
+            None,  # initial asyncio.gather call
+            None,  # poll 1
             channel_summary,  # poll 2 — consolidation done
         ]
     )

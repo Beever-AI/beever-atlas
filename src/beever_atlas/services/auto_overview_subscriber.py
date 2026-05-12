@@ -127,9 +127,7 @@ class AutoOverviewSubscriber:
     # Public event handler
     # ------------------------------------------------------------------
 
-    async def on_extraction_done(
-        self, channel_id: str, fact_ids: list[str]
-    ) -> None:
+    async def on_extraction_done(self, channel_id: str, fact_ids: list[str]) -> None:
         """Idempotent gate-and-trigger. Safe to call concurrently for the
         same channel — only one generation fires."""
         # Gate 1: feature flag — checked FIRST so a disabled deployment
@@ -342,10 +340,7 @@ class AutoOverviewSubscriber:
             from beever_atlas.infra.config import get_settings
 
             settings = get_settings()
-            return (
-                getattr(settings, "default_target_language", None)
-                or "en"
-            )
+            return getattr(settings, "default_target_language", None) or "en"
         except Exception:  # noqa: BLE001
             return "en"
 

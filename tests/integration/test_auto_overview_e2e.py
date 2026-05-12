@@ -41,9 +41,7 @@ async def test_e2e_first_sync_completes_overview_auto_generates() -> None:
     channel_id = "C-fresh"
 
     class _FakeMongo:
-        async def count_channel_messages_by_status(
-            self, _channel_id: str
-        ) -> dict[str, int]:
+        async def count_channel_messages_by_status(self, _channel_id: str) -> dict[str, int]:
             return {"pending": 0, "extracting": 0, "done": 10, "failed": 0}
 
         @property
@@ -100,11 +98,7 @@ async def test_e2e_first_sync_completes_overview_auto_generates() -> None:
     await worker._emit_extraction_done(channel_id, ["f1", "f2", "f3"])
 
     # Wait for the fire-and-forget child task to settle.
-    pending = [
-        t
-        for t in asyncio.all_tasks()
-        if t is not asyncio.current_task() and not t.done()
-    ]
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
@@ -122,9 +116,7 @@ async def test_e2e_subsequent_sync_does_not_regenerate() -> None:
     channel_id = "C-existing"
 
     class _FakeMongo:
-        async def count_channel_messages_by_status(
-            self, _channel_id: str
-        ) -> dict[str, int]:
+        async def count_channel_messages_by_status(self, _channel_id: str) -> dict[str, int]:
             return {"pending": 0, "extracting": 0, "done": 100, "failed": 0}
 
         @property
@@ -161,11 +153,7 @@ async def test_e2e_subsequent_sync_does_not_regenerate() -> None:
     worker.subscribe_extraction_done(_on_done_sync)
     await worker._emit_extraction_done(channel_id, ["f100", "f101"])
 
-    pending = [
-        t
-        for t in asyncio.all_tasks()
-        if t is not asyncio.current_task() and not t.done()
-    ]
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 

@@ -302,13 +302,13 @@ def test_persister_post_hoc_stub_type_is_topic():
     # ``missing_names``. The literal ``type="Project"`` must NOT appear
     # in the post-hoc stub block (it would mismatch the in-Cypher
     # MERGE default and trigger the Q-DUP-1 duplicate pattern).
-    assert "type=\"Project\"" not in src, (
-        "persister.py still constructs a stub with type=\"Project\" — "
-        "must be \"Topic\" to align with the in-Cypher MERGE default."
+    assert 'type="Project"' not in src, (
+        'persister.py still constructs a stub with type="Project" — '
+        'must be "Topic" to align with the in-Cypher MERGE default.'
     )
     # Positive assertion: the post-hoc loop now uses Topic.
-    assert "type=\"Topic\"" in src, (
-        "expected the post-hoc stub block to construct GraphEntity(type=\"Topic\", ...)"
+    assert 'type="Topic"' in src, (
+        'expected the post-hoc stub block to construct GraphEntity(type="Topic", ...)'
     )
 
 

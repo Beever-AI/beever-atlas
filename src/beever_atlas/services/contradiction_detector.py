@@ -217,19 +217,14 @@ async def check_and_supersede_for_channel(
     pre_check_watermark: datetime
     if watermark_ts is not None:
         pre_check_watermark = (
-            watermark_ts
-            if watermark_ts.tzinfo is not None
-            else watermark_ts.replace(tzinfo=UTC)
+            watermark_ts if watermark_ts.tzinfo is not None else watermark_ts.replace(tzinfo=UTC)
         )
     else:
         try:
-            pre_check_watermark = await stores.mongodb.get_contradiction_watermark(
-                channel_id
-            )
+            pre_check_watermark = await stores.mongodb.get_contradiction_watermark(channel_id)
         except Exception:
             logger.warning(
-                "ContradictionDetector: failed to read watermark channel=%s — "
-                "treating as epoch",
+                "ContradictionDetector: failed to read watermark channel=%s — treating as epoch",
                 channel_id,
                 exc_info=True,
             )

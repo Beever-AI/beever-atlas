@@ -1727,9 +1727,7 @@ class ConsolidationService:
             return {"summary_text": str(result)} if result else {}
 
         if not result.get("title", "").strip():
-            logger.info(
-                "topic_summarizer returned empty title — retrying once at temperature=0.3"
-            )
+            logger.info("topic_summarizer returned empty title — retrying once at temperature=0.3")
             retry_agent = create_topic_summarizer(instruction=prompt, temperature=0.3)
             retry_state = await run_agent(retry_agent)
             retry_result = retry_state.get("summary_result") or {}

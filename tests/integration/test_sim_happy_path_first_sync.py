@@ -39,9 +39,7 @@ async def test_happy_path_first_sync(sim_stack: SimStack) -> None:
 
     # 5.2.2 — Memory + wiki + overview all present.
     fact_count = await sim_stack.fact_count(channel)
-    assert fact_count >= 30, (
-        f"expected at least 30 messages extracted, got {fact_count}"
-    )
+    assert fact_count >= 30, f"expected at least 30 messages extracted, got {fact_count}"
 
     # Drain subscriber tasks so the overview gate runs to completion.
     pending = getattr(sim_stack.worker, "_sim_pending_tasks", [])

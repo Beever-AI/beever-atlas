@@ -116,25 +116,19 @@ def test_timeline_predicate_too_few_epochs() -> None:
 
 
 def test_stakeholders_predicate_above_threshold() -> None:
-    s = ChannelSignals(
-        distinct_contributor_count=15, role_hierarchy_detected=True
-    )
+    s = ChannelSignals(distinct_contributor_count=15, role_hierarchy_detected=True)
     should, _reason = stakeholders_predicate(s)
     assert should is True
 
 
 def test_stakeholders_predicate_no_hierarchy_suppresses() -> None:
-    s = ChannelSignals(
-        distinct_contributor_count=20, role_hierarchy_detected=False
-    )
+    s = ChannelSignals(distinct_contributor_count=20, role_hierarchy_detected=False)
     should, _reason = stakeholders_predicate(s)
     assert should is False
 
 
 def test_stakeholders_predicate_too_few_contributors() -> None:
-    s = ChannelSignals(
-        distinct_contributor_count=5, role_hierarchy_detected=True
-    )
+    s = ChannelSignals(distinct_contributor_count=5, role_hierarchy_detected=True)
     should, _reason = stakeholders_predicate(s)
     assert should is False
 

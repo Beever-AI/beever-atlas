@@ -71,12 +71,8 @@ def _apply_patches(compiler, fake_settings, topic_side_effect) -> contextlib.Exi
     fixed_page = _make_wiki_page("fixed")
     stack = contextlib.ExitStack()
 
-    stack.enter_context(
-        patch("beever_atlas.infra.config.get_settings", return_value=fake_settings)
-    )
-    stack.enter_context(
-        patch.object(compiler, "_is_topic_relevant", return_value=(True, None))
-    )
+    stack.enter_context(patch("beever_atlas.infra.config.get_settings", return_value=fake_settings))
+    stack.enter_context(patch.object(compiler, "_is_topic_relevant", return_value=(True, None)))
     stack.enter_context(
         patch.object(compiler, "_compile_topic_page", side_effect=topic_side_effect)
     )
@@ -89,9 +85,7 @@ def _apply_patches(compiler, fake_settings, topic_side_effect) -> contextlib.Exi
         "_compile_resources",
         "_compile_activity",
     ):
-        stack.enter_context(
-            patch.object(compiler, method, new=AsyncMock(return_value=fixed_page))
-        )
+        stack.enter_context(patch.object(compiler, method, new=AsyncMock(return_value=fixed_page)))
     return stack
 
 
@@ -132,9 +126,7 @@ class TestTopicCompileSemaphore:
         with _apply_patches(compiler, fake_settings, fake_compile_topic_page):
             await compiler.compile(gathered)
 
-        assert max_observed <= 6, (
-            f"Expected max concurrent topics <= 6, got {max_observed}"
-        )
+        assert max_observed <= 6, f"Expected max concurrent topics <= 6, got {max_observed}"
 
     @pytest.mark.asyncio
     async def test_tunable_via_setting(self):

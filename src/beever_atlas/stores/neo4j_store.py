@@ -428,9 +428,7 @@ class Neo4jStore:
         eid, _stub_created = await self._upsert_relationship_with_stub_flag(rel)
         return eid
 
-    async def _upsert_relationship_with_stub_flag(
-        self, rel: GraphRelationship
-    ) -> tuple[str, int]:
+    async def _upsert_relationship_with_stub_flag(self, rel: GraphRelationship) -> tuple[str, int]:
         """Internal helper — same as :meth:`upsert_relationship` but also
         returns the number of stub endpoint Entity nodes created (0, 1,
         or 2). Used by :meth:`batch_upsert_relationships` to apply the
@@ -640,9 +638,7 @@ class Neo4jStore:
         # Fail-closed cap on stub creation (PR-2 Task 1 criterion #6).
         if stubs_created > self._STUB_EXPLOSION_THRESHOLD:
             # Sample up to 5 (rel_type, source, target) triples for ops triage.
-            samples = [
-                (r.type, r.source, r.target) for r in rels[:5]
-            ]
+            samples = [(r.type, r.source, r.target) for r in rels[:5]]
             logger.error(
                 "Neo4jStore: stub explosion detected — batch created %d stub "
                 "Entity nodes (threshold=%d); sample rel_types/endpoints=%s",
@@ -1441,7 +1437,7 @@ class Neo4jStore:
                     "MERGE (e:Entity {name: link.entity_name, type: 'Topic', scope: 'global'}) "
                     "  ON CREATE SET "
                     "    e.channel_id = null, "
-                    "    e.properties = '{\"stub\": true, \"reason\": \"episodic_link\"}', "
+                    '    e.properties = \'{"stub": true, "reason": "episodic_link"}\', '
                     "    e.aliases    = [], "
                     "    e.status     = 'active', "
                     "    e.created_at = toString(datetime()), "

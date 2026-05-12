@@ -326,15 +326,10 @@ async def dedupe_entities(
         canonical_norms = list(buckets.keys())
         names_for_embedding = [buckets[n].name for n in canonical_norms]
         try:
-            vectors_by_name = await _safe_compute_embeddings(
-                entity_registry, names_for_embedding
-            )
+            vectors_by_name = await _safe_compute_embeddings(entity_registry, names_for_embedding)
         except _EmbeddingsFailed:
             embedding_failed = True
-            logger.warning(
-                "entity_dedup: embedding call failed, falling back to "
-                "exact-match-only"
-            )
+            logger.warning("entity_dedup: embedding call failed, falling back to exact-match-only")
             vectors_by_name = {}
 
         if not embedding_failed:
@@ -377,8 +372,7 @@ async def dedupe_entities(
         name_b = buckets[norm_b].name
         if not llm_fallback_enabled:
             logger.info(
-                "entity_dedup: ambiguous pair %r ~ %r score=%.3f "
-                "(fallback disabled, not merged)",
+                "entity_dedup: ambiguous pair %r ~ %r score=%.3f (fallback disabled, not merged)",
                 name_a,
                 name_b,
                 score,
@@ -403,11 +397,7 @@ async def dedupe_entities(
     # surface for audit.
     merges: list[MergeRecord] = []
     for _canonical_norm, head in buckets.items():
-        sources = [
-            src
-            for src, dst in rename_map.items()
-            if dst == head.name and src != head.name
-        ]
+        sources = [src for src, dst in rename_map.items() if dst == head.name and src != head.name]
         # Dedup while preserving order.
         seen_srcs: set[str] = set()
         merged_from: list[str] = []

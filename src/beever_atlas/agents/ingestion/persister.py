@@ -368,6 +368,7 @@ class PersisterAgent(BaseAgent):
                     )
                     if _dropped and channel_id and sync_job_id:
                         from beever_atlas.services.batch_processor import increment_sync_metric
+
                         increment_sync_metric(
                             channel_id, sync_job_id, "relationships_dropped_total", _dropped
                         )
@@ -376,9 +377,7 @@ class PersisterAgent(BaseAgent):
                 if settings.neo4j_batch_name_vector:
                     try:
                         items = [
-                            (e.name, e.name_vector)
-                            for e in entities
-                            if e.name_vector is not None
+                            (e.name, e.name_vector) for e in entities if e.name_vector is not None
                         ]
                         await stores.entity_registry.batch_store_name_vectors(items)
                         logger.info(
@@ -400,9 +399,7 @@ class PersisterAgent(BaseAgent):
                                     entity.name, entity.name_vector
                                 )
                             except Exception:  # noqa: BLE001
-                                logger.exception(
-                                    "store_name_vector failed entity=%s", entity.name
-                                )
+                                logger.exception("store_name_vector failed entity=%s", entity.name)
                 else:
                     for entity in entities:
                         if entity.name_vector:

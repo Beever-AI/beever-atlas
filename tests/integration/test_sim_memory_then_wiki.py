@@ -32,9 +32,13 @@ async def test_on_memory_changed_routes_without_scheduling_flush() -> None:
     """``on_memory_changed`` enqueues to wiki_dirty_queue and writes
     through to the in-memory dirty set — but MUST NOT schedule a flush."""
 
-    page_store_mock = type("PS", (), {
-        "list_pages": lambda *a, **kw: __import__("asyncio").sleep(0),
-    })()
+    page_store_mock = type(
+        "PS",
+        (),
+        {
+            "list_pages": lambda *a, **kw: __import__("asyncio").sleep(0),
+        },
+    )()
 
     maint = WikiMaintainer(page_store=page_store_mock)  # type: ignore[arg-type]
 
@@ -120,9 +124,13 @@ async def test_bulk_burst_fires_one_flush_not_N() -> None:
     same page, then ONE ``memory_settled`` event. Only one flush
     schedule MUST fire (not N)."""
 
-    page_store_mock = type("PS", (), {
-        "list_pages": lambda *a, **kw: __import__("asyncio").sleep(0),
-    })()
+    page_store_mock = type(
+        "PS",
+        (),
+        {
+            "list_pages": lambda *a, **kw: __import__("asyncio").sleep(0),
+        },
+    )()
     maint = WikiMaintainer(page_store=page_store_mock, mode="auto")  # type: ignore[arg-type]
     maint._debounce_seconds_override = 60
 
@@ -155,9 +163,7 @@ async def test_bulk_burst_fires_one_flush_not_N() -> None:
         # Single memory_settled fires when the queue drains.
         await maint.on_memory_settled("C1", target_lang="en")
 
-    assert schedule_count == 1, (
-        "Bulk sync must produce exactly 1 flush schedule, not 1 per batch"
-    )
+    assert schedule_count == 1, "Bulk sync must produce exactly 1 flush schedule, not 1 per batch"
 
 
 # ---------------------------------------------------------------------------
@@ -228,10 +234,7 @@ async def test_crash_recovery_resumes_pending_via_queue() -> None:
             async def claim_dirty(channel_id):
                 claimed = []
                 for row in enqueued:
-                    if (
-                        row["channel_id"] == channel_id
-                        and row["status"] == "pending"
-                    ):
+                    if row["channel_id"] == channel_id and row["status"] == "pending":
                         row["status"] = "flushing"
                         flushing_set.add(row["_id"])
                         claimed.append(dict(row))

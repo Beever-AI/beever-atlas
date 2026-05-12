@@ -211,9 +211,7 @@ async def test_sync_summary_cluster_histogram_format() -> None:
     all_msgs = await _run_process("ch-hist", "job-hist")
 
     hist_lines = [m for m in all_msgs if "metric=cluster_size_histogram" in m]
-    assert len(hist_lines) == 1, (
-        f"Expected 1 cluster_size_histogram line, got {len(hist_lines)}"
-    )
+    assert len(hist_lines) == 1, f"Expected 1 cluster_size_histogram line, got {len(hist_lines)}"
     line = hist_lines[0]
     m = re.search(r"value=(\[.*?\])", line)
     assert m, f"No value=[...] array in: {line!r}"

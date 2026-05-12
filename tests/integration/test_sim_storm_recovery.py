@@ -34,9 +34,7 @@ async def test_storm_then_recovery_all_rows_eventually_done(
     sim_stack.inject_messages(channel, 100)
 
     # Storm: every completion fails with 429 for the first batch wave.
-    sim_stack.llm.add_rule(
-        FaultRule(match=lambda _kwargs: True, mode="429", count=10**9)
-    )
+    sim_stack.llm.add_rule(FaultRule(match=lambda _kwargs: True, mode="429", count=10**9))
 
     # First tick — every sub-batch fails.
     counters_t1 = await sim_stack.worker.tick(channel_id=channel)
@@ -46,21 +44,16 @@ async def test_storm_then_recovery_all_rows_eventually_done(
     )
 
     # 5.10.2 — every failed row carries attempt_count below max.
-    failed_msgs = [
-        m for m in sim_stack.mongo.messages if m.extraction_status == "failed"
-    ]
+    failed_msgs = [m for m in sim_stack.mongo.messages if m.extraction_status == "failed"]
     assert len(failed_msgs) == 100
     for msg in failed_msgs:
         assert msg.attempt_count < 5, (
-            f"row {msg.message_id} hit max_retries during storm; "
-            f"attempt_count={msg.attempt_count}"
+            f"row {msg.message_id} hit max_retries during storm; attempt_count={msg.attempt_count}"
         )
 
     # 5.10.4 — during the storm, the API status payload reports
     # retrying > 0 and abandoned == 0.
-    split = await sim_stack.mongo.count_channel_messages_failure_subtypes(
-        channel, max_retries=5
-    )
+    split = await sim_stack.mongo.count_channel_messages_failure_subtypes(channel, max_retries=5)
     assert split["retrying"] > 0
     assert split["abandoned"] == 0
 
@@ -75,9 +68,7 @@ async def test_storm_then_recovery_all_rows_eventually_done(
     # 5.10.3 — second tick after recovery: all rows transition to done.
     await sim_stack.run_worker_until_quiet(channel, include_retries=True)
     counts_final = await sim_stack.mongo.count_channel_messages_by_status(channel)
-    assert counts_final["done"] == 100, (
-        f"after recovery, all rows must be done; got {counts_final}"
-    )
+    assert counts_final["done"] == 100, f"after recovery, all rows must be done; got {counts_final}"
     assert counts_final["failed"] == 0
 
 
@@ -106,8 +97,6 @@ async def test_storm_payload_retrying_distinct_from_abandoned(
         msg.attempt_count = 5
         msg.next_attempt_at = now + timedelta(seconds=60)
 
-    split = await sim_stack.mongo.count_channel_messages_failure_subtypes(
-        channel, max_retries=5
-    )
+    split = await sim_stack.mongo.count_channel_messages_failure_subtypes(channel, max_retries=5)
     assert split["retrying"] == 3
     assert split["abandoned"] == 3

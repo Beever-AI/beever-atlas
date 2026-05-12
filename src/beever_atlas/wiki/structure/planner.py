@@ -275,9 +275,7 @@ class WikiStructurePlanner:
         # the Builder (when channel policy allows auto-split) or the
         # operator UI can act on them. Threshold per design D4:
         # ≥35 inbound edges OR ≥50 facts in a cluster.
-        plan.split_candidates = _compute_split_candidates(
-            clusters=clusters, fact_graph=fact_graph
-        )
+        plan.split_candidates = _compute_split_candidates(clusters=clusters, fact_graph=fact_graph)
 
         return plan
 

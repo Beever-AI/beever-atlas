@@ -34,9 +34,7 @@ async def test_incremental_sync_processes_only_new_rows(sim_stack: SimStack) -> 
     initial_completions = sim_stack.llm_call_count(kind="completion")
     initial_overview_count = len(sim_stack.wiki_pages_added)
     initial_maintainer_calls = len(sim_stack.maintainer.calls)
-    assert initial_overview_count == 1, (
-        "first sync should produce exactly one overview page"
-    )
+    assert initial_overview_count == 1, "first sync should produce exactly one overview page"
 
     # Inject 5 new messages mentioning a new entity.
     sim_stack.inject_messages(channel, 5, topics=["delta"])
@@ -47,23 +45,20 @@ async def test_incremental_sync_processes_only_new_rows(sim_stack: SimStack) -> 
     # 5.4.3 — only 5 new rows processed → ~1 incremental sub-batch.
     new_completions = sim_stack.llm_call_count(kind="completion") - initial_completions
     assert 1 <= new_completions <= 2, (
-        f"expected ~1 incremental completion call for the 5-msg batch, "
-        f"got {new_completions}"
+        f"expected ~1 incremental completion call for the 5-msg batch, got {new_completions}"
     )
 
     # 5.4.4 — maintainer fired for new facts (one event for the new
     # batch's fact_ids).
     new_maintainer_calls = len(sim_stack.maintainer.calls) - initial_maintainer_calls
     assert new_maintainer_calls >= 1, (
-        "maintainer should have received at least one event for the "
-        "incremental batch"
+        "maintainer should have received at least one event for the incremental batch"
     )
 
     # 5.4.5 — overview NOT regenerated.
     final_overview_count = len(sim_stack.wiki_pages_added)
     assert final_overview_count == initial_overview_count, (
-        "auto-overview must be idempotent — second sync produced an "
-        "unexpected extra overview row"
+        "auto-overview must be idempotent — second sync produced an unexpected extra overview row"
     )
 
 

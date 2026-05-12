@@ -40,37 +40,21 @@ async def test_partial_429_per_sub_batch_attribution(sim_stack: SimStack) -> Non
 
     # 5.5.3 — partition counters reflect 7 succeeded sub-batches × 25
     # rows = 175 succeeded; 1 failed sub-batch × 25 rows = 25 failed.
-    assert counters["succeeded"] == 175, (
-        f"expected 175 succeeded, got {counters['succeeded']}"
-    )
-    assert counters["failed"] == 25, (
-        f"expected 25 failed, got {counters['failed']}"
-    )
+    assert counters["succeeded"] == 175, f"expected 175 succeeded, got {counters['succeeded']}"
+    assert counters["failed"] == 25, f"expected 25 failed, got {counters['failed']}"
 
     # 5.5.4 — succeeded keys are now ``done``, failed keys are ``failed``
     # with ``next_attempt_at`` set.
     counts = await sim_stack.mongo.count_channel_messages_by_status(channel)
     assert counts["done"] == 175
     assert counts["failed"] == 25
-    failed_msgs = [
-        m for m in sim_stack.mongo.messages if m.extraction_status == "failed"
-    ]
+    failed_msgs = [m for m in sim_stack.mongo.messages if m.extraction_status == "failed"]
     for msg in failed_msgs:
-        assert msg.next_attempt_at is not None, (
-            "every failed row must carry a backoff timestamp"
-        )
+        assert msg.next_attempt_at is not None, "every failed row must carry a backoff timestamp"
 
     # 5.5.5 — invariant: succeeded ∪ failed == claimed; disjoint.
-    succeeded_keys = {
-        m.key()
-        for m in sim_stack.mongo.messages
-        if m.extraction_status == "done"
-    }
-    failed_keys = {
-        m.key()
-        for m in sim_stack.mongo.messages
-        if m.extraction_status == "failed"
-    }
+    succeeded_keys = {m.key() for m in sim_stack.mongo.messages if m.extraction_status == "done"}
+    failed_keys = {m.key() for m in sim_stack.mongo.messages if m.extraction_status == "failed"}
     all_claimed = {m.key() for m in sim_stack.mongo.messages}
     assert succeeded_keys | failed_keys == all_claimed
     assert succeeded_keys.isdisjoint(failed_keys)

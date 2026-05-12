@@ -482,9 +482,7 @@ class SyncRunner:
                     failed_stage="fetch",
                 )
             except Exception:
-                logger.exception(
-                    "SyncRunner: also failed to mark job %s as failed", job_id
-                )
+                logger.exception("SyncRunner: also failed to mark job %s as failed", job_id)
 
     async def _fetch_all_messages(
         self,

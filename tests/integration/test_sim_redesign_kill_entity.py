@@ -70,9 +70,7 @@ def test_routing_never_produces_entity_pages() -> None:
     assert "glossary" in plan
     # Crucially: NO entity:<slug> rows produced.
     entity_keys = [k for k in plan if k.startswith("entity:")]
-    assert entity_keys == [], (
-        f"redesign routing must never emit entity:<slug>, got: {entity_keys}"
-    )
+    assert entity_keys == [], f"redesign routing must never emit entity:<slug>, got: {entity_keys}"
     # Each people/glossary page receives both fact ids.
     assert set(plan["people"]) == {"f1", "f2"}
     assert set(plan["glossary"]) == {"f1", "f2"}

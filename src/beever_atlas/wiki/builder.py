@@ -77,14 +77,14 @@ def _compute_build_input_hash(gathered: dict) -> str:
     parts: list[str] = []
     clusters = gathered.get("clusters") or []
     cluster_keys = sorted(
-        f"{getattr(c, 'id', '')}|{getattr(c, 'member_count', 0)}|"
-        f"{getattr(c, 'summary', '') or ''}"
+        f"{getattr(c, 'id', '')}|{getattr(c, 'member_count', 0)}|{getattr(c, 'summary', '') or ''}"
         for c in clusters
     )
     parts.extend(cluster_keys)
     cs = gathered.get("channel_summary")
     if cs is not None:
         parts.append(f"summary_facts={getattr(cs, 'fact_count', 0)}")
+
         # ``glossary_terms`` shape changed from ``list[str]`` (legacy
         # extraction schema) to ``list[GlossaryTerm]`` (consolidation
         # schema) — and Weaviate deserialises whatever JSON was last
@@ -96,25 +96,19 @@ def _compute_build_input_hash(gathered: dict) -> str:
             if isinstance(t, dict):
                 return str(t.get("term") or "")
             return str(getattr(t, "term", "") or "")
+
         _glossary_keys = sorted(
             _glossary_key(t) for t in (getattr(cs, "glossary_terms", None) or [])
         )
         parts.append("glossary=" + ",".join(_glossary_keys))
     decisions = gathered.get("decisions") or []
-    parts.append(
-        "decisions="
-        + ",".join(sorted(getattr(d, "id", "") for d in decisions))
-    )
+    parts.append("decisions=" + ",".join(sorted(getattr(d, "id", "") for d in decisions)))
     cluster_facts = gathered.get("cluster_facts") or {}
     for cid in sorted(cluster_facts.keys()):
         facts = cluster_facts.get(cid) or []
-        parts.append(
-            f"facts:{cid}=" + ",".join(sorted(getattr(f, "id", "") for f in facts))
-        )
+        parts.append(f"facts:{cid}=" + ",".join(sorted(getattr(f, "id", "") for f in facts)))
     media_facts = gathered.get("media_facts") or []
-    parts.append(
-        "media=" + ",".join(sorted(getattr(f, "id", "") for f in media_facts))
-    )
+    parts.append("media=" + ",".join(sorted(getattr(f, "id", "") for f in media_facts)))
     h = hashlib.sha256()
     for p in parts:
         h.update(p.encode("utf-8"))
@@ -492,11 +486,8 @@ class WikiBuilder:
                         # targets the same way Glossary / People / Topic do.
                         # Fall back to every cluster title when the key is
                         # absent (legacy/test entry points).
-                        compiled_topic_titles_for_folders = data.get(
-                            "_compiled_topic_titles"
-                        ) or [
-                            getattr(c, "title", "") or ""
-                            for c in data.get("clusters", []) or []
+                        compiled_topic_titles_for_folders = data.get("_compiled_topic_titles") or [
+                            getattr(c, "title", "") or "" for c in data.get("clusters", []) or []
                         ]
                         compiled_topic_titles_for_folders = [
                             t for t in compiled_topic_titles_for_folders if t

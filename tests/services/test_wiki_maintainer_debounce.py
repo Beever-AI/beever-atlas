@@ -52,10 +52,7 @@ def _make_recording_maintainer(
             target_lang: str = "en",
         ) -> dict[str, list[str]]:
             if routing is not None:
-                return {
-                    page_id: list(fids)
-                    for page_id, fids in routing.items()
-                }
+                return {page_id: list(fids) for page_id, fids in routing.items()}
             return {"page:test": list(fact_ids)}
 
         async def _record_merge_proposals(self, **_kwargs: Any) -> None:

@@ -870,9 +870,7 @@ class BatchPipelineRunner:
             )
 
         if max_retries < 1:
-            breakdown = BatchBreakdown(
-                batch_num=batch_num, keys=_keys_for_batch(messages)
-            )
+            breakdown = BatchBreakdown(batch_num=batch_num, keys=_keys_for_batch(messages))
             breakdown.error = "attempt 1 failed, no retries configured"
             return breakdown
 
@@ -911,9 +909,7 @@ class BatchPipelineRunner:
             )
 
         if max_retries < 2:
-            breakdown = BatchBreakdown(
-                batch_num=batch_num, keys=_keys_for_batch(messages)
-            )
+            breakdown = BatchBreakdown(batch_num=batch_num, keys=_keys_for_batch(messages))
             breakdown.error = "attempts 1-2 failed, max_retries=1"
             return breakdown
 
@@ -986,8 +982,6 @@ class BatchPipelineRunner:
             sync_job_id,
             batch_num,
         )
-        breakdown = BatchBreakdown(
-            batch_num=batch_num, keys=_keys_for_batch(messages)
-        )
+        breakdown = BatchBreakdown(batch_num=batch_num, keys=_keys_for_batch(messages))
         breakdown.error = f"all {max_retries + 1} attempts failed"
         return breakdown

@@ -80,10 +80,7 @@ async def test_tier1_exact_match_merges_case_and_punct_variants() -> None:
     assert "jeff tai" in canonical.aliases
     assert "JT" in canonical.aliases
     # Merge record emitted.
-    assert any(
-        m.canonical == "Jeff Tai" and "jeff tai" in m.merged_from
-        for m in result.merges
-    )
+    assert any(m.canonical == "Jeff Tai" and "jeff tai" in m.merged_from for m in result.merges)
     assert fallback == 0
 
 
@@ -145,9 +142,7 @@ async def test_tier2_high_cosine_merges_with_mocked_embeddings() -> None:
     # Two vectors with cosine ≈ 0.95 (within the merge band).
     vec_js = [1.0, 0.0, 0.0]
     vec_javascript = [0.95, 0.3122, 0.0]  # sqrt(0.0975) ≈ 0.3122
-    registry = _make_registry(
-        embeddings={"JS": vec_js, "JavaScript": vec_javascript}
-    )
+    registry = _make_registry(embeddings={"JS": vec_js, "JavaScript": vec_javascript})
 
     entities = [
         _entity("JS", "Technology"),
@@ -202,7 +197,7 @@ def _ambiguous_vectors() -> dict[str, list[float]]:
     import math
 
     a = [1.0, 0.0]
-    b = [0.88, math.sqrt(1.0 - 0.88 ** 2)]
+    b = [0.88, math.sqrt(1.0 - 0.88**2)]
     return {"OpenClaw": a, "OpenClaw API": b}
 
 
@@ -322,9 +317,7 @@ async def test_embedding_api_failure_degrades_to_exact_match_only(monkeypatch) -
 async def test_prior_canonical_name_wins_over_extracted_variant() -> None:
     """When ``prior_entities`` contains a graph-canonical name matching
     a new variant, the canonical name is preserved (not the new spelling)."""
-    prior = [
-        {"name": "PostgreSQL", "type": "Technology", "aliases": ["postgres", "pg"]}
-    ]
+    prior = [{"name": "PostgreSQL", "type": "Technology", "aliases": ["postgres", "pg"]}]
     entities = [_entity("postgres", "Technology")]
 
     result, _ = await dedupe_entities(

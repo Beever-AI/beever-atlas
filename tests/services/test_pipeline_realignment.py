@@ -285,6 +285,7 @@ async def test_topic_summary_empty_title_falls_through_to_synthesis():
         return {"summary_result": {"title": "", "summary_text": "original-text"}}
 
     import beever_atlas.services.consolidation as _mod
+
     # Pull the dynamic imports inside ``_call_topic_llm`` through stubs.
     import beever_atlas.agents.consolidation.summarizer as _summarizer_mod
     import beever_atlas.agents.runner as _runner_mod
@@ -357,7 +358,8 @@ def _make_section(paragraph_count: int) -> dict:
         "anchor": "context",
         "heading": "Context",
         "paragraphs": [
-            _para(f"Sentence {i}. Another sentence with detail {i}.") for i in range(paragraph_count)
+            _para(f"Sentence {i}. Another sentence with detail {i}.")
+            for i in range(paragraph_count)
         ],
         "visual": None,
     }

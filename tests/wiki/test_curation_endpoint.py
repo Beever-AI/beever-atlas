@@ -105,9 +105,7 @@ async def test_update_curation_mode_persists() -> None:
     store, fake = _make_store()
     _seed(fake)
 
-    updated = await store.update_curation_mode(
-        "C1", "gpu-procurement", "frozen", target_lang="en"
-    )
+    updated = await store.update_curation_mode("C1", "gpu-procurement", "frozen", target_lang="en")
 
     assert updated is not None
     assert updated.curation_mode == "frozen"
@@ -119,9 +117,7 @@ async def test_update_curation_mode_rejects_invalid_value() -> None:
     store, fake = _make_store()
     _seed(fake)
 
-    updated = await store.update_curation_mode(
-        "C1", "gpu-procurement", "rainbow", target_lang="en"
-    )
+    updated = await store.update_curation_mode("C1", "gpu-procurement", "rainbow", target_lang="en")
     assert updated is None
     # Doc unchanged.
     assert fake.docs[0]["curation_mode"] == "auto"
@@ -130,9 +126,7 @@ async def test_update_curation_mode_rejects_invalid_value() -> None:
 @pytest.mark.asyncio
 async def test_update_curation_mode_404_on_missing_page() -> None:
     store, _ = _make_store()
-    updated = await store.update_curation_mode(
-        "C1", "nonexistent", "manual", target_lang="en"
-    )
+    updated = await store.update_curation_mode("C1", "nonexistent", "manual", target_lang="en")
     assert updated is None
 
 
@@ -141,9 +135,7 @@ async def test_update_curation_mode_does_not_bump_version() -> None:
     store, fake = _make_store()
     _seed(fake, version=42)
 
-    updated = await store.update_curation_mode(
-        "C1", "gpu-procurement", "manual", target_lang="en"
-    )
+    updated = await store.update_curation_mode("C1", "gpu-procurement", "manual", target_lang="en")
     assert updated is not None
     assert updated.version == 42
 
@@ -228,12 +220,8 @@ async def test_apply_pending_updates_passes_truly_new_facts() -> None:
     flushed: list[str] = []
     for page in manual_dirty:
         already_seen = set(page.last_facts_seen)
-        new_fact_ids = sorted(
-            fid for fid in all_fact_ids if fid and fid not in already_seen
-        )
-        applied = await maintainer.apply_update(
-            "C1", page.page_id, new_fact_ids, target_lang="en"
-        )
+        new_fact_ids = sorted(fid for fid in all_fact_ids if fid and fid not in already_seen)
+        applied = await maintainer.apply_update("C1", page.page_id, new_fact_ids, target_lang="en")
         if applied:
             flushed.append(page.page_id)
 

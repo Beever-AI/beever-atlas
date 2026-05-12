@@ -525,7 +525,10 @@ class MongoDBStore:
         )
 
     async def increment_batches_completed_for_channel(
-        self, channel_id: str, count: int, max_batch_num: int | None = None,
+        self,
+        channel_id: str,
+        count: int,
+        max_batch_num: int | None = None,
     ) -> None:
         """Increment ``batches_completed`` on the most-recent user-facing
         sync_jobs row for a channel.

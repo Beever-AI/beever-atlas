@@ -394,9 +394,9 @@ async def test_ui_initiated_migration_downgrades_persisted_mismatch_to_warn(monk
         h = await probe_and_validate(cfg, stores)
 
     assert h.ok  # Boot proceeds.
-    assert any(
-        "UI-initiated migration pending" in rec.message for rec in caplog.records
-    ), "Expected the UI-initiated migration WARN to be logged"
+    assert any("UI-initiated migration pending" in rec.message for rec in caplog.records), (
+        "Expected the UI-initiated migration WARN to be logged"
+    )
 
     # CRITICAL: embedding_meta MUST NOT be updated in this branch — the
     # runtime gate relies on persisted dim != effective dim to keep

@@ -207,9 +207,7 @@ class TestImageExtractorCache:
         """Images failing _should_use_vision must not compute SHA-256 (architect AC)."""
         extractor = ImageExtractor()
 
-        with patch(
-            "beever_atlas.services.media_extractors._compute_media_hash"
-        ) as mock_hash:
+        with patch("beever_atlas.services.media_extractors._compute_media_hash") as mock_hash:
             # Long message text with no attachment cues → _should_use_vision returns False
             long_text = "x" * 200
             result = await extractor.extract(

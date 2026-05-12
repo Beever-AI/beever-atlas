@@ -38,9 +38,7 @@ class _FakeMongo:
         self._counts = counts
         self._existing_overview = existing_overview
 
-    async def count_channel_messages_by_status(
-        self, channel_id: str
-    ) -> dict[str, int]:
+    async def count_channel_messages_by_status(self, channel_id: str) -> dict[str, int]:
         return dict(self._counts)
 
     @property
@@ -89,9 +87,7 @@ def _make_subscriber(
         generator=gen,
     )
 
-    fake_stores = _FakeStores(
-        _FakeMongo(counts=counts, existing_overview=existing_overview)
-    )
+    fake_stores = _FakeStores(_FakeMongo(counts=counts, existing_overview=existing_overview))
     sub._get_stores = lambda: fake_stores  # type: ignore[method-assign]
 
     return sub, gen
@@ -254,9 +250,7 @@ async def test_concurrent_events_only_one_generate() -> None:
         generator=AsyncMock(side_effect=slow_generator),
     )
 
-    await asyncio.gather(
-        *(sub.on_extraction_done("C123", [f"f{i}"]) for i in range(5))
-    )
+    await asyncio.gather(*(sub.on_extraction_done("C123", [f"f{i}"]) for i in range(5)))
 
     assert call_count == 1
 

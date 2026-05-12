@@ -103,9 +103,7 @@ def test_emit_helpers_swallow_buffer_failures(monkeypatch) -> None:
     # Both emit helpers must NOT raise, even though the underlying buffer
     # always raises.
     emit_agent_state("C1", "fact_extractor", "running")
-    emit_message_processing(
-        "C1", message_id="m", text_preview="t", author="a"
-    )
+    emit_message_processing("C1", message_id="m", text_preview="t", author="a")
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +241,7 @@ async def test_maintainer_drops_routes_to_uninstantiated_adaptive_kind() -> None
             # Existing pages exist so the first-sync gate doesn't defer.
             from beever_atlas.models.persistence import WikiPage
 
-            return [
-                WikiPage(channel_id=channel_id, page_id="overview", title="Overview")
-            ]
+            return [WikiPage(channel_id=channel_id, page_id="overview", title="Overview")]
 
         async def save_page(self, page):
             raise AssertionError("Maintainer should not save adaptive page placeholders")
@@ -374,9 +370,7 @@ def test_build_input_hash_changes_when_facts_change() -> None:
     h_base = _compute_build_input_hash(base)
     base_with_new_fact = {
         **base,
-        "cluster_facts": {
-            "topic-a": [SimpleNamespace(id="f1"), SimpleNamespace(id="f2_new")]
-        },
+        "cluster_facts": {"topic-a": [SimpleNamespace(id="f1"), SimpleNamespace(id="f2_new")]},
     }
     h_new = _compute_build_input_hash(base_with_new_fact)
     assert h_base != h_new

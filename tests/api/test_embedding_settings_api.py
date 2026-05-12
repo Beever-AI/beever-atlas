@@ -95,6 +95,7 @@ def app_and_client(monkeypatch):
     # find ``.env`` from cwd.
     import os
     import tempfile
+
     _tmp = tempfile.TemporaryDirectory()
     _prev_cwd = os.getcwd()
     os.chdir(_tmp.name)

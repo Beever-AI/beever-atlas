@@ -246,9 +246,7 @@ def test_collect_filters_related_topics_to_compiled_set():
             "related_topics": ["Compiled One", "Skipped One"],
         }
     ]
-    rows = _collect_glossary_entries(
-        glossary, [], compiled_topic_titles=["Compiled One"]
-    )
+    rows = _collect_glossary_entries(glossary, [], compiled_topic_titles=["Compiled One"])
     wfh = next(r for r in rows if r["term"] == "WFH")
     assert wfh["related_topics"] == ["Compiled One"]
 

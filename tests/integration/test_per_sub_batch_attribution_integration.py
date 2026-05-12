@@ -205,6 +205,4 @@ async def test_one_sub_batch_429_others_succeed() -> None:
     )
 
     # And the keys are disjoint (no row both succeeded and failed).
-    assert set(succeeded_keys).isdisjoint(set(failed_keys)), (
-        "succeeded ∩ failed must be empty"
-    )
+    assert set(succeeded_keys).isdisjoint(set(failed_keys)), "succeeded ∩ failed must be empty"

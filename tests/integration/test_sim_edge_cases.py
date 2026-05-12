@@ -176,9 +176,7 @@ async def test_maintainer_crash_mid_debounce_recovers() -> None:
     m._dirty.clear()
     m._flush_task = None
 
-    assert rewrite_calls == [], (
-        "crash before flush — no rewrite calls expected yet"
-    )
+    assert rewrite_calls == [], "crash before flush — no rewrite calls expected yet"
 
     # Fire one more event after crash — the page IS rewritten via the
     # fresh dirty-set.

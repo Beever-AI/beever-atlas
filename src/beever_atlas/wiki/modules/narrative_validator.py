@@ -65,9 +65,9 @@ _ARTICLE_HARD_MAX_WORDS = 6000
 # Small topics (< 5 paragraphs) get a relaxed threshold because the
 # LLM sometimes omits the citations array on 1-2 paragraphs, and
 # rejecting the whole article is too aggressive for thin inputs.
-_CITATION_COVERAGE_GATE = 0.80          # > 10 paragraphs (large topics)
-_CITATION_COVERAGE_GATE_MID = 0.70     # 5-10 paragraphs
-_CITATION_COVERAGE_GATE_SMALL = 0.60   # < 5 paragraphs
+_CITATION_COVERAGE_GATE = 0.80  # > 10 paragraphs (large topics)
+_CITATION_COVERAGE_GATE_MID = 0.70  # 5-10 paragraphs
+_CITATION_COVERAGE_GATE_SMALL = 0.60  # < 5 paragraphs
 
 # Sentence boundary detection — period / question mark / exclamation
 # followed by whitespace. Conservative; captures the most common

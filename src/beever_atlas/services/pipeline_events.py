@@ -115,9 +115,7 @@ class PipelineEventBuffer:
                 self._events[channel_id] = bucket
             bucket.append(evt)
             if event_type == EVENT_TYPE_PARSE_FAILURE:
-                fail_bucket = self._parse_failure_ts.setdefault(
-                    channel_id, deque(maxlen=200)
-                )
+                fail_bucket = self._parse_failure_ts.setdefault(channel_id, deque(maxlen=200))
                 fail_bucket.append(evt.ts)
 
     def parse_failure_count_last_10_min(self, channel_id: str) -> int:

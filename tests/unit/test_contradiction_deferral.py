@@ -113,9 +113,7 @@ async def test_advance_contradiction_watermark_atomic_lte_filter():
 
     store = MongoDBStore.__new__(MongoDBStore)
     store._channel_sync_state = MagicMock()
-    store._channel_sync_state.find_one_and_update = AsyncMock(
-        return_value={"channel_id": "C1"}
-    )
+    store._channel_sync_state.find_one_and_update = AsyncMock(return_value={"channel_id": "C1"})
 
     pre = datetime(2026, 5, 1, tzinfo=UTC)
     post = datetime(2026, 5, 11, tzinfo=UTC)
@@ -320,9 +318,7 @@ async def test_check_and_supersede_for_channel_explicit_watermark_override():
 
     mongodb = MagicMock()
     # Persisted watermark would say "2026-05-10" — we override to 1970.
-    mongodb.get_contradiction_watermark = AsyncMock(
-        return_value=datetime(2026, 5, 10, tzinfo=UTC)
-    )
+    mongodb.get_contradiction_watermark = AsyncMock(return_value=datetime(2026, 5, 10, tzinfo=UTC))
     mongodb.advance_contradiction_watermark = AsyncMock(return_value=True)
 
     facts = [_make_fact("f-1")]
@@ -338,9 +334,7 @@ async def test_check_and_supersede_for_channel_explicit_watermark_override():
         patch("beever_atlas.stores.get_stores", return_value=stores),
         patch.object(contradiction_detector, "check_and_supersede", new=AsyncMock()),
     ):
-        await contradiction_detector.check_and_supersede_for_channel(
-            "C1", watermark_ts=override
-        )
+        await contradiction_detector.check_and_supersede_for_channel("C1", watermark_ts=override)
 
     # Persisted watermark was NEVER consulted.
     mongodb.get_contradiction_watermark.assert_not_awaited()

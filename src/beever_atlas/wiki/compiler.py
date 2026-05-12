@@ -1207,9 +1207,7 @@ def _splice_glossary_sections(
         entries = _collect_glossary_entries(
             glossary_terms, clusters, compiled_topic_titles=compiled_topic_titles
         )
-        block = _render_glossary_terms_table(
-            entries, compiled_topic_titles=compiled_topic_titles
-        )
+        block = _render_glossary_terms_table(entries, compiled_topic_titles=compiled_topic_titles)
         if block:
             additions.append(block)
     if not additions:
@@ -4008,9 +4006,7 @@ class WikiCompiler:
                 )
                 return None
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "WikiCompiler: topic analysis failed for %s: %s", cluster.title, exc
-                )
+                logger.warning("WikiCompiler: topic analysis failed for %s: %s", cluster.title, exc)
                 return None
         return None
 
@@ -4491,9 +4487,9 @@ class WikiCompiler:
         # Rewrite any ``[[Title]]`` references the modular path's narrative
         # may have produced into native markdown links (compiled topics) or
         # plain text (skipped / unknown topics).
-        compiled_topic_titles_for_rewrite: list[str] = gathered.get(
-            "_compiled_topic_titles"
-        ) or [getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []]
+        compiled_topic_titles_for_rewrite: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
         compiled_topic_titles_for_rewrite = [t for t in compiled_topic_titles_for_rewrite if t]
         modular_content = _rewrite_topic_wikilinks(out.content, compiled_topic_titles_for_rewrite)
         return WikiPage(
@@ -4742,9 +4738,7 @@ class WikiCompiler:
                     # Rewrite any ``[[Title]]`` references the LLM emitted in
                     # See Also / inline prose into native links (compiled
                     # topics) or plain text (skipped / unknown topics).
-                    parent_content = _rewrite_topic_wikilinks(
-                        parent_content, compiled_topic_titles
-                    )
+                    parent_content = _rewrite_topic_wikilinks(parent_content, compiled_topic_titles)
                     children_refs = [
                         WikiPageRef(
                             id=sp.id,
@@ -4761,9 +4755,7 @@ class WikiCompiler:
                     final_parent_content = (
                         parent_content
                         if v2
-                        else _rewrite_topic_wikilinks(
-                            parent_result.content, compiled_topic_titles
-                        )
+                        else _rewrite_topic_wikilinks(parent_result.content, compiled_topic_titles)
                     )
                     parent_page = WikiPage(
                         id=f"topic-{slug}",
@@ -4900,8 +4892,13 @@ class WikiCompiler:
         # Decision-typed graph entities on chat channels.
         existing_decisions = list(gathered.get("decisions", []) or [])
         _seen_decision_names: set[str] = {
-            (d.get("name") or d.get("title") or "" if isinstance(d, dict) else
-             str(getattr(d, "name", "") or getattr(d, "title", ""))).strip().lower()[:60]
+            (
+                d.get("name") or d.get("title") or ""
+                if isinstance(d, dict)
+                else str(getattr(d, "name", "") or getattr(d, "title", ""))
+            )
+            .strip()
+            .lower()[:60]
             for d in existing_decisions
         }
         for facts in gathered.get("cluster_facts", {}).values():
@@ -5898,9 +5895,9 @@ class WikiCompiler:
         # ``compiled_topic_titles_json`` placeholder and the post-render
         # rewrite. ``None`` (legacy callers) falls back to the children's
         # titles so the rewrite still resolves intra-folder references.
-        compiled_topic_titles_safe: list[str] = [
-            t for t in (compiled_topic_titles or []) if t
-        ] or [c.title for c in children_pages if c.title]
+        compiled_topic_titles_safe: list[str] = [t for t in (compiled_topic_titles or []) if t] or [
+            c.title for c in children_pages if c.title
+        ]
 
         try:
             modular_out = await compile_folder_page_modular(

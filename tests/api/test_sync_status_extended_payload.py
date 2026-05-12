@@ -117,9 +117,7 @@ def _reset_singletons(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_phases_mid_extraction_payload_shape(
-    client: AsyncClient, mock_stores
-) -> None:
+async def test_phases_mid_extraction_payload_shape(client: AsyncClient, mock_stores) -> None:
     """Mid-extraction: phases = [done, in_flight, in_flight, pending]."""
     job = _make_job(status="running")
     _wire_mongo(
@@ -158,9 +156,7 @@ async def test_phases_mid_extraction_payload_shape(
 
 
 @pytest.mark.asyncio
-async def test_phases_all_complete_payload_shape(
-    client: AsyncClient, mock_stores
-) -> None:
+async def test_phases_all_complete_payload_shape(client: AsyncClient, mock_stores) -> None:
     """All-complete: phases = [done, done, done, done]."""
     started = datetime.now(tz=UTC) - timedelta(seconds=23)
     completed = datetime.now(tz=UTC)
@@ -215,9 +211,7 @@ async def test_phases_skipped_overview_when_feature_flag_off(
 
 
 @pytest.mark.asyncio
-async def test_mixed_retrying_state_reports_split_counts(
-    client: AsyncClient, mock_stores
-) -> None:
+async def test_mixed_retrying_state_reports_split_counts(client: AsyncClient, mock_stores) -> None:
     """195 retrying + 5 abandoned must split correctly on the response."""
     job = _make_job(status="running", processed_messages=400, total_messages=600)
     _wire_mongo(

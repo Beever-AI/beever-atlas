@@ -1128,9 +1128,7 @@ class WikiMaintainer:
         )
         return plan
 
-    def _ensure_flush_scheduled(
-        self, debounce_seconds: float, *, target_lang: str = "en"
-    ) -> None:
+    def _ensure_flush_scheduled(self, debounce_seconds: float, *, target_lang: str = "en") -> None:
         """Schedule one debounced flush task if none is already in flight.
 
         Idempotent — subsequent calls while the existing task is still
@@ -1150,9 +1148,7 @@ class WikiMaintainer:
             self._debounced_flush(debounce_seconds, target_lang=target_lang)
         )
 
-    async def _debounced_flush(
-        self, debounce_seconds: float, *, target_lang: str = "en"
-    ) -> None:
+    async def _debounced_flush(self, debounce_seconds: float, *, target_lang: str = "en") -> None:
         """Sleep the debounce window, then drain the dirty-set atomically."""
         try:
             if debounce_seconds > 0:
@@ -1253,9 +1249,7 @@ class WikiMaintainer:
                     continue
                 # Filter archived rows so legacy kind=entity stragglers
                 # don't accidentally satisfy the "Builder has run" check.
-                active_pages = [
-                    p for p in pages if not getattr(p, "archived", False)
-                ]
+                active_pages = [p for p in pages if not getattr(p, "archived", False)]
                 if not active_pages:
                     deferred_channels.add(channel_id)
             except Exception:  # noqa: BLE001 — best-effort gate
@@ -1274,9 +1268,7 @@ class WikiMaintainer:
                 "wiki_maintainer._flush_dirty deferred channels=%s pages=%d "
                 "(Builder hasn't run yet — first-sync gate)",
                 sorted(deferred_channels),
-                sum(
-                    1 for (ch, _pid) in snapshot if ch in deferred_channels
-                ),
+                sum(1 for (ch, _pid) in snapshot if ch in deferred_channels),
             )
 
         rewritten = 0
@@ -1301,8 +1293,7 @@ class WikiMaintainer:
                         done_ids.append(doc_id)
             except Exception:  # noqa: BLE001 — one bad page must not stall others
                 logger.exception(
-                    "wiki_maintainer._flush_dirty: rewrite failed "
-                    "channel=%s page=%s fact_count=%d",
+                    "wiki_maintainer._flush_dirty: rewrite failed channel=%s page=%s fact_count=%d",
                     channel_id,
                     page_id,
                     len(fact_ids),
@@ -1372,9 +1363,7 @@ class WikiMaintainer:
         :meth:`maintain_now`.
         """
         del mode  # accepted for backwards-compat; flushes are owned by memory_settled
-        return await self.on_memory_changed(
-            channel_id, fact_ids, target_lang=target_lang
-        )
+        return await self.on_memory_changed(channel_id, fact_ids, target_lang=target_lang)
 
     async def maintain_now(self, channel_id: str, target_lang: str = "en") -> dict[str, int]:
         """Drain the dirty page queue for one channel — used by the
@@ -1448,9 +1437,7 @@ class WikiMaintainer:
         )
 
         _maint_started_at = time.monotonic()
-        _emit_agent_state_local(
-            channel_id, "wiki_maintainer", "running", batch_id=page_id
-        )
+        _emit_agent_state_local(channel_id, "wiki_maintainer", "running", batch_id=page_id)
         try:
             return await self._apply_update_inner(
                 channel_id, page_id, new_fact_ids, target_lang=target_lang
@@ -1681,9 +1668,7 @@ class WikiMaintainer:
             try:
                 from beever_atlas.wiki.hashing import compute_kind_schema_hash
 
-                page.kind_schema_hash = compute_kind_schema_hash(
-                    dispatch_kind, new_kind_schema
-                )
+                page.kind_schema_hash = compute_kind_schema_hash(dispatch_kind, new_kind_schema)
             except Exception:  # noqa: BLE001
                 page.kind_schema_hash = None
         # title, slug, page_voice_seed are intentionally NOT touched here —

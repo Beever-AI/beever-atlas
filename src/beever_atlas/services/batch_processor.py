@@ -549,9 +549,7 @@ class BatchProcessor:
                 "persister",
                 "wiki_maintainer",
             ):
-                _emit_agent_state(
-                    channel_id, _agent, "running", batch_id=_batch_id
-                )
+                _emit_agent_state(channel_id, _agent, "running", batch_id=_batch_id)
             await stores.mongodb.update_sync_progress(
                 job_id=sync_job_id,
                 processed=0,
@@ -641,9 +639,7 @@ class BatchProcessor:
                 "skip_entity_extraction": bool(
                     ingestion_config and ingestion_config.skip_entity_extraction
                 ),
-                "skip_graph_writes": bool(
-                    ingestion_config and ingestion_config.skip_graph_writes
-                ),
+                "skip_graph_writes": bool(ingestion_config and ingestion_config.skip_graph_writes),
                 "quality_threshold": (
                     ingestion_config.quality_threshold
                     if ingestion_config and ingestion_config.quality_threshold is not None
@@ -720,9 +716,7 @@ class BatchProcessor:
                         )
                         if _retry_checkpoint:
                             _resumed_from = _retry_checkpoint["completed_stage"]
-                            _skipped_stage_count = (
-                                _retry_checkpoint["completed_stage_index"] + 1
-                            )
+                            _skipped_stage_count = _retry_checkpoint["completed_stage_index"] + 1
                             _retry_snapshot = _retry_checkpoint.get("state_snapshot") or {}
                             for _key in _ALL_CHECKPOINT_KEYS:
                                 if _key in _retry_snapshot:
@@ -1740,9 +1734,7 @@ class BatchProcessor:
             _embedded_facts = final_state.get("embedded_facts") or []
             _preprocessed = final_state.get("preprocessed_messages") or []
             _media_count_bd = sum(
-                1
-                for m in _preprocessed
-                if isinstance(m, dict) and m.get("modality") == "mixed"
+                1 for m in _preprocessed if isinstance(m, dict) and m.get("modality") == "mixed"
             )
             breakdown = BatchBreakdown(
                 batch_num=batch_index,
@@ -1834,15 +1826,12 @@ class BatchProcessor:
                             keys=list(breakdown.keys),
                             new_status="done",
                         )
-                    await stores.mongodb.refresh_sync_progress_for_channel(
-                        channel_id
-                    )
+                    await stores.mongodb.refresh_sync_progress_for_channel(channel_id)
                 except Exception:
                     # Mirror to channel-row is best-effort observability —
                     # never fail a batch on a mongo blip.
                     logger.exception(
-                        "BatchProcessor: channel-row mirror failed "
-                        "job_id=%s batch=%d channel=%s",
+                        "BatchProcessor: channel-row mirror failed job_id=%s batch=%d channel=%s",
                         sync_job_id,
                         batch_index,
                         channel_id,
@@ -1899,10 +1888,7 @@ class BatchProcessor:
         # ``batch_index_offset`` makes the enumeration global across the
         # whole sync (see process_messages docstring). The array lookup
         # below subtracts the offset to recover the local index.
-        _tasks = [
-            _tagged(i, b)
-            for i, b in enumerate(batches, start=batch_index_offset + 1)
-        ]
+        _tasks = [_tagged(i, b) for i, b in enumerate(batches, start=batch_index_offset + 1)]
 
         processed_so_far = 0
         for coro in asyncio.as_completed(_tasks):
@@ -2020,9 +2006,7 @@ class BatchProcessor:
                     _buckets[10] += 1
                 else:
                     _buckets[11] += 1
-            _histogram = json.dumps(
-                [[k, _buckets[k]] for k in (1, 2, 3, 5, 10, 11)]
-            )
+            _histogram = json.dumps([[k, _buckets[k]] for k in (1, 2, 3, 5, 10, 11)])
         except Exception:  # noqa: BLE001
             logger.debug(
                 "sync_summary: cluster_size_histogram query failed — emitting empty",

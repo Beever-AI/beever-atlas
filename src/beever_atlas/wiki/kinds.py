@@ -86,9 +86,7 @@ def projects_predicate(s: ChannelSignals) -> tuple[bool, str]:
         return True, f"{p_facts} project facts ≥3"
     if s.project_cluster_count >= 2:
         return True, f"{s.project_cluster_count} project clusters ≥2"
-    return False, (
-        f"only {p_facts} project facts and {s.project_cluster_count} project clusters"
-    )
+    return False, (f"only {p_facts} project facts and {s.project_cluster_count} project clusters")
 
 
 def architecture_predicate(s: ChannelSignals) -> tuple[bool, str]:
@@ -109,8 +107,7 @@ def open_questions_predicate(s: ChannelSignals) -> tuple[bool, str]:
     if s.open_question_resolved_ratio >= 1.0:
         return False, "all open questions resolved — page would be empty"
     return True, (
-        f"{oq_facts} open_question facts with "
-        f"{s.open_question_resolved_ratio:.0%} resolved"
+        f"{oq_facts} open_question facts with {s.open_question_resolved_ratio:.0%} resolved"
     )
 
 
@@ -120,10 +117,7 @@ def timeline_predicate(s: ChannelSignals) -> tuple[bool, str]:
         return False, f"channel age {s.channel_age_days}d <30"
     if s.activity_epoch_count < 3:
         return False, f"only {s.activity_epoch_count} activity epochs"
-    return True, (
-        f"channel age {s.channel_age_days}d ≥30 with "
-        f"{s.activity_epoch_count} epochs ≥3"
-    )
+    return True, (f"channel age {s.channel_age_days}d ≥30 with {s.activity_epoch_count} epochs ≥3")
 
 
 def stakeholders_predicate(s: ChannelSignals) -> tuple[bool, str]:
@@ -133,8 +127,7 @@ def stakeholders_predicate(s: ChannelSignals) -> tuple[bool, str]:
     if not s.role_hierarchy_detected:
         return False, "no role hierarchy detected in entity graph"
     return True, (
-        f"{s.distinct_contributor_count} distinct contributors with "
-        "detectable role hierarchy"
+        f"{s.distinct_contributor_count} distinct contributors with detectable role hierarchy"
     )
 
 
@@ -205,9 +198,7 @@ KIND_REGISTRY: dict[str, KindSpec] = {
 # ----------------------------------------------------------------------
 
 
-def should_instantiate(
-    kind: str, signals: ChannelSignals
-) -> tuple[bool, str]:
+def should_instantiate(kind: str, signals: ChannelSignals) -> tuple[bool, str]:
     """Decide whether to instantiate a page of ``kind`` for the channel.
 
     Order of precedence (per design D3):

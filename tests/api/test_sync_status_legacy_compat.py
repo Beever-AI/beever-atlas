@@ -126,9 +126,7 @@ def _wire_mongo(mock_stores, job: SimpleNamespace) -> None:
 
 
 @pytest.mark.asyncio
-async def test_response_contains_all_legacy_fields(
-    client: AsyncClient, mock_stores
-) -> None:
+async def test_response_contains_all_legacy_fields(client: AsyncClient, mock_stores) -> None:
     """Every legacy field MUST be present and unchanged."""
     job = _make_job()
     _wire_mongo(mock_stores, job)
@@ -194,9 +192,7 @@ async def test_legacy_only_model_can_deserialize_new_payload(
 
 
 @pytest.mark.asyncio
-async def test_idle_state_response_unchanged(
-    client: AsyncClient, mock_stores
-) -> None:
+async def test_idle_state_response_unchanged(client: AsyncClient, mock_stores) -> None:
     """The ``no job → idle`` short-circuit must keep its minimal shape."""
     mock_stores.mongodb.get_sync_status = AsyncMock(return_value=None)
     resp = await client.get("/api/channels/C_IDLE/sync/status")

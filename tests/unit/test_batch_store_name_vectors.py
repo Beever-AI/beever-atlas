@@ -99,9 +99,7 @@ async def test_fallback_on_exception(caplog):
     from beever_atlas.stores.entity_registry import EntityRegistry
 
     mock_graph = AsyncMock()
-    mock_graph.batch_store_name_vectors = AsyncMock(
-        side_effect=RuntimeError("neo4j unavailable")
-    )
+    mock_graph.batch_store_name_vectors = AsyncMock(side_effect=RuntimeError("neo4j unavailable"))
     mock_graph.store_name_vector = AsyncMock(return_value=None)
 
     registry = EntityRegistry(mock_graph)

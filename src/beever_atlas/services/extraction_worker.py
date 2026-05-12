@@ -696,9 +696,7 @@ class ExtractionWorker:
         # Batch 1 in tick B). The offset shifts this tick's internal
         # batches to global positions ``offset+1..offset+K``.
         try:
-            batch_index_offset = (
-                await stores.mongodb.get_user_facing_batches_completed(channel_id)
-            )
+            batch_index_offset = await stores.mongodb.get_user_facing_batches_completed(channel_id)
         except Exception:
             logger.exception(
                 "ExtractionWorker: failed to read batches_completed offset "
@@ -733,6 +731,7 @@ class ExtractionWorker:
             # {} when the success path already popped the bucket.
             try:
                 from beever_atlas.services.batch_processor import _drain_sync_metrics
+
                 _drain_sync_metrics(channel_id, sync_job_id)
             except Exception:  # noqa: BLE001
                 pass

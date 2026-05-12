@@ -886,8 +886,7 @@ async def update_curation_mode(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"curation_mode must be one of 'auto'|'manual'|'frozen', "
-                f"got {body.curation_mode!r}"
+                f"curation_mode must be one of 'auto'|'manual'|'frozen', got {body.curation_mode!r}"
             ),
         )
     await assert_channel_access(principal, channel_id)
@@ -901,9 +900,7 @@ async def update_curation_mode(
     return {
         "slug": updated.slug,
         "curation_mode": updated.curation_mode,
-        "updated_at": (
-            updated.updated_at.isoformat() if updated.updated_at else None
-        ),
+        "updated_at": (updated.updated_at.isoformat() if updated.updated_at else None),
     }
 
 
@@ -956,9 +953,7 @@ async def apply_pending_updates(
         already_seen = set(page.last_facts_seen)
         new_fact_ids = sorted(fid for fid in all_fact_ids if fid and fid not in already_seen)
         try:
-            await store.update_curation_mode(
-                channel_id, page.slug, "auto", target_lang=lang
-            )
+            await store.update_curation_mode(channel_id, page.slug, "auto", target_lang=lang)
             applied = await maintainer.apply_update(
                 channel_id,
                 page.page_id,
@@ -968,9 +963,7 @@ async def apply_pending_updates(
             if applied:
                 flushed.append(page.page_id)
         finally:
-            await store.update_curation_mode(
-                channel_id, page.slug, "manual", target_lang=lang
-            )
+            await store.update_curation_mode(channel_id, page.slug, "manual", target_lang=lang)
     return {"flushed": len(flushed), "pages": flushed}
 
 

@@ -138,6 +138,4 @@ async def test_throttle_halves_rate_after_429(monkeypatch: pytest.MonkeyPatch) -
     # rate-limit instance API exposes this via the metrics shape.
     bucket = get_llm_throttle()._buckets["gemini"]
     rpm_eff, _tpm_eff = bucket.effective_limits(time.monotonic())
-    assert rpm_eff == 5, (
-        "after 429 the effective RPM should halve from 10 → 5"
-    )
+    assert rpm_eff == 5, "after 429 the effective RPM should halve from 10 → 5"

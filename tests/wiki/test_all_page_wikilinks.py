@@ -246,9 +246,7 @@ def _gathered_for_activity() -> dict:
         ("_compile_activity", _gathered_for_activity),
     ],
 )
-async def test_fixed_page_compilers_rewrite_wikilinks(
-    method: str, gathered_factory
-) -> None:
+async def test_fixed_page_compilers_rewrite_wikilinks(method: str, gathered_factory) -> None:
     """Each fixed-page compiler must funnel LLM output through the wikilink
     rewrite so compiled topics resolve and skipped topics become plain text."""
     compiler = _compiler()
@@ -375,10 +373,7 @@ async def test_overview_fallbacks_to_cluster_titles_when_compiled_set_missing() 
     fallback uses ``[c.title for c in clusters]`` so legacy/test callers
     aren't broken."""
     compiler = _compiler()
-    body = (
-        "**TL;DR.**\n\n## Overview\n\n"
-        f"See [[{COMPILED}]] — should resolve via fallback.\n"
-    )
+    body = f"**TL;DR.**\n\n## Overview\n\nSee [[{COMPILED}]] — should resolve via fallback.\n"
     _patch_call_llm(compiler, body)
     gathered = _make_gathered(with_compiled_set=False)
     page = await compiler._compile_overview(gathered)

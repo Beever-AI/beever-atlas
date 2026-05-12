@@ -10,9 +10,7 @@ from beever_atlas.wiki.hashing import (
 
 def test_hash_stable_for_identical_payload() -> None:
     payload = {"name": "Alpha", "count": 3, "tags": ["a", "b"]}
-    assert compute_kind_schema_hash("topic", payload) == compute_kind_schema_hash(
-        "topic", payload
-    )
+    assert compute_kind_schema_hash("topic", payload) == compute_kind_schema_hash("topic", payload)
 
 
 def test_hash_changes_when_payload_changes() -> None:
@@ -31,18 +29,14 @@ def test_hash_invariant_to_unordered_list_order() -> None:
     """``entity_tags`` is declared unordered for the topic kind."""
     p1 = {"entity_tags": ["alpha", "beta"]}
     p2 = {"entity_tags": ["beta", "alpha"]}
-    assert compute_kind_schema_hash("topic", p1) == compute_kind_schema_hash(
-        "topic", p2
-    )
+    assert compute_kind_schema_hash("topic", p1) == compute_kind_schema_hash("topic", p2)
 
 
 def test_hash_sensitive_to_ordered_list_order() -> None:
     """``epochs`` for the timeline kind is order-significant."""
     p1 = {"epochs": ["jan", "feb"]}
     p2 = {"epochs": ["feb", "jan"]}
-    assert compute_kind_schema_hash("timeline", p1) != compute_kind_schema_hash(
-        "timeline", p2
-    )
+    assert compute_kind_schema_hash("timeline", p1) != compute_kind_schema_hash("timeline", p2)
 
 
 def test_hash_strips_whitespace_in_strings() -> None:
@@ -54,9 +48,7 @@ def test_hash_strips_whitespace_in_strings() -> None:
 def test_hash_excludes_derived_fields() -> None:
     p1 = {"name": "Alpha", "fact_count": 3, "generated_at": "2026-01-01"}
     p2 = {"name": "Alpha", "fact_count": 99, "generated_at": "2030-12-31"}
-    assert compute_kind_schema_hash("topic", p1) == compute_kind_schema_hash(
-        "topic", p2
-    )
+    assert compute_kind_schema_hash("topic", p1) == compute_kind_schema_hash("topic", p2)
 
 
 def test_hash_busts_on_prompt_version_change() -> None:
@@ -73,9 +65,7 @@ def test_hash_empty_for_none_payload() -> None:
 def test_hash_kind_separation() -> None:
     """Same payload under different kinds produces different hashes."""
     p = {"name": "Alpha"}
-    assert compute_kind_schema_hash("topic", p) != compute_kind_schema_hash(
-        "people", p
-    )
+    assert compute_kind_schema_hash("topic", p) != compute_kind_schema_hash("people", p)
 
 
 def test_compute_prompt_version_short_and_stable() -> None:

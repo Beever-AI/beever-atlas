@@ -70,9 +70,7 @@ class _SyncJobsCollectionStub:
             return None
         return dict(matches[0])
 
-    async def update_many(
-        self, filt: dict[str, Any], update: dict[str, Any]
-    ) -> None:
+    async def update_many(self, filt: dict[str, Any], update: dict[str, Any]) -> None:
         set_ops = update.get("$set", {})
         for d in self._docs:
             if self._matches(d, filt):

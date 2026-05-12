@@ -170,9 +170,7 @@ class LLMMock:
         # Happy path: deterministic completion shaped for the persister
         # actor. The test paths never read the JSON, so a minimal stub
         # is sufficient.
-        return _StubCompletionResponse(
-            content='{"facts":[],"entities":[],"relationships":[]}'
-        )
+        return _StubCompletionResponse(content='{"facts":[],"entities":[],"relationships":[]}')
 
     async def aembedding(self, *, model: str, input: Any, **kwargs: Any) -> Any:
         provider = _provider_from_model(model)
@@ -404,10 +402,7 @@ class _FakeMongo:
             if msg.extraction_status == "pending":
                 # Retry barrier: rows reset to pending after a failure carry
                 # ``next_attempt_at``; skip until the wall clock catches up.
-                if (
-                    msg.next_attempt_at is not None
-                    and msg.next_attempt_at > now
-                ):
+                if msg.next_attempt_at is not None and msg.next_attempt_at > now:
                     continue
                 msg.extraction_status = "extracting"
                 msg.attempt_count += 1
@@ -458,9 +453,7 @@ class _FakeMongo:
                 n += 1
         return n
 
-    async def count_channel_messages_by_status(
-        self, channel_id: str
-    ) -> dict[str, int]:
+    async def count_channel_messages_by_status(self, channel_id: str) -> dict[str, int]:
         out = {"pending": 0, "extracting": 0, "done": 0, "failed": 0}
         for msg in self.messages:
             if msg.channel_id != channel_id:
@@ -695,22 +688,15 @@ class SimStack:
 
     async def overview_exists(self, channel_id: str) -> bool:
         for p in self.mongo.wiki_pages:
-            if (
-                p.get("channel_id") == channel_id
-                and p.get("page_type") == "overview"
-            ):
+            if p.get("channel_id") == channel_id and p.get("page_type") == "overview":
                 return True
         return False
 
-    def llm_call_count(
-        self, provider: str | None = None, kind: str | None = None
-    ) -> int:
+    def llm_call_count(self, provider: str | None = None, kind: str | None = None) -> int:
         return self.llm.call_count(provider=provider, kind=kind)
 
     def emit_pipeline_event(self, channel_id: str, stage: str, label: str) -> None:
-        get_pipeline_events().record(
-            channel_id=channel_id, stage=stage, label=label
-        )
+        get_pipeline_events().record(channel_id=channel_id, stage=stage, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -779,9 +765,7 @@ def build_sim_stack(
         succeeded_keys: list[tuple[str, str, str]] = []
         failed_keys: list[tuple[str, str, str]] = []
 
-        for batch_idx, start in enumerate(
-            range(0, len(all_keys), sub_batch_size)
-        ):
+        for batch_idx, start in enumerate(range(0, len(all_keys), sub_batch_size)):
             keys_slice = all_keys[start : start + sub_batch_size]
             try:
                 # Hit the LLM mock so the fault rules + global 429
@@ -845,9 +829,7 @@ def build_sim_stack(
                 ("embed", f"Embedded {len(messages)} fact rows"),
                 ("persist", f"Persisted {len(succeeded_keys)} extraction rows"),
             ]:
-                get_pipeline_events().record(
-                    channel_id=channel_id, stage=stage, label=label
-                )
+                get_pipeline_events().record(channel_id=channel_id, stage=stage, label=label)
         except Exception:  # noqa: BLE001
             pass
 
@@ -911,9 +893,7 @@ def build_sim_stack(
         # The auto-overview subscriber is async; spawn a task as the
         # production lifespan does.
         pending_subscriber_tasks.append(
-            asyncio.create_task(
-                subscriber.on_extraction_done(channel_id, fact_ids)
-            )
+            asyncio.create_task(subscriber.on_extraction_done(channel_id, fact_ids))
         )
 
     worker.subscribe_extraction_done(_on_done)

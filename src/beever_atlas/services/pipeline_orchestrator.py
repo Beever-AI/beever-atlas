@@ -245,8 +245,7 @@ async def summarize_settled_for_channel(channel_id: str) -> None:
     in_flight_consolidation = _consolidation_tasks.get(channel_id)
     if in_flight_consolidation is not None and not in_flight_consolidation.done():
         logger.info(
-            "Orchestrator: summarize_settled awaiting in-flight consolidation "
-            "channel=%s",
+            "Orchestrator: summarize_settled awaiting in-flight consolidation channel=%s",
             channel_id,
         )
         try:
