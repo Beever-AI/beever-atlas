@@ -126,11 +126,16 @@ async def _run_consolidation(channel_id: str) -> None:
         # readable heading, not the raw channel_id.
         channel_name = await stores.mongodb.get_channel_display_name(channel_id) or ""
         if getattr(settings, "consolidation_summarize_on_settle", True):
-            result = await service.assign_clusters_only(channel_id)
-            # Mark that this channel owes a summarize-on-settle pass — the
-            # memory_settled subscriber reads this gate to avoid running the
-            # LLM batch on channels that had no per-batch consolidation.
+            # CRITICAL: mark BEFORE the await so memory_settled subscribers
+            # firing concurrently with this task still see the gate flipped.
+            # Previously the add happened AFTER assign_clusters_only completed
+            # (~500ms-2s), which lost the race against memory_settled — the
+            # AutoOverviewSubscriber timed out waiting for a channel_summary
+            # that summarize_settled never wrote because the gate looked empty.
+            # `summarize_settled_for_channel` awaits this consolidation task
+            # in-flight to ensure it reads fresh cluster state.
             _channels_pending_summary.add(channel_id)
+            result = await service.assign_clusters_only(channel_id)
         else:
             result = await service.on_sync_complete(channel_id, channel_name=channel_name)
 
@@ -231,6 +236,23 @@ async def summarize_settled_for_channel(channel_id: str) -> None:
     if channel_id not in _channels_pending_summary:
         return
     _channels_pending_summary.discard(channel_id)
+
+    # If consolidation is still running for this channel (we added to the
+    # pending-set BEFORE awaiting assign_clusters_only), wait for it to
+    # finish so we read fresh cluster state. Otherwise summarize_settled
+    # would race against the in-flight consolidation and see no clusters
+    # to summarize.
+    in_flight_consolidation = _consolidation_tasks.get(channel_id)
+    if in_flight_consolidation is not None and not in_flight_consolidation.done():
+        logger.info(
+            "Orchestrator: summarize_settled awaiting in-flight consolidation "
+            "channel=%s",
+            channel_id,
+        )
+        try:
+            await in_flight_consolidation
+        except Exception:  # noqa: BLE001 — already logged in _run_consolidation
+            pass
 
     try:
         from beever_atlas.infra.config import get_settings
