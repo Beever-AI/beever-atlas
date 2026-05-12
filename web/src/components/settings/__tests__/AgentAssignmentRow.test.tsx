@@ -1,0 +1,150 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { AgentAssignmentRow } from "../AgentAssignmentRow";
+import type { Assignment, Endpoint } from "@/lib/aiSetup";
+
+function makeEndpoint(overrides: Partial<Endpoint> = {}): Endpoint {
+  return {
+    id: "ep-1",
+    name: "OpenAI prod",
+    preset: "openai",
+    base_url: "https://api.openai.com/v1",
+    auth_type: "api_key",
+    has_credential: true,
+    credential_masked: "sk-p...1234",
+    models: ["gpt-4o-mini", "gpt-4o", "o4-mini"],
+    rpm: 500,
+    headers: {},
+    tags: [],
+    last_test_at: null,
+    last_test_ok: null,
+    last_test_error: null,
+    created_at: "2026-05-12T00:00:00Z",
+    updated_at: "2026-05-12T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeAssignment(overrides: Partial<Assignment> = {}): Assignment {
+  return {
+    consumer: "qa_agent",
+    endpoint_id: "ep-1",
+    model: "gpt-4o",
+    temperature: null,
+    max_tokens: null,
+    response_format: null,
+    extra_headers: {},
+    fallback_endpoint_id: null,
+    dimensions: null,
+    task: null,
+    updated_at: "2026-05-12T00:00:00Z",
+    ...overrides,
+  };
+}
+
+const ep = makeEndpoint();
+
+describe("AgentAssignmentRow", () => {
+  it("renders displayName + description + provider badge", () => {
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment()}
+        endpoints={[ep]}
+        required={["tools"]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    expect(screen.getByText("QA Agent")).toBeTruthy();
+    expect(screen.getByText(/Answers user questions/i)).toBeTruthy();
+    expect(screen.getByText("Cloud")).toBeTruthy();
+  });
+
+  it("changing the model select calls onUpsert with {endpoint_id, model}", async () => {
+    const onUpsert = vi.fn(async () => makeAssignment({ model: "gpt-4o-mini" }));
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment()}
+        endpoints={[ep]}
+        required={["tools"]}
+        onUpsert={onUpsert}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("qa_agent model"), { target: { value: "gpt-4o-mini" } });
+    await waitFor(() => expect(onUpsert).toHaveBeenCalled());
+    expect(onUpsert).toHaveBeenCalledWith("qa_agent", { endpoint_id: "ep-1", model: "gpt-4o-mini" });
+  });
+
+  it("the Advanced gear reveals temperature/max_tokens/response_format/fallback", () => {
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment()}
+        endpoints={[ep, makeEndpoint({ id: "ep-2", name: "Gemini" })]}
+        required={[]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    expect(screen.queryByText("temperature")).toBeNull();
+    fireEvent.click(screen.getByTitle("Advanced parameters"));
+    expect(screen.getByText("temperature")).toBeTruthy();
+    expect(screen.getByText("max_tokens")).toBeTruthy();
+    expect(screen.getByText("response_format")).toBeTruthy();
+    expect(screen.getByText("fallback")).toBeTruthy();
+  });
+
+  it("Reset calls onUpsert with the params nulled (keeping endpoint+model)", async () => {
+    const onUpsert = vi.fn(async () => makeAssignment());
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment({ temperature: 0.3, max_tokens: 1024 })}
+        endpoints={[ep]}
+        required={[]}
+        onUpsert={onUpsert}
+      />,
+    );
+    // The reset button has the title "Reset advanced overrides".
+    fireEvent.click(screen.getByTitle("Reset advanced overrides"));
+    await waitFor(() => expect(onUpsert).toHaveBeenCalled());
+    expect(onUpsert).toHaveBeenCalledWith("qa_agent", {
+      endpoint_id: "ep-1",
+      model: "gpt-4o",
+      temperature: null,
+      max_tokens: null,
+      response_format: null,
+      fallback_endpoint_id: null,
+    });
+  });
+
+  it("a row whose model is incompatible shows the red capability badge", () => {
+    const { container } = render(
+      <AgentAssignmentRow
+        consumer="image_describer"
+        assignment={makeAssignment({ consumer: "image_describer", model: "o4-mini" })}
+        endpoints={[ep]}
+        required={["vision"]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const badge = container.querySelector('[data-capability="vision"][data-incompatible="true"]');
+    expect(badge).not.toBeNull();
+  });
+
+  it("shows the suggested-fix button when a suggestion is provided for an incompatible row", async () => {
+    const onUpsert = vi.fn(async () => makeAssignment());
+    render(
+      <AgentAssignmentRow
+        consumer="image_describer"
+        assignment={makeAssignment({ consumer: "image_describer", model: "o4-mini" })}
+        endpoints={[ep]}
+        required={["vision"]}
+        suggested={["gpt-4o"]}
+        onUpsert={onUpsert}
+      />,
+    );
+    fireEvent.click(screen.getByText("Use gpt-4o"));
+    await waitFor(() => expect(onUpsert).toHaveBeenCalledWith("image_describer", { endpoint_id: "ep-1", model: "gpt-4o" }));
+  });
+});

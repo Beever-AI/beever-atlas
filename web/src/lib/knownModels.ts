@@ -141,3 +141,124 @@ export function costHintForModel(providerPrefix: string, model: string): string 
   }
   return "—";
 }
+
+// ── cost rollup (one-card summary for the Agent-models tab) ─────────────────
+
+/** A minimal endpoint shape — just what the rollup needs to find a provider. */
+export interface RollupEndpoint {
+  id: string;
+  preset: string;
+}
+
+/** A minimal assignment shape — consumer + endpoint + model. */
+export interface RollupAssignment {
+  consumer: string;
+  endpoint_id: string;
+  model: string;
+}
+
+export interface CostBucket {
+  /** Friendly model label (the bare model name). */
+  label: string;
+  /** Number of consumers on this model. */
+  count: number;
+  /** Human-readable input-rate string ("~$0.30/M in", "free", "—"). */
+  inRate: string;
+  /** Sortable input cost per million (0 for local, Infinity-ish unknown handled separately). */
+  inCostPerM: number | null;
+}
+
+export interface CostRollup {
+  /** One bucket per distinct model in use, sorted most-expensive first. */
+  buckets: CostBucket[];
+  /** The single most expensive assignment, or null if nothing priced. */
+  mostExpensive: { consumer: string; model: string; rate: string } | null;
+  /** How many in-use models have no price in KNOWN_MODELS. */
+  unknownCount: number;
+  /** True when there are no assignments at all. */
+  empty: boolean;
+}
+
+/** TS mirror of llm/endpoints.preset_to_provider — used to qualify bare model names. */
+function presetToProviderPrefix(preset: string): string {
+  return (
+    {
+      google_ai: "gemini",
+      ollama: "ollama",
+      vllm: "openai",
+      lmstudio: "openai",
+      openrouter: "openai",
+      litellm_proxy: "openai",
+      custom: "openai",
+    } as Record<string, string>
+  )[preset] ?? preset;
+}
+
+function inputCostPerM(spec: ModelSpec | undefined): number | null {
+  if (!spec) return null;
+  if (typeof spec.cost_per_m === "number") return spec.cost_per_m;
+  if (typeof spec.input_cost_per_m === "number") return spec.input_cost_per_m;
+  return null;
+}
+
+function rateLabel(cost: number | null): string {
+  if (cost == null) return "—";
+  if (cost === 0) return "free";
+  return `~$${cost.toFixed(2)}/M in`;
+}
+
+/**
+ * Aggregate the per-consumer assignments into a single cost summary so the
+ * Agent-models tab can show one rollup card instead of repeating the per-row
+ * cost hint 16×. Pure — computes only from KNOWN_MODELS.
+ */
+export function costRollup(
+  assignments: RollupAssignment[],
+  endpointById: Record<string, RollupEndpoint>,
+): CostRollup {
+  if (assignments.length === 0) {
+    return { buckets: [], mostExpensive: null, unknownCount: 0, empty: true };
+  }
+  const byModel = new Map<string, { label: string; count: number; cost: number | null }>();
+  let unknownCount = 0;
+  let mostExpensive: { consumer: string; model: string; cost: number } | null = null;
+
+  for (const a of assignments) {
+    const ep = endpointById[a.endpoint_id];
+    const prefix = ep ? presetToProviderPrefix(ep.preset) : "";
+    const id = a.model.includes("/") ? a.model : `${prefix}/${a.model}`;
+    const spec = KNOWN_MODELS[id];
+    const cost = inputCostPerM(spec);
+    if (cost == null) unknownCount += 1;
+    // Bucket key — bare model name keeps the label readable.
+    const bareModel = a.model.includes("/") ? (a.model.split("/").pop() ?? a.model) : a.model;
+    const existing = byModel.get(a.model);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      byModel.set(a.model, { label: bareModel, count: 1, cost });
+    }
+    if (cost != null && cost > 0 && (mostExpensive == null || cost > mostExpensive.cost)) {
+      mostExpensive = { consumer: a.consumer, model: a.model, cost };
+    }
+  }
+
+  const buckets: CostBucket[] = Array.from(byModel.values())
+    .map((b) => ({ label: b.label, count: b.count, inRate: rateLabel(b.cost), inCostPerM: b.cost }))
+    .sort((x, y) => {
+      // Most-expensive first; unknown (null) sinks to the bottom; ties → count desc.
+      const xc = x.inCostPerM == null ? -1 : x.inCostPerM;
+      const yc = y.inCostPerM == null ? -1 : y.inCostPerM;
+      if (yc !== xc) return yc - xc;
+      return y.count - x.count;
+    });
+
+  return {
+    buckets,
+    mostExpensive: mostExpensive
+      ? { consumer: mostExpensive.consumer, model: mostExpensive.model, rate: rateLabel(mostExpensive.cost) }
+      : null,
+    unknownCount,
+    empty: false,
+  };
+}
