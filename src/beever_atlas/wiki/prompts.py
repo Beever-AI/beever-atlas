@@ -417,8 +417,8 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Content structure (follow this order strictly)
 1. **Relationship diagram** — if 5+ terms exist, include a ```mermaid diagram showing how terms relate to each other (which terms are used together, which are sub-concepts of others). THIS MUST BE THE VERY FIRST CONTENT ELEMENT (skip if fewer than 5 terms — start with Introduction instead).
 2. **Introduction** — 1 sentence: "Key terms, acronyms, and concepts used in this channel."
-3. **Terms table** — GFM table with columns: Term, Definition, First Mentioned By, Related Topics. Sort alphabetically. In the "First Mentioned By" column, write "—" when the source is unknown; NEVER write placeholder markers like `(Implicit)`, `(Inferred)`, `(Unknown)`, `(N/A)`, or any parenthesized guess. The Related Topics column MUST contain wikilinks: `[[Topic Title]]` for each related topic so navigation lands on the right Topic page.
-4. **Term details** — for each significant non-people entity (max 12; products, systems, services, concepts), a `### <Term>` sub-section. Each contains: a 1–2 sentence channel-context definition (NOT a generic Wikipedia gloss), a "Used in" line listing the Topic pages where the term shows up as `[[Topic Title]]` wikilinks, and an optional "See also" line with cross-references to other glossary terms. This section absorbs the per-entity profile work the deprecated `entity:<thing>` page kind used to do — channel readers and agents land here for "what is X in this channel".
+3. **Terms table** — GFM table with columns: Term, Definition, First Mentioned By, Related Topics. Sort alphabetically. In the "First Mentioned By" column, write "—" when the source is unknown; NEVER write placeholder markers like `(Implicit)`, `(Inferred)`, `(Unknown)`, `(N/A)`, or any parenthesized guess. The Related Topics column MUST contain wikilinks: `[[Topic Title]]` for each related topic so navigation lands on the right Topic page. **ONLY reference topic titles from the `compiled_topic_titles` list below — every other topic was dropped by the threshold gate and has no page; pointing at it produces a red broken link.** If none of the compiled topics relate to a term, write `—` in that cell.
+4. **Term details** — for each significant non-people entity (max 12; products, systems, services, concepts), a `### <Term>` sub-section. Each contains: a 1–2 sentence channel-context definition (NOT a generic Wikipedia gloss), a "Used in" line listing the Topic pages where the term shows up as `[[Topic Title]]` wikilinks, and an optional "See also" line with cross-references to other glossary terms. **Same constraint: ONLY use titles from `compiled_topic_titles` for `[[...]]` references.** This section absorbs the per-entity profile work the deprecated `entity:<thing>` page kind used to do — channel readers and agents land here for "what is X in this channel".
 5. **Category breakdown** — if terms naturally group into categories (e.g., technical terms, process terms, domain terms), add a brief categorized list after the table
 
 ## Writing style
@@ -443,6 +443,7 @@ Return JSON: {{"content": "markdown string", "summary": "1-2 sentence summary"}}
 ## Data
 Glossary terms: {glossary_terms_json}
 Channel context: {channel_description}
+Compiled topic titles (the ONLY valid targets for `[[Topic Title]]` wikilinks — any other title was dropped by the threshold gate and has no page): {compiled_topic_titles_json}
 """
 
 RESOURCES_PROMPT = """You are a knowledge wiki compiler. Create a **Resources & Media** page cataloging all shared files, images, documents, and links.

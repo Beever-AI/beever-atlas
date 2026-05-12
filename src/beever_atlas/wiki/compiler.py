@@ -119,8 +119,40 @@ TOPIC_SUBPAGE_THRESHOLD = 15
 # for marginal benefit.  Raise to suppress premature splits.
 _TOPIC_SUBPAGE_MIN_FACTS = 25
 
-# Minimum number of member facts for a cluster to get its own topic page
+# Minimum number of member facts for a cluster to get its own topic page.
+# Kept as the legacy constant for back-compat with callers that don't yet pass
+# a tier-resolved override; the tiered policy below is the production path.
 TOPIC_MIN_MEMORY_THRESHOLD = 3
+
+# Tiered compile threshold — sparse channels naturally produce low fact-per-topic
+# counts; dense channels need the filter to suppress noise. Mirrors the same
+# sparse/dense principle the relevance gate already uses (commit b52bff7) so
+# small Discord/Slack channels with 1-3 topics still get pages, while 100-topic
+# channels keep the noise filter intact.
+#
+# Format: list of ``(cluster_count_upper_bound, min_facts)`` tuples. Resolution
+# picks the first tier whose upper-bound the cluster count fits under; the
+# final tuple's bound is ``float("inf")`` to catch everything above the largest
+# explicit threshold.
+_TOPIC_COMPILE_THRESHOLD_TIERS: list[tuple[float, int]] = [
+    (4, 1),  # < 4 clusters: compile any topic with ≥1 fact (very sparse channel)
+    (8, 2),  # 4-7 clusters: ≥2 facts
+    (16, 3),  # 8-15 clusters: ≥3 facts (current behaviour)
+    (float("inf"), 3),  # 16+ clusters: ≥3 facts (unchanged)
+]
+
+
+def _resolve_topic_compile_threshold(cluster_count: int) -> int:
+    """Pick the min-facts threshold for ``cluster_count`` total clusters.
+
+    See ``_TOPIC_COMPILE_THRESHOLD_TIERS`` for the table. Falls back to the
+    legacy constant when the table is empty / mis-configured so a bad edit
+    never silently drops every topic on the floor.
+    """
+    for upper_bound, min_facts in _TOPIC_COMPILE_THRESHOLD_TIERS:
+        if cluster_count < upper_bound:
+            return min_facts
+    return TOPIC_MIN_MEMORY_THRESHOLD
 
 
 def _slugify(text: str) -> str:
@@ -942,8 +974,112 @@ _GLOSSARY_SECTION_ALIASES: dict[str, re.Pattern] = {
 }
 
 
-def _collect_glossary_entries(glossary_terms: list, clusters: list) -> list[dict]:
-    """Aggregate {term, definition, first_mentioned_by, related_topics} rows."""
+def _topic_slug_for_title(title: str) -> str:
+    """Canonical topic-page slug for a cluster title.
+
+    Single source of truth shared between (a) compile-time WikiPage slug
+    assignment in ``_compile_topic_page`` / ``_compile_thin_topic`` and
+    (b) wikilink rewriting in the Glossary post-processor. Keeping both
+    sides on ``_slugify`` (with the same kebab-case rules) is what makes
+    the Glossary's Related-Topics column actually resolve to a real page
+    URL instead of opening the "No page yet" modal.
+    """
+    return _slugify(title or "")
+
+
+def _build_compiled_topic_slug_index(
+    compiled_topic_titles: list[str] | set[str] | None,
+) -> dict[str, str]:
+    """Build a {lower-cased title: slug} index for wikilink rewriting.
+
+    Lower-casing the key absorbs the (frequent) LLM habit of dropping a
+    leading capital on the second word of a multi-word title — the LLM
+    emits ``[[hong kong work-from-home policy]]`` while the cluster title
+    is ``Hong Kong Work-from-Home Policy``. Both map to the same slug.
+    """
+    if not compiled_topic_titles:
+        return {}
+    index: dict[str, str] = {}
+    for title in compiled_topic_titles:
+        title = (title or "").strip()
+        if not title:
+            continue
+        slug = _topic_slug_for_title(title)
+        if slug:
+            index.setdefault(title.lower(), slug)
+    return index
+
+
+# ``[[Page Title]]`` matcher. Mirrors the resolver pattern in
+# ``services/wiki_maintainer.py`` so anything the LLM emits as a wikilink
+# inside the Glossary content gets the same treatment as wikilinks on
+# other compiled pages.
+_GLOSSARY_WIKILINK_RE = re.compile(r"\[\[([^\[\]\n]+?)\]\]")
+
+
+def _rewrite_glossary_wikilinks(
+    content: str,
+    compiled_topic_titles: list[str] | set[str] | None,
+) -> str:
+    """Convert ``[[Title]]`` references in glossary content to native links.
+
+    For each match:
+      * if ``Title`` (case-insensitively) matches a compiled topic, emit
+        ``[Title](/wiki/<slug>)`` — a real markdown link the renderer
+        passes through without consulting the ``cross_links`` map (which
+        the compiler-built cache doesn't populate).
+      * otherwise drop the brackets and keep the plain title text so the
+        Glossary stops surfacing red broken links to topics that were
+        skipped by the relevance/thresh​old gate.
+
+    Operates on the raw markdown string — both inside table cells and in
+    the inline ``Used in`` lines the LLM emits for term details.
+    """
+    if not content:
+        return content
+    index = _build_compiled_topic_slug_index(compiled_topic_titles)
+
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(1).strip()
+        if not raw:
+            return match.group(0)
+        slug = index.get(raw.lower())
+        if slug:
+            # Keep the original casing the LLM emitted so the rendered
+            # anchor text matches the surrounding sentence.
+            return f"[{raw}](/wiki/{slug})"
+        # Unknown / skipped topic — strip the brackets to plain text.
+        return raw
+
+    return _GLOSSARY_WIKILINK_RE.sub(_replace, content)
+
+
+def _collect_glossary_entries(
+    glossary_terms: list,
+    clusters: list,
+    compiled_topic_titles: list[str] | set[str] | None = None,
+) -> list[dict]:
+    """Aggregate {term, definition, first_mentioned_by, related_topics} rows.
+
+    When ``compiled_topic_titles`` is provided, the ``related_topics`` list
+    on each row is filtered to titles that actually have a compiled page;
+    titles that the relevance/threshold gate skipped are dropped so the
+    Glossary never emits a wikilink to a non-existent destination. When
+    ``None``, the legacy behaviour (every cluster title counts) is kept
+    so unit tests and ad-hoc callers don't need to plumb the filter.
+    """
+    allowed_lower: set[str] | None
+    if compiled_topic_titles is None:
+        allowed_lower = None
+    else:
+        allowed_lower = {(t or "").strip().lower() for t in compiled_topic_titles if t}
+        allowed_lower.discard("")
+
+    def _filter_titles(titles: list[str]) -> list[str]:
+        if allowed_lower is None:
+            return list(titles)
+        return [t for t in titles if t and t.strip().lower() in allowed_lower]
+
     rows: dict[str, dict] = {}
     for t in glossary_terms or []:
         if isinstance(t, dict):
@@ -954,7 +1090,7 @@ def _collect_glossary_entries(glossary_terms: list, clusters: list) -> list[dict
                 "term": name,
                 "definition": (t.get("definition") or t.get("description") or "").strip(),
                 "first_mentioned_by": (t.get("first_mentioned_by") or "").strip(),
-                "related_topics": list(t.get("related_topics") or []),
+                "related_topics": _filter_titles(list(t.get("related_topics") or [])),
             }
         elif t:
             name = str(t).strip()
@@ -965,9 +1101,16 @@ def _collect_glossary_entries(glossary_terms: list, clusters: list) -> list[dict
                     "first_mentioned_by": "",
                     "related_topics": [],
                 }
-    # Enrich from cluster key_entities.
+    # Enrich from cluster key_entities. Only clusters that actually compiled
+    # to a page contribute — otherwise the Glossary's Related-Topics column
+    # would name skipped clusters (the threshold gate dropped them) and the
+    # renderer would surface them as red broken links.
+    cluster_title_lower_allowed: set[str] | None = allowed_lower
     for c in clusters or []:
         cluster_title = (getattr(c, "title", "") or "").strip()
+        if cluster_title_lower_allowed is not None:
+            if cluster_title.lower() not in cluster_title_lower_allowed:
+                continue
         for ent in getattr(c, "key_entities", None) or []:
             if not isinstance(ent, dict):
                 continue
@@ -990,9 +1133,23 @@ def _collect_glossary_entries(glossary_terms: list, clusters: list) -> list[dict
     return sorted(rows.values(), key=lambda r: r["term"].lower())
 
 
-def _render_glossary_terms_table(entries: list[dict]) -> str:
+def _render_glossary_terms_table(
+    entries: list[dict],
+    compiled_topic_titles: list[str] | set[str] | None = None,
+) -> str:
+    """Render the deterministic Glossary Terms table.
+
+    When ``compiled_topic_titles`` is provided, the Related-Topics column
+    emits a markdown link ``[Title](/wiki/<slug>)`` for each topic that
+    actually has a page; titles that aren't on the compiled list render as
+    plain text so the column never produces a red broken link. The slug
+    derivation matches the topic-page slug assignment in
+    ``_compile_topic_page`` / ``_compile_thin_topic`` exactly — both go
+    through ``_slugify``.
+    """
     if not entries:
         return ""
+    slug_index = _build_compiled_topic_slug_index(compiled_topic_titles)
     lines = [
         "## Terms",
         "",
@@ -1003,18 +1160,40 @@ def _render_glossary_terms_table(entries: list[dict]) -> str:
         term = row["term"].replace("|", "\\|")
         definition = (row["definition"] or "Referenced in this channel.").replace("|", "\\|")
         author = (row["first_mentioned_by"] or "—").replace("|", "\\|")
-        related = ", ".join(row["related_topics"][:4]) if row["related_topics"] else "—"
-        related = related.replace("|", "\\|")
+        related_titles = row["related_topics"][:4] if row["related_topics"] else []
+        if related_titles:
+            rendered: list[str] = []
+            for title in related_titles:
+                title_str = (title or "").strip()
+                if not title_str:
+                    continue
+                slug = slug_index.get(title_str.lower())
+                if slug:
+                    safe = title_str.replace("|", "\\|")
+                    rendered.append(f"[{safe}](/wiki/{slug})")
+                else:
+                    rendered.append(title_str.replace("|", "\\|"))
+            related = ", ".join(rendered) if rendered else "—"
+        else:
+            related = "—"
         lines.append(f"| {term} | {definition} | {author} | {related} |")
     return "\n".join(lines)
 
 
-def _splice_glossary_sections(content: str, glossary_terms: list, clusters: list) -> str:
+def _splice_glossary_sections(
+    content: str,
+    glossary_terms: list,
+    clusters: list,
+    compiled_topic_titles: list[str] | set[str] | None = None,
+) -> str:
     """Append deterministic Introduction + Terms table when the LLM drops them.
 
     The Glossary prompt sometimes emits only the relationship mermaid diagram
     and nothing else. This helper detects missing Introduction and Terms
     sections via heading-alias regex and appends deterministic replacements.
+    ``compiled_topic_titles`` (when provided) is forwarded to the entry
+    collector + renderer so the spliced table never references skipped
+    topics.
     """
     if not content:
         return content
@@ -1025,8 +1204,12 @@ def _splice_glossary_sections(content: str, glossary_terms: list, clusters: list
             "## Introduction\n\nKey terms, acronyms, and concepts used in this channel."
         )
     if not present["terms"]:
-        entries = _collect_glossary_entries(glossary_terms, clusters)
-        block = _render_glossary_terms_table(entries)
+        entries = _collect_glossary_entries(
+            glossary_terms, clusters, compiled_topic_titles=compiled_topic_titles
+        )
+        block = _render_glossary_terms_table(
+            entries, compiled_topic_titles=compiled_topic_titles
+        )
         if block:
             additions.append(block)
     if not additions:
@@ -2737,25 +2920,38 @@ class WikiCompiler:
 
     @staticmethod
     def _is_topic_relevant(
-        cluster, channel_themes: list[str], cluster_facts: dict, total_cluster_count: int = 8
+        cluster,
+        channel_themes: list[str],
+        cluster_facts: dict,
+        total_cluster_count: int = 8,
+        min_facts_override: int | None = None,
     ) -> tuple[bool, str]:
         """Check if a topic cluster should get its own page.
 
         Returns (should_include, skip_reason) tuple.
 
         Two-tier policy based on channel sparsity (total_cluster_count):
-        - Sparse channels (< 8 clusters): keep any topic with ≥3 facts,
-          regardless of tag overlap, so small channels still render all topics.
-        - Dense channels (≥ 8 clusters): keep topics with ≥3 facts AND
-          (≥5 facts OR tag overlap with channel themes).
+        - Sparse channels (< 8 clusters): keep any topic that clears the
+          per-channel min-facts threshold, regardless of tag overlap, so
+          small channels still render all topics.
+        - Dense channels (≥ 8 clusters): keep topics that clear the
+          threshold AND (≥5 facts OR tag overlap with channel themes).
+
+        ``min_facts_override`` lets the caller inject the tiered threshold
+        resolved once per compile run (see ``_resolve_topic_compile_threshold``);
+        callers that pass ``None`` get the legacy constant for back-compat with
+        ad-hoc test harnesses.
         """
         member_count = len(cluster_facts.get(cluster.id, []))
 
+        min_facts = (
+            min_facts_override if min_facts_override is not None else TOPIC_MIN_MEMORY_THRESHOLD
+        )
         # Check minimum memory threshold (both tiers)
-        if member_count < TOPIC_MIN_MEMORY_THRESHOLD:
+        if member_count < min_facts:
             return (
                 False,
-                f"{member_count} facts, below minimum threshold of {TOPIC_MIN_MEMORY_THRESHOLD}",
+                f"{member_count} facts, below minimum threshold of {min_facts}",
             )
 
         # Sparse channel: any topic with ≥3 facts is kept unconditionally
@@ -4767,10 +4963,21 @@ class WikiCompiler:
         # Cap at 30 terms
         glossary_terms = glossary_terms[:30]
 
+        # Only topics that actually compiled to a page are valid wikilink
+        # targets for the Glossary's Related-Topics column. ``compile()``
+        # stashes the list under ``_compiled_topic_titles``; when the key
+        # is absent (legacy/test callers), fall back to every cluster
+        # title so the prompt + post-processor still have a target list.
+        compiled_topic_titles: list[str] = gathered.get("_compiled_topic_titles") or [
+            getattr(c, "title", "") or "" for c in gathered.get("clusters", []) or []
+        ]
+        compiled_topic_titles = [t for t in compiled_topic_titles if t]
+
         prompt = self._fmt_prompt(
             GLOSSARY_PROMPT,
             glossary_terms_json=json.dumps(glossary_terms, default=str),
             channel_description=channel_summary.description or channel_summary.channel_name,
+            compiled_topic_titles_json=json.dumps(compiled_topic_titles, default=str),
         )
         result = await self._call_llm(
             prompt,
@@ -4790,8 +4997,16 @@ class WikiCompiler:
         content = self._postprocess_content(content)
         content = _scrub_glossary_placeholders(content)
         content = _splice_glossary_sections(
-            content, glossary_terms, gathered.get("clusters", []) or []
+            content,
+            glossary_terms,
+            gathered.get("clusters", []) or [],
+            compiled_topic_titles=compiled_topic_titles,
         )
+        # Final pass: rewrite any leftover ``[[Title]]`` references into
+        # native markdown links (compiled topics) or plain text (skipped /
+        # unknown topics). Runs AFTER the splice so deterministic-fallback
+        # rows added by the splicer are also covered.
+        content = _rewrite_glossary_wikilinks(content, compiled_topic_titles)
         return WikiPage(
             id="glossary",
             slug="glossary",
@@ -5058,6 +5273,42 @@ class WikiCompiler:
                 ]
                 gathered = {**gathered, "clusters": clusters}
 
+        # Resolve which clusters will actually compile to a topic page BEFORE
+        # dispatching any LLM call. The Glossary needs to know the compiled set
+        # so its Related-Topics column never points at a topic the threshold
+        # gate skipped — pre-computing here means the dispatch path doesn't
+        # have to wait on topic-compile to finish to surface that list.
+        channel_themes = channel_summary.themes if hasattr(channel_summary, "themes") else []
+        if isinstance(channel_themes, str):
+            channel_themes = [channel_themes]
+        filtered_clusters: list = []
+        skipped_topics: list[dict] = []
+        total_cluster_count = len(clusters)
+        compile_min_facts = _resolve_topic_compile_threshold(total_cluster_count)
+        for c in clusters:
+            should_include, skip_reason = self._is_topic_relevant(
+                c,
+                channel_themes,
+                gathered["cluster_facts"],
+                total_cluster_count,
+                min_facts_override=compile_min_facts,
+            )
+            if should_include:
+                filtered_clusters.append(c)
+            else:
+                logger.info("WikiCompiler: skipping topic '%s' (%s)", c.title, skip_reason)
+                skipped_topics.append(
+                    {"title": c.title, "reason": skip_reason, "member_count": c.member_count}
+                )
+
+        # Stash both lists on ``gathered`` so per-page compile coroutines can
+        # read them. The Glossary uses ``_compiled_topic_titles`` to filter
+        # its Related-Topics wikilinks; the Overview already consumes
+        # ``_skipped_topics``.
+        compiled_topic_titles = [getattr(c, "title", "") or "" for c in filtered_clusters]
+        gathered["_skipped_topics"] = skipped_topics
+        gathered["_compiled_topic_titles"] = compiled_topic_titles
+
         # Build list of (key, coroutine) pairs, gating conditional pages BEFORE dispatching LLM calls
         fixed_tasks: list[tuple[str, Any]] = []
 
@@ -5122,29 +5373,9 @@ class WikiCompiler:
         else:
             logger.info("WikiCompiler: skipping Resources page (0 media)")
 
-        # Filter clusters: skip thin or off-topic topics.
-        # Use original clusters for relevance check (titles are cosmetic only).
-        channel_themes = channel_summary.themes if hasattr(channel_summary, "themes") else []
-        if isinstance(channel_themes, str):
-            channel_themes = [channel_themes]
-        filtered_clusters: list = []
-        skipped_topics: list[dict] = []
-        total_cluster_count = len(clusters)
-        for c in clusters:
-            should_include, skip_reason = self._is_topic_relevant(
-                c, channel_themes, gathered["cluster_facts"], total_cluster_count
-            )
-            if should_include:
-                filtered_clusters.append(c)
-            else:
-                logger.info("WikiCompiler: skipping topic '%s' (%s)", c.title, skip_reason)
-                skipped_topics.append(
-                    {"title": c.title, "reason": skip_reason, "member_count": c.member_count}
-                )
-
-        # Store skipped topics so overview can reference them
-        gathered["_skipped_topics"] = skipped_topics
-
+        # Topic dispatch — ``filtered_clusters`` was computed above so the
+        # Glossary task can read ``_compiled_topic_titles`` from ``gathered``
+        # while we set up the per-topic coroutines.
         topic_parallelism = get_settings().wiki_topic_compile_parallelism
         topic_sem = asyncio.Semaphore(topic_parallelism)
         logger.info(
