@@ -13,7 +13,22 @@ from beever_atlas.llm import embedding_runtime as rt
 
 @pytest.fixture(autouse=True)
 def _reset_cache(monkeypatch):
-    """Clear embedding-related env + module caches between tests."""
+    """Clear embedding-related env + module caches between tests.
+
+    ``get_settings()`` is ``@lru_cache``'d so the env-strip below is a
+    no-op unless we also clear that cache — otherwise Settings stays
+    pinned to whatever the first call (during conftest fixture setup)
+    captured from a local ``.env``. Without clearing it, a developer
+    machine with ``EMBEDDING_PROVIDER=gemini`` in ``.env`` will see
+    these tests assert ``provider == "jina_ai"`` and fail because the
+    cached Settings still reflects the env file rather than the
+    monkeypatch-stripped state.
+    """
+    import os
+    import tempfile
+
+    from beever_atlas.infra.config import get_settings
+
     for var in (
         "EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL",
@@ -28,8 +43,21 @@ def _reset_cache(monkeypatch):
         "JINA_RPM",
     ):
         monkeypatch.delenv(var, raising=False)
+    # Pydantic Settings ALSO reads ``.env`` from cwd — ``delenv`` only
+    # affects ``os.environ``. A dev machine whose ``.env`` contains
+    # ``EMBEDDING_PROVIDER=gemini`` would leak through Settings even
+    # after ``delenv``. ``chdir`` into a tempdir so Settings can't find
+    # ``.env`` from cwd, ensuring tests rely only on the Field defaults
+    # in the ``Settings`` class definition.
+    _tmp = tempfile.TemporaryDirectory()
+    _prev_cwd = os.getcwd()
+    os.chdir(_tmp.name)
+    get_settings.cache_clear()
     rt.bust_embedding_settings_cache()
     yield
+    os.chdir(_prev_cwd)
+    _tmp.cleanup()
+    get_settings.cache_clear()
     rt.bust_embedding_settings_cache()
 
 

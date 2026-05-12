@@ -86,6 +86,18 @@ def app_and_client(monkeypatch):
         "JINA_RPM",
     ):
         monkeypatch.delenv(var, raising=False)
+    # Pydantic Settings ALSO reads ``.env`` from disk; ``delenv`` only
+    # affects ``os.environ``. ``test_get_returns_default_when_unset`` in
+    # particular asserts ``source == "default"`` — i.e. neither env vars
+    # NOR a DB doc supplied a value. A dev machine whose ``.env`` contains
+    # ``EMBEDDING_PROVIDER=gemini`` would otherwise leak through Settings
+    # and break the assertion. ``chdir`` into a tempdir so Settings can't
+    # find ``.env`` from cwd.
+    import os
+    import tempfile
+    _tmp = tempfile.TemporaryDirectory()
+    _prev_cwd = os.getcwd()
+    os.chdir(_tmp.name)
 
     # CI runners do NOT have a CREDENTIAL_MASTER_KEY in their env. The
     # encrypted-API-key path requires one. Inject a deterministic 32-byte
@@ -103,7 +115,14 @@ def app_and_client(monkeypatch):
 
     app = FastAPI()
     app.include_router(ep.router)
-    return app, TestClient(app)
+    try:
+        yield app, TestClient(app)
+    finally:
+        # Restore cwd + clean up the .env-less tempdir so other tests
+        # (and any post-test teardown that resolves relative paths)
+        # don't operate from a stale working directory.
+        os.chdir(_prev_cwd)
+        _tmp.cleanup()
 
 
 # ─── GET ──────────────────────────────────────────────────────────────────

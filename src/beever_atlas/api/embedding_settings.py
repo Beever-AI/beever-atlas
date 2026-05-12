@@ -535,11 +535,16 @@ async def start_migration(req: MigrateRequest) -> MigrateResponse:
             _active_migration["error"] = f"SystemExit({exc.code})"
             logger.error("reembed: SystemExit trapped to protect uvicorn: %s", exc)
         except Exception as exc:  # noqa: BLE001
-            # Log the full traceback so the operator can see why the
-            # migration died. Without ``exc_info=True`` the only signal
-            # was the GET /migrate/status ``error`` field, which the UI
-            # currently silently drops — leaving silent failures.
-            _active_migration["error"] = f"{type(exc).__name__}: {exc}"
+            # Log the full traceback server-side so the operator can
+            # diagnose. Surface ONLY the exception class to the UI —
+            # raw exception strings frequently include internal URLs,
+            # hostnames, request IDs, and (in some provider SDKs)
+            # partial credentials. The class name is enough for the
+            # banner to communicate "re-embed failed: <type>", and the
+            # server log retains everything else.
+            _active_migration["error"] = (
+                f"{type(exc).__name__}: migration failed (see server logs for details)"
+            )
             logger.error(
                 "reembed: migration task failed — %s",
                 exc,
