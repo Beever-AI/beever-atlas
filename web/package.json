@@ -27,7 +27,7 @@
     "@types/cytoscape": "^3.31.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cytoscape": "^3.33.2",
+    "cytoscape": "^3.33.3",
     "cytoscape-dagre": "^2.5.0",
     "cytoscape-fcose": "^2.2.0",
     "emoji-picker-react": "^4.19.1",
