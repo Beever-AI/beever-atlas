@@ -444,7 +444,15 @@ class Neo4jStore:
         async with self._driver.session() as session:
             if use_merge:
                 # PR-2 MERGE path — auto-creates stub Entity nodes for
-                # unknown endpoints. ON CREATE returns 1 per side created.
+                # unknown endpoints. Stub creation is detected by comparing
+                # node ``created_at`` to ``$now``: stubs created in THIS
+                # query have created_at == $now exactly; pre-existing nodes
+                # have an older value.
+                #
+                # Earlier marker-property approach (_created_by_rel_stub +
+                # REMOVE) tripped a Neo4j 5+ Cypher syntax error around the
+                # WITH/REMOVE/CALL fence. This pure-MERGE form avoids that
+                # by computing the count from a property already being set.
                 stub_props = '{"stub": true, "reason": "rel_endpoint"}'
                 result = await session.run(
                     """
@@ -455,8 +463,7 @@ class Neo4jStore:
                         a.aliases    = [],
                         a.status     = 'active',
                         a.created_at = $now,
-                        a.updated_at = $now,
-                        a._created_by_rel_stub = true
+                        a.updated_at = $now
                     MERGE (b:Entity {name: $target, type: 'Topic', scope: 'global'})
                       ON CREATE SET
                         b.channel_id = null,
@@ -464,12 +471,10 @@ class Neo4jStore:
                         b.aliases    = [],
                         b.status     = 'active',
                         b.created_at = $now,
-                        b.updated_at = $now,
-                        b._created_by_rel_stub = true
+                        b.updated_at = $now
                     WITH a, b,
-                         CASE WHEN a._created_by_rel_stub = true THEN 1 ELSE 0 END AS a_new,
-                         CASE WHEN b._created_by_rel_stub = true THEN 1 ELSE 0 END AS b_new
-                    REMOVE a._created_by_rel_stub, b._created_by_rel_stub
+                         (CASE WHEN a.created_at = $now THEN 1 ELSE 0 END
+                          + CASE WHEN b.created_at = $now THEN 1 ELSE 0 END) AS stubs_created
                     CALL apoc.merge.relationship(
                         a,
                         $rel_type,
@@ -486,7 +491,7 @@ class Neo4jStore:
                         b,
                         {}
                     ) YIELD rel
-                    RETURN elementId(rel) AS eid, (a_new + b_new) AS stubs_created
+                    RETURN elementId(rel) AS eid, stubs_created
                     """,
                     source=rel.source,
                     target=rel.target,
