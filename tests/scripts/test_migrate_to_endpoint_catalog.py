@@ -70,7 +70,11 @@ def _stores(
     *,
     embedding_settings: dict | None = None,
     agent_model_config: dict | None = None,
+    embedding_secret: dict | None = None,
 ) -> Any:
+    async def _get_embedding_secret() -> dict | None:
+        return embedding_secret
+
     return SimpleNamespace(
         mongodb=SimpleNamespace(
             db={
@@ -79,17 +83,27 @@ def _stores(
                 "embedding_settings": _FakeCollection(
                     [embedding_settings] if embedding_settings else []
                 ),
+                "embedding_secret": _FakeCollection(
+                    [embedding_secret] if embedding_secret else []
+                ),
                 "agent_model_config": _FakeCollection(
                     [agent_model_config] if agent_model_config else []
                 ),
-            }
+            },
+            get_embedding_secret=_get_embedding_secret,
         )
     )
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Strip every provider-key env so each test starts clean."""
+    """Strip every provider-key + embedding env so each test starts clean.
+
+    The ``EMBEDDING_*`` vars matter because ``.env`` (loaded process-wide by
+    ``server.app``'s ``load_dotenv`` when any sibling test imports it) sets
+    ``EMBEDDING_PROVIDER`` etc., which would otherwise look like a legacy
+    embedding signal to the shim — a false positive for the no-config tests.
+    """
     for v in (
         "GOOGLE_API_KEY",
         "OPENAI_API_KEY",
@@ -106,6 +120,13 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OLLAMA_ENABLED",
         "OLLAMA_API_BASE",
         "LLM_FAST_MODEL",
+        "EMBEDDING_PROVIDER",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DIMENSIONS",
+        "EMBEDDING_RPM",
+        "EMBEDDING_API_BASE",
+        "EMBEDDING_API_KEY",
+        "EMBEDDING_TASK",
     ):
         monkeypatch.delenv(v, raising=False)
 
@@ -118,13 +139,15 @@ def _master_key(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_idempotent_when_endpoints_already_populated() -> None:
     stores = _stores()
-    # Pre-populate endpoints collection so the shim should skip.
+    # Pre-populate endpoints collection so the shim should skip Steps 1–2 and 4.
     stores.mongodb.db["endpoints"]._docs.append({"id": "existing", "name": "X"})
 
     result = await migrate_to_endpoint_catalog(stores)
     assert result["skipped"] == "endpoints_already_populated"
-    # No new endpoints written.
+    # No new endpoints written — no legacy embedding signal so repair is a no-op.
     assert len(stores.mongodb.db["endpoints"]._docs) == 1
+    assert result["embedding_endpoint_created"] is False
+    assert result["embedding_assignment_repaired"] is False
 
 
 @pytest.mark.asyncio
@@ -273,6 +296,239 @@ async def test_full_legacy_install_migrates_cleanly(
     # 3 explicit + the remaining DEFAULT_CONSUMERS (16 agents - 3 explicit = 13)
     # all fall back to LLM_FAST_MODEL=gemini-2.5-flash → google_ai endpoint.
     assert result["assignments_created"] >= 4
+
+
+_FAKE_SECRET_BLOB = {
+    "_id": "embedding_api_key",
+    "ciphertext_b64": "Y2lwaGVy",  # base64("cipher")
+    "iv_b64": "aXY=",  # base64("iv")
+    "tag_b64": "dGFn",  # base64("tag")
+}
+
+
+@pytest.mark.asyncio
+async def test_db_stored_embedding_config_creates_jina_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: an install that configured embedding via the legacy
+    Settings UI — DB-stored Jina key + ``embedding_settings`` doc, **no
+    ``JINA_API_KEY`` env** — must end up with a ``jina_ai`` Endpoint (tagged
+    ``migrated-embedding-config``, carrying the decrypted key) AND the
+    ``embedding`` Assignment pointed at it (model ``jina-embeddings-v4`` /
+    dim 2048), NOT at ``google_ai``.
+    """
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-agents-key")  # agents use Gemini
+
+    # Mock the lazy ``decrypt_credentials`` import inside the shim's resolver.
+    import beever_atlas.infra.crypto as crypto_mod
+
+    monkeypatch.setattr(
+        crypto_mod, "decrypt_credentials", lambda *_a, **_kw: {"api_key": "jina-db-secret"}
+    )
+
+    stores = _stores(
+        embedding_settings={
+            "_id": "embedding_settings",
+            "provider": "jina_ai",
+            "model": "jina-embeddings-v4",
+            "dimensions": 2048,
+        },
+        embedding_secret=dict(_FAKE_SECRET_BLOB),
+    )
+
+    await migrate_to_endpoint_catalog(stores)
+
+    endpoint_docs = stores.mongodb.db["endpoints"]._docs
+    jina_ep = next((d for d in endpoint_docs if d["preset"] == "jina_ai"), None)
+    assert jina_ep is not None, "expected a jina_ai endpoint to be synthesised"
+    assert "migrated-embedding-config" in jina_ep["tags"]
+    assert jina_ep["auth_type"] == "api_key"
+    # The decrypted DB key reached EndpointStore.create (it encrypts before
+    # persisting, so the plaintext shouldn't be visible in the stored doc).
+    assert "jina-db-secret" not in str(jina_ep)
+    assert jina_ep["encrypted_key"] is not None
+    assert jina_ep["models"] == ["jina-embeddings-v4"]
+
+    assignments = {a["consumer"]: a for a in stores.mongodb.db["llm_assignments"]._docs}
+    embedding = assignments["embedding"]
+    assert embedding["endpoint_id"] == jina_ep["id"]
+    # Definitely NOT pointed at the google_ai endpoint.
+    google_ep = next((d for d in endpoint_docs if d["preset"] == "google_ai"), None)
+    assert google_ep is not None
+    assert embedding["endpoint_id"] != google_ep["id"]
+    assert embedding["model"] == "jina-embeddings-v4"
+    assert embedding["dimensions"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_db_stored_embedding_config_rerun_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-running the shim against an already-correctly-migrated install is a
+    no-op — no second jina endpoint, the ``embedding`` Assignment is untouched,
+    and both repair flags are False."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-agents-key")
+
+    import beever_atlas.infra.crypto as crypto_mod
+
+    monkeypatch.setattr(
+        crypto_mod, "decrypt_credentials", lambda *_a, **_kw: {"api_key": "jina-db-secret"}
+    )
+
+    stores = _stores(
+        embedding_settings={
+            "_id": "embedding_settings",
+            "provider": "jina_ai",
+            "model": "jina-embeddings-v4",
+            "dimensions": 2048,
+        },
+        embedding_secret=dict(_FAKE_SECRET_BLOB),
+    )
+    await migrate_to_endpoint_catalog(stores)
+    endpoints_after_first = list(stores.mongodb.db["endpoints"]._docs)
+    embedding_after_first = next(
+        a for a in stores.mongodb.db["llm_assignments"]._docs if a["consumer"] == "embedding"
+    )
+
+    result = await migrate_to_endpoint_catalog(stores)
+    assert result["skipped"] == "endpoints_already_populated"
+    # Repair flags both False — nothing was wrong.
+    assert result["embedding_endpoint_created"] is False
+    assert result["embedding_assignment_repaired"] is False
+    # Catalog state is identical to after the first run.
+    assert stores.mongodb.db["endpoints"]._docs == endpoints_after_first
+    jina_eps = [d for d in stores.mongodb.db["endpoints"]._docs if d["preset"] == "jina_ai"]
+    assert len(jina_eps) == 1
+    embedding_after_second = next(
+        a for a in stores.mongodb.db["llm_assignments"]._docs if a["consumer"] == "embedding"
+    )
+    assert embedding_after_second == embedding_after_first
+
+
+@pytest.mark.asyncio
+async def test_env_embedding_provider_reuses_existing_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``EMBEDDING_PROVIDER=openai`` (+ ``OPENAI_API_KEY`` set) is the
+    legacy signal, the embedding Assignment reuses the env-derived ``openai``
+    Endpoint — no dedicated ``migrated-embedding-config`` endpoint."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "openai")
+    monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-large")
+    monkeypatch.setenv("EMBEDDING_DIMENSIONS", "3072")
+
+    stores = _stores()
+    result = await migrate_to_endpoint_catalog(stores)
+
+    endpoint_docs = stores.mongodb.db["endpoints"]._docs
+    # Exactly one endpoint — the env-derived openai one. No "migrated-embedding-config".
+    assert result["endpoints_created"] == 1
+    openai_ep = next(d for d in endpoint_docs if d["preset"] == "openai")
+    assert "migrated-from-env" in openai_ep["tags"]
+    assert all("migrated-embedding-config" not in d.get("tags", []) for d in endpoint_docs)
+
+    assignments = {a["consumer"]: a for a in stores.mongodb.db["llm_assignments"]._docs}
+    embedding = assignments["embedding"]
+    assert embedding["endpoint_id"] == openai_ep["id"]
+    assert embedding["model"] == "text-embedding-3-large"
+    assert embedding["dimensions"] == 3072
+
+
+@pytest.mark.asyncio
+async def test_already_migrated_wrong_embedding_self_heals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user's actual broken state: endpoints already populated with ONLY a
+    ``google_ai`` endpoint, the ``embedding`` Assignment wrongly pointing at it
+    with a chat-model name, plus a legacy ``embedding_settings`` doc + a
+    ``secrets.embedding_api_key`` blob — no ``JINA_API_KEY`` env.
+
+    After migrate_to_endpoint_catalog on the next server boot the shim must:
+    - Create a ``jina_ai`` endpoint tagged ``migrated-embedding-config``.
+    - Repair the ``embedding`` Assignment to point at it with the correct
+      model / dimensions.
+    - Return ``{skipped: "endpoints_already_populated",
+                embedding_endpoint_created: True,
+                embedding_assignment_repaired: True}``.
+    """
+    import beever_atlas.infra.crypto as crypto_mod
+
+    monkeypatch.setattr(
+        crypto_mod, "decrypt_credentials", lambda *_a, **_kw: {"api_key": "jina-db-secret"}
+    )
+
+    stores = _stores(
+        embedding_settings={
+            "_id": "embedding_settings",
+            "provider": "jina_ai",
+            "model": "jina-embeddings-v4",
+            "dimensions": 2048,
+        },
+        embedding_secret=dict(_FAKE_SECRET_BLOB),
+    )
+
+    # Simulate the wrongly-migrated state: a google_ai endpoint exists and the
+    # embedding Assignment points at it with a chat-model name.
+    google_ep_id = "google-ep-abc123"
+    stores.mongodb.db["endpoints"]._docs.append(
+        {
+            "id": google_ep_id,
+            "name": "google_ai (from GOOGLE_API_KEY)",
+            "preset": "google_ai",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "auth_type": "api_key",
+            "encrypted_key": {"ciphertext_b64": "x", "iv_b64": "y", "tag_b64": "z"},
+            "models": [],
+            "rpm": 1000,
+            "headers": {},
+            "tags": ["migrated-from-env"],
+            "last_test_at": None,
+            "last_test_ok": None,
+            "last_test_error": None,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "updated_at": "2025-01-01T00:00:00+00:00",
+        }
+    )
+    stores.mongodb.db["llm_assignments"]._docs.append(
+        {
+            "consumer": "embedding",
+            "endpoint_id": google_ep_id,
+            "model": "models/gemini-2.5-flash",  # wrong: chat model
+            "dimensions": None,
+            "task": None,
+            "temperature": None,
+            "max_tokens": None,
+            "response_format": None,
+            "extra_headers": {},
+            "fallback_endpoint_id": None,
+            "updated_at": "2025-01-01T00:00:00+00:00",
+        }
+    )
+
+    result = await migrate_to_endpoint_catalog(stores)
+
+    assert result["skipped"] == "endpoints_already_populated"
+    assert result["embedding_endpoint_created"] is True
+    assert result["embedding_assignment_repaired"] is True
+
+    # A jina_ai endpoint tagged migrated-embedding-config must now exist.
+    endpoint_docs = stores.mongodb.db["endpoints"]._docs
+    jina_ep = next((d for d in endpoint_docs if d["preset"] == "jina_ai"), None)
+    assert jina_ep is not None, "jina_ai endpoint must have been created"
+    assert "migrated-embedding-config" in jina_ep["tags"]
+    assert jina_ep["auth_type"] == "api_key"
+    assert jina_ep["encrypted_key"] is not None
+
+    # The embedding Assignment must now point at the jina endpoint, not google.
+    assignments = {a["consumer"]: a for a in stores.mongodb.db["llm_assignments"]._docs}
+    embedding = assignments["embedding"]
+    assert embedding["endpoint_id"] == jina_ep["id"]
+    assert embedding["endpoint_id"] != google_ep_id
+    assert embedding["model"] == "jina-embeddings-v4"
+    assert embedding["dimensions"] == 2048
+
+    # The google_ai endpoint is untouched (agents still need it).
+    assert any(d["id"] == google_ep_id for d in endpoint_docs)
 
 
 @pytest.mark.asyncio

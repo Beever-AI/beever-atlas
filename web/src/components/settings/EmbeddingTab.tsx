@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ChevronDown,
   CircleDot,
@@ -614,6 +615,22 @@ export function EmbeddingTab() {
               </span>
               <span className="ml-0.5 px-1 py-px rounded text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border border-border">
                 live
+              </span>
+            </div>
+          )}
+
+          {/* "About to change" — the explicit before→after once the form is
+              dirty and the configured model differs from what's running. */}
+          {dirty && desiredProvider && desiredModel &&
+            (!persisted || persisted.provider !== desiredProvider || persisted.model !== desiredModel) && (
+            <div className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 -mt-1">
+              <ArrowRight className="w-3 h-3 shrink-0" />
+              <span>
+                Changing to:{" "}
+                <code className="font-mono">{desiredProvider}/{desiredModel}</code>
+                {knownDim != null ? ` · ${knownDim}-dim` : " · dimension verified at re-embed"}
+                {" — Save"}
+                {(persisted?.count ?? 0) > 0 ? ` (re-embeds ${(persisted!.count ?? 0).toLocaleString()} facts)` : ""}.
               </span>
             </div>
           )}
