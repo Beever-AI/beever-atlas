@@ -173,13 +173,30 @@ def register_litellm_observer() -> None:
                 except Exception:  # noqa: BLE001
                     pass
 
+            # LiteLLM exposes the call's effective routing under
+            # ``kwargs["litellm_params"]`` (a normalised mirror), not at the
+            # top level. The top-level ``api_base`` is only present when
+            # the caller passed it as a direct kwarg AND LiteLLM hasn't
+            # promoted it into litellm_params yet — for the ADK path
+            # (qa_agent etc.) the top-level slot is always None. Prefer
+            # the nested copy so the ring buffer reflects where the call
+            # actually went on the wire.
+            litellm_params = kwargs.get("litellm_params") if isinstance(kwargs.get("litellm_params"), dict) else None
             provider = (
                 kwargs.get("custom_llm_provider")
+                or (litellm_params.get("custom_llm_provider") if litellm_params else None)
                 or kwargs.get("litellm_provider")
                 or ""
             )
             model = kwargs.get("model") or ""
-            api_base = kwargs.get("api_base") if isinstance(kwargs.get("api_base"), str) else None
+            api_base_top = kwargs.get("api_base")
+            api_base_nested = litellm_params.get("api_base") if litellm_params else None
+            api_base_raw = api_base_top if isinstance(api_base_top, str) else api_base_nested if isinstance(api_base_nested, str) else None
+            # LiteLLM often appends a trailing "/" to the nested copy
+            # (``https://api.z.ai/api/paas/v4/`` vs the operator-saved
+            # ``…/v4``). Strip so the ring buffer matches what the UI
+            # compares against in lastByModel.
+            api_base = api_base_raw.rstrip("/") if isinstance(api_base_raw, str) else None
             consumer: str | None = None
             metadata = kwargs.get("metadata") if isinstance(kwargs.get("metadata"), dict) else None
             if metadata:
@@ -211,6 +228,41 @@ def register_litellm_observer() -> None:
         litellm.success_callback.append(_on_success)
     if not any(getattr(cb, "__name__", "") == "_on_failure" and getattr(cb, "__module__", "") == __name__ for cb in (litellm.failure_callback or [])):
         litellm.failure_callback.append(_on_failure)
+
+    # The function-style ``success_callback`` does NOT fire for streamed
+    # completions — and ADK's LiteLlm wrapper streams every agent turn.
+    # LiteLLM's ``CustomLogger`` API surfaces stream-aware async hooks
+    # (``async_log_success_event`` / ``async_log_failure_event``) that DO
+    # fire on stream completion, so register one alongside the function
+    # callbacks. Together they cover every code path: ADK streamed calls,
+    # dispatch_completion non-stream calls, embedding calls, and the
+    # Test Connection probe.
+    try:
+        from litellm.integrations.custom_logger import CustomLogger  # type: ignore[import-untyped]
+    except Exception:  # noqa: BLE001
+        return
+
+    class _RingBufferLogger(CustomLogger):  # type: ignore[misc]
+        async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):  # noqa: D401, ANN001
+            _record_from_kwargs(kwargs, response_obj, None, start_time, end_time)
+
+        async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):  # noqa: D401, ANN001
+            # CustomLogger's failure hook receives the exception via
+            # ``response_obj`` (it carries the upstream error object). The
+            # nested ``kwargs["exception"]`` is the canonical exception
+            # when present.
+            exc = kwargs.get("exception") if isinstance(kwargs.get("exception"), BaseException) else (
+                response_obj if isinstance(response_obj, BaseException) else None
+            )
+            _record_from_kwargs(kwargs, None, exc, start_time, end_time)
+
+    already = any(isinstance(cb, _RingBufferLogger) for cb in (litellm.callbacks or []))
+    if not already:
+        # The ``callbacks`` registry accepts CustomLogger subclass instances
+        # and fans events to all of them. Idempotent on re-register.
+        if litellm.callbacks is None:
+            litellm.callbacks = []
+        litellm.callbacks.append(_RingBufferLogger())
 
 
 __all__ = ["RecentLLMCall", "record_call", "snapshot", "clear", "register_litellm_observer"]
