@@ -133,7 +133,26 @@ _SUMMARIZE_TOOLS_NAMES = {
 
 # Cached agent instances keyed on (mode, citation_registry_enabled, qa_new_prompt) so
 # flipping either flag at runtime produces a freshly-built agent.
+#
+# IMPORTANT: the cache key does NOT include the resolved model — an Assignment
+# switch in the Settings UI updates LLMProvider's overrides but leaves THIS
+# cache pointing at the LlmAgent built with the previous model. The fix is to
+# explicitly clear the cache from ``api/assignments.py::_refresh_llm_provider``
+# (see :func:`reset_agent_cache`). Without this, an operator who switches
+# qa_agent gemini→glm sees the resolve log line ("qa_ask start: …
+# resolved_model=openai/glm-4.5-flash") but the actual call still hits Gemini.
 _agents: dict[tuple[str, bool, bool, bool], LlmAgent] = {}
+
+
+def reset_agent_cache() -> None:
+    """Drop every cached LlmAgent so the next request rebuilds with the
+    currently-resolved model + credentials.
+
+    Called by ``api/assignments.py::_refresh_llm_provider`` after every
+    Assignment write so a Settings UI save takes effect immediately
+    instead of requiring an uvicorn restart.
+    """
+    _agents.clear()
 
 
 def _current_registry_flag() -> bool:

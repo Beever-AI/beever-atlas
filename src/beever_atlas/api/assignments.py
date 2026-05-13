@@ -269,7 +269,12 @@ async def _refresh_llm_provider() -> None:
     """Refresh ``LLMProvider`` agent overrides from the persistent state.
 
     Pulls from ``llm_assignments`` + legacy ``agent_model_config`` so a
-    UI-saved Assignment takes effect on the very next agent call.
+    UI-saved Assignment takes effect on the very next agent call. Also
+    invalidates the qa_agent ``_agents`` cache — without that, the cached
+    LlmAgent keeps using the previously-resolved model object (built on
+    its first request after boot) and an Assignment switch silently has
+    no effect at runtime.
+
     Best-effort — never let a hydration failure fail the save.
     """
     try:
@@ -279,6 +284,19 @@ async def _refresh_llm_provider() -> None:
     except Exception:  # noqa: BLE001
         logger.warning(
             "assignments: LLMProvider.reload_from_db failed (non-fatal)",
+            exc_info=True,
+        )
+
+    # Drop cached LlmAgents. Independent try block — provider reload and
+    # cache reset are decoupled; a failure in one shouldn't suppress the
+    # other.
+    try:
+        from beever_atlas.agents.query.qa_agent import reset_agent_cache
+
+        reset_agent_cache()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "assignments: qa_agent.reset_agent_cache failed (non-fatal)",
             exc_info=True,
         )
 

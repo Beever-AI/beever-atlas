@@ -108,6 +108,10 @@ async def test_multi_aspect_decomposes_to_multiple_queries():
 
     mock_provider = MagicMock()
     mock_provider.resolve_model = MagicMock(return_value="gemini-1.5-flash-lite")
+    # Force the decomposer's Endpoint+Assignment path (added so qa_router
+    # credentials reach LiteLLM) to fall through to legacy dispatch_completion
+    # — that's what these tests have always mocked.
+    mock_provider.resolve_for_call = AsyncMock(return_value=None)
 
     with (
         patch(
@@ -138,6 +142,10 @@ async def test_simple_question_fast_path():
     """Short single-topic questions should skip decomposition entirely."""
     mock_provider = MagicMock()
     mock_provider.resolve_model = MagicMock(return_value="gemini-1.5-flash-lite")
+    # Force the decomposer's Endpoint+Assignment path (added so qa_router
+    # credentials reach LiteLLM) to fall through to legacy dispatch_completion
+    # — that's what these tests have always mocked.
+    mock_provider.resolve_for_call = AsyncMock(return_value=None)
 
     with patch(
         "beever_atlas.llm.provider.get_llm_provider",
@@ -164,6 +172,7 @@ async def test_ollama_fallback_returns_is_simple_false():
     mock_provider = MagicMock()
     # Simulate Ollama: resolve_model returns a non-string object
     mock_provider.resolve_model = MagicMock(return_value=MagicMock())  # non-str
+    mock_provider.resolve_for_call = AsyncMock(return_value=None)
 
     with patch(
         "beever_atlas.llm.provider.get_llm_provider",
@@ -189,6 +198,10 @@ async def test_timeout_fallback_returns_is_simple_false():
 
     mock_provider = MagicMock()
     mock_provider.resolve_model = MagicMock(return_value="gemini-1.5-flash-lite")
+    # Force the decomposer's Endpoint+Assignment path (added so qa_router
+    # credentials reach LiteLLM) to fall through to legacy dispatch_completion
+    # — that's what these tests have always mocked.
+    mock_provider.resolve_for_call = AsyncMock(return_value=None)
 
     async def _timeout_wait_for(coro, timeout):
         # Close the coroutine so it doesn't trigger "never awaited" warnings,
@@ -228,6 +241,10 @@ async def test_json_parse_failure_returns_is_simple_false():
 
     mock_provider = MagicMock()
     mock_provider.resolve_model = MagicMock(return_value="gemini-1.5-flash-lite")
+    # Force the decomposer's Endpoint+Assignment path (added so qa_router
+    # credentials reach LiteLLM) to fall through to legacy dispatch_completion
+    # — that's what these tests have always mocked.
+    mock_provider.resolve_for_call = AsyncMock(return_value=None)
 
     with (
         patch(
