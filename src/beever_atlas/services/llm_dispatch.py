@@ -491,14 +491,28 @@ async def dispatch_embedding(
     litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
     if timeout is not None:
         kwargs["timeout"] = timeout
-    # Per-call ``drop_params`` overrides any global state and bypasses LiteLLM's
-    # strict pre-flight validation for provider-specific kwargs that arrive at
-    # the wrong handler (e.g. ``dimensions=`` reaching the openai SDK with a
-    # bare model name like ``text-embedding-004`` from Gemini's OpenAI-compat
-    # shim — LiteLLM's openai handler refuses the kwarg even though the shim
-    # itself accepts it). PR-ζ.1: also belt-and-suspenders for the boot probe
-    # which can race ahead of ``litellm.drop_params = True`` global init.
+    # Per-call ``drop_params`` overrides any global state and bypasses most
+    # of LiteLLM's pre-flight validation for provider-specific kwargs.
     kwargs.setdefault("drop_params", True)
+    # PR-ζ.2: LiteLLM has a HARDCODED check (utils.py L3306-3315) that
+    # raises ``UnsupportedParamsError`` when ``custom_llm_provider="openai"``
+    # AND the model name doesn't contain ``text-embedding-3`` AND
+    # ``dimensions`` is in the kwargs. The only escape hatch is
+    # ``allowed_openai_params=["dimensions"]`` — ``drop_params`` does NOT
+    # bypass this specific check.
+    #
+    # Affected paths in production: any non-OpenAI embedding model routed
+    # through the ``openai`` provider for its OpenAI-compat shim — Gemini's
+    # ``text-embedding-004`` (default 768-dim), Jina's ``jina-embeddings-*``
+    # (variable dim), etc. These shims DO accept ``dimensions=`` natively;
+    # LiteLLM's check is overly strict.
+    if litellm_provider == "openai" and "dimensions" in kwargs:
+        bare = litellm_model.split("/", 1)[-1]
+        if "text-embedding-3" not in bare:
+            allowed = list(kwargs.get("allowed_openai_params") or [])
+            if "dimensions" not in allowed:
+                allowed.append("dimensions")
+            kwargs["allowed_openai_params"] = allowed
     async with throttle.acquire(provider, est_tokens):
         try:
             response = await litellm.aembedding(

@@ -512,6 +512,89 @@ async def test_dispatch_embedding_matrix(
 
 
 # ────────────────────────────────────────────────────────────────────────
+# Section 4.5 — PR-ζ.2: dimensions bypass for non-OpenAI models routed
+# through the ``openai`` custom_llm_provider (Gemini ``/v1beta/openai/``
+# shim, Jina ``/v1`` shim, Ollama ``/v1`` shim).
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_embedding_adds_allowed_openai_params_for_shim_model() -> None:
+    """When ``custom_llm_provider=openai`` AND model name lacks
+    ``text-embedding-3`` AND ``dimensions=`` is set, ``dispatch_embedding``
+    MUST inject ``allowed_openai_params=["dimensions"]``. LiteLLM has a
+    hardcoded check (utils.py L3306-3315) that raises ``UnsupportedParamsError``
+    otherwise — ``drop_params`` does NOT bypass this specific guard."""
+    captured: dict[str, Any] = {}
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _fake_embedding_response()
+
+    with patch("litellm.aembedding", side_effect=fake_aembedding):
+        await dispatch_embedding(
+            provider="openai",  # routed for Gemini's /v1beta/openai/ shim
+            model="text-embedding-004",
+            input=["x"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key="AIza-test",
+            dimensions=768,
+        )
+
+    assert captured["custom_llm_provider"] == "openai"
+    # The bypass kwarg is what unblocks the boot probe.
+    assert captured["allowed_openai_params"] == ["dimensions"]
+    assert captured["dimensions"] == 768
+
+
+@pytest.mark.asyncio
+async def test_dispatch_embedding_skips_bypass_for_real_openai_models() -> None:
+    """A genuine OpenAI ``text-embedding-3-*`` request must NOT trigger the
+    bypass — the kwarg is already supported natively. Adding it would be a
+    no-op but the conditional should still skip cleanly."""
+    captured: dict[str, Any] = {}
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _fake_embedding_response()
+
+    with patch("litellm.aembedding", side_effect=fake_aembedding):
+        await dispatch_embedding(
+            provider="openai",
+            model="openai/text-embedding-3-small",
+            input=["x"],
+            api_key="sk-test",
+            dimensions=512,
+        )
+
+    # bypass NOT applied — the model name already matches openai's allow-list.
+    assert "allowed_openai_params" not in captured
+    assert captured["dimensions"] == 512
+
+
+@pytest.mark.asyncio
+async def test_dispatch_embedding_skips_bypass_when_no_dimensions_kwarg() -> None:
+    """Embedding calls without ``dimensions=`` skip the bypass injection."""
+    captured: dict[str, Any] = {}
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return _fake_embedding_response()
+
+    with patch("litellm.aembedding", side_effect=fake_aembedding):
+        await dispatch_embedding(
+            provider="openai",
+            model="jina-embeddings-v4",
+            input=["x"],
+            api_base="https://api.jina.ai/v1",
+            api_key="jina-test",
+        )
+
+    assert "allowed_openai_params" not in captured
+    assert "dimensions" not in captured
+
+
+# ────────────────────────────────────────────────────────────────────────
 # Section 5 — dispatch_assignment end-to-end on a handful of representative
 # rows. This is the path agents actually take (not the Test Connection
 # probe). Exercises the ``ResolvedAssignment`` plumbing as well so a future
