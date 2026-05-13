@@ -128,16 +128,23 @@ export function useReembedStatus(): UseReembedStatusResult {
     }
   }, [getMigrationStatus]);
 
-  // Resilient poll loop — ported verbatim from ``EmbeddingSettings``:
-  //   * 2s base delay; 4s back-off on a transient error.
-  //   * Never stops on transient errors / undefined results — only on an
-  //     authoritative ``running: false`` response. A single 5xx mid-migration
-  //     previously froze "Re-embedding · 28%" on screen forever.
+  // Resilient poll loop — PR-θ:
+  //   * Always polling while the component is mounted (was: only while a
+  //     job was running). The previous behaviour exited the loop on the
+  //     FIRST ``running: false`` response, which is exactly what happens
+  //     on mount before the user has clicked Start re-embed — so the
+  //     subsequent click spawned a migration that the UI never saw.
+  //     Progress bar would stay at "0 / 0 facts · starting" forever even
+  //     while the backend was finishing the migration. Always-poll is
+  //     ~1 tiny Mongo ``find_one`` every 2-10s and keeps the UI honest.
+  //   * 2s base delay while a job is running (responsive progress bar);
+  //     8s when idle (mostly a no-op poll just to stay synced).
+  //   * 4s back-off on transient errors. Never stops on errors — a single
+  //     5xx mid-migration previously froze "Re-embedding · 28%" on screen.
   //   * On running → !running, refetch the state doc so the "Re-embed
   //     required" banner re-evaluates against the now-current ``embedding_meta``.
   useEffect(() => {
     cancelledRef.current = false;
-    let pollUntilExplicitlyDone = true;
 
     async function poll() {
       if (cancelledRef.current) return;
@@ -151,12 +158,14 @@ export function useReembedStatus(): UseReembedStatusResult {
           refetchState();
         }
         lastRunningRef.current = s.running;
-        pollUntilExplicitlyDone = s.running;
+        // Slower poll when no job is running — the UI just needs to notice
+        // if a migration starts (e.g. from another tab) or finishes.
+        nextDelay = s.running ? 2000 : 8000;
       } catch {
         // Transient — back off slightly and retry. Do NOT stop the loop.
         nextDelay = 4000;
       }
-      if (!cancelledRef.current && pollUntilExplicitlyDone) {
+      if (!cancelledRef.current) {
         timerRef.current = window.setTimeout(poll, nextDelay);
       }
     }

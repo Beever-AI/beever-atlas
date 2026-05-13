@@ -135,11 +135,16 @@ describe("useReembedStatus", () => {
     expect(result.current.status?.running).toBe(false);
     expect(result.current.isPolling).toBe(false);
 
-    // No further polls scheduled now that we have an authoritative running:false.
+    // PR-θ: the poll loop now keeps running at the 8s idle cadence even
+    // when running=false. Otherwise the first running:false response (which
+    // commonly happens on mount, before any spawn) would freeze the loop
+    // and a subsequent user-triggered re-embed would never surface in the UI.
+    // After +10s past the running:false response (next idle poll at +8s),
+    // we should see exactly one more poll.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
-    expect(statusCalls).toBe(3);
+    expect(statusCalls).toBe(4);
     unmount();
   });
 
