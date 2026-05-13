@@ -1,15 +1,31 @@
 import { useState } from "react";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, X } from "lucide-react";
 import {
   ENDPOINT_PRESETS,
   getEndpointPreset,
   type CreateEndpointRequest,
+  type Endpoint,
   type EndpointPreset,
+  type UpdateEndpointRequest,
 } from "@/lib/aiSetup";
 
+/** Mode the panel renders in — see ``AddEndpointPanelProps``. */
+export type EndpointPanelMode = "create" | "edit";
+
 interface AddEndpointPanelProps {
-  onCreate: (req: CreateEndpointRequest) => Promise<void>;
+  /** Create handler — used in ``"create"`` mode. */
+  onCreate?: (req: CreateEndpointRequest) => Promise<void>;
+  /**
+   * Update handler — used in ``"edit"`` mode. ``api_key`` is omitted from the
+   * request unless the user explicitly replaced it, so the backend keeps the
+   * stored credential.
+   */
+  onUpdate?: (req: UpdateEndpointRequest) => Promise<void>;
   onCancel: () => void;
+  /** ``"create"`` (default) shows the preset chips; ``"edit"`` locks the preset. */
+  mode?: EndpointPanelMode;
+  /** The endpoint being edited — required in ``"edit"`` mode, ignored otherwise. */
+  existing?: Endpoint;
   /** Preset to start on; defaults to the first preset passing the filter. */
   initialPresetKey?: string;
   /** Restrict which presets are offered (e.g. embedding-capable only). */
@@ -32,34 +48,76 @@ function groupPresets(presets: EndpointPreset[]): PresetGroup[] {
   ].filter((g) => g.presets.length > 0);
 }
 
+interface HeaderRow {
+  k: string;
+  v: string;
+}
+
+function headersToRows(headers: Record<string, string>): HeaderRow[] {
+  return Object.entries(headers).map(([k, v]) => ({ k, v }));
+}
+
+function rowsToHeaders(rows: HeaderRow[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const { k, v } of rows) {
+    const key = k.trim();
+    if (key) out[key] = v;
+  }
+  return out;
+}
+
 /**
- * Inline expanding panel (NOT a modal) for adding an Endpoint:
- *   (1) preset chips, grouped chat / embedding-only / local;
- *   (2) form — Name, Base URL (prefilled), API key (hidden for ``none`` auth),
- *       Models (comma-separated, prefilled), + the preset's "Get an API key" link;
- *   (3) Save / Cancel — Save shows a spinner and surfaces the create error inline.
+ * Inline expanding panel (NOT a modal) for adding *or editing* an Endpoint:
+ *   - **create** mode: (1) preset chips, grouped chat / embedding-only / local;
+ *     (2) form — Name, Base URL, API key (hidden for ``none`` auth), Models;
+ *     (3) Advanced — RPM, extra headers, tags; (4) Save / Cancel.
+ *   - **edit** mode: the preset is fixed (rendered as a read-only label); the
+ *     API key shows a masked placeholder with a "Replace key" link that reveals
+ *     an empty password input — the request only carries ``api_key`` if the user
+ *     actually changed it, so the backend's "PUT preserves the unchanged
+ *     credential" behaviour applies. Same Advanced section.
  *
- * The Add flow is Save → then Test/Discover on the resulting EndpointCard;
- * this panel does not attempt to discover pre-create.
+ * The Add flow is Save → then Test/Discover on the resulting EndpointCard.
  */
 export function AddEndpointPanel({
   onCreate,
+  onUpdate,
   onCancel,
+  mode = "create",
+  existing,
   initialPresetKey,
   presetFilter,
 }: AddEndpointPanelProps) {
+  const isEdit = mode === "edit" && !!existing;
+
   const available = presetFilter ? ENDPOINT_PRESETS.filter(presetFilter) : ENDPOINT_PRESETS;
   const groups = groupPresets(available);
-  const firstKey = initialPresetKey && available.some((p) => p.key === initialPresetKey)
+  const createFirstKey = initialPresetKey && available.some((p) => p.key === initialPresetKey)
     ? initialPresetKey
     : (available[0]?.key ?? "custom");
 
-  const [presetKey, setPresetKey] = useState(firstKey);
+  // In edit mode the preset is whatever the endpoint already has.
+  const initialPreset = isEdit ? existing!.preset : createFirstKey;
+  const [presetKey, setPresetKey] = useState(initialPreset);
   const preset = getEndpointPreset(presetKey);
-  const [name, setName] = useState(preset?.label ?? presetKey);
-  const [baseUrl, setBaseUrl] = useState(preset?.base_url ?? "");
+  const presetLabel = preset?.label ?? presetKey;
+
+  const [name, setName] = useState(isEdit ? existing!.name : (preset?.label ?? presetKey));
+  const [baseUrl, setBaseUrl] = useState(isEdit ? existing!.base_url : (preset?.base_url ?? ""));
   const [apiKey, setApiKey] = useState("");
-  const [models, setModels] = useState<string[]>(preset?.default_models ?? []);
+  // In edit mode the field starts hidden behind a "Replace key" link.
+  const [revealKeyInput, setRevealKeyInput] = useState(!isEdit);
+  const [models, setModels] = useState<string[]>(isEdit ? existing!.models : (preset?.default_models ?? []));
+  const [modelsRaw, setModelsRaw] = useState((isEdit ? existing!.models : (preset?.default_models ?? [])).join(", "));
+
+  // Advanced section — collapsed by default in both modes.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const presetRpmDefault = 60;
+  const [rpm, setRpm] = useState<string>(String(isEdit ? existing!.rpm : presetRpmDefault));
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(isEdit ? headersToRows(existing!.headers) : []);
+  const [tags, setTags] = useState<string[]>(isEdit ? existing!.tags : []);
+  const [tagsRaw, setTagsRaw] = useState((isEdit ? existing!.tags : []).join(", "));
+
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -67,60 +125,120 @@ export function AddEndpointPanel({
     setPresetKey(key);
     const p = getEndpointPreset(key);
     setBaseUrl(p?.base_url ?? "");
-    setModels(p?.default_models ?? []);
+    const nextModels = p?.default_models ?? [];
+    setModels(nextModels);
+    setModelsRaw(nextModels.join(", "));
     setName(p?.label ?? key);
     setErr(null);
   }
 
+  function commitModels(raw: string) {
+    setModelsRaw(raw);
+    setModels(raw.split(",").map((m) => m.trim()).filter(Boolean));
+  }
+
+  function commitTags(raw: string) {
+    setTagsRaw(raw);
+    setTags(raw.split(",").map((t) => t.trim()).filter(Boolean));
+  }
+
+  function updateHeaderRow(i: number, patch: Partial<HeaderRow>) {
+    setHeaderRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+  function addHeaderRow() {
+    setHeaderRows((rows) => [...rows, { k: "", v: "" }]);
+  }
+  function removeHeaderRow(i: number) {
+    setHeaderRows((rows) => rows.filter((_, idx) => idx !== i));
+  }
+
   async function submit() {
+    if (isEdit ? !onUpdate : !onCreate) return;
     setSaving(true);
     setErr(null);
     try {
       const authType = preset?.auth_type ?? "api_key";
-      await onCreate({
+      const parsedRpm = Number.parseInt(rpm, 10);
+      const headers = rowsToHeaders(headerRows);
+      const common = {
         name: name.trim() || presetKey,
-        preset: presetKey,
         base_url: baseUrl,
-        auth_type: authType,
-        api_key: authType === "none" ? undefined : (apiKey || undefined),
         models,
-      });
+        ...(Number.isFinite(parsedRpm) && parsedRpm > 0 ? { rpm: parsedRpm } : {}),
+        ...(Object.keys(headers).length > 0 || (isEdit && Object.keys(existing!.headers).length > 0) ? { headers } : {}),
+        ...(tags.length > 0 || (isEdit && existing!.tags.length > 0) ? { tags } : {}),
+      };
+      if (isEdit) {
+        // ``api_key`` is only sent when the user opened the input *and* typed
+        // something — otherwise the backend keeps the stored credential.
+        const apiKeyChanged = revealKeyInput && apiKey.trim().length > 0;
+        const req: UpdateEndpointRequest = {
+          ...common,
+          auth_type: authType,
+          ...(authType === "none" ? {} : apiKeyChanged ? { api_key: apiKey } : {}),
+        };
+        await onUpdate!(req);
+      } else {
+        const req: CreateEndpointRequest = {
+          ...common,
+          preset: presetKey,
+          auth_type: authType,
+          api_key: authType === "none" ? undefined : (apiKey || undefined),
+        };
+        await onCreate!(req);
+      }
     } catch (e: any) {
       const detail = e?.body?.detail ?? e?.detail;
-      setErr(detail?.error ? String(detail.error) : (e?.message ?? "Failed to create endpoint"));
+      setErr(
+        detail?.error
+          ? String(detail.error)
+          : (e?.message ?? (isEdit ? "Failed to update endpoint" : "Failed to create endpoint")),
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  const showApiKey = preset?.auth_type !== "none";
+  const showApiKey = (preset?.auth_type ?? "api_key") !== "none";
 
   return (
     <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-4">
-      {/* (1) Preset chips */}
-      <div className="space-y-2.5">
-        {groups.map((g) => (
-          <div key={g.label} className="space-y-1.5">
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{g.label}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {g.presets.map((p) => (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => selectPreset(p.key)}
-                  className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                    p.key === presetKey
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-border hover:bg-muted"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">{isEdit ? "Edit endpoint" : "Add endpoint"}</h3>
+        {isEdit && (
+          <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            {presetLabel}
+          </span>
+        )}
       </div>
+
+      {/* (1) Preset chips — create mode only */}
+      {!isEdit && (
+        <div className="space-y-2.5">
+          {groups.map((g) => (
+            <div key={g.label} className="space-y-1.5">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{g.label}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {g.presets.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => selectPreset(p.key)}
+                    className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                      p.key === presetKey
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border hover:bg-muted"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* (2) Form */}
       <div className="space-y-3">
@@ -145,21 +263,54 @@ export function AddEndpointPanel({
         {showApiKey && (
           <div className="space-y-1">
             <label className="text-sm font-medium text-foreground">API key</label>
-            <input
-              type="password"
-              className="w-full text-sm font-mono rounded-md border border-border bg-background px-2.5 py-1.5"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-..."
-            />
+            {isEdit && !revealKeyInput ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-mono text-muted-foreground truncate">
+                  {existing!.has_credential ? existing!.credential_masked : "no credential stored"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRevealKeyInput(true);
+                    setApiKey("");
+                  }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Replace key
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  type="password"
+                  className="w-full text-sm font-mono rounded-md border border-border bg-background px-2.5 py-1.5"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={isEdit ? "enter a new key…" : "sk-..."}
+                  autoFocus={isEdit}
+                />
+                {isEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRevealKeyInput(false);
+                      setApiKey("");
+                    }}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Keep existing key
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
         <div className="space-y-1">
           <label className="text-sm font-medium text-foreground">Models</label>
           <input
             className="w-full text-sm font-mono rounded-md border border-border bg-background px-2.5 py-1.5"
-            value={models.join(", ")}
-            onChange={(e) => setModels(e.target.value.split(",").map((m) => m.trim()).filter(Boolean))}
+            value={modelsRaw}
+            onChange={(e) => commitModels(e.target.value)}
             placeholder="comma-separated model names"
           />
         </div>
@@ -175,6 +326,82 @@ export function AddEndpointPanel({
         )}
       </div>
 
+      {/* Advanced — collapsed by default */}
+      <div className="rounded-lg border border-border bg-background/50">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+          aria-expanded={advancedOpen}
+        >
+          {advancedOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          Advanced
+        </button>
+        {advancedOpen && (
+          <div className="space-y-3 border-t border-border px-3 py-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Rate limit (RPM)</label>
+              <input
+                type="number"
+                min={1}
+                className="w-32 text-sm rounded-md border border-border bg-background px-2.5 py-1.5"
+                value={rpm}
+                onChange={(e) => setRpm(e.target.value)}
+                placeholder="60"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground">Extra headers</label>
+              {headerRows.length === 0 && (
+                <p className="text-[11px] text-muted-foreground">No custom headers.</p>
+              )}
+              {headerRows.map((row, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <input
+                    className="flex-1 min-w-0 text-xs font-mono rounded-md border border-border bg-background px-2 py-1"
+                    value={row.k}
+                    onChange={(e) => updateHeaderRow(i, { k: e.target.value })}
+                    placeholder="Header-Name"
+                    aria-label={`header name ${i + 1}`}
+                  />
+                  <input
+                    className="flex-1 min-w-0 text-xs font-mono rounded-md border border-border bg-background px-2 py-1"
+                    value={row.v}
+                    onChange={(e) => updateHeaderRow(i, { v: e.target.value })}
+                    placeholder="value"
+                    aria-label={`header value ${i + 1}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeHeaderRow(i)}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                    aria-label={`remove header ${i + 1}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addHeaderRow}
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <Plus className="h-3 w-3" /> Add header
+              </button>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-foreground">Tags</label>
+              <input
+                className="w-full text-xs rounded-md border border-border bg-background px-2.5 py-1.5"
+                value={tagsRaw}
+                onChange={(e) => commitTags(e.target.value)}
+                placeholder="comma-separated tags"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       {err && <div className="text-xs text-destructive">{err}</div>}
 
       {/* (3) Save / Cancel */}
@@ -185,7 +412,7 @@ export function AddEndpointPanel({
           disabled={saving}
           className="inline-flex items-center gap-1.5 text-sm rounded-md bg-primary text-primary-foreground px-3.5 py-1.5 hover:bg-primary/90 disabled:opacity-50 font-medium"
         >
-          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} {isEdit ? "Save changes" : "Save"}
         </button>
         <button
           type="button"

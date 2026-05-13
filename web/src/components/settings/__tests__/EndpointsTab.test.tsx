@@ -130,6 +130,42 @@ describe("EndpointsTab", () => {
     expect(screen.getByText("Models")).toBeTruthy();
   });
 
+  it("clicking Edit opens the editor prefilled; saving without touching the key PUTs without api_key", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const putBodies: any[] = [];
+    fetchMock.mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/endpoints/ep-1") && init?.method === "PUT") {
+        putBodies.push(JSON.parse(init.body as string));
+        return makeResponse({ ...ENDPOINT, name: "OpenAI staging" });
+      }
+      if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [ENDPOINT] });
+      if (url.includes("/api/settings/assignments"))
+        return makeResponse({ assignments: [], default_consumers: [], capabilities: {} });
+      return makeResponse({});
+    });
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("OpenAI prod")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Edit"));
+
+    // Editor opens prefilled with the endpoint's name + models.
+    await waitFor(() => expect(screen.getByText("Edit endpoint")).toBeTruthy());
+    const nameInput = screen.getByDisplayValue("OpenAI prod") as HTMLInputElement;
+    expect(nameInput).toBeTruthy();
+    expect(screen.getByDisplayValue(/gpt-4o-mini/)).toBeTruthy();
+
+    fireEvent.change(nameInput, { target: { value: "OpenAI staging" } });
+    fireEvent.click(screen.getByText("Save changes"));
+
+    await waitFor(() => expect(putBodies.length).toBe(1));
+    expect(putBodies[0].name).toBe("OpenAI staging");
+    expect("api_key" in putBodies[0]).toBe(false);
+    // Editor closes on success.
+    await waitFor(() => expect(screen.queryByText("Edit endpoint")).toBeNull());
+  });
+
   it("delete returning endpoint_in_use_* surfaces a friendly message", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any, init?: any) => {

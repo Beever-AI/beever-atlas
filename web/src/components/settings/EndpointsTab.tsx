@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { useEndpoints } from "@/hooks/useEndpoints";
 import { useAssignments } from "@/hooks/useAssignments";
 import { useToast } from "@/hooks/useToast";
-import { PRESET_LABELS } from "@/lib/aiSetup";
+import { PRESET_LABELS, type UpdateEndpointRequest } from "@/lib/aiSetup";
 import {
   EndpointCard,
   type EndpointDiscoverResult,
@@ -26,6 +26,7 @@ export function EndpointsTab() {
   const { toasts, show: showToast, dismiss: dismissToast } = useToast();
 
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, EndpointTestResult | null>>({});
   const [discoverResults, setDiscoverResults] = useState<Record<string, EndpointDiscoverResult | null>>({});
@@ -120,6 +121,19 @@ export function EndpointsTab() {
     }
   }
 
+  async function handleUpdate(id: string, fallbackName: string, req: UpdateEndpointRequest) {
+    setBusyId(id);
+    try {
+      // Let a failure propagate — ``AddEndpointPanel`` catches it and surfaces
+      // the message inline (the editor stays open).
+      await ep.update(id, req);
+      setEditingId(null);
+      showToast(`'${req.name?.trim() || fallbackName}' updated`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function handleApplyPreset(presetKey: string) {
     setPresetError(null);
     try {
@@ -159,14 +173,17 @@ export function EndpointsTab() {
 
       {/* Add-endpoint affordance — inline expanding panel */}
       {!noEndpoints && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">
             {ep.endpoints.length} {ep.endpoints.length === 1 ? "endpoint" : "endpoints"} configured
           </span>
           {!showAdd && (
             <button
               type="button"
-              onClick={() => setShowAdd(true)}
+              onClick={() => {
+                setShowAdd(true);
+                setEditingId(null);
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
             >
               <Plus className="w-4 h-4" />
@@ -219,20 +236,40 @@ export function EndpointsTab() {
           />
         )
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {ep.endpoints.map((e) => (
-            <EndpointCard
-              key={e.id}
-              endpoint={e}
-              usedByCount={usedByCount[e.id] ?? 0}
-              busy={busyId === e.id}
-              testResult={testResults[e.id] ?? null}
-              discoverResult={discoverResults[e.id] ?? null}
-              onTest={() => handleTest(e.id)}
-              onDiscover={() => handleDiscover(e.id)}
-              onDelete={() => handleDelete(e.id, e.name)}
-            />
-          ))}
+        <div className="grid gap-3 sm:grid-cols-2 items-start">
+          {ep.endpoints.map((e) => {
+            const isEditing = editingId === e.id;
+            return (
+              <EndpointCard
+                key={e.id}
+                endpoint={e}
+                usedByCount={usedByCount[e.id] ?? 0}
+                usedByConsumers={consumersUsing(e.id)}
+                busy={busyId === e.id}
+                testResult={testResults[e.id] ?? null}
+                discoverResult={discoverResults[e.id] ?? null}
+                isEditing={isEditing}
+                editor={
+                  isEditing ? (
+                    <AddEndpointPanel
+                      mode="edit"
+                      existing={e}
+                      onCancel={() => setEditingId(null)}
+                      onUpdate={(req) => handleUpdate(e.id, e.name, req)}
+                    />
+                  ) : undefined
+                }
+                onEdit={() => {
+                  setEditingId(e.id);
+                  setShowAdd(false);
+                  setPresetError(null);
+                }}
+                onTest={() => handleTest(e.id)}
+                onDiscover={() => handleDiscover(e.id)}
+                onDelete={() => handleDelete(e.id, e.name)}
+              />
+            );
+          })}
         </div>
       )}
 

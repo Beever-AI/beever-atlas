@@ -130,4 +130,70 @@ describe("EndpointCard", () => {
     expect(screen.queryByText("no key")).toBeNull();
     expect(screen.getByText("untested")).toBeTruthy();
   });
+
+  it("renders an Edit button when onEdit is given and calls it on click", () => {
+    const onEdit = vi.fn();
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint()}
+        usedByCount={0}
+        onEdit={onEdit}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText("Edit"));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("expanding the model stat shows the model-name chips", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ models: ["gpt-4o-mini", "gpt-4o", "o4-mini"] })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    // Chips not visible until expanded.
+    expect(screen.queryByText("o4-mini")).toBeNull();
+    fireEvent.click(screen.getByText("3 models"));
+    expect(screen.getByText("gpt-4o-mini")).toBeTruthy();
+    expect(screen.getByText("o4-mini")).toBeTruthy();
+  });
+
+  it("shows '(no models — run Discover)' and disables the model toggle when there are no models", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ models: [] })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText("0 models")).toBeTruthy();
+    expect((screen.getByText("0 models") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/no models — run Discover/i)).toBeTruthy();
+  });
+
+  it("renders the supplied editor in place of the body when isEditing", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint()}
+        usedByCount={0}
+        isEditing
+        editor={<div>EDITOR HERE</div>}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText("EDITOR HERE")).toBeTruthy();
+    // Body stats / buttons are hidden while editing.
+    expect(screen.queryByText("Test")).toBeNull();
+    expect(screen.queryByText("2 models")).toBeNull();
+  });
 });
