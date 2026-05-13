@@ -82,6 +82,7 @@ def spawn_reembed_job() -> tuple[str, str]:
             # uvicorn.
             _active_migration["error"] = f"SystemExit({exc.code})"
             logger.error("reembed: SystemExit trapped to protect uvicorn: %s", exc)
+            await _clear_checkpoint_safely()
         except Exception as exc:  # noqa: BLE001
             # Log the full traceback server-side so the operator can
             # diagnose. Surface ONLY the exception class to the UI — raw
@@ -98,10 +99,34 @@ def spawn_reembed_job() -> tuple[str, str]:
                 exc,
                 exc_info=True,
             )
+            # PR-η.1: clear the checkpoint on failure. The script writes a
+            # "stage=weaviate_embed, processed=0" checkpoint at the start of
+            # the embed phase and only clears it on success. A mid-flight
+            # crash leaves that stale checkpoint in MongoDB, which makes the
+            # UI's progress banner show "Re-embedding in progress · 0 / N"
+            # forever — even though the task has exited. Without this clear
+            # the operator has to surgically delete the doc from MongoDB
+            # before retrying. Best-effort: never let cleanup mask the
+            # underlying error.
+            await _clear_checkpoint_safely()
             raise
 
     _active_migration["task"] = asyncio.create_task(_run())
     return job_id, "running"
+
+
+async def _clear_checkpoint_safely() -> None:
+    """Delete the ``reembed_state`` checkpoint doc, never raising."""
+    try:
+        stores = get_stores()
+        await stores.mongodb.db["reembed_state"].delete_one(
+            {"_id": "reembed_state"}
+        )
+    except Exception as cleanup_exc:  # noqa: BLE001
+        logger.warning(
+            "reembed: failed to clear stale checkpoint after job failure: %s",
+            cleanup_exc,
+        )
 
 
 async def migration_status_snapshot() -> dict[str, Any]:
