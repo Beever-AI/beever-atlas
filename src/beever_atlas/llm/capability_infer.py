@@ -30,6 +30,11 @@ def infer_capabilities(model_string: str) -> dict[str, Any]:
 
     # Tool-calling — covers OpenAI/Anthropic/Gemini families + Mistral + the
     # major Llama / Qwen variants that ship function-calling.
+    #
+    # PR-λ.4: pattern coverage for Ollama-style names. Ollama publishes
+    # ``llama3.1``, ``llama3.2``, ``llama3.3`` (no hyphen) while the
+    # provider APIs use ``llama-3.1`` (hyphen). Both forms denote the
+    # same tool-capable model family.
     supports_tools = (
         "gpt-" in s
         or "claude" in s
@@ -37,10 +42,14 @@ def infer_capabilities(model_string: str) -> dict[str, Any]:
         or "mistral" in s
         or "qwen" in s
         or "llama-3" in s
+        or "llama3.1" in s
+        or "llama3.2" in s
         or "llama3.3" in s
         or "minimax" in s
         or "deepseek-chat" in s
         or "grok" in s
+        or "firefunction" in s
+        or "nous-hermes2" in s
     )
 
     # Vision — multimodal models.
