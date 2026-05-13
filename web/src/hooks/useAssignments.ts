@@ -37,9 +37,17 @@ export function useAssignments() {
 
   const upsert = useCallback(
     async (consumer: string, req: UpdateAssignmentRequest): Promise<Assignment> => {
+      // PR-λ.6: always send ``force: true`` so the backend never 422s on a
+      // capability mismatch. Atlas's substring-based capability classifier
+      // is fundamentally a whack-a-mole (every new provider / new model
+      // family is a missing pattern). Trying to gate operators by it locks
+      // them out of legitimate models — and the runtime call itself is the
+      // authoritative source of truth (visible via the "Last call"
+      // indicator on the row). Operators who explicitly want the safety
+      // gate can hit the API directly with ``force: false``.
       const saved = await api.put<Assignment>(
         `/api/settings/assignments/${consumer}`,
-        req
+        { ...req, force: true }
       );
       await fetchAll();
       return saved;
