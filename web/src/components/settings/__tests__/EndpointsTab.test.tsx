@@ -197,6 +197,64 @@ describe("EndpointsTab", () => {
     await waitFor(() => expect(screen.getByText(/in use by: qa_agent/i)).toBeTruthy());
   });
 
+  it("PR-γ: clicking Promote on an advanced model PUTs the endpoint with the extended manually_kept array", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const putBodies: any[] = [];
+    const endpointWithAdvanced = {
+      ...ENDPOINT,
+      models: ["gpt-4o-mini", "gpt-4o"],
+      model_kinds: {
+        "gpt-4o-mini": "chat",
+        "gpt-4o": "chat",
+      },
+      advanced_models: ["jina-reranker-v2", "dall-e-3"],
+      manually_kept: [],
+    };
+    // Pre-populate the discover result by triggering a discover call first.
+    // We model that by having discover return a by_kind shape.
+    fetchMock.mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/endpoints/ep-1") && init?.method === "PUT") {
+        putBodies.push(JSON.parse(init.body as string));
+        return makeResponse({ ...endpointWithAdvanced, manually_kept: ["jina-reranker-v2"] });
+      }
+      if (url.includes("/api/settings/endpoints/ep-1/discover") && init?.method === "POST") {
+        return makeResponse({
+          ok: true,
+          models: ["gpt-4o-mini", "gpt-4o"],
+          error: null,
+          by_kind: { chat: ["gpt-4o-mini", "gpt-4o"], embedding: [] },
+          dropped_breakdown: { reranker: 1, image_gen: 1 },
+        });
+      }
+      if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [endpointWithAdvanced] });
+      if (url.includes("/api/settings/assignments"))
+        return makeResponse({ assignments: [], default_consumers: [], capabilities: {} });
+      return makeResponse({});
+    });
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("OpenAI prod")).toBeTruthy());
+
+    // Trigger Discover to get the rich summary panel rendered.
+    fireEvent.click(screen.getByText("Discover"));
+    // Wait for the "Show advanced" toggle to appear in the rich summary.
+    await waitFor(() => expect(screen.getByText(/Show advanced/)).toBeTruthy());
+
+    // The first PUT is the models-list write from handleDiscover; ignore it.
+    putBodies.length = 0;
+
+    // Reveal the advanced chips + click Promote on the first one.
+    fireEvent.click(screen.getByText(/Show advanced/));
+    await waitFor(() => expect(screen.getByText("jina-reranker-v2")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Promote jina-reranker-v2 to the model list"));
+
+    await waitFor(() => expect(putBodies.length).toBeGreaterThan(0));
+    // The PUT carries the extended manually_kept array.
+    const promotePut = putBodies[putBodies.length - 1];
+    expect(promotePut.manually_kept).toEqual(["jina-reranker-v2"]);
+  });
+
   it("adding a model via the card's add-input PUTs the endpoint with the extended model list", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     const putBodies: any[] = [];

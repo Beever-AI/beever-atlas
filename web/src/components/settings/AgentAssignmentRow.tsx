@@ -79,6 +79,19 @@ function ProviderBadge({ preset }: { preset: string | undefined }) {
   );
 }
 
+/**
+ * PR-γ: narrow an endpoint's ``models`` list to those that classify as chat.
+ * Pre-PR-α endpoints (no ``model_kinds``) keep the full list so the operator
+ * isn't stranded until they re-Discover. Operator-typed entries that aren't in
+ * ``model_kinds`` (e.g. a freshly added model that hasn't gone through the
+ * classifier) also stay visible.
+ */
+function chatModelsFor(ep: Endpoint): string[] {
+  const kinds = ep.model_kinds;
+  if (!kinds || Object.keys(kinds).length === 0) return ep.models;
+  return ep.models.filter((m) => kinds[m] === "chat" || !(m in kinds));
+}
+
 export function AgentAssignmentRow({
   consumer,
   assignment: a,
@@ -94,6 +107,7 @@ export function AgentAssignmentRow({
   const currentEp = a ? endpointById[a.endpoint_id] : undefined;
   const provPrefix = currentEp ? presetToProvider(currentEp.preset) : "";
   const compat = a && currentEp ? isCompatible(provPrefix, a.model, required) : true;
+  const chatModels = currentEp ? chatModelsFor(currentEp) : [];
 
   const hasCustomParams =
     a != null &&
@@ -142,9 +156,12 @@ export function AgentAssignmentRow({
   function changeEndpoint(newEpId: string) {
     const newEp = endpointById[newEpId];
     if (!newEpId || !newEp) return;
-    const firstModel = newEp.models[0] ?? a?.model ?? "";
+    // Prefer a chat-classified model when the endpoint has classifications;
+    // otherwise fall back to the first listed model (pre-α behaviour).
+    const newChat = chatModelsFor(newEp);
+    const firstModel = newChat[0] ?? newEp.models[0] ?? a?.model ?? "";
     if (!firstModel) {
-      onToast?.(`${newEp.name} has no models — run Discover first`, "error");
+      onToast?.(`${newEp.name} has no chat models — run Discover first`, "error");
       return;
     }
     void save({ endpoint_id: newEpId, model: firstModel });
@@ -195,9 +212,23 @@ export function AgentAssignmentRow({
             className="text-xs bg-background border border-border rounded-md px-2 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 hover:border-primary/40 transition-colors"
           >
             <option value="">— pick endpoint —</option>
-            {endpoints.map((e) => (
-              <option key={e.id} value={e.id}>{e.name}</option>
-            ))}
+            {endpoints.map((e) => {
+              // PR-γ: surface a warning when an endpoint has zero chat models
+              // in its ``model_kinds`` classification. Only label when the
+              // backend has actually classified things — pre-α endpoints (no
+              // ``model_kinds``) keep the plain name.
+              const kinds = e.model_kinds;
+              const hasChatClassification =
+                !!kinds && Object.values(kinds).some((k) => k === "chat");
+              const classifierRan = !!kinds && Object.keys(kinds).length > 0;
+              const noChat = classifierRan && !hasChatClassification;
+              return (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                  {noChat ? " (no chat models — run Discover)" : ""}
+                </option>
+              );
+            })}
           </select>
           {currentEp && (
             <select
@@ -206,8 +237,18 @@ export function AgentAssignmentRow({
               onChange={(e) => changeModel(e.target.value)}
               className="text-xs bg-background border border-border rounded-md px-2 py-1.5 min-w-[160px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 hover:border-primary/40 transition-colors"
             >
-              {currentEp.models.length === 0 && <option value="">(no models — run Discover)</option>}
-              {currentEp.models.map((m) => {
+              {chatModels.length === 0 && (
+                <option value="">(no chat models — run Discover)</option>
+              )}
+              {/* PR-γ: when the saved model isn't in the chat-filtered set (e.g.
+                  a stale embedding model still pinned by an old Assignment),
+                  keep it as a visible option so the <select> isn't blank. */}
+              {a?.model && !chatModels.includes(a.model) && (
+                <option key={`__saved__${a.model}`} value={a.model}>
+                  {a.model}
+                </option>
+              )}
+              {chatModels.map((m) => {
                 const ok = isCompatible(provPrefix, m, required);
                 return (
                   <option key={m} value={m} disabled={!ok}>

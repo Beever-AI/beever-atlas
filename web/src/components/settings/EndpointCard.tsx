@@ -7,16 +7,18 @@ import {
   ChevronUp,
   CircleDot,
   Copy,
+  Info,
   KeyRound,
   Loader2,
   Pencil,
   PlugZap,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
-import type { Endpoint } from "@/lib/aiSetup";
+import type { Endpoint, PersistedModelKind } from "@/lib/aiSetup";
 import { getEndpointPreset } from "@/lib/aiSetup";
 import { getPresetIdentity } from "@/lib/endpointPresetIdentity";
 
@@ -25,6 +27,9 @@ export interface EndpointTestResult {
   ok: boolean;
   latency_ms: number | null;
   error: string | null;
+  /** PR-β: which model the test actually probed (response-only). */
+  probed_model?: string | null;
+  probed_kind?: PersistedModelKind | null;
 }
 
 /** Inline result of a Discover Models call, surfaced on the card. */
@@ -32,6 +37,54 @@ export interface EndpointDiscoverResult {
   ok: boolean;
   count: number;
   error: string | null;
+  /** PR-α: kept buckets (chat / embedding lists). Optional for pre-α backends. */
+  by_kind?: { chat: string[]; embedding: string[] };
+  /** PR-α: counts per dropped category (reranker / image_gen / …). */
+  dropped_breakdown?: Record<string, number>;
+}
+
+/**
+ * Pretty-print a dropped-category key for the breakdown tooltip:
+ *   image_gen   → "image gen"
+ *   audio_stt   → "audio STT"
+ *   audio_synth → "audio synth"
+ *   fine_tune   → "fine-tune"
+ *   clip        → "CLIP / vision-only"
+ *   vlm         → "VLM"
+ *   reranker    → "reranker"
+ *   moderation  → "moderation"
+ *   reader      → "reader"
+ *   segmenter   → "segmenter"
+ *   other       → "other"
+ */
+export function prettyDroppedCategory(key: string): string {
+  switch (key) {
+    case "image_gen":
+      return "image gen";
+    case "audio_stt":
+      return "audio STT";
+    case "audio_synth":
+      return "audio synth";
+    case "fine_tune":
+      return "fine-tune";
+    case "clip":
+      return "CLIP / vision-only";
+    case "vlm":
+      return "VLM";
+    default:
+      return key.replace(/_/g, " ");
+  }
+}
+
+/** Build the breakdown tooltip string from `dropped_breakdown` (non-zero entries only). */
+export function buildBreakdownTooltip(breakdown: Record<string, number> | undefined): string {
+  if (!breakdown) return "";
+  const parts: string[] = [];
+  for (const [key, count] of Object.entries(breakdown)) {
+    if (!count || count <= 0) continue;
+    parts.push(`${count} ${prettyDroppedCategory(key)}`);
+  }
+  return parts.join(" · ");
 }
 
 interface EndpointCardProps {
@@ -57,6 +110,14 @@ interface EndpointCardProps {
    * model is added via the inline "+ add model" affordance.
    */
   onUpdateModels?: (models: string[]) => Promise<void>;
+  /**
+   * PR-γ: promote one of ``endpoint.advanced_models`` into ``endpoint.models[]``
+   * by appending it to ``endpoint.manually_kept`` and persisting via
+   * ``ep.update(id, { manually_kept: […, model] })``. The backend's Discover
+   * already preserves ``manually_kept`` across re-Discover, so the promoted
+   * model survives the next refresh.
+   */
+  onPromoteAdvanced?: (model: string) => Promise<void>;
 }
 
 interface StatusPill {
@@ -162,6 +223,7 @@ export function EndpointCard({
   onDiscover,
   onDelete,
   onUpdateModels,
+  onPromoteAdvanced,
 }: EndpointCardProps) {
   const status = computeStatus(e, testResult);
   const identity = getPresetIdentity(e.preset);
@@ -173,6 +235,11 @@ export function EndpointCard({
   const [showModels, setShowModels] = useState(modelCount > 0 && modelCount <= 8);
   const [newModel, setNewModel] = useState("");
   const [copied, setCopied] = useState(false);
+  // PR-γ: collapsible panel for the dropped/advanced models from Discover.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Tracks which advanced model is currently being promoted (to disable that
+  // chip's button + show a spinner without locking the rest of the card).
+  const [promotingModel, setPromotingModel] = useState<string | null>(null);
 
   const usedByTitle =
     usedByCount === 0
@@ -207,6 +274,35 @@ export function EndpointCard({
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1000);
   }
+
+  async function promoteAdvanced(model: string) {
+    if (!onPromoteAdvanced) return;
+    setPromotingModel(model);
+    try {
+      await onPromoteAdvanced(model);
+    } finally {
+      setPromotingModel(null);
+    }
+  }
+
+  // PR-γ: derive the rich Discover summary. Only render when the backend
+  // returned the new ``by_kind`` shape — pre-α endpoints fall back to the
+  // legacy "Discovered N models — added" line.
+  const hasRichDiscover =
+    discoverResult?.ok === true && discoverResult.by_kind !== undefined;
+  const richKept = hasRichDiscover
+    ? (discoverResult!.by_kind!.chat.length + discoverResult!.by_kind!.embedding.length)
+    : 0;
+  const richDroppedCount = hasRichDiscover && discoverResult!.dropped_breakdown
+    ? Object.values(discoverResult!.dropped_breakdown).reduce((a, b) => a + b, 0)
+    : 0;
+  const richChatCount = hasRichDiscover ? discoverResult!.by_kind!.chat.length : 0;
+  const richEmbeddingCount = hasRichDiscover ? discoverResult!.by_kind!.embedding.length : 0;
+  const breakdownTooltip = hasRichDiscover
+    ? buildBreakdownTooltip(discoverResult!.dropped_breakdown)
+    : "";
+
+  const advancedModels = e.advanced_models ?? [];
 
   return (
     <div className="group rounded-xl border border-border bg-card overflow-hidden transition-shadow hover:shadow-md hover:shadow-black/5 dark:hover:shadow-black/20">
@@ -416,10 +512,14 @@ export function EndpointCard({
             }`}
           >
             {testResult.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-            {testResult.ok ? `Connected · ${testResult.latency_ms}ms` : `Test failed: ${testResult.error ?? "unknown"}`}
+            {testResult.ok
+              ? testResult.probed_model
+                ? `Test passed (probed ${testResult.probed_model}, ${testResult.latency_ms} ms)`
+                : `Connected · ${testResult.latency_ms}ms`
+              : `Test failed: ${testResult.error ?? "unknown"}`}
           </div>
         )}
-        {discoverResult && (
+        {discoverResult && !hasRichDiscover && (
           <div
             className={`text-xs flex items-center gap-1.5 ${
               discoverResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
@@ -429,6 +529,85 @@ export function EndpointCard({
             {discoverResult.ok
               ? `Discovered ${discoverResult.count} models — added`
               : `Discover failed: ${discoverResult.error ?? "unknown"}`}
+          </div>
+        )}
+
+        {/* PR-γ: rich Discover summary card. Shows kept/filtered counts, a
+            tooltip with the per-category breakdown, and a [Show advanced]
+            toggle that reveals the dropped-model chips with "+ Promote"
+            buttons. Only rendered when the backend returned ``by_kind``. */}
+        {hasRichDiscover && (
+          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="font-medium">
+                Discovered {richKept} {richKept === 1 ? "model" : "models"}
+                {richDroppedCount > 0 && (
+                  <span className="text-muted-foreground"> · {richDroppedCount} filtered</span>
+                )}
+              </span>
+              {richDroppedCount > 0 && breakdownTooltip && (
+                <span
+                  className="text-muted-foreground inline-flex"
+                  title={breakdownTooltip}
+                  aria-label={`Breakdown: ${breakdownTooltip}`}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-muted-foreground pl-5">
+              {richChatCount} chat · {richEmbeddingCount} embedding
+              {richDroppedCount > 0 && ` · ${richDroppedCount} filtered out`}
+            </div>
+            {advancedModels.length > 0 && (
+              <div className="pl-5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                  aria-expanded={showAdvanced}
+                  aria-controls={`advanced-models-${e.id}`}
+                >
+                  {showAdvanced ? "Hide advanced" : "Show advanced"}
+                  {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+              </div>
+            )}
+            {showAdvanced && advancedModels.length > 0 && (
+              <div id={`advanced-models-${e.id}`} className="pl-5 pt-1 space-y-1">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                  Advanced — filtered by the classifier
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  {advancedModels.map((m) => (
+                    <span
+                      key={m}
+                      className="inline-flex items-center gap-1 rounded bg-muted/70 pl-1.5 pr-1 py-0.5 text-xs font-mono text-muted-foreground border border-border/50"
+                    >
+                      {m}
+                      {onPromoteAdvanced && (
+                        <button
+                          type="button"
+                          onClick={() => void promoteAdvanced(m)}
+                          disabled={busy || promotingModel === m}
+                          className="inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[10px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                          aria-label={`Promote ${m} to the model list`}
+                          title={`Promote ${m} to the model list`}
+                        >
+                          {promotingModel === m ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3 w-3" />
+                          )}
+                          Promote
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

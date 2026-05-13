@@ -505,6 +505,60 @@ describe("EmbeddingTab", () => {
     expect(screen.queryByText(/Embeddings up to date/i)).toBeNull();
   });
 
+  it("PR-γ: never offers chat models in the Model picker even when they're in endpoint.models[] (model_kinds-aware)", async () => {
+    // Endpoint advertises a chat model + an embedding model and the
+    // classifier has tagged them. The Model picker must not surface
+    // gpt-4o-mini even though it's in endpoint.models[].
+    const mixedOpenAI = {
+      ...OPENAI_EMB_ENDPOINT,
+      models: ["gpt-4o-mini", "gpt-4o", "text-embedding-3-large"],
+      model_kinds: {
+        "gpt-4o-mini": "chat",
+        "gpt-4o": "chat",
+        "text-embedding-3-large": "embedding",
+      } as Record<string, "chat" | "embedding">,
+    };
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        endpoints: [mixedOpenAI],
+        assignment: mkAssignment("embedding", "ep-openai", "text-embedding-3-large", 3072),
+        state: { ...STATE_OK, persisted_provider: "openai", persisted_model: "text-embedding-3-large", persisted_dimensions: 3072 },
+      }),
+    );
+    renderTab();
+    const modelSelect = (await screen.findByLabelText("embedding model")) as HTMLSelectElement;
+    const optionValues = Array.from(modelSelect.options).map((o) => o.value);
+    // Embedding model is offered.
+    expect(optionValues).toContain("text-embedding-3-large");
+    // Chat models are NOT offered.
+    expect(optionValues).not.toContain("gpt-4o-mini");
+    expect(optionValues).not.toContain("gpt-4o");
+    // The custom escape hatch remains.
+    expect(optionValues).toContain("__custom__");
+  });
+
+  it("PR-γ: shows '(no embedding models — run Discover)' on the endpoint option when classifier produced zero embedding kinds", async () => {
+    // Jina endpoint, role=embedding, classifier ran but tagged zero models as
+    // embedding (e.g. an upstream listing returned only rerankers).
+    const noEmbJina = {
+      ...EMBEDDING_ENDPOINT,
+      role: "embedding" as const,
+      models: ["jina-reranker-v2"],
+      model_kinds: { "jina-reranker-v2": "chat" } as Record<string, "chat" | "embedding">,
+    };
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        endpoints: [noEmbJina],
+        assignment: mkAssignment("embedding", "ep-jina", "jina-embeddings-v4", 2048),
+        state: { ...STATE_OK, persisted_provider: null, persisted_model: null },
+      }),
+    );
+    renderTab();
+    const endpointSelect = (await screen.findByLabelText("embedding endpoint")) as HTMLSelectElement;
+    const labels = Array.from(endpointSelect.options).map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.includes("(no embedding models — run Discover)"))).toBe(true);
+  });
+
   it("shows the green 'up to date' pill only when the configured model == persisted", async () => {
     // Configured = persisted = jina_ai/jina-embeddings-v4 and migration_required=false.
     vi.mocked(globalThis.fetch).mockImplementation(

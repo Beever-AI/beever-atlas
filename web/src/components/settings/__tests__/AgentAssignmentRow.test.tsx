@@ -132,6 +132,74 @@ describe("AgentAssignmentRow", () => {
     expect(badge).not.toBeNull();
   });
 
+  it("PR-γ: filters the Model select to only chat-classified models from endpoint.model_kinds", () => {
+    const mixed = makeEndpoint({
+      models: ["gpt-4o-mini", "gpt-4o", "text-embedding-3-large"],
+      model_kinds: {
+        "gpt-4o-mini": "chat",
+        "gpt-4o": "chat",
+        "text-embedding-3-large": "embedding",
+      },
+    });
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment({ endpoint_id: "ep-1", model: "gpt-4o" })}
+        endpoints={[mixed]}
+        required={["tools"]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const modelSelect = screen.getByLabelText("qa_agent model") as HTMLSelectElement;
+    const optionValues = Array.from(modelSelect.options).map((o) => o.value);
+    // Chat-classified models only…
+    expect(optionValues).toContain("gpt-4o-mini");
+    expect(optionValues).toContain("gpt-4o");
+    // …embedding model is filtered out.
+    expect(optionValues).not.toContain("text-embedding-3-large");
+  });
+
+  it("PR-γ: pre-α endpoints (empty model_kinds) keep showing every endpoint.models[] entry", () => {
+    const preAlpha = makeEndpoint({
+      models: ["gpt-4o-mini", "gpt-4o", "text-embedding-3-large"],
+      // No model_kinds set.
+    });
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={makeAssignment({ endpoint_id: "ep-1", model: "gpt-4o" })}
+        endpoints={[preAlpha]}
+        required={["tools"]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const modelSelect = screen.getByLabelText("qa_agent model") as HTMLSelectElement;
+    const optionValues = Array.from(modelSelect.options).map((o) => o.value);
+    // Fallback: every model is offered (capability gate still narrows further).
+    expect(optionValues).toContain("gpt-4o-mini");
+    expect(optionValues).toContain("gpt-4o");
+    expect(optionValues).toContain("text-embedding-3-large");
+  });
+
+  it("PR-γ: when classifier produced zero chat models, the endpoint option carries the 'run Discover' hint", () => {
+    const noChat = makeEndpoint({
+      models: ["text-embedding-3-large"],
+      model_kinds: { "text-embedding-3-large": "embedding" },
+    });
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={undefined}
+        endpoints={[noChat]}
+        required={[]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const endpointSelect = screen.getByLabelText("qa_agent endpoint") as HTMLSelectElement;
+    const labels = Array.from(endpointSelect.options).map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.includes("(no chat models — run Discover)"))).toBe(true);
+  });
+
   it("shows the suggested-fix button when a suggestion is provided for an incompatible row", async () => {
     const onUpsert = vi.fn(async () => makeAssignment());
     render(

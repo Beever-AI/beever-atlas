@@ -52,6 +52,18 @@ function presetToEmbeddingProvider(preset: string): string {
 const CUSTOM_MODEL_OPTION = "__custom__";
 
 /**
+ * PR-γ: True when the endpoint's classifier has run AND it produced zero
+ * embedding-classified models. Drives the "(no embedding models — run
+ * Discover)" hint on the endpoint picker. Pre-α endpoints (no ``model_kinds``)
+ * stay quiet — we don't know either way.
+ */
+function endpointHasNoEmbeddingModels(e: Endpoint): boolean {
+  const kinds = e.model_kinds;
+  if (!kinds || Object.keys(kinds).length === 0) return false;
+  return !Object.values(kinds).some((k) => k === "embedding");
+}
+
+/**
  * Clean display label for an endpoint <option> — mirrors
  * ``EndpointCard.resolveDisplayName``: an endpoint hydrated from the env shim
  * gets a noisy ``"<preset> (from GOOGLE_API_KEY)"`` name + the
@@ -183,6 +195,20 @@ export function EmbeddingTab() {
   const provider = chosenEndpoint ? presetToEmbeddingProvider(chosenEndpoint.preset) : "";
   const desiredProvider = provider;
   const knownModels = provider ? modelsForProvider(provider) : [];
+  // PR-γ: operator-promoted embedding entries from ``endpoint.models[]`` that
+  // aren't in ``KNOWN_EMBEDDING_MODELS``. We surface them in the Model picker
+  // *only* when the classifier tagged them ``"embedding"`` — that's the case
+  // where the operator hit "+ Promote" on an advanced model that turned out
+  // to be embedding-shaped. Pre-α endpoints (empty ``model_kinds``) keep the
+  // known-only list to avoid offering chat models by accident.
+  const promotedEmbeddingModels: string[] = useMemo(() => {
+    if (!chosenEndpoint) return [];
+    const kinds = chosenEndpoint.model_kinds;
+    if (!kinds || Object.keys(kinds).length === 0) return [];
+    return chosenEndpoint.models.filter(
+      (m) => kinds[m] === "embedding" && !knownModels.includes(m),
+    );
+  }, [chosenEndpoint, knownModels]);
   const effModel = draft ? effectiveModel(draft) : "";
   const desiredModel = effModel;
   const usingCustom = !!draft && (draft.customModel.trim().length > 0 || knownModels.length === 0);
@@ -553,11 +579,18 @@ export function EmbeddingTab() {
                     {endpointById[draft.endpoint_id] ? endpointLabel(endpointById[draft.endpoint_id]) : draft.endpoint_id} (not embedding-capable)
                   </option>
                 )}
-                {embeddingEndpoints.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {endpointLabel(e)}
-                  </option>
-                ))}
+                {embeddingEndpoints.map((e) => {
+                  // PR-γ: when an endpoint's classifier has run AND produced
+                  // zero embedding models, hint the operator to re-Discover.
+                  // Pre-α endpoints with no ``model_kinds`` stay quiet.
+                  const noEmb = endpointHasNoEmbeddingModels(e);
+                  return (
+                    <option key={e.id} value={e.id}>
+                      {endpointLabel(e)}
+                      {noEmb ? " (no embedding models — run Discover)" : ""}
+                    </option>
+                  );
+                })}
               </select>
               <button
                 type="button"
@@ -596,6 +629,15 @@ export function EmbeddingTab() {
                   </option>
                 );
               })}
+              {/* PR-γ: operator-promoted embedding models — entries that the
+                  classifier tagged as ``"embedding"`` but that aren't in
+                  ``KNOWN_EMBEDDING_MODELS``. Shown with a small "(promoted)"
+                  hint so they're obviously not a curated default. */}
+              {promotedEmbeddingModels.map((m) => (
+                <option key={`__promoted__${m}`} value={m}>
+                  {m} — promoted (dim verified at re-embed)
+                </option>
+              ))}
               <option value={CUSTOM_MODEL_OPTION}>Other (custom model)…</option>
             </select>
           </label>

@@ -327,4 +327,122 @@ describe("EndpointCard", () => {
     expect((screen.getByText("0 models") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/no models/i)).toBeTruthy();
   });
+
+  // ── PR-γ: rich Discover summary + advanced promotion ────────────────────
+
+  it("PR-γ: rich Discover summary renders kept/filtered counts and the chat/embedding split", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({
+          models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "text-embedding-3-large", "text-embedding-3-small"],
+          model_kinds: {
+            "gpt-4o-mini": "chat",
+            "gpt-4o": "chat",
+            "gpt-4.1": "chat",
+            "text-embedding-3-large": "embedding",
+            "text-embedding-3-small": "embedding",
+          },
+        })}
+        usedByCount={0}
+        discoverResult={{
+          ok: true,
+          count: 5,
+          error: null,
+          by_kind: {
+            chat: ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
+            embedding: ["text-embedding-3-large", "text-embedding-3-small"],
+          },
+          dropped_breakdown: { reranker: 1, image_gen: 2 },
+        }}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    // "Discovered 5 models · 3 filtered" lives in the summary card.
+    expect(screen.getByText(/Discovered 5 models/)).toBeTruthy();
+    expect(screen.getByText(/3 filtered$/)).toBeTruthy();
+    // Sub-line carries the chat/embedding split.
+    expect(screen.getByText(/3 chat · 2 embedding · 3 filtered out/)).toBeTruthy();
+    // The tooltip carries the breakdown.
+    const info = screen.getByLabelText(/Breakdown: 1 reranker · 2 image gen/);
+    expect(info).toBeTruthy();
+    // The legacy "Discovered N models — added" line is NOT also rendered.
+    expect(screen.queryByText(/Discovered 5 models — added/)).toBeNull();
+  });
+
+  it("PR-γ: [Show advanced] toggle reveals advanced_models chips and Promote calls onPromoteAdvanced", async () => {
+    const onPromoteAdvanced: Mock<(model: string) => Promise<void>> = vi
+      .fn<(model: string) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({
+          models: ["gpt-4o-mini"],
+          model_kinds: { "gpt-4o-mini": "chat" },
+          advanced_models: ["jina-reranker-v2", "dall-e-3"],
+          manually_kept: [],
+        })}
+        usedByCount={0}
+        discoverResult={{
+          ok: true,
+          count: 1,
+          error: null,
+          by_kind: { chat: ["gpt-4o-mini"], embedding: [] },
+          dropped_breakdown: { reranker: 1, image_gen: 1 },
+        }}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+        onPromoteAdvanced={onPromoteAdvanced}
+      />,
+    );
+    // The advanced panel is collapsed by default — chips not in the DOM yet.
+    expect(screen.queryByText("jina-reranker-v2")).toBeNull();
+    fireEvent.click(screen.getByText(/Show advanced/));
+    expect(screen.getByText("jina-reranker-v2")).toBeTruthy();
+    expect(screen.getByText("dall-e-3")).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Promote jina-reranker-v2 to the model list"));
+    await waitFor(() => expect(onPromoteAdvanced).toHaveBeenCalledTimes(1));
+    expect(onPromoteAdvanced.mock.calls[0][0]).toBe("jina-reranker-v2");
+  });
+
+  it("PR-γ: pre-α endpoints (no by_kind) fall back to the legacy 'Discovered N models — added' line", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint()}
+        usedByCount={0}
+        discoverResult={{ ok: true, count: 14, error: null }}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    // Legacy line renders…
+    expect(screen.getByText(/Discovered 14 models — added/)).toBeTruthy();
+    // …and the rich summary's chat/embedding sub-line does NOT.
+    expect(screen.queryByText(/chat · 0 embedding/)).toBeNull();
+    expect(screen.queryByText(/Show advanced/)).toBeNull();
+  });
+
+  it("PR-γ: a successful Test with probed_model surfaces it in the inline pass message", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ preset: "jina_ai" })}
+        usedByCount={0}
+        testResult={{
+          ok: true,
+          latency_ms: 187,
+          error: null,
+          probed_model: "jina-embeddings-v4",
+          probed_kind: "embedding",
+        }}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText(/Test passed \(probed jina-embeddings-v4, 187 ms\)/)).toBeTruthy();
+  });
 });

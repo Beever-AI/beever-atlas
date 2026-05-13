@@ -58,9 +58,25 @@ export function EndpointsTab() {
     setTestResults((p) => ({ ...p, [id]: null }));
     try {
       const r = await ep.test(id);
-      setTestResults((p) => ({ ...p, [id]: { ok: r.ok, latency_ms: r.latency_ms, error: r.error } }));
+      setTestResults((p) => ({
+        ...p,
+        [id]: {
+          ok: r.ok,
+          latency_ms: r.latency_ms,
+          error: r.error,
+          // PR-β/γ: pass through the probed model + kind so the card can
+          // surface "Test passed (probed jina-embeddings-v4, 187 ms)".
+          probed_model: r.probed_model ?? null,
+          probed_kind: r.probed_kind ?? null,
+        },
+      }));
       await ep.refetch();
-      showToast(r.ok ? `Connection OK · ${r.latency_ms}ms` : `Test failed: ${r.error ?? "unknown"}`, r.ok ? "info" : "error");
+      // PR-γ: when the backend told us which model it hit, weave that into
+      // the success toast so the operator doesn't have to guess.
+      const okMsg = r.probed_model
+        ? `Test passed (probed ${r.probed_model}, ${r.latency_ms} ms)`
+        : `Connection OK · ${r.latency_ms}ms`;
+      showToast(r.ok ? okMsg : `Test failed: ${r.error ?? "unknown"}`, r.ok ? "info" : "error");
     } catch (e: any) {
       setTestResults((p) => ({ ...p, [id]: { ok: false, latency_ms: null, error: e?.message ?? "test failed" } }));
       showToast(e?.message ?? "Test failed", "error");
@@ -76,10 +92,24 @@ export function EndpointsTab() {
       const r = await ep.discover(id);
       if (r.ok && r.models.length > 0) {
         await ep.update(id, { models: r.models });
-        setDiscoverResults((p) => ({ ...p, [id]: { ok: true, count: r.models.length, error: null } }));
+        setDiscoverResults((p) => ({
+          ...p,
+          [id]: {
+            ok: true,
+            count: r.models.length,
+            error: null,
+            // PR-γ: surface the by_kind + dropped_breakdown so the card can
+            // render the richer Discover summary.
+            by_kind: r.by_kind,
+            dropped_breakdown: r.dropped_breakdown,
+          },
+        }));
         showToast(`Found ${r.models.length} models — added`);
       } else if (r.ok) {
-        setDiscoverResults((p) => ({ ...p, [id]: { ok: true, count: 0, error: null } }));
+        setDiscoverResults((p) => ({
+          ...p,
+          [id]: { ok: true, count: 0, error: null, by_kind: r.by_kind, dropped_breakdown: r.dropped_breakdown },
+        }));
         showToast("No models discovered", "error");
       } else {
         setDiscoverResults((p) => ({ ...p, [id]: { ok: false, count: 0, error: r.error } }));
@@ -145,6 +175,28 @@ export function EndpointsTab() {
       showToast(`'${name}' models updated`);
     } catch (e: any) {
       showToast(e?.message ?? "Failed to update models", "error");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // PR-γ: promote one of ``advanced_models`` into the regular model list by
+  // appending it to ``manually_kept``. The backend's Discover already
+  // preserves ``manually_kept`` across re-Discover; calling ``ep.update``
+  // directly with the extended array triggers the same merge logic so the
+  // promoted model lands in ``models[]`` and is re-classified as kept.
+  async function handlePromoteAdvanced(id: string, model: string) {
+    const endpoint = ep.endpoints.find((x) => x.id === id);
+    if (!endpoint) return;
+    const next = Array.from(new Set([...(endpoint.manually_kept ?? []), model]));
+    setBusyId(id);
+    try {
+      await ep.update(id, { manually_kept: next });
+      showToast(`Promoted '${model}' to the model list`);
+    } catch (e: any) {
+      showToast(e?.message ?? `Failed to promote ${model}`, "error");
+      // Re-throw so the card can clear its in-flight state.
+      throw e;
     } finally {
       setBusyId(null);
     }
@@ -253,6 +305,7 @@ export function EndpointsTab() {
               onDiscover={() => handleDiscover(e.id)}
               onDelete={() => handleDelete(e.id, e.name)}
               onUpdateModels={(models) => handleUpdateModels(e.id, e.name, models)}
+              onPromoteAdvanced={(model) => handlePromoteAdvanced(e.id, model)}
             />
           ))}
         </div>
