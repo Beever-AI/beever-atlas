@@ -56,6 +56,9 @@ export interface CreateEndpointRequest {
   rpm?: number;
   headers?: Record<string, string>;
   tags?: string[];
+  // PR-β: soft role hint. Omit to let the backend derive a sensible default
+  // from the preset (embedding-only presets → "embedding"; rest → "auto").
+  role?: EndpointRole;
 }
 
 export interface UpdateEndpointRequest {
@@ -71,12 +74,20 @@ export interface UpdateEndpointRequest {
   rpm?: number;
   headers?: Record<string, string>;
   tags?: string[];
+  // PR-β: omit to leave unchanged. ``manually_kept`` curates the operator-
+  // promoted id list — those IDs survive a re-Discover even when the
+  // classifier would otherwise drop them into ``advanced_models``.
+  role?: EndpointRole;
+  manually_kept?: string[];
 }
 
 export interface TestConnectionResponse {
   ok: boolean;
   latency_ms: number | null;
   error: string | null;
+  // PR-β: the model + kind actually probed (response-only, not persisted).
+  probed_model?: string | null;
+  probed_kind?: PersistedModelKind | null;
 }
 
 export interface DiscoverModelsResponse {

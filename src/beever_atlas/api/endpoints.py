@@ -9,7 +9,7 @@ for the full contract.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -26,6 +26,7 @@ from beever_atlas.llm.endpoints import (
     discover_models,
     preset_to_provider,
 )
+from beever_atlas.llm.model_classifier import classify_model
 from beever_atlas.llm.model_resolver import SUPPORTED_PROVIDERS
 from beever_atlas.stores import get_stores
 
@@ -81,6 +82,10 @@ class CreateEndpointRequest(BaseModel):
     rpm: int | None = Field(default=None, ge=1, le=10000)
     headers: dict[str, str] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    # PR-β: soft role hint for the Test Connection probe + model picker.
+    # ``None`` ⇒ derive a sensible default from the preset (embedding-only
+    # presets get ``"embedding"``; everything else gets ``"auto"``).
+    role: EndpointRole | None = None
 
 
 class UpdateEndpointRequest(BaseModel):
@@ -96,12 +101,20 @@ class UpdateEndpointRequest(BaseModel):
     rpm: int | None = Field(default=None, ge=1, le=10000)
     headers: dict[str, str] | None = None
     tags: list[str] | None = None
+    # PR-β: ``None`` ⇒ leave the field unchanged. Operators can flip the
+    # role + curate ``manually_kept`` directly via PUT.
+    role: EndpointRole | None = None
+    manually_kept: list[str] | None = None
 
 
 class TestConnectionResponse(BaseModel):
     ok: bool
     latency_ms: int | None = None
     error: str | None = None
+    # PR-β: surface the probed model + kind so operators can see what was
+    # actually hit. Response-only — not persisted on the Endpoint document.
+    probed_model: str | None = None
+    probed_kind: Literal["chat", "embedding"] | None = None
 
 
 class DiscoverModelsResponse(BaseModel):
@@ -266,6 +279,17 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
         req.google_sa_json,
     )
 
+    # PR-β: derive a sensible role default from the preset when the caller
+    # didn't supply one. Embedding-only presets get ``"embedding"`` so the
+    # Test probe + picker default the right way; everything else gets
+    # ``"auto"`` (model_kinds inference + preset's natural side).
+    if req.role is not None:
+        role: EndpointRole = req.role
+    elif req.preset in _EMBEDDING_ONLY_PRESETS:
+        role = "embedding"
+    else:
+        role = "auto"
+
     store = _store()
     try:
         endpoint = await store.create(
@@ -279,6 +303,13 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
             headers=req.headers,
             tags=req.tags,
         )
+        # Persist the role via update() — the store's ``create()`` doesn't
+        # accept ``role`` directly. Skip the round-trip when the default
+        # ``"auto"`` already matches the dataclass default.
+        if role != "auto":
+            updated = await store.update(endpoint.id, role=role)
+            if updated is not None:
+                endpoint = updated
     except RuntimeError as exc:
         # ``CredentialEncryptor`` raises when ``CREDENTIAL_MASTER_KEY`` is unset.
         # Don't echo the internal error string (it names the env var + the
@@ -339,6 +370,8 @@ async def update_endpoint(endpoint_id: str, req: UpdateEndpointRequest) -> Endpo
             rpm=req.rpm,
             headers=req.headers,
             tags=req.tags,
+            role=req.role,
+            manually_kept=req.manually_kept,
         )
     except RuntimeError as exc:
         logger.error("endpoint update: credential encryptor unavailable: %s", exc)
@@ -477,7 +510,7 @@ def _friendly_probe_error(exc: BaseException, api_base: str | None) -> str | Non
     return None
 
 
-def _build_probe_model(endpoint: Endpoint) -> tuple[str, str, bool]:
+def _build_probe_model(endpoint: Endpoint, model_id: str) -> tuple[str, str, bool]:
     """Return ``(litellm_provider, model_id, drop_base_url)`` for a probe.
 
     Thin wrapper around :func:`route_for_endpoint` — the single source of truth
@@ -487,7 +520,73 @@ def _build_probe_model(endpoint: Endpoint) -> tuple[str, str, bool]:
     """
     from beever_atlas.services.llm_dispatch import route_for_endpoint
 
-    return route_for_endpoint(endpoint.preset, endpoint.base_url, endpoint.models[0])
+    return route_for_endpoint(endpoint.preset, endpoint.base_url, model_id)
+
+
+# Presets whose natural probe side is embedding even when role="both"/"auto".
+# Mirrors ``_EMBEDDING_ONLY_PRESETS`` above plus ``model_classifier``'s own
+# embedding-only set. ``cohere`` lives in the embedding-only UX bucket per
+# PR-α but the provider serves both — operators who flip the role to ``chat``
+# get the chat probe regardless.
+_EMBEDDING_NATURAL_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage"})
+
+
+def pick_probe_model(
+    endpoint: Endpoint,
+    intent: Literal["auto", "chat", "embedding"] = "auto",
+) -> tuple[str, Literal["chat", "embedding"]]:
+    """Pick the model + kind to probe for Test Connection.
+
+    Resolution:
+      * If ``intent`` is "chat" or "embedding" → first model in
+        ``endpoint.models`` whose ``model_kinds`` value matches.
+      * If "auto" → resolve from ``endpoint.role``:
+          - role="embedding"           → kind="embedding"
+          - role="chat"                → kind="chat"
+          - role="both" | role="auto"  → prefer the preset's natural side:
+              embedding-only presets (jina_ai, voyage) → "embedding";
+              others → "chat".
+      * Fall back to ``endpoint.models[0]`` (with kind inferred via the
+        classifier) when no model of the desired kind exists — preserves
+        the old behaviour rather than 422-ing the operator.
+    """
+    if not endpoint.models:
+        # Caller should short-circuit before us, but guard anyway.
+        raise ValueError("endpoint has no models")
+
+    if intent == "auto":
+        role = endpoint.role
+        if role == "embedding":
+            desired: Literal["chat", "embedding"] = "embedding"
+        elif role == "chat":
+            desired = "chat"
+        else:
+            # role == "both" | "auto" — preset's natural side wins.
+            desired = (
+                "embedding" if endpoint.preset in _EMBEDDING_NATURAL_PRESETS else "chat"
+            )
+    else:
+        desired = intent
+
+    # First model in ``endpoint.models`` whose ``model_kinds`` value matches.
+    for mid in endpoint.models:
+        kind = endpoint.model_kinds.get(mid)
+        if kind == desired:
+            return mid, desired
+
+    # Fallback — pre-α document without model_kinds, or no model of the
+    # desired kind. Probe ``models[0]`` with the classifier's best guess
+    # so we don't 422 the operator; classifier may return a non-chat/
+    # embedding kind (e.g. reranker) — coerce to ``desired`` so the caller
+    # still picks a probe path.
+    fallback_id = endpoint.models[0]
+    inferred = classify_model(endpoint.preset, fallback_id)
+    if inferred in ("chat", "embedding"):
+        return fallback_id, inferred
+    # Classifier dropped this id (reranker / image_gen / …). Trust the
+    # caller's intent — old endpoints with role=auto + a single non-chat /
+    # non-embedding model probe via ``desired``'s path.
+    return fallback_id, desired
 
 
 @router.post("/{endpoint_id}/test", response_model=TestConnectionResponse)
@@ -515,20 +614,27 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
             ok=False, error="endpoint_has_no_models: configure at least one model before testing"
         )
 
+    # PR-β: pick model + kind based on role + per-model classification.
+    probed_model, probed_kind = pick_probe_model(endpoint, "auto")
+    # Force the embedding path for embedding-only presets even when the kind
+    # came back "chat" (e.g. legacy doc with no model_kinds + classifier
+    # fallback). ``route_for_endpoint`` raises for embedding-only presets, so
+    # those must route through the embedding probe regardless.
     is_embedding_only = endpoint.preset in _EMBEDDING_ONLY_PRESETS
-    if is_embedding_only:
-        # Embedding-only presets aren't routed through ``route_for_endpoint``
-        # (it's chat-only — would raise ValueError). Probe-side they still use
-        # the legacy provider prefix + ``preset/<model>`` shape that LiteLLM's
-        # ``aembedding`` accepts.
-        raw_model = endpoint.models[0]
+    use_embedding_path = is_embedding_only or probed_kind == "embedding"
+    if use_embedding_path:
+        # Embedding probe — use the legacy provider prefix + ``preset/<model>``
+        # shape that LiteLLM's ``aembedding`` accepts. ``route_for_endpoint``
+        # is chat-only.
         provider = preset_to_provider(endpoint.preset)
         full_model = (
-            raw_model if "/" in raw_model else f"{provider}/{raw_model.removeprefix('models/')}"
+            probed_model
+            if "/" in probed_model
+            else f"{provider}/{probed_model.removeprefix('models/')}"
         )
         drop_base_url = False
     else:
-        provider, full_model, drop_base_url = _build_probe_model(endpoint)
+        provider, full_model, drop_base_url = _build_probe_model(endpoint, probed_model)
 
     # Pull credentials from runtime cache (populated at boot or via PUT hot-reload).
     credential = get_runtime_credential(endpoint_id)
@@ -567,11 +673,11 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
 
     started = time.monotonic()
     try:
-        if is_embedding_only:
-            # Embedding-only providers (Jina, Voyage, Cohere) have no chat
-            # completion route — LiteLLM 400s with ``LiteLLMUnknownProvider``
-            # the moment we try ``acompletion`` against them. Probe via the
-            # embedding path instead.
+        if use_embedding_path:
+            # Embedding probe — route through ``litellm.aembedding``. Required
+            # for embedding-only providers (Jina, Voyage, Cohere) AND for
+            # chat-capable providers whose role + model_kinds say "probe an
+            # embedding model" (e.g. OpenAI endpoint with role="embedding").
             await dispatch_embedding(
                 provider=provider,
                 model=full_model,
@@ -610,7 +716,12 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
 
     latency_ms = int((time.monotonic() - started) * 1000)
     await _store().record_test_result(endpoint_id, ok=True)
-    return TestConnectionResponse(ok=True, latency_ms=latency_ms)
+    return TestConnectionResponse(
+        ok=True,
+        latency_ms=latency_ms,
+        probed_model=probed_model,
+        probed_kind=("embedding" if use_embedding_path else "chat"),
+    )
 
 
 @router.post("/{endpoint_id}/discover", response_model=DiscoverModelsResponse)

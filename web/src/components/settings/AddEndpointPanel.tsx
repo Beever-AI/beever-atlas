@@ -6,8 +6,45 @@ import {
   type CreateEndpointRequest,
   type Endpoint,
   type EndpointPreset,
+  type EndpointRole,
   type UpdateEndpointRequest,
 } from "@/lib/aiSetup";
+
+/**
+ * PR-β: presets where the role radio is offered. Embedding-only presets
+ * (``jina_ai`` / ``voyage`` / ``cohere``) hide the radio and seed
+ * ``role="embedding"``; chat-only providers hide the radio and seed
+ * ``role="chat"``; everything else (ambiguous) renders the radio with
+ * ``role="both"`` as the default.
+ */
+const AMBIGUOUS_ROLE_PRESETS = new Set<string>([
+  "openai",
+  "google_ai",
+  "ollama",
+  "custom",
+  "litellm_proxy",
+  "openrouter",
+  "vllm",
+  "lmstudio",
+  "bedrock",
+  "vertex_ai",
+]);
+const EMBEDDING_ONLY_PRESET_ROLES = new Set<string>(["jina_ai", "voyage", "cohere"]);
+const CHAT_ONLY_PRESET_ROLES = new Set<string>([
+  "anthropic",
+  "mistral",
+  "deepseek",
+  "groq",
+  "xai",
+  "minimax",
+  "together_ai",
+]);
+
+function defaultRoleForPreset(presetKey: string): EndpointRole {
+  if (EMBEDDING_ONLY_PRESET_ROLES.has(presetKey)) return "embedding";
+  if (CHAT_ONLY_PRESET_ROLES.has(presetKey)) return "chat";
+  return "both";
+}
 
 /** Mode the panel renders in — see ``AddEndpointPanelProps``. */
 export type EndpointPanelMode = "create" | "edit";
@@ -121,6 +158,13 @@ export function AddEndpointPanel({
   const [tags, setTags] = useState<string[]>(isEdit ? existing!.tags : []);
   const [tagsRaw, setTagsRaw] = useState((isEdit ? existing!.tags : []).join(", "));
 
+  // PR-β: soft role for the Test probe + model picker. Edit mode prefills
+  // from the existing endpoint; create mode derives from the preset.
+  const initialRole: EndpointRole = isEdit
+    ? (existing!.role ?? defaultRoleForPreset(existing!.preset))
+    : defaultRoleForPreset(initialPreset);
+  const [role, setRole] = useState<EndpointRole>(initialRole);
+
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -139,6 +183,8 @@ export function AddEndpointPanel({
     setBaseUrl(p?.base_url ?? "");
     setModels(p?.default_models ?? []);
     setName(p?.label ?? key);
+    // PR-β: reset role to the new preset's natural default.
+    setRole(defaultRoleForPreset(key));
     setErr(null);
   }
 
@@ -191,6 +237,11 @@ export function AddEndpointPanel({
           ...common,
           auth_type: authType,
           ...(authType === "none" ? {} : apiKeyChanged ? { api_key: apiKey } : {}),
+          // PR-β: only send role on edit when it actually changed from the
+          // persisted value — keeps the wire payload minimal.
+          ...(role !== (existing!.role ?? defaultRoleForPreset(existing!.preset))
+            ? { role }
+            : {}),
         };
         await onUpdate!(req);
       } else {
@@ -199,6 +250,9 @@ export function AddEndpointPanel({
           preset: presetKey,
           auth_type: authType,
           api_key: authType === "none" ? undefined : (apiKey || undefined),
+          // PR-β: always send the role so the backend persists exactly what
+          // the operator picked (vs. its preset-default).
+          role,
         };
         await onCreate!(req);
       }
@@ -281,6 +335,43 @@ export function AddEndpointPanel({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* PR-β: Role radio — shown only for ambiguous presets. Embedding-only
+          and chat-only presets seed the role silently. */}
+      {AMBIGUOUS_ROLE_PRESETS.has(presetKey) && (
+        <div className="space-y-1.5" role="radiogroup" aria-label="endpoint role">
+          <div className="text-sm font-medium text-foreground">
+            What will you use this endpoint for?
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { value: "both", label: "Both (default)" },
+              { value: "chat", label: "Chat agents" },
+              { value: "embedding", label: "Embeddings" },
+            ] as { value: EndpointRole; label: string }[]).map((opt) => (
+              <label
+                key={opt.value}
+                className={`inline-flex items-center gap-1.5 cursor-pointer rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  role === opt.value
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border hover:bg-muted"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="endpoint-role"
+                  value={opt.value}
+                  checked={role === opt.value}
+                  onChange={() => setRole(opt.value)}
+                  className="sr-only"
+                  aria-label={opt.label}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
         </div>
       )}
 

@@ -204,4 +204,94 @@ describe("AddEndpointPanel", () => {
       expect(screen.getByDisplayValue("prod")).toBeTruthy();
     });
   });
+
+  // ── PR-β: role radio ───────────────────────────────────────────────
+  describe("role radio (PR-β)", () => {
+    it("renders the role radio for ambiguous presets (openai)", () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="openai" />);
+      expect(screen.getByText("What will you use this endpoint for?")).toBeTruthy();
+      expect(screen.getByRole("radiogroup", { name: /endpoint role/i })).toBeTruthy();
+      // All three choices visible.
+      expect(screen.getByLabelText("Both (default)")).toBeTruthy();
+      expect(screen.getByLabelText("Chat agents")).toBeTruthy();
+      expect(screen.getByLabelText("Embeddings")).toBeTruthy();
+    });
+
+    it("hides the role radio for embedding-only presets (jina_ai)", () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="jina_ai" />);
+      expect(screen.queryByText("What will you use this endpoint for?")).toBeNull();
+    });
+
+    it("hides the role radio for embedding-only preset (voyage)", () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="voyage" />);
+      expect(screen.queryByText("What will you use this endpoint for?")).toBeNull();
+    });
+
+    it("hides the role radio for chat-only presets (anthropic, mistral)", () => {
+      const { unmount } = render(
+        <AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="anthropic" />,
+      );
+      expect(screen.queryByText("What will you use this endpoint for?")).toBeNull();
+      unmount();
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="mistral" />);
+      expect(screen.queryByText("What will you use this endpoint for?")).toBeNull();
+    });
+
+    it("defaults role to 'both' for ambiguous presets and persists on submit", async () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="openai" />);
+      fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-x" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0][0].role).toBe("both");
+    });
+
+    it("persists the selected role on submit (chat → 'chat')", async () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="openai" />);
+      fireEvent.click(screen.getByLabelText("Chat agents"));
+      fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-x" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0][0].role).toBe("chat");
+    });
+
+    it("persists the selected role on submit (embedding → 'embedding')", async () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="openai" />);
+      fireEvent.click(screen.getByLabelText("Embeddings"));
+      fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-x" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0][0].role).toBe("embedding");
+    });
+
+    it("seeds 'embedding' for embedding-only preset (jina_ai) even though the radio is hidden", async () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="jina_ai" />);
+      fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "k" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0][0].role).toBe("embedding");
+    });
+
+    it("seeds 'chat' for chat-only preset (anthropic) even though the radio is hidden", async () => {
+      render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="anthropic" />);
+      fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "k" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+      expect(onCreate.mock.calls[0][0].role).toBe("chat");
+    });
+
+    it("edit mode prefills the radio from existing.role", () => {
+      const onUpdate = vi.fn<(req: UpdateEndpointRequest) => Promise<void>>().mockResolvedValue(undefined);
+      render(
+        <AddEndpointPanel
+          mode="edit"
+          existing={makeEndpoint({ role: "embedding" })}
+          onUpdate={onUpdate}
+          onCancel={onCancel}
+        />,
+      );
+      // openai preset → radio visible; "Embeddings" should be checked.
+      const radio = screen.getByLabelText("Embeddings") as HTMLInputElement;
+      expect(radio.checked).toBe(true);
+    });
+  });
 });

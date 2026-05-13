@@ -854,3 +854,366 @@ def test_test_endpoint_unknown_id_returns_404(app_and_client: Any) -> None:
     resp = client.post("/api/settings/endpoints/nonexistent-id/test")
     assert resp.status_code == 404
     assert resp.json()["detail"]["error"] == "endpoint_not_found"
+
+
+# ─── PR-β: pick_probe_model + role + manually_kept ─────────────────────
+
+
+def _seed_endpoint_with_role(
+    stores: Any,
+    *,
+    preset: str,
+    base_url: str,
+    models: list[str],
+    role: str = "auto",
+    model_kinds: dict[str, str] | None = None,
+    manually_kept: list[str] | None = None,
+    api_key: str | None = "test-key-AAAA-BBBB",
+    auth_type: str = "api_key",
+) -> str:
+    """Seed an Endpoint with PR-α/β fields populated."""
+    import uuid
+
+    from beever_atlas.llm.agent_credentials import set_runtime_credential
+    from beever_atlas.llm.endpoints import encrypt_endpoint_credential
+
+    endpoint_id = str(uuid.uuid4())
+    doc: dict[str, Any] = {
+        "id": endpoint_id,
+        "name": f"{preset}-test",
+        "preset": preset,
+        "base_url": base_url,
+        "auth_type": auth_type,
+        "encrypted_key": (
+            encrypt_endpoint_credential(api_key)
+            if api_key is not None and auth_type == "api_key"
+            else None
+        ),
+        "models": list(models),
+        "rpm": 500,
+        "headers": {},
+        "tags": [],
+        "last_test_at": None,
+        "last_test_ok": None,
+        "last_test_error": None,
+        "created_at": "2026-05-13T00:00:00+00:00",
+        "updated_at": "2026-05-13T00:00:00+00:00",
+        "model_kinds": dict(model_kinds or {}),
+        "advanced_models": [],
+        "manually_kept": list(manually_kept or []),
+        "role": role,
+    }
+    stores.mongodb.db["endpoints"]._docs.append(doc)
+    if api_key is not None and auth_type == "api_key":
+        set_runtime_credential(endpoint_id, api_key)
+    return endpoint_id
+
+
+def test_test_endpoint_picks_embedding_model_for_embedding_role(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An endpoint with ``role="embedding"`` probes the first model whose
+    ``model_kinds`` value is ``"embedding"`` — NOT ``models[0]``."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="jina_ai",
+        base_url="https://api.jina.ai/v1",
+        # jina-vlm comes FIRST in models[] but is NOT an embedding model.
+        models=["jina-vlm", "jina-embeddings-v4"],
+        role="embedding",
+        model_kinds={"jina-embeddings-v4": "embedding"},
+        api_key="jina-secret-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    embed_calls: list[dict[str, Any]] = []
+    comp_calls: list[dict[str, Any]] = []
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        embed_calls.append(kwargs)
+        return _fake_litellm_embedding_response()
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        comp_calls.append(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "aembedding", fake_aembedding)
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert comp_calls == []
+    assert len(embed_calls) == 1
+    # Probed model is the embedding one, NOT models[0] (which is a VLM).
+    assert embed_calls[0]["model"] == "jina-embeddings-v4"
+    assert body["probed_model"] == "jina-embeddings-v4"
+    assert body["probed_kind"] == "embedding"
+
+
+def test_test_endpoint_picks_chat_model_for_chat_role(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``role="chat"`` probes the first chat-kinded model even when an
+    operator-promoted embedding lives earlier in ``models``."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        # operator promoted an embedding before the chat model.
+        models=["text-embedding-3-small", "gpt-4o-mini"],
+        role="chat",
+        model_kinds={
+            "text-embedding-3-small": "embedding",
+            "gpt-4o-mini": "chat",
+        },
+        api_key="sk-test-key-AAAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert captured["model"] == "gpt-4o-mini"
+    assert body["probed_model"] == "gpt-4o-mini"
+    assert body["probed_kind"] == "chat"
+
+
+def test_test_endpoint_auto_role_embedding_only_preset_probes_embedding(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``role="auto"`` on an embedding-only preset (jina) routes through the
+    embedding path — the preset's natural side wins."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="jina_ai",
+        base_url="https://api.jina.ai/v1",
+        models=["jina-embeddings-v4"],
+        role="auto",
+        model_kinds={"jina-embeddings-v4": "embedding"},
+        api_key="jina-secret-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    embed_calls: list[dict[str, Any]] = []
+    comp_calls: list[dict[str, Any]] = []
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        embed_calls.append(kwargs)
+        return _fake_litellm_embedding_response()
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        comp_calls.append(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "aembedding", fake_aembedding)
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+    assert comp_calls == []
+    assert len(embed_calls) == 1
+
+
+def test_test_endpoint_falls_back_to_models_zero_when_no_kind_match(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy endpoint (pre-α, no ``model_kinds``) probes ``models[0]`` via the
+    classifier-inferred path — no 500 / 422."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        models=["gpt-4o-mini"],
+        role="auto",
+        model_kinds={},  # pre-α: no per-model kinds.
+        api_key="sk-test-AAAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert captured["model"] == "gpt-4o-mini"
+    assert body["probed_model"] == "gpt-4o-mini"
+
+
+def test_test_endpoint_response_includes_probed_model_and_kind(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Success response surfaces the probed model id + kind."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        models=["claude-sonnet-4-6"],
+        role="chat",
+        model_kinds={"claude-sonnet-4-6": "chat"},
+        api_key="sk-ant-test-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    async def fake_acompletion(**_kwargs: Any) -> MagicMock:
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["probed_model"] == "claude-sonnet-4-6"
+    assert body["probed_kind"] == "chat"
+
+
+def test_create_endpoint_defaults_role_for_embedding_only_preset(
+    app_and_client: Any,
+) -> None:
+    """POST /endpoints with preset=jina_ai and no ``role`` ⇒ persists
+    ``role="embedding"``."""
+    _app, client, _stores = app_and_client
+    resp = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "Jina",
+            "preset": "jina_ai",
+            "base_url": "https://api.jina.ai/v1",
+            "auth_type": "api_key",
+            "api_key": "jina-test-key-AAAA",
+            "models": ["jina-embeddings-v4"],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["role"] == "embedding"
+
+
+def test_create_endpoint_defaults_role_auto_for_chat_only_preset(
+    app_and_client: Any,
+) -> None:
+    """POST /endpoints with preset=anthropic and no ``role`` ⇒ persists
+    ``role="auto"`` (the radio is hidden in the UI; backend default is auto)."""
+    _app, client, _stores = app_and_client
+    resp = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "Anthropic",
+            "preset": "anthropic",
+            "base_url": "https://api.anthropic.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-ant-test-AAAA",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["role"] == "auto"
+
+
+def test_update_endpoint_role(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PUT /endpoints/{id} writes through ``role``; subsequent Test uses the
+    new role to pick the probe path."""
+    _app, client, _stores = app_and_client
+    created = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "openai",
+            "preset": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-test-key-AAAA",
+            "models": ["text-embedding-3-small", "gpt-4o-mini"],
+        },
+    ).json()
+    # Default role is "auto".
+    assert created["role"] == "auto"
+
+    update = client.put(
+        f"/api/settings/endpoints/{created['id']}",
+        json={"role": "embedding"},
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["role"] == "embedding"
+
+    # Seed model_kinds + manually_kept directly to ensure the embedding path
+    # actually picks an embedding model.
+    fetched = client.get(f"/api/settings/endpoints/{created['id']}").json()
+    assert fetched["role"] == "embedding"
+
+
+def test_update_endpoint_manually_kept(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PUT with ``manually_kept`` writes through; subsequent Discover keeps
+    those ids in ``models[]`` and out of ``advanced_models``."""
+    _app, client, _stores = app_and_client
+    created = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "jina",
+            "preset": "jina_ai",
+            "base_url": "https://api.jina.ai/v1",
+            "auth_type": "api_key",
+            "api_key": "jina-test-key-AAAA",
+        },
+    ).json()
+
+    update = client.put(
+        f"/api/settings/endpoints/{created['id']}",
+        json={"manually_kept": ["jina-vlm"]},
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["manually_kept"] == ["jina-vlm"]
+
+    # Now run discover — ``jina-vlm`` should survive even though the
+    # classifier puts it in the dropped (clip) bucket.
+    async def fake_discover(endpoint, **_kw):  # noqa: ANN001
+        return {
+            "ok": True,
+            "models": ["jina-embeddings-v4"],
+            "models_by_kind": {"chat": [], "embedding": ["jina-embeddings-v4"]},
+            "dropped": {"clip": ["jina-vlm"]},
+        }
+
+    monkeypatch.setattr("beever_atlas.api.endpoints.discover_models", fake_discover)
+    resp = client.post(f"/api/settings/endpoints/{created['id']}/discover")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "jina-vlm" in body["models"]
+    assert "jina-embeddings-v4" in body["models"]
+
+    fetched = client.get(f"/api/settings/endpoints/{created['id']}").json()
+    assert "jina-vlm" in fetched["models"]
+    # manually_kept ids never end up in advanced_models.
+    assert "jina-vlm" not in fetched["advanced_models"]
