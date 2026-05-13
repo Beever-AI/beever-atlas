@@ -491,6 +491,14 @@ async def dispatch_embedding(
     litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
     if timeout is not None:
         kwargs["timeout"] = timeout
+    # Per-call ``drop_params`` overrides any global state and bypasses LiteLLM's
+    # strict pre-flight validation for provider-specific kwargs that arrive at
+    # the wrong handler (e.g. ``dimensions=`` reaching the openai SDK with a
+    # bare model name like ``text-embedding-004`` from Gemini's OpenAI-compat
+    # shim — LiteLLM's openai handler refuses the kwarg even though the shim
+    # itself accepts it). PR-ζ.1: also belt-and-suspenders for the boot probe
+    # which can race ahead of ``litellm.drop_params = True`` global init.
+    kwargs.setdefault("drop_params", True)
     async with throttle.acquire(provider, est_tokens):
         try:
             response = await litellm.aembedding(
