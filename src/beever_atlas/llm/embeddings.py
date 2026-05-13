@@ -185,53 +185,81 @@ def _build_extra_kwargs(cfg: Settings, *, task: str) -> dict[str, Any]:
     return kwargs
 
 
+# Providers whose ``/v1`` URL is a genuine OpenAI-compatible shim path
+# (``POST <api_base>/embeddings`` in OpenAI shape works). Routing these
+# through LiteLLM's ``openai`` SDK is correct and sidesteps native-handler
+# quirks (URL builders, missing kwargs, etc.).
+#
+# Cohere is NOT here even though its API has ``/v1`` — Cohere's ``/v1``
+# is its OWN native shape with ``/embed`` (not ``/embeddings``), so we
+# leave Cohere on the native LiteLLM handler. Cohere does expose an
+# OpenAI-compat path at ``/compatibility/v1`` separately; operators who
+# want that will choose a different shim explicitly.
+_OPENAI_SHIM_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "openai",  # canonical — the openai SDK is the openai handler
+        "ollama",
+        "ollama_chat",  # Ollama /v1 shim works for embeddings
+        "jina_ai",  # Jina /v1/embeddings is genuinely OpenAI-shaped
+    }
+)
+
+
 def _route_embedding_for_dispatch(
     provider: str, model: str, api_base: str | None
 ) -> tuple[str, str, bool]:
-    """Rewrite ``(provider, model)`` and decide whether to drop ``api_base``.
+    """Pick ``(litellm_provider, litellm_model, drop_api_base)`` for embedding.
 
-    Returns ``(litellm_provider, litellm_model, drop_api_base)``. When
-    ``drop_api_base`` is True, the caller MUST strip ``api_base`` from the
-    dispatch kwargs so LiteLLM uses its built-in default for the provider.
+    Three-rule decision tree that covers every provider switch + base_url
+    combination the UI can produce:
 
-    Routing matrix:
+    1. **Gemini override** — ``provider == "gemini"`` → native handler,
+       DROP api_base. Google's OpenAI-compat shim at
+       ``/v1beta/openai/embeddings`` is broken (internally proxies to
+       ``v1main`` where ``text-embedding-*`` models don't exist → 404).
+       The native ``/v1beta/models/<model>:batchEmbedContents`` works
+       reliably and auto-maps ``dimensions`` → ``outputDimensionality``.
+       Applied regardless of how the operator's base_url looks.
 
-    * ``provider="gemini"`` → ALWAYS route through LiteLLM's native
-      ``gemini`` embedding handler, **drop api_base**. Reason: Google's
-      OpenAI-compat shim at ``/v1beta/openai/embeddings`` internally
-      proxies to ``v1main`` where ``text-embedding-004`` does not exist,
-      producing ``404 NOT_FOUND … is not found for API version v1main``.
-      The native handler hits ``/v1beta/models/<model>:batchEmbedContents``
-      directly with a working endpoint, and auto-maps ``dimensions=`` to
-      Google's ``outputDimensionality`` field — so we don't need the
-      ``allowed_openai_params=['dimensions']`` workaround for this path.
-      Mirrors the chat-side native-Gemini routing in
-      :func:`services.llm_dispatch.route_for_endpoint`.
-    * ``provider in ("jina_ai", "cohere")`` + ``api_base`` ends in ``/v1``
-      → openai provider, bare model, keep api_base. Their ``/v1/embeddings``
-      endpoints are genuinely OpenAI-shaped and the shim works.
-    * ``provider in ("ollama", "ollama_chat")`` + ``api_base`` ends in
-      ``/v1`` → openai provider, bare model, keep api_base. Same trick.
-    * Anything else passes through unchanged with api_base kept.
+    2. **OpenAI-compat shim** — ``provider in _OPENAI_SHIM_PROVIDERS``
+       AND ``api_base`` ends in ``/v1`` → openai SDK with bare model,
+       keep api_base. LiteLLM POSTs ``<api_base>/embeddings``. Covers
+       Ollama ``/v1``, Jina ``/v1``, OpenAI itself, plus any operator-
+       configured custom proxy whose preset maps to ``openai``.
 
-    Aligned with ``_resolve_probe`` in ``api/endpoints.py`` so Test and the
-    re-embed migration agree on the wire shape — the gating constraint per
-    the architecture review: "Test passes / dispatch 404s" is a failure
-    mode and both lanes must use the same routing.
+    3. **Native default** — anything else → use LiteLLM's native handler
+       for the provider with whatever api_base the operator set (or
+       LiteLLM's default if none). Covers Cohere, Voyage, Mistral, and
+       any native-only embedding path.
+
+    Why this shape:
+      * Generalises across providers: switching an embedding endpoint
+        from Jina to OpenAI to Gemini to Voyage works without any
+        per-provider downstream code paths.
+      * Mirrors :func:`services.llm_dispatch.route_for_endpoint` (chat
+        side) with the single documented Gemini-embedding exception. The
+        architecture review explicitly required both lanes use the same
+        decision tree.
+      * Robust to operator misconfiguration: an unknown ``base_url`` or
+        a wrong shim suffix gracefully falls through to native handling
+        instead of producing an opaque 404.
+
+    Returns ``(litellm_provider, litellm_model, drop_api_base)``. The
+    caller MUST strip ``api_base`` from the dispatch kwargs when the
+    third return value is True.
     """
     base = (api_base or "").rstrip("/")
     bare = model.split("/", 1)[1] if "/" in model else model
 
+    # Rule 1: Gemini — always native, drop api_base.
     if provider == "gemini":
-        # Native Gemini embedding handler — drop api_base unconditionally so
-        # LiteLLM uses Google's default native URL. Even when the operator
-        # configured a /v1beta/openai/ shim base, that path is unusable for
-        # embeddings on Google's side.
         return "gemini", f"gemini/{bare}", True
-    if provider in ("jina_ai", "cohere") and base.endswith("/v1"):
+
+    # Rule 2: OpenAI-compat shim — use openai SDK.
+    if provider in _OPENAI_SHIM_PROVIDERS and base.endswith("/v1"):
         return "openai", bare, False
-    if provider in ("ollama", "ollama_chat") and base.endswith("/v1"):
-        return "openai", bare, False
+
+    # Rule 3: Native handler with operator's api_base (or LiteLLM's default).
     return provider, model, False
 
 

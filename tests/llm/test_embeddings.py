@@ -328,16 +328,68 @@ def test_route_ollama_v1_shim_uses_openai_provider() -> None:
     assert drop_api_base is False
 
 
-def test_route_openai_passes_through() -> None:
-    """OpenAI itself stays openai — no rewrite needed."""
+def test_route_openai_v1_uses_bare_model() -> None:
+    """OpenAI's canonical ``https://api.openai.com/v1`` is the OpenAI-compat
+    shim path by definition. Rule 2 strips the ``openai/`` prefix so LiteLLM
+    sends the bare model id to the openai SDK — the standard form."""
     provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "openai",
         "openai/text-embedding-3-small",
         "https://api.openai.com/v1",
     )
     assert provider == "openai"
-    assert model == "openai/text-embedding-3-small"
+    assert model == "text-embedding-3-small"
     assert drop_api_base is False
+
+
+# ─── Generalised routing matrix — covers every provider switch ──────────
+
+
+@pytest.mark.parametrize(
+    "provider,model,api_base,exp_provider,exp_model,exp_drop",
+    [
+        # Cohere — native handler regardless of url (/v1 is Cohere's OWN shape,
+        # not OpenAI-compat — /embed not /embeddings).
+        ("cohere", "cohere/embed-english-v3.0", "https://api.cohere.ai/v1",
+         "cohere", "cohere/embed-english-v3.0", False),
+        # Voyage — native, no shim.
+        ("voyage", "voyage/voyage-3", "https://api.voyageai.com/v1",
+         "voyage", "voyage/voyage-3", False),
+        # Mistral — native, no shim.
+        ("mistral", "mistral/mistral-embed", "https://api.mistral.ai/v1",
+         "mistral", "mistral/mistral-embed", False),
+        # Bedrock — native SDK path.
+        ("bedrock", "bedrock/amazon.titan-embed-text-v2:0", None,
+         "bedrock", "bedrock/amazon.titan-embed-text-v2:0", False),
+        # vLLM proxy — preset maps to ``openai``, /v1 → rule 2 (bare).
+        ("openai", "openai/llama-3-embed", "https://vllm.internal/v1",
+         "openai", "llama-3-embed", False),
+        # LiteLLM Proxy — preset maps to ``openai``, /v1 → rule 2.
+        ("openai", "openai/proxy-model", "https://litellm-proxy.internal/v1",
+         "openai", "proxy-model", False),
+        # Empty / missing api_base — native handler with no override.
+        ("mistral", "mistral/mistral-embed", None,
+         "mistral", "mistral/mistral-embed", False),
+        ("mistral", "mistral/mistral-embed", "",
+         "mistral", "mistral/mistral-embed", False),
+    ],
+)
+def test_route_embedding_matrix(
+    provider: str,
+    model: str,
+    api_base: str | None,
+    exp_provider: str,
+    exp_model: str,
+    exp_drop: bool,
+) -> None:
+    """PR-ζ.4: comprehensive coverage of the routing decision tree across
+    every provider switch operators can realistically configure."""
+    got_provider, got_model, got_drop = emb._route_embedding_for_dispatch(
+        provider, model, api_base
+    )
+    assert got_provider == exp_provider
+    assert got_model == exp_model
+    assert got_drop is exp_drop
 
 
 @pytest.mark.asyncio

@@ -783,40 +783,29 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
     def _resolve_probe(model_id: str) -> tuple[str, str, bool]:
         """Pick LiteLLM ``(provider, full_model, drop_base_url)`` for ``model_id``.
 
-        Mirrors :func:`beever_atlas.llm.embeddings._route_embedding_for_dispatch`
-        so the Test probe and the production embedding dispatch agree on the
-        wire shape — otherwise we hit the "Test passes / dispatch 404s"
-        failure mode the architecture review flagged.
+        For the embedding path, defers to
+        :func:`beever_atlas.llm.embeddings._route_embedding_for_dispatch` so
+        Test and the production embedding dispatch share one decision tree
+        — closes the "Test passes / dispatch 404s" failure mode the
+        architecture review explicitly flagged.
         """
         if use_embedding_path:
-            # Google AI: ALWAYS route embedding through LiteLLM's native
-            # ``gemini`` handler and drop ``api_base``. Google's OpenAI-compat
-            # shim at ``/v1beta/openai/embeddings`` 404s for ``text-embedding-*``
-            # models because it internally proxies to ``v1main`` where those
-            # models don't exist. Native ``/v1beta/models/<model>:batchEmbedContents``
-            # works reliably and auto-maps ``dimensions=`` to Google's
-            # ``outputDimensionality`` field.
-            if endpoint.preset == "google_ai":
-                bare = model_id.removeprefix("models/")
-                return "gemini", f"gemini/{bare}", True
-            # Jina / Cohere expose an OpenAI-shaped ``/v1/embeddings`` shim
-            # alongside their native API — those genuinely work, route via
-            # the openai SDK. ``/v1`` suffix is the marker.
-            shim_compat = (
-                endpoint.preset in {"jina_ai", "cohere"}
-                and (endpoint.base_url or "").rstrip("/").endswith("/v1")
-            )
-            if shim_compat:
-                provider = "openai"
-                bare = model_id.removeprefix("models/")
-                return provider, bare, False
+            from beever_atlas.llm.embeddings import _route_embedding_for_dispatch
+
+            # Translate the Endpoint preset to LiteLLM's provider prefix
+            # (``google_ai`` → ``gemini``, OpenAI-compat presets → ``openai``,
+            # etc.) and the bare model id LiteLLM expects.
             provider = preset_to_provider(endpoint.preset)
-            full_model = (
-                model_id
-                if "/" in model_id
-                else f"{provider}/{model_id.removeprefix('models/')}"
+            bare = model_id.removeprefix("models/")
+            litellm_model = (
+                model_id if "/" in model_id else f"{provider}/{bare}"
             )
-            return provider, full_model, False
+            routed_provider, routed_model, drop_api_base = (
+                _route_embedding_for_dispatch(
+                    provider, litellm_model, endpoint.base_url
+                )
+            )
+            return routed_provider, routed_model, drop_api_base
         return _build_probe_model(endpoint, model_id)
 
     provider, full_model, drop_base_url = _resolve_probe(probed_model)
