@@ -43,6 +43,15 @@ export interface AgentAssignmentRowProps {
   required: string[];
   /** Optional list of suggested fixes (model names) surfaced after an incompatible save. */
   suggested?: string[];
+  /** PR-λ.2: latest dispatch the recorder saw for this consumer (or null). */
+  lastCall?: {
+    ts: string;
+    model: string;
+    latency_ms: number | null;
+    ok: boolean;
+    response_model: string | null;
+    error_class: string | null;
+  } | null;
   /** Per-consumer upsert. Returns the saved Assignment (or throws). */
   onUpsert: (
     consumer: string,
@@ -59,6 +68,21 @@ export interface AgentAssignmentRowProps {
   onToast?: (message: string, variant?: "info" | "error") => void;
   /** Returns true if this is the first save in the current burst (so only one toast fires). */
   shouldToastSave?: () => boolean;
+}
+
+
+/** Tiny relative-time formatter — duplicates the hook's helper so this
+ * module doesn't import the hook (avoids a circular ref through Storybook). */
+function relativeTime(ts: string, now: Date = new Date()): string {
+  const delta = (now.getTime() - new Date(ts).getTime()) / 1000;
+  if (Number.isNaN(delta)) return "";
+  if (delta < 5) return "just now";
+  if (delta < 60) return `${Math.floor(delta)}s ago`;
+  const mins = Math.floor(delta / 60);
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 function ProviderBadge({ preset }: { preset: string | undefined }) {
@@ -98,6 +122,7 @@ export function AgentAssignmentRow({
   endpoints,
   required,
   suggested,
+  lastCall,
   onUpsert,
   onToast,
   shouldToastSave,
@@ -217,6 +242,34 @@ export function AgentAssignmentRow({
             {a && <ProviderBadge preset={currentEp?.preset} />}
           </div>
           {meta.description && <div className="text-xs text-muted-foreground truncate">{meta.description}</div>}
+          {/* PR-λ.2: live indicator of the most recent dispatch for this
+              consumer. Helps operators confirm a model switch is actually
+              in effect without reading server logs. */}
+          {lastCall && (
+            <div
+              className={`text-[11px] mt-0.5 truncate ${
+                lastCall.ok
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-destructive"
+              }`}
+              title={lastCall.ok ? "Last call OK" : `Last call failed: ${lastCall.error_class}`}
+            >
+              {lastCall.ok ? "✓ last call: " : "✗ last call failed: "}
+              <span className="font-mono">{lastCall.model}</span>
+              {lastCall.latency_ms != null && (
+                <span className="text-muted-foreground"> · {lastCall.latency_ms}ms</span>
+              )}
+              <span className="text-muted-foreground"> · {relativeTime(lastCall.ts)}</span>
+              {lastCall.response_model && lastCall.response_model !== lastCall.model && (
+                <span
+                  className="ml-1 text-amber-600 dark:text-amber-400"
+                  title={`Provider echoed a different model: ${lastCall.response_model}`}
+                >
+                  · echoed {lastCall.response_model}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Middle: endpoint + model selects */}

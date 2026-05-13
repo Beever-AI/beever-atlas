@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEndpoints } from "@/hooks/useEndpoints";
 import { useAssignments } from "@/hooks/useAssignments";
+import { useRecentLLMCalls } from "@/hooks/useRecentLLMCalls";
 import { useToast } from "@/hooks/useToast";
 import { PRESET_LABELS, type Endpoint } from "@/lib/aiSetup";
 import { costRollup } from "@/lib/knownModels";
@@ -136,6 +137,7 @@ const AGENT_CONSUMERS = new Set(AGENT_META.map((a) => a.name));
 export function AgentModelsTab() {
   const ep = useEndpoints();
   const asn = useAssignments();
+  const recent = useRecentLLMCalls();
   const { toasts, show: showToast, dismiss: dismissToast } = useToast();
 
   const [search, setSearch] = useState("");
@@ -516,6 +518,7 @@ export function AgentModelsTab() {
                           endpoints={ep.endpoints}
                           required={asn.capabilities[c] ?? []}
                           suggested={incompatibleSuggestions[c]}
+                          lastCall={recent.lastForConsumer(c)}
                           onUpsert={upsertWithCapture}
                           onToast={showToast}
                           shouldToastSave={shouldToastSave}
