@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, ExternalLink, KeyRound, Loader2, Plus, X } f
 import {
   ENDPOINT_PRESETS,
   getEndpointPreset,
+  modelsDocsUrl,
   type CreateEndpointRequest,
   type Endpoint,
   type EndpointPreset,
@@ -441,7 +442,19 @@ export function AddEndpointPanel({
           </div>
         )}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-foreground">Models</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-sm font-medium text-foreground">Models</label>
+            <a
+              href={modelsDocsUrl(presetKey)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              title={`Open ${presetLabel} model catalog in a new tab`}
+            >
+              View available models
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
           <p className="text-xs text-muted-foreground">
             The models this endpoint serves — pickable on the Embedding &amp; Agent-models tabs.
             Add them by name, or hit <span className="font-medium">Discover</span> on the endpoint card after saving.

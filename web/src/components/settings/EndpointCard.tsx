@@ -7,6 +7,7 @@ import {
   ChevronUp,
   CircleDot,
   Copy,
+  ExternalLink,
   Info,
   KeyRound,
   Loader2,
@@ -19,8 +20,10 @@ import {
   X,
 } from "lucide-react";
 import type { Endpoint, PersistedModelKind } from "@/lib/aiSetup";
-import { getEndpointPreset } from "@/lib/aiSetup";
+import { getEndpointPreset, modelsDocsUrl } from "@/lib/aiSetup";
 import { getPresetIdentity } from "@/lib/endpointPresetIdentity";
+
+
 
 /** Inline result of a Test Connection call, surfaced on the card. */
 export interface EndpointTestResult {
@@ -405,6 +408,18 @@ export function EndpointCard({
                 · used by {usedByCount} {usedByCount === 1 ? "agent" : "agents"}
               </span>
             )}
+            {/* PR-κ: link to the provider's official model docs so operators
+                can see what's available before typing a model id by hand. */}
+            <a
+              href={modelsDocsUrl(e.preset)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              title={`Open ${e.preset} model catalog in a new tab`}
+            >
+              View available models
+              <ExternalLink className="h-3 w-3" />
+            </a>
           </div>
 
           {showModels && (

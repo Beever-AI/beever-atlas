@@ -333,6 +333,51 @@ export function presetSupportsEmbedding(p: EndpointPreset): boolean {
   return EMBEDDING_CAPABLE_PRESETS.has(p.key);
 }
 
+
+/**
+ * PR-κ: per-preset link to the provider's model catalog. Surfaces in the
+ * endpoint card + Add Endpoint form so operators can see what models
+ * their account has access to before typing a model id by hand. Each
+ * URL points at the provider's official model list; ``custom`` and
+ * unknown presets fall back to LiteLLM's provider-agnostic docs.
+ *
+ * Separate from ``EndpointPreset.docs_url`` (which goes to the API-key
+ * settings page, not the model catalog).
+ */
+const PRESET_MODELS_URL: Record<string, string> = {
+  openai: "https://platform.openai.com/docs/models",
+  google_ai: "https://ai.google.dev/gemini-api/docs/models",
+  anthropic: "https://docs.anthropic.com/en/docs/about-claude/models/overview",
+  mistral: "https://docs.mistral.ai/getting-started/models/models_overview/",
+  deepseek: "https://api-docs.deepseek.com/quick_start/pricing",
+  groq: "https://console.groq.com/docs/models",
+  xai: "https://docs.x.ai/docs/models",
+  minimax: "https://platform.minimaxi.com/document/Models",
+  cohere: "https://docs.cohere.com/docs/models",
+  voyage: "https://docs.voyageai.com/docs/embeddings",
+  jina_ai: "https://jina.ai/embeddings/",
+  together_ai: "https://docs.together.ai/docs/serverless-models",
+  ollama: "https://ollama.com/library",
+  ollama_chat: "https://ollama.com/library",
+  vllm: "https://docs.vllm.ai/en/latest/models/supported_models.html",
+  lmstudio: "https://lmstudio.ai/models",
+  openrouter: "https://openrouter.ai/models",
+  litellm_proxy: "https://docs.litellm.ai/docs/providers",
+  bedrock: "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html",
+  vertex_ai: "https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models",
+};
+
+/**
+ * Return the URL for the provider's official model catalog.
+ *
+ * Falls back to LiteLLM's provider index for ``custom`` / unknown presets —
+ * the operator chose a custom URL, so the most useful generic doc is
+ * LiteLLM's "which providers are supported" page.
+ */
+export function modelsDocsUrl(preset: string): string {
+  return PRESET_MODELS_URL[preset] ?? "https://docs.litellm.ai/docs/providers";
+}
+
 export function formatCost(spec: { input_cost_per_m?: number; output_cost_per_m?: number; cost_per_m?: number }): string {
   if (typeof spec.cost_per_m === "number") {
     return spec.cost_per_m === 0 ? "free" : `~$${spec.cost_per_m.toFixed(2)}/M`;
