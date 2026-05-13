@@ -186,10 +186,23 @@ export function AgentAssignmentRow({
       }
     } catch (e: any) {
       const detail = e?.detail;
-      const msg =
-        detail && typeof detail === "object" && typeof detail.error === "string"
-          ? String(detail.error)
-          : (e?.message ?? `Failed to save ${consumer}`);
+      let msg = e?.message ?? `Failed to save ${consumer}`;
+      if (detail && typeof detail === "object") {
+        // PR-λ.3: translate machine error codes into operator-readable
+        // toasts. The backend's ``error`` field is for programmatic clients;
+        // operators see this string in a toast and need to know what to do
+        // about it.
+        if (detail.error === "incompatible_assignment") {
+          const missing: string[] = Array.isArray(detail.missing_capabilities)
+            ? detail.missing_capabilities
+            : [];
+          const model = String(detail.model ?? "this model");
+          const caps = missing.length > 0 ? missing.join(", ") : "required capabilities";
+          msg = `${model} doesn't support ${caps} — required for ${consumer}. Pick a model that does (see "Suggested" below the row).`;
+        } else if (typeof detail.error === "string") {
+          msg = String(detail.error);
+        }
+      }
       onToast?.(msg, "error");
     }
   }
