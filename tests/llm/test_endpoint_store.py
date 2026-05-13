@@ -310,3 +310,55 @@ def test_endpoint_from_document_tolerates_missing_fields() -> None:
     assert ep.name == ""
     assert ep.models == []
     assert ep.rpm == DEFAULT_PROVIDER_RPM["openai"]
+
+
+def test_endpoint_from_document_defaults_pr_alpha_fields() -> None:
+    """Old documents pre-dating PR-α lack model_kinds / advanced_models /
+    manually_kept / role — hydrate them as empty containers + role=auto."""
+    ep = Endpoint.from_document({"id": "abc", "preset": "openai", "models": ["gpt-4o"]})
+    assert ep.model_kinds == {}
+    assert ep.advanced_models == []
+    assert ep.manually_kept == []
+    assert ep.role == "auto"
+
+
+def test_endpoint_to_document_round_trips_pr_alpha_fields() -> None:
+    """A populated PR-α endpoint serialises cleanly and re-hydrates intact."""
+    ep = Endpoint(
+        id="ep-1",
+        name="OpenAI prod",
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        auth_type="api_key",
+        encrypted_key=None,
+        models=["gpt-4o", "text-embedding-3-small"],
+        rpm=500,
+        model_kinds={"gpt-4o": "chat", "text-embedding-3-small": "embedding"},
+        advanced_models=["whisper-1", "dall-e-3"],
+        manually_kept=["custom-model-id"],
+        role="chat",
+    )
+    doc = ep.to_document()
+    assert doc["model_kinds"] == {"gpt-4o": "chat", "text-embedding-3-small": "embedding"}
+    assert doc["advanced_models"] == ["whisper-1", "dall-e-3"]
+    assert doc["manually_kept"] == ["custom-model-id"]
+    assert doc["role"] == "chat"
+
+    rehydrated = Endpoint.from_document(doc)
+    assert rehydrated.model_kinds == ep.model_kinds
+    assert rehydrated.advanced_models == ep.advanced_models
+    assert rehydrated.manually_kept == ep.manually_kept
+    assert rehydrated.role == ep.role
+
+
+def test_endpoint_from_document_drops_non_chat_embedding_kinds() -> None:
+    """A malformed document with stray 'reranker' values in ``model_kinds``
+    is sanitised — only ``chat`` / ``embedding`` survive the hydration."""
+    ep = Endpoint.from_document(
+        {
+            "id": "abc",
+            "preset": "openai",
+            "model_kinds": {"gpt-4o": "chat", "weird": "reranker", "x": "image_gen"},
+        }
+    )
+    assert ep.model_kinds == {"gpt-4o": "chat"}

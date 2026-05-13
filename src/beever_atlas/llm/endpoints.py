@@ -106,6 +106,19 @@ DEFAULT_PROVIDER_RPM: dict[str, int] = {
 }
 
 
+# A persisted per-model kind label. Only chat / embedding land on the
+# Endpoint document — finer categories (reranker, image_gen, …) returned
+# by the classifier surface in the *dropped* breakdown for UI, never in
+# the kept-models map. See ``llm/model_classifier.py``.
+PersistedModelKind = Literal["chat", "embedding"]
+
+
+# Role hint per endpoint. ``auto`` means "infer from model_kinds"; the
+# remaining values are soft hints the UI uses to default the Test Connection
+# probe + the model picker, NOT a hard gate on Assignments. See design D7.
+EndpointRole = Literal["chat", "embedding", "both", "auto"]
+
+
 @dataclass
 class Endpoint:
     """A single LLM endpoint Atlas can route consumers to.
@@ -134,10 +147,37 @@ class Endpoint:
     last_test_error: str | None = None
     created_at: str = ""
     updated_at: str = ""
+    # ── Model classification (PR-α) ──────────────────────────────────────
+    # Per-model kind for every id in ``models``. Only ``chat`` and
+    # ``embedding`` are persisted here — the rest (rerankers, image-gen,
+    # TTS, …) are routed into ``advanced_models`` and surface in a separate
+    # "advanced models" UI bucket. Old documents without this field hydrate
+    # to ``{}`` (lazy backfill on next Re-Discover).
+    model_kinds: dict[str, PersistedModelKind] = field(default_factory=dict)
+    # Discovered ids the classifier dropped (rerankers, image-gen, TTS, …).
+    # The full per-category breakdown lives in the discover response; the
+    # persisted form is just a flat list so the UI can offer
+    # "Promote to active" later.
+    advanced_models: list[str] = field(default_factory=list)
+    # Ids the operator manually promoted out of ``advanced_models`` (or
+    # added by hand). These survive a Re-Discover even when the classifier
+    # would otherwise drop them.
+    manually_kept: list[str] = field(default_factory=list)
+    # Soft hint — ``auto`` means "infer from model_kinds"; the remaining
+    # values bias the default Test Connection probe + picker. Not a hard
+    # gate on Assignments.
+    role: EndpointRole = "auto"
 
     @classmethod
     def from_document(cls, doc: dict[str, Any]) -> "Endpoint":
         """Hydrate from a MongoDB document; tolerant of legacy/missing fields."""
+        # Defensive defaults — old documents (pre-PR-α) lack the new fields.
+        raw_kinds = doc.get("model_kinds") or {}
+        model_kinds: dict[str, PersistedModelKind] = {
+            str(k): cast(PersistedModelKind, v)
+            for k, v in raw_kinds.items()
+            if v in ("chat", "embedding")
+        }
         return cls(
             id=cast(str, doc["id"]),
             name=cast(str, doc.get("name") or ""),
@@ -154,6 +194,10 @@ class Endpoint:
             last_test_error=doc.get("last_test_error"),
             created_at=cast(str, doc.get("created_at") or ""),
             updated_at=cast(str, doc.get("updated_at") or ""),
+            model_kinds=model_kinds,
+            advanced_models=list(doc.get("advanced_models") or []),
+            manually_kept=list(doc.get("manually_kept") or []),
+            role=cast(EndpointRole, doc.get("role") or "auto"),
         )
 
     def to_document(self) -> dict[str, Any]:
@@ -282,6 +326,10 @@ class EndpointStore:
         rpm: int | None = None,
         headers: dict[str, str] | None = None,
         tags: list[str] | None = None,
+        model_kinds: dict[str, PersistedModelKind] | None = None,
+        advanced_models: list[str] | None = None,
+        manually_kept: list[str] | None = None,
+        role: EndpointRole | None = None,
     ) -> Endpoint | None:
         """Patch fields on an existing Endpoint.
 
@@ -305,6 +353,14 @@ class EndpointStore:
             updates["headers"] = headers
         if tags is not None:
             updates["tags"] = tags
+        if model_kinds is not None:
+            updates["model_kinds"] = dict(model_kinds)
+        if advanced_models is not None:
+            updates["advanced_models"] = list(advanced_models)
+        if manually_kept is not None:
+            updates["manually_kept"] = list(manually_kept)
+        if role is not None:
+            updates["role"] = role
         if plaintext_credential is not ...:
             cred = cast("dict[str, str] | str | None", plaintext_credential)
             updates["encrypted_key"] = (
@@ -346,7 +402,19 @@ class EndpointStore:
 
 
 class DiscoveryResult(dict[str, Any]):
-    """Return shape from ``discover_models``: ``{ok, models, error?}``."""
+    """Return shape from ``discover_models``.
+
+    Keys (post PR-α):
+      * ``ok`` (bool) — request succeeded.
+      * ``models`` (list[str]) — kept ids = chat + embedding, sorted.
+        Kept for backward compatibility with callers that don't yet read
+        ``models_by_kind``.
+      * ``models_by_kind`` (dict[str, list[str]]) —
+        ``{"chat": [...], "embedding": [...]}``.
+      * ``dropped`` (dict[str, list[str]]) — finer category → ids the
+        classifier excluded (rerankers, image_gen, audio_*, fine_tune, …).
+      * ``error`` (str | None) — populated when ``ok`` is False.
+    """
 
 
 async def discover_models(
@@ -373,6 +441,8 @@ async def discover_models(
         return DiscoveryResult(
             ok=False,
             models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
             error=(
                 f"discovery_not_supported_for_preset: {endpoint.preset}. "
                 "Enter model names manually."
@@ -383,13 +453,21 @@ async def discover_models(
         return DiscoveryResult(
             ok=False,
             models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
             error="discovery_no_base_url: base_url is empty",
         )
 
-    # Resolve auth header.
+    # Resolve auth header. Anthropic's /v1/models endpoint accepts ONLY
+    # ``x-api-key`` + ``anthropic-version``; ``Authorization: Bearer`` 401s
+    # silently. Every other supported preset uses the OpenAI bearer shape.
     headers = dict(endpoint.headers)
     if plaintext_credential and endpoint.auth_type == "api_key":
-        headers["Authorization"] = f"Bearer {plaintext_credential}"
+        if endpoint.preset == "anthropic":
+            headers["x-api-key"] = plaintext_credential
+            headers.setdefault("anthropic-version", "2023-06-01")
+        else:
+            headers["Authorization"] = f"Bearer {plaintext_credential}"
 
     # Pick the discovery URL per preset.
     if endpoint.preset in ("ollama", "ollama_chat"):
@@ -414,36 +492,62 @@ async def discover_models(
         try:
             resolve_and_validate(url)
         except (ValueError, PermissionError) as exc:
-            return DiscoveryResult(ok=False, models=[], error=f"discovery_url_blocked: {exc}")
+            return DiscoveryResult(
+                ok=False,
+                models=[],
+                models_by_kind={"chat": [], "embedding": []},
+                dropped={},
+                error=f"discovery_url_blocked: {exc}",
+            )
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             resp = await client.get(url, headers=headers)
     except (httpx.TimeoutException,) as exc:
         return DiscoveryResult(
-            ok=False, models=[], error=f"discovery_timeout: {timeout_seconds}s ({exc})"
+            ok=False,
+            models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
+            error=f"discovery_timeout: {timeout_seconds}s ({exc})",
         )
     except httpx.HTTPError as exc:
-        return DiscoveryResult(ok=False, models=[], error=f"discovery_connect_error: {exc}")
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
+            error=f"discovery_connect_error: {exc}",
+        )
 
     if resp.status_code != 200:
         body = _redact_credential_fragments(resp.text[:200])
         return DiscoveryResult(
             ok=False,
             models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
             error=f"discovery_http_{resp.status_code}: {body}",
         )
 
     try:
         payload = resp.json()
     except Exception:  # noqa: BLE001
-        return DiscoveryResult(ok=False, models=[], error="discovery_invalid_json_response")
+        return DiscoveryResult(
+            ok=False,
+            models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
+            error="discovery_invalid_json_response",
+        )
 
     entries = payload.get(list_key)
     if not isinstance(entries, list):
         return DiscoveryResult(
             ok=False,
             models=[],
+            models_by_kind={"chat": [], "embedding": []},
+            dropped={},
             error=f"discovery_invalid_response_shape: expected {{{list_key}: [...]}}",
         )
 
@@ -456,7 +560,34 @@ async def discover_models(
         # OpenAI shape: extract "id" from each entry.
         model_ids = [str(item["id"]) for item in entries if isinstance(item, dict) and "id" in item]
 
-    return DiscoveryResult(ok=True, models=model_ids)
+    # Bucket every discovered id by classifier kind. Lazy import keeps the
+    # ``endpoints`` module free of a hard dep on ``model_classifier`` at
+    # import time (matters for the credential-encryption tests that import
+    # this module without the full LLM stack ready).
+    from beever_atlas.llm.model_classifier import classify_model
+
+    chat_ids: list[str] = []
+    embedding_ids: list[str] = []
+    dropped: dict[str, list[str]] = {}
+    for mid in model_ids:
+        kind = classify_model(endpoint.preset, mid)
+        if kind == "chat":
+            chat_ids.append(mid)
+        elif kind == "embedding":
+            embedding_ids.append(mid)
+        else:
+            dropped.setdefault(kind, []).append(mid)
+
+    kept_sorted = sorted(set(chat_ids + embedding_ids))
+    return DiscoveryResult(
+        ok=True,
+        models=kept_sorted,
+        models_by_kind={
+            "chat": sorted(set(chat_ids)),
+            "embedding": sorted(set(embedding_ids)),
+        },
+        dropped={k: sorted(set(v)) for k, v in dropped.items()},
+    )
 
 
 __all__ = [

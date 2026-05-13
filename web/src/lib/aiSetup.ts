@@ -13,6 +13,9 @@ export type AuthType =
   | "none"
   | "oauth";
 
+export type PersistedModelKind = "chat" | "embedding";
+export type EndpointRole = "chat" | "embedding" | "both" | "auto";
+
 export interface Endpoint {
   id: string;
   name: string;
@@ -30,6 +33,13 @@ export interface Endpoint {
   last_test_error: string | null;
   created_at: string;
   updated_at: string;
+  // PR-α: per-model classification surface. Backend persists these but
+  // older documents (and older API versions) may omit them — keep them
+  // optional on the TS side so UI code can ?? them.
+  model_kinds?: Record<string, PersistedModelKind>;
+  advanced_models?: string[];
+  manually_kept?: string[];
+  role?: EndpointRole;
 }
 
 export interface CreateEndpointRequest {
@@ -73,6 +83,10 @@ export interface DiscoverModelsResponse {
   ok: boolean;
   models: string[];
   error: string | null;
+  // PR-α: kept buckets + counts-per-dropped-category. Optional so older
+  // backends that don't yet ship these fields still typecheck.
+  by_kind?: { chat: string[]; embedding: string[] };
+  dropped_breakdown?: Record<string, number>;
 }
 
 export type ResponseFormat = "text" | "json";

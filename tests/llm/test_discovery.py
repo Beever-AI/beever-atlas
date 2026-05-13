@@ -52,7 +52,11 @@ async def test_openai_shape_returns_ids() -> None:
         result = await discover_models(_endpoint("openai"))
 
     assert result["ok"] is True
-    assert result["models"] == ["gpt-4o-mini", "gpt-4.1"]
+    # PR-α: kept ids are sorted (chat + embedding union).
+    assert result["models"] == ["gpt-4.1", "gpt-4o-mini"]
+    assert result["models_by_kind"]["chat"] == ["gpt-4.1", "gpt-4o-mini"]
+    assert result["models_by_kind"]["embedding"] == []
+    assert result["dropped"] == {}
 
 
 @pytest.mark.asyncio
@@ -270,3 +274,116 @@ async def test_ssrf_guard_off_by_default_allows_localhost() -> None:
 
     assert result["ok"] is True
     assert result["models"] == ["gemma3:4b"]
+
+
+# ─── PR-α: classification filters out non-chat/non-embedding ids ────────────
+
+
+@pytest.mark.asyncio
+async def test_jina_filters_reranker_vlm_clip_segmenter_into_dropped() -> None:
+    """Jina's ``/v1/models`` lists rerankers, VLMs, CLIP, segmenters, readers,
+    embeddings. Discovery keeps only the embeddings; everything else lands
+    in the per-category ``dropped`` map."""
+    payload = {
+        "data": [
+            {"id": "jina-embeddings-v4"},
+            {"id": "jina-embeddings-v3"},
+            {"id": "jina-reranker-v2-base-multilingual"},
+            {"id": "jina-vlm"},
+            {"id": "jina-clip-v1"},
+            {"id": "jina-segmenter-v1"},
+            {"id": "reader-lm-1.5b"},
+        ]
+    }
+    with patch("httpx.AsyncClient") as client_cls:
+        client_instance = MagicMock()
+        client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+        client_instance.__aexit__ = AsyncMock(return_value=None)
+        client_instance.get = AsyncMock(return_value=_make_response(payload=payload))
+        client_cls.return_value = client_instance
+
+        result = await discover_models(_endpoint("jina_ai"))
+
+    assert result["ok"] is True
+    assert result["models_by_kind"]["embedding"] == [
+        "jina-embeddings-v3",
+        "jina-embeddings-v4",
+    ]
+    assert result["models_by_kind"]["chat"] == []
+    # Kept list = sorted union of chat + embedding.
+    assert result["models"] == ["jina-embeddings-v3", "jina-embeddings-v4"]
+    assert set(result["dropped"].keys()) == {"reranker", "clip", "segmenter", "reader"}
+    assert result["dropped"]["reranker"] == ["jina-reranker-v2-base-multilingual"]
+    assert result["dropped"]["clip"] == ["jina-clip-v1", "jina-vlm"]
+    assert result["dropped"]["segmenter"] == ["jina-segmenter-v1"]
+    assert result["dropped"]["reader"] == ["reader-lm-1.5b"]
+
+
+@pytest.mark.asyncio
+async def test_openai_filters_whisper_tts_dalle_ft_into_dropped() -> None:
+    """OpenAI discovery: chat + embedding kept; whisper, TTS, DALL-E,
+    ft:* fine-tunes, legacy completion models all routed to dropped."""
+    payload = {
+        "data": [
+            {"id": "gpt-4o-mini"},
+            {"id": "gpt-4.1"},
+            {"id": "text-embedding-3-small"},
+            {"id": "text-embedding-3-large"},
+            {"id": "whisper-1"},
+            {"id": "tts-1"},
+            {"id": "dall-e-3"},
+            {"id": "ft:gpt-4o-mini:acme::abcd1234"},
+            {"id": "babbage-002"},
+            {"id": "omni-moderation-latest"},
+        ]
+    }
+    with patch("httpx.AsyncClient") as client_cls:
+        client_instance = MagicMock()
+        client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+        client_instance.__aexit__ = AsyncMock(return_value=None)
+        client_instance.get = AsyncMock(return_value=_make_response(payload=payload))
+        client_cls.return_value = client_instance
+
+        result = await discover_models(_endpoint("openai"))
+
+    assert result["ok"] is True
+    assert result["models_by_kind"]["chat"] == ["gpt-4.1", "gpt-4o-mini"]
+    assert result["models_by_kind"]["embedding"] == [
+        "text-embedding-3-large",
+        "text-embedding-3-small",
+    ]
+    # Each non-kept category populated correctly.
+    assert result["dropped"]["audio_stt"] == ["whisper-1"]
+    assert result["dropped"]["audio_synth"] == ["tts-1"]
+    assert result["dropped"]["image_gen"] == ["dall-e-3"]
+    assert result["dropped"]["fine_tune"] == ["ft:gpt-4o-mini:acme::abcd1234"]
+    assert result["dropped"]["other"] == ["babbage-002"]
+    assert result["dropped"]["moderation"] == ["omni-moderation-latest"]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_discovery_uses_x_api_key_header() -> None:
+    """Anthropic's /v1/models route accepts ONLY x-api-key + anthropic-version;
+    Authorization: Bearer would 401. PR-α adopts the canonical header shape."""
+    captured: dict[str, dict[str, str]] = {}
+
+    async def fake_get(url: str, *, headers: dict[str, str], **_kw: Any) -> MagicMock:
+        captured["headers"] = dict(headers)
+        return _make_response(payload={"data": [{"id": "claude-haiku-4-5"}]})
+
+    with patch("httpx.AsyncClient") as client_cls:
+        client_instance = MagicMock()
+        client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+        client_instance.__aexit__ = AsyncMock(return_value=None)
+        client_instance.get = AsyncMock(side_effect=fake_get)
+        client_cls.return_value = client_instance
+
+        await discover_models(
+            _endpoint("anthropic", base_url="https://api.anthropic.com/v1"),
+            plaintext_credential="sk-ant-test-key",
+        )
+
+    assert captured["headers"]["x-api-key"] == "sk-ant-test-key"
+    assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    # The legacy Bearer shape must NOT leak through alongside x-api-key.
+    assert "Authorization" not in captured["headers"]

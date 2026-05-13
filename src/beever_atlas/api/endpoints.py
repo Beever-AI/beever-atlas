@@ -18,7 +18,9 @@ from beever_atlas.llm.agent_credentials import set_runtime_credential
 from beever_atlas.llm.endpoints import (
     AuthType,
     Endpoint,
+    EndpointRole,
     EndpointStore,
+    PersistedModelKind,
     _redact_credential_fragments,
     decrypt_endpoint_credential,
     discover_models,
@@ -52,6 +54,11 @@ class EndpointResponse(BaseModel):
     last_test_error: str | None = None
     created_at: str
     updated_at: str
+    # PR-α: per-model classification surface.
+    model_kinds: dict[str, PersistedModelKind] = Field(default_factory=dict)
+    advanced_models: list[str] = Field(default_factory=list)
+    manually_kept: list[str] = Field(default_factory=list)
+    role: EndpointRole = "auto"
 
 
 class EndpointListResponse(BaseModel):
@@ -101,6 +108,14 @@ class DiscoverModelsResponse(BaseModel):
     ok: bool
     models: list[str] = Field(default_factory=list)
     error: str | None = None
+    # PR-α: per-kind buckets + dropped-category counts. ``by_kind`` is the
+    # kept ids split into chat / embedding; ``dropped_breakdown`` is the
+    # count of ids per classifier-dropped category (reranker, image_gen, …)
+    # so the UI can render a "filtered N (Y rerankers, Z image-gen…)" hint.
+    # Full dropped-id lists live in ``Endpoint.advanced_models`` after the
+    # response persists.
+    by_kind: dict[str, list[str]] = Field(default_factory=dict)
+    dropped_breakdown: dict[str, int] = Field(default_factory=dict)
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -145,6 +160,10 @@ def _endpoint_to_response(endpoint: Endpoint) -> EndpointResponse:
         last_test_error=endpoint.last_test_error,
         created_at=endpoint.created_at,
         updated_at=endpoint.updated_at,
+        model_kinds=endpoint.model_kinds,
+        advanced_models=endpoint.advanced_models,
+        manually_kept=endpoint.manually_kept,
+        role=endpoint.role,
     )
 
 
@@ -376,6 +395,88 @@ async def delete_endpoint(endpoint_id: str) -> None:
 _EMBEDDING_ONLY_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage", "cohere"})
 
 
+# Probe timeout for Test Connection (seconds). LiteLLM's openai SDK defaults
+# to ~600s for connect+read — far too long for a UI-triggered probe. 15s is
+# enough for any healthy endpoint to round-trip a 1-token completion AND for
+# Ollama to surface a connect-refused / cold-load failure quickly.
+_PROBE_TIMEOUT_SECONDS: float = 15.0
+
+# Ollama presets whose ``localhost`` base_url must be rewritten to ``127.0.0.1``
+# at probe time. See :func:`_rewrite_ollama_localhost`.
+_OLLAMA_PRESETS: frozenset[str] = frozenset({"ollama", "ollama_chat"})
+
+
+def _rewrite_ollama_localhost(preset: str, base_url: str) -> str:
+    """Rewrite ``localhost`` → ``127.0.0.1`` for Ollama-preset probe URLs.
+
+    macOS resolves ``localhost`` to ``::1`` (IPv6) first; Ollama binds to
+    IPv4 ``127.0.0.1`` by default, so the first connect attempt waits the
+    kernel's IPv6 TCP timeout (~75s on macOS) before falling back. The
+    pragmatic fix is to rewrite the host at probe-build time for Ollama
+    endpoints only — it's the user's loopback either way. This is a
+    documented Ollama+macOS pitfall (cloud providers like ``api.openai.com``
+    handle IPv6 fine, so the rewrite stays scoped to Ollama). The stored
+    Endpoint document is NOT mutated; only the value forwarded to LiteLLM.
+    """
+    if preset not in _OLLAMA_PRESETS or not base_url:
+        return base_url
+    # Match http(s)://localhost[:port] or http(s)://localhost/path forms.
+    # Use urlparse for correctness; avoid a naive string replace which would
+    # also corrupt e.g. ``/path/localhost-thing``.
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(base_url)
+    if (parsed.hostname or "").lower() != "localhost":
+        return base_url
+    new_netloc = "127.0.0.1"
+    if parsed.port is not None:
+        new_netloc = f"127.0.0.1:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=new_netloc))
+
+
+def _friendly_probe_error(exc: BaseException, api_base: str | None) -> str | None:
+    """Return a friendly error message for known probe failure modes.
+
+    Returns ``None`` for unrecognised exceptions — caller falls back to the
+    generic ``<ExceptionType>: <redacted str>`` shape. Returned strings are
+    crafted to NOT contain any ``_CREDENTIAL_MARKERS`` substring so the
+    redactor leaves them intact.
+    """
+    import asyncio
+
+    try:
+        import litellm  # type: ignore[import-untyped]
+    except Exception:  # noqa: BLE001
+        litellm = None  # type: ignore[assignment]
+
+    try:
+        import httpx
+    except Exception:  # noqa: BLE001
+        httpx = None  # type: ignore[assignment]
+
+    # Timeout first — ``litellm.Timeout`` subclasses ``litellm.APIConnectionError``.
+    timeout_types: list[type[BaseException]] = [asyncio.TimeoutError, TimeoutError]
+    if litellm is not None:
+        timeout_types.append(litellm.Timeout)
+    if httpx is not None:
+        timeout_types.append(httpx.TimeoutException)
+    if isinstance(exc, tuple(timeout_types)):
+        return f"Request timed out after {int(_PROBE_TIMEOUT_SECONDS)}s"
+
+    # Connection refused / unreachable — LiteLLM wraps these in APIConnectionError;
+    # httpx's raw form is ConnectError. The message is intentionally framed
+    # around the service rather than the URL to avoid touching marker words.
+    connect_types: list[type[BaseException]] = []
+    if litellm is not None:
+        connect_types.append(litellm.APIConnectionError)
+    if httpx is not None:
+        connect_types.extend([httpx.ConnectError, httpx.ConnectTimeout])
+    if connect_types and isinstance(exc, tuple(connect_types)):
+        where = f" at {api_base}" if api_base else ""
+        return f"Connection refused{where} - is the service running?"
+    return None
+
+
 def _build_probe_model(endpoint: Endpoint) -> tuple[str, str, bool]:
     """Return ``(litellm_provider, model_id, drop_base_url)`` for a probe.
 
@@ -442,7 +543,13 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
         # at the SDK boundary before the request leaves the process.
         extra_kwargs["api_key"] = "placeholder-no-auth"
     if endpoint.base_url and not drop_base_url:
-        extra_kwargs["api_base"] = endpoint.base_url
+        # Rewrite ``localhost`` → ``127.0.0.1`` for Ollama presets to dodge the
+        # macOS IPv6-first / Ollama-binds-IPv4 ~75s connect stall. Scoped to
+        # Ollama only — cloud providers handle IPv6 fine. Stored Endpoint is
+        # not mutated; only the value forwarded to LiteLLM.
+        extra_kwargs["api_base"] = _rewrite_ollama_localhost(
+            endpoint.preset, endpoint.base_url
+        )
         # Opt-in SSRF guard — refuse private/link-local/metadata targets before
         # we attach the credential and probe. Off by default (local presets
         # legitimately point at localhost); see ``llm_endpoint_ssrf_guard``.
@@ -469,6 +576,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 provider=provider,
                 model=full_model,
                 input=["test"],
+                timeout=_PROBE_TIMEOUT_SECONDS,
                 **extra_kwargs,
             )
         else:
@@ -477,15 +585,26 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 model=full_model,
                 messages=[{"role": "user", "content": "hi"}],
                 max_tokens=1,
+                timeout=_PROBE_TIMEOUT_SECONDS,
                 **extra_kwargs,
             )
     except Exception as exc:  # noqa: BLE001
-        # Sanitise the error before returning it — some LiteLLM SDK exceptions
-        # embed the full request kwargs (including ``api_key``) in their repr.
-        # When the message looks like it could carry credential fragments, drop
-        # the body and return only the exception class + a generic note.
-        raw = _redact_credential_fragments(str(exc)[:200])
-        error_msg = f"{type(exc).__name__}: {raw}"
+        # Friendly path first — turn known transport failures (timeout,
+        # connection refused) into operator-readable messages. These strings
+        # are crafted to avoid any ``_CREDENTIAL_MARKERS`` substring so the
+        # redactor below leaves them intact.
+        api_base = extra_kwargs.get("api_base")
+        friendly = _friendly_probe_error(exc, api_base if isinstance(api_base, str) else None)
+        if friendly is not None:
+            error_msg = friendly
+        else:
+            # Sanitise the error before returning it — some LiteLLM SDK
+            # exceptions embed the full request kwargs (including ``api_key``)
+            # in their repr. When the message looks like it could carry
+            # credential fragments, drop the body and return only the
+            # exception class + a generic note.
+            raw = _redact_credential_fragments(str(exc)[:200])
+            error_msg = f"{type(exc).__name__}: {raw}"
         await _store().record_test_result(endpoint_id, ok=False, error=error_msg)
         return TestConnectionResponse(ok=False, error=error_msg)
 
@@ -496,7 +615,23 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
 
 @router.post("/{endpoint_id}/discover", response_model=DiscoverModelsResponse)
 async def discover_endpoint_models(endpoint_id: str) -> DiscoverModelsResponse:
-    """Issue the preset-specific discovery request and return the model list."""
+    """Issue the preset-specific discovery request, classify each id, and
+    persist the bucketed result back onto the Endpoint document.
+
+    Discovery dumps every model the provider serves — including rerankers,
+    image-gen, TTS / STT and fine-tunes that Atlas doesn't consume. The
+    classifier (see ``llm/model_classifier.py``) splits those into:
+
+      * kept ``models`` = chat + embedding, persisted to ``Endpoint.models``
+      * ``advanced_models`` = everything else, surfaced separately in the UI
+      * ``model_kinds[id]`` = ``"chat" | "embedding"`` for each kept id
+
+    Models the operator has manually promoted (``Endpoint.manually_kept``)
+    always stay in the kept list even when re-Discover would otherwise drop
+    them.
+    """
+    from itertools import chain
+
     from beever_atlas.llm.agent_credentials import get_runtime_credential
 
     endpoint = await _store().get(endpoint_id)
@@ -507,8 +642,73 @@ async def discover_endpoint_models(endpoint_id: str) -> DiscoverModelsResponse:
     plaintext = credential if isinstance(credential, str) else None
 
     result = await discover_models(endpoint, plaintext_credential=plaintext)
+    ok = bool(result.get("ok"))
+    error = result.get("error")
+    by_kind = dict(result.get("models_by_kind") or {"chat": [], "embedding": []})
+    dropped = dict(result.get("dropped") or {})
+
+    if ok:
+        chat_ids = list(by_kind.get("chat") or [])
+        embedding_ids = list(by_kind.get("embedding") or [])
+        kept_set = set(chat_ids) | set(embedding_ids)
+
+        # Pre-existing operator-promoted ids survive re-Discover even when
+        # the classifier would drop them. They keep their previous kind if
+        # known, otherwise default to "chat".
+        manually_kept = list(endpoint.manually_kept)
+        prev_kinds = endpoint.model_kinds
+        for mid in manually_kept:
+            if mid in kept_set:
+                continue
+            kept_set.add(mid)
+            kind = prev_kinds.get(mid)
+            if kind == "embedding":
+                embedding_ids.append(mid)
+            else:
+                # No prior kind, or it was a non-chat/embedding category —
+                # treat operator's promotion as a chat default. We do NOT
+                # re-classify; the operator's intent wins.
+                if kind != "chat":
+                    chat_ids.append(mid)
+                else:
+                    chat_ids.append(mid)
+
+        new_model_kinds: dict[str, PersistedModelKind] = {}
+        for mid in chat_ids:
+            new_model_kinds[mid] = "chat"
+        for mid in embedding_ids:
+            # Embedding wins if a model somehow ended up in both buckets.
+            new_model_kinds[mid] = "embedding"
+
+        kept_sorted = sorted(kept_set)
+        manually_kept_set = set(manually_kept)
+        advanced = sorted(
+            {mid for mid in chain.from_iterable(dropped.values()) if mid not in manually_kept_set}
+        )
+
+        await _store().update(
+            endpoint_id,
+            models=kept_sorted,
+            model_kinds=new_model_kinds,
+            advanced_models=advanced,
+        )
+
+        return DiscoverModelsResponse(
+            ok=True,
+            models=kept_sorted,
+            error=None,
+            by_kind={
+                "chat": sorted(set(chat_ids)),
+                "embedding": sorted(set(embedding_ids)),
+            },
+            dropped_breakdown={k: len(v) for k, v in dropped.items() if v},
+        )
+
+    # Failure path — preserve legacy ``models`` shape (empty list).
     return DiscoverModelsResponse(
-        ok=bool(result.get("ok")),
+        ok=False,
         models=list(result.get("models") or []),
-        error=result.get("error"),
+        error=error,
+        by_kind={"chat": [], "embedding": []},
+        dropped_breakdown={},
     )

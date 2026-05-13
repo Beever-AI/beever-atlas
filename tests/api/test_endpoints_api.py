@@ -302,7 +302,12 @@ def test_discover_returns_models_for_ollama(
     ).json()
 
     async def fake_discover(endpoint, **_kw):  # noqa: ANN001
-        return {"ok": True, "models": ["gemma3:e4b", "qwen2.5:14b"]}
+        return {
+            "ok": True,
+            "models": ["gemma3:e4b", "qwen2.5:14b"],
+            "models_by_kind": {"chat": ["gemma3:e4b", "qwen2.5:14b"], "embedding": []},
+            "dropped": {},
+        }
 
     monkeypatch.setattr("beever_atlas.api.endpoints.discover_models", fake_discover)
     resp = client.post(f"/api/settings/endpoints/{created['id']}/discover")
@@ -310,6 +315,112 @@ def test_discover_returns_models_for_ollama(
     body = resp.json()
     assert body["ok"] is True
     assert "gemma3:e4b" in body["models"]
+
+
+def test_discover_persists_model_kinds_and_advanced_models(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discover persists the classifier output: kept ids into ``models`` +
+    ``model_kinds``, dropped ids into ``advanced_models``; response carries
+    ``by_kind`` + ``dropped_breakdown`` counts."""
+    _app, client, _stores = app_and_client
+    created = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "jina",
+            "preset": "jina_ai",
+            "base_url": "https://api.jina.ai/v1",
+            "auth_type": "api_key",
+            "api_key": "jina-test-key-xxxxxxxx",
+        },
+    ).json()
+
+    async def fake_discover(endpoint, **_kw):  # noqa: ANN001
+        return {
+            "ok": True,
+            "models": ["jina-embeddings-v3", "jina-embeddings-v4"],
+            "models_by_kind": {
+                "chat": [],
+                "embedding": ["jina-embeddings-v3", "jina-embeddings-v4"],
+            },
+            "dropped": {
+                "reranker": ["jina-reranker-v2-base-multilingual"],
+                "clip": ["jina-vlm", "jina-clip-v1"],
+                "segmenter": ["jina-segmenter-v1"],
+            },
+        }
+
+    monkeypatch.setattr("beever_atlas.api.endpoints.discover_models", fake_discover)
+    resp = client.post(f"/api/settings/endpoints/{created['id']}/discover")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["models"] == ["jina-embeddings-v3", "jina-embeddings-v4"]
+    assert body["by_kind"]["embedding"] == ["jina-embeddings-v3", "jina-embeddings-v4"]
+    assert body["by_kind"]["chat"] == []
+    assert body["dropped_breakdown"] == {"reranker": 1, "clip": 2, "segmenter": 1}
+
+    fetched = client.get(f"/api/settings/endpoints/{created['id']}").json()
+    assert fetched["models"] == ["jina-embeddings-v3", "jina-embeddings-v4"]
+    assert fetched["model_kinds"] == {
+        "jina-embeddings-v3": "embedding",
+        "jina-embeddings-v4": "embedding",
+    }
+    assert set(fetched["advanced_models"]) == {
+        "jina-reranker-v2-base-multilingual",
+        "jina-vlm",
+        "jina-clip-v1",
+        "jina-segmenter-v1",
+    }
+
+
+def test_discover_preserves_manually_kept_ids(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Models the operator manually promoted (``manually_kept``) survive a
+    re-Discover even when the classifier would otherwise drop them."""
+    _app, client, stores = app_and_client
+    created = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "openai",
+            "preset": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-test-key-aaaaaaaaaaaa",
+        },
+    ).json()
+
+    # Seed the persisted document with a manually-kept id (and a prior
+    # classification we expect Discover to preserve).
+    coll = stores.mongodb.db["endpoints"]
+    for doc in coll._docs:
+        if doc["id"] == created["id"]:
+            doc["manually_kept"] = ["some-private-fine-tune"]
+            doc["model_kinds"] = {"some-private-fine-tune": "chat"}
+
+    async def fake_discover(endpoint, **_kw):  # noqa: ANN001
+        return {
+            "ok": True,
+            "models": ["gpt-4o-mini"],
+            "models_by_kind": {"chat": ["gpt-4o-mini"], "embedding": []},
+            "dropped": {"image_gen": ["dall-e-3"]},
+        }
+
+    monkeypatch.setattr("beever_atlas.api.endpoints.discover_models", fake_discover)
+    resp = client.post(f"/api/settings/endpoints/{created['id']}/discover")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "some-private-fine-tune" in body["models"]
+    assert "gpt-4o-mini" in body["models"]
+
+    fetched = client.get(f"/api/settings/endpoints/{created['id']}").json()
+    assert fetched["model_kinds"]["some-private-fine-tune"] == "chat"
+    assert fetched["model_kinds"]["gpt-4o-mini"] == "chat"
+    # manually_kept ids are NEVER routed into advanced_models even when the
+    # classifier would otherwise put them there.
+    assert "some-private-fine-tune" not in fetched["advanced_models"]
+    assert "dall-e-3" in fetched["advanced_models"]
 
 
 # ─── Plaintext absence ─────────────────────────────────────────────────
@@ -567,7 +678,9 @@ def test_test_endpoint_ollama_v1_base_url_uses_openai_provider(
     # NOT provided``.
     assert captured["model"] == "gemma4:e2b"
     assert captured["custom_llm_provider"] == "openai"
-    assert captured["api_base"] == "http://localhost:11434/v1"
+    # PR16: ``localhost`` → ``127.0.0.1`` rewrite for Ollama preset to dodge
+    # the macOS IPv6-first / Ollama-binds-IPv4 ~75s connect stall.
+    assert captured["api_base"] == "http://127.0.0.1:11434/v1"
     # ``auth_type=none`` + openai provider ⇒ placeholder api_key (LiteLLM's
     # openai SDK rejects a missing key client-side; server ignores the value).
     assert captured["api_key"] == "placeholder-no-auth"
@@ -607,7 +720,9 @@ def test_test_endpoint_ollama_native_base_url_uses_ollama_chat(
     # stripped now that the provider is the authoritative routing signal.
     assert captured["model"] == "llama3.2:latest"
     assert captured["custom_llm_provider"] == "ollama_chat"
-    assert captured["api_base"] == "http://localhost:11434"
+    # PR16: ``localhost`` → ``127.0.0.1`` rewrite for Ollama preset to dodge
+    # the macOS IPv6-first / Ollama-binds-IPv4 ~75s connect stall.
+    assert captured["api_base"] == "http://127.0.0.1:11434"
     # auth_type=none + ollama_chat provider (not openai) ⇒ no placeholder needed.
     assert "api_key" not in captured
 

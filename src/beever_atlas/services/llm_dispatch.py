@@ -300,6 +300,7 @@ async def dispatch_completion(
     model: str,
     messages: list[Any],
     endpoint_id: str | None = None,
+    timeout: float | None = None,
     **kwargs: Any,
 ) -> Any:
     """Throttle-gated wrapper around ``litellm.acompletion``.
@@ -313,6 +314,12 @@ async def dispatch_completion(
     get independent rate-limit state. Backward-compatible with PR-A callers
     that pass only ``(provider, model, messages)``.
 
+    ``timeout`` is optional — when set, forwarded to LiteLLM as ``timeout=``
+    (seconds). LiteLLM's openai SDK defaults to ~600s for connect+read; the
+    Test Connection probe path passes a short value (~15s) so a hung probe
+    fails fast with a clear error. Agent / ingestion dispatch paths leave
+    this unset (long completions can legitimately exceed 60s).
+
     PR15: also forwards ``custom_llm_provider=<provider>`` to LiteLLM so
     OpenAI-compat routing (Google AI's ``/openai/`` shim, Ollama's ``/v1``
     shim, vLLM, LM Studio, OpenRouter, LiteLLM Proxy) reaches LiteLLM's
@@ -325,6 +332,8 @@ async def dispatch_completion(
     throttle = get_llm_throttle()
     est_tokens = _estimate_completion_tokens(messages)
     litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
         try:
             response = await litellm.acompletion(
@@ -462,9 +471,14 @@ async def dispatch_embedding(
     provider: str,
     model: str,
     input: str | list[Any],
+    timeout: float | None = None,
     **kwargs: Any,
 ) -> Any:
     """Throttle-gated wrapper around ``litellm.aembedding``.
+
+    ``timeout`` is optional — when set, forwarded to LiteLLM as ``timeout=``
+    (seconds). Mirrors :func:`dispatch_completion`; the Test Connection probe
+    path passes ~15s so a hung embedding probe fails fast.
 
     PR15: forwards ``custom_llm_provider=<provider>`` to LiteLLM for the same
     reason as :func:`dispatch_completion` — guarantees the routed provider
@@ -475,6 +489,8 @@ async def dispatch_embedding(
     throttle = get_llm_throttle()
     est_tokens = _estimate_embedding_tokens(input)
     litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     async with throttle.acquire(provider, est_tokens):
         try:
             response = await litellm.aembedding(
