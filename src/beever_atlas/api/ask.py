@@ -251,6 +251,24 @@ async def _run_agent_stream(
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
 
+    # Log the resolved model + endpoint at QA invocation so operators can
+    # confirm — without polling debug endpoints — which pluggable provider
+    # is about to serve this Ask. The per-call ``llm call ok/FAIL`` log
+    # from ``llm_call_log`` follows once LiteLLM completes. Together they
+    # form the operator-visible trace: "what will run" → "what actually ran".
+    try:
+        from beever_atlas.llm.provider import get_llm_provider
+
+        _qa_model = get_llm_provider().get_model_string("qa_agent")
+        logger.info(
+            "qa_ask start: session=%s mode=%s consumer=qa_agent resolved_model=%s",
+            session_id,
+            mode,
+            _qa_model,
+        )
+    except Exception:  # noqa: BLE001 — never block an Ask on logging
+        pass
+
     # ----- Settings flags ---------------------------------------------
     from beever_atlas.infra.config import get_settings
 

@@ -18,11 +18,14 @@ Size bound: 50 entries (~10KB). Process-local — restarts reset the log.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -165,11 +168,22 @@ def register_litellm_observer() -> None:
             # Translate litellm's wall-clock times into a monotonic offset for
             # the recorder. When start_time is missing fall back to now-elapsed
             # so latency_ms is at least non-None for successes.
+            # LiteLLM's callback contract passes ``start_time`` / ``end_time``
+            # as ``datetime`` objects in UTC. ``end - start`` returns a
+            # ``timedelta`` — float() on that raises TypeError and falls
+            # through, leaving the recorded latency at 0ms. Convert via
+            # ``.total_seconds()`` so the operator-visible log line shows
+            # real timing (was the cause of every "latency_ms=0" line).
             started_at = _time.monotonic()
+            elapsed_seconds = 0.0
             if start_time is not None and end_time is not None:
                 try:
-                    elapsed = float(end_time - start_time) if hasattr(end_time, "__sub__") else 0.0
-                    started_at = _time.monotonic() - elapsed
+                    diff = end_time - start_time
+                    if hasattr(diff, "total_seconds"):
+                        elapsed_seconds = float(diff.total_seconds())
+                    else:
+                        elapsed_seconds = float(diff)
+                    started_at = _time.monotonic() - elapsed_seconds
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -213,6 +227,42 @@ def register_litellm_observer() -> None:
                 response=response,
                 exc=exc,
             )
+
+            # Surface every LiteLLM call to the standard logger so operators
+            # can SEE which model handled a turn, how long it took, and
+            # whether it failed — without having to poll the ring buffer.
+            # Visible in uvicorn's console at INFO. Credentials never appear
+            # here because we only forward (provider, model, base, error
+            # class + redacted summary).
+            try:
+                latency_ms = int((_time.monotonic() - started_at) * 1000)
+                stream = kwargs.get("stream")
+                if exc is None:
+                    logger.info(
+                        "llm call ok: consumer=%s provider=%s model=%s base=%s "
+                        "latency_ms=%d stream=%s",
+                        consumer or "-",
+                        provider or "-",
+                        model or "-",
+                        api_base or "-",
+                        latency_ms,
+                        bool(stream),
+                    )
+                else:
+                    summary = _redact(str(exc)[:200])
+                    logger.warning(
+                        "llm call FAIL: consumer=%s provider=%s model=%s base=%s "
+                        "stream=%s error_class=%s error_summary=%s",
+                        consumer or "-",
+                        provider or "-",
+                        model or "-",
+                        api_base or "-",
+                        bool(stream),
+                        type(exc).__name__,
+                        summary,
+                    )
+            except Exception:  # noqa: BLE001 — logging must never crash
+                pass
         except Exception:  # noqa: BLE001 — never crash the callback
             pass
 

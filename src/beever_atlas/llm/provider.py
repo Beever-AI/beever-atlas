@@ -163,6 +163,32 @@ class LLMProvider:
                     exc_info=True,
                 )
 
+        # Three-rule provider routing — mirrors the embedding-side decision
+        # tree in ``llm/embeddings.py::_route_embedding_for_dispatch``.
+        #
+        # The Endpoint table stores a single ``base_url`` per Endpoint
+        # (e.g. the Gemini OpenAI-compat shim URL). LiteLLM has two
+        # incompatible handlers for Gemini:
+        #
+        #   1. native ``gemini/<m>`` — uses google-genai SDK, builds its
+        #      own URL from the model name. Must NOT receive an api_base
+        #      pointing at the shim — it would compose
+        #      ``<shim_base>/models/<m>:generateContent`` and 404.
+        #   2. OpenAI-compat ``openai/<m>`` — uses the openai SDK, needs
+        #      an api_base ending in ``/openai/`` or ``/v1``.
+        #
+        # Rule of thumb: ``gemini/`` model id → drop api_base (let the
+        # native handler reach Google directly); ``openai/`` model id →
+        # keep api_base (the shim needs it); everything else passes
+        # through unchanged.
+        if model_str.startswith("gemini/") and api_base:
+            logger.debug(
+                "LLMProvider.resolve_model: dropping api_base=%r for native "
+                "gemini handler (would build wrong URL)",
+                api_base,
+            )
+            api_base = None
+
         return resolve_model_object(model_str, api_key=api_key, api_base=api_base)
 
     def get_model_string(self, agent_name: str) -> str:
