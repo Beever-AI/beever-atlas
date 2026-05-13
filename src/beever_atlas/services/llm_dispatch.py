@@ -122,6 +122,7 @@ def route_for_endpoint(
       caller should route to ``dispatch_embedding`` instead.
     """
     from beever_atlas.llm.endpoints import preset_to_provider
+    from beever_atlas.llm.model_resolver import SUPPORTED_PROVIDERS
 
     if preset in _EMBEDDING_ONLY_PRESETS:
         raise ValueError(
@@ -129,13 +130,16 @@ def route_for_endpoint(
             "route to dispatch_embedding instead of chat dispatch"
         )
 
-    # Operator-supplied fully-prefixed LiteLLM id wins — trust it.
-    if "/" in model and not model.startswith("models/"):
-        return model.split("/", 1)[0], model, False
-
     # Strip Gemini's native-API ``models/`` discovery prefix.
     bare_model = model.removeprefix("models/")
     base = (base_url or "").rstrip("/")
+
+    # Preset-driven routing comes first so OpenAI-compat shims (vLLM, LM Studio,
+    # OpenRouter, LiteLLM Proxy, Custom, plus the Google/Ollama OpenAI-compat
+    # paths) reach LiteLLM's ``openai`` provider even when the model id carries
+    # an HF-org slash (``meta-llama/Llama-3.3-70B``) — those slashes are NOT
+    # LiteLLM provider prefixes and trusting them would mis-route. The Gemini
+    # ``models/`` prefix has already been stripped above.
 
     if preset == "google_ai":
         if "/openai/" in (base_url or ""):
@@ -150,6 +154,16 @@ def route_for_endpoint(
 
     if preset in _OPENAI_COMPAT_PRESETS:
         return "openai", bare_model, False
+
+    # Operator-supplied fully-prefixed LiteLLM id wins — but only when the
+    # prefix is a real LiteLLM provider (not e.g. an HF-org slash). Without
+    # this gate, a vLLM Endpoint configured with ``meta-llama/Llama-3.3-70B``
+    # was returning ``("meta-llama", ...)`` which then failed at dispatch.
+    if "/" in bare_model:
+        head = bare_model.split("/", 1)[0]
+        if head in SUPPORTED_PROVIDERS or head == "ollama":
+            return head, bare_model, False
+        # Fall through — let the preset's native provider claim the model id.
 
     # Native LiteLLM provider (anthropic, mistral, groq, openai, …).
     provider = preset_to_provider(preset)
@@ -229,6 +243,57 @@ def _is_429(exc: BaseException) -> bool:
     return any(phrase in msg for phrase in rate_limit_phrases)
 
 
+def _split_model_for_litellm(provider: str, model: str) -> tuple[str, str]:
+    """Return ``(litellm_model, litellm_custom_provider)`` for a dispatch call.
+
+    LiteLLM accepts two equivalent forms for routing to a specific provider:
+
+    * ``litellm.acompletion(model="<provider>/<id>", ...)`` — provider inferred
+      from the prefix.
+    * ``litellm.acompletion(model="<id>", custom_llm_provider="<provider>", ...)``
+      — provider passed explicitly; bare ``<id>`` accepted.
+
+    PR15 collapses to the second form **for every dispatch** because LiteLLM
+    silently mis-routes when the bare model string happens to match an entry
+    in its native model registry (e.g. ``gemini-2.5-flash`` reaches LiteLLM's
+    native gemini provider, ignoring our OpenAI-compat ``api_base``) — and
+    fails outright when the bare string matches nothing (e.g. ``gemma4:e2b``
+    → ``LLM Provider NOT provided``). Always-pass-``custom_llm_provider`` is
+    the only path LiteLLM treats as authoritative.
+
+    Behaviour:
+      * Matching ``<provider>/`` prefix → strip it; keep ``provider``. This is
+        the canonical happy path: dispatch callers historically built
+        ``<provider>/<id>`` strings (matching the ``route_for_endpoint``
+        return) and we now collapse them to the bare form.
+      * Non-matching slash → leave the model untouched, keep the routed
+        ``provider``. The slash is treated as **part of the model id**, not
+        as a provider hint. This covers two real cases:
+          - HF-org-style ids on OpenAI-compat shims (vLLM, OpenRouter, etc.)
+            like ``meta-llama/Llama-3.3-70B``. The shim accepts the slash
+            verbatim and the LiteLLM provider we want is the OpenAI SDK.
+          - OpenRouter's vendor-prefixed model ids like
+            ``anthropic/claude-3-opus``. The route table sets
+            ``provider=openai`` (route through LiteLLM's OpenAI SDK to
+            OpenRouter's ``/v1/chat/completions``) and the model id stays
+            ``anthropic/claude-3-opus`` because that's the OpenRouter
+            model name — NOT a request for LiteLLM's native Anthropic SDK.
+      * No slash → pass through bare; keep ``provider``.
+
+    Net effect: ``provider`` (the routed value) always wins. ``model`` is the
+    bare canonical id LiteLLM should receive.
+    """
+    if "/" in model:
+        head, rest = model.split("/", 1)
+        if head == provider:
+            return rest, provider
+        # Non-matching slash — the routed provider is authoritative; the slash
+        # is part of the model id. See docstring for why this is correct for
+        # vLLM / OpenRouter / vendor-prefixed proxies.
+        return model, provider
+    return model, provider
+
+
 async def dispatch_completion(
     *,
     provider: str,
@@ -247,14 +312,27 @@ async def dispatch_completion(
     becomes ``f"{provider}:{endpoint_id}"`` so two same-provider Endpoints
     get independent rate-limit state. Backward-compatible with PR-A callers
     that pass only ``(provider, model, messages)``.
+
+    PR15: also forwards ``custom_llm_provider=<provider>`` to LiteLLM so
+    OpenAI-compat routing (Google AI's ``/openai/`` shim, Ollama's ``/v1``
+    shim, vLLM, LM Studio, OpenRouter, LiteLLM Proxy) reaches LiteLLM's
+    ``openai`` SDK path regardless of how the bare model string looks —
+    without this kwarg, ``gemma4:e2b`` raised ``LLM Provider NOT provided``
+    and ``gemini-2.5-flash`` mis-routed to native Gemini ignoring api_base.
     """
     import litellm  # type: ignore[import-untyped]
 
     throttle = get_llm_throttle()
     est_tokens = _estimate_completion_tokens(messages)
+    litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
     async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
         try:
-            response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+            response = await litellm.acompletion(
+                model=litellm_model,
+                messages=messages,
+                custom_llm_provider=litellm_provider,
+                **kwargs,
+            )
         except BaseException as exc:
             if _is_429(exc):
                 throttle.report_429(provider, endpoint_id=endpoint_id)
@@ -386,14 +464,25 @@ async def dispatch_embedding(
     input: str | list[Any],
     **kwargs: Any,
 ) -> Any:
-    """Throttle-gated wrapper around ``litellm.aembedding``."""
+    """Throttle-gated wrapper around ``litellm.aembedding``.
+
+    PR15: forwards ``custom_llm_provider=<provider>`` to LiteLLM for the same
+    reason as :func:`dispatch_completion` — guarantees the routed provider
+    matches the caller's intent regardless of bare-model-string heuristics.
+    """
     import litellm  # type: ignore[import-untyped]
 
     throttle = get_llm_throttle()
     est_tokens = _estimate_embedding_tokens(input)
+    litellm_model, litellm_provider = _split_model_for_litellm(provider, model)
     async with throttle.acquire(provider, est_tokens):
         try:
-            response = await litellm.aembedding(model=model, input=input, **kwargs)
+            response = await litellm.aembedding(
+                model=litellm_model,
+                input=input,
+                custom_llm_provider=litellm_provider,
+                **kwargs,
+            )
         except BaseException as exc:
             if _is_429(exc):
                 throttle.report_429(provider)

@@ -436,9 +436,13 @@ def test_test_endpoint_jina_uses_embedding_path(
     # The completion path must NOT have been touched — Jina has no chat route.
     assert comp_calls == []
     # The embedding probe ran exactly once with the canonical LiteLLM model id.
+    # PR15: dispatch passes ``custom_llm_provider`` explicitly so the bare
+    # model id is forwarded (any matching prefix gets stripped to avoid
+    # redundancy + the silent-mis-route trap).
     assert len(embed_calls) == 1
     kw = embed_calls[0]
-    assert kw["model"] == "jina_ai/jina-embeddings-v4"
+    assert kw["model"] == "jina-embeddings-v4"
+    assert kw["custom_llm_provider"] == "jina_ai"
     assert kw["api_base"] == "https://api.jina.ai/v1"
     assert kw["api_key"] == "jina-secret-key-AAAA"
     assert kw["input"] == ["test"]
@@ -476,7 +480,11 @@ def test_test_endpoint_google_ai_openai_compat_uses_openai_provider(
     assert resp.json()["ok"] is True
 
     # ``/openai/`` shim → bare model + openai provider; api_base honoured.
+    # PR15: ``custom_llm_provider`` is now passed explicitly so LiteLLM can't
+    # mis-route on the bare ``gemini-2.5-flash`` (which matches its native
+    # gemini model registry).
     assert captured["model"] == "gemini-2.5-flash"
+    assert captured["custom_llm_provider"] == "openai"
     assert captured["api_base"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
     assert captured["api_key"] == "AIza-test-key-XYZ-ABCD"
     assert captured["max_tokens"] == 1
@@ -511,7 +519,11 @@ def test_test_endpoint_google_ai_native_drops_api_base(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    assert captured["model"] == "gemini/gemini-2.5-flash"
+    # PR15: bare model + ``custom_llm_provider=gemini``. Equivalent to the
+    # ``gemini/<id>`` form LiteLLM also accepts, but the explicit kwarg is
+    # the authoritative routing signal.
+    assert captured["model"] == "gemini-2.5-flash"
+    assert captured["custom_llm_provider"] == "gemini"
     # Native Gemini path — no api_base.
     assert "api_base" not in captured
     assert captured["api_key"] == "AIza-test-key-XYZ-ABCD"
@@ -549,7 +561,12 @@ def test_test_endpoint_ollama_v1_base_url_uses_openai_provider(
     assert resp.json()["ok"] is True
 
     # OpenAI-compat path — bare model id, api_base honoured.
+    # PR15: ``custom_llm_provider=openai`` is the load-bearing kwarg —
+    # without it, LiteLLM tries to infer a provider from ``gemma4:e2b``
+    # (no prefix, not in any model registry) and raises ``LLM Provider
+    # NOT provided``.
     assert captured["model"] == "gemma4:e2b"
+    assert captured["custom_llm_provider"] == "openai"
     assert captured["api_base"] == "http://localhost:11434/v1"
     # ``auth_type=none`` + openai provider ⇒ placeholder api_key (LiteLLM's
     # openai SDK rejects a missing key client-side; server ignores the value).
@@ -586,7 +603,10 @@ def test_test_endpoint_ollama_native_base_url_uses_ollama_chat(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    assert captured["model"] == "ollama_chat/llama3.2:latest"
+    # PR15: bare model + ``custom_llm_provider=ollama_chat`` — the prefix is
+    # stripped now that the provider is the authoritative routing signal.
+    assert captured["model"] == "llama3.2:latest"
+    assert captured["custom_llm_provider"] == "ollama_chat"
     assert captured["api_base"] == "http://localhost:11434"
     # auth_type=none + ollama_chat provider (not openai) ⇒ no placeholder needed.
     assert "api_key" not in captured
@@ -620,7 +640,9 @@ def test_test_endpoint_anthropic_uses_native_provider(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    assert captured["model"] == "anthropic/claude-sonnet-4-6"
+    # PR15: prefix stripped + ``custom_llm_provider`` passed explicitly.
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert captured["custom_llm_provider"] == "anthropic"
     assert captured["api_base"] == "https://api.anthropic.com/v1"
     assert captured["api_key"] == "sk-ant-test-key-AAAA"
 
@@ -653,7 +675,12 @@ def test_test_endpoint_openai_passes_through_prefixed_model(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    assert captured["model"] == "openai/gpt-4o-mini"
+    # PR15: an operator-supplied ``openai/...`` prefix matches the routed
+    # provider — dispatch strips it and forwards the bare id + explicit
+    # ``custom_llm_provider=openai``. The routing decision is unchanged;
+    # only the wire form is now canonical.
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["custom_llm_provider"] == "openai"
     assert captured["api_base"] == "https://api.openai.com/v1"
     assert captured["api_key"] == "sk-test-secret-key-AAAA"
 

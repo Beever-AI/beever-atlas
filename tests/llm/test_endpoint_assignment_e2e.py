@@ -203,7 +203,11 @@ async def test_e2e_full_happy_path() -> None:
     assert response.choices[0].message.content == "answer"
 
     # 7. Verify litellm.acompletion received every Endpoint + Assignment param.
-    assert captured_kwargs["model"] == "anthropic/claude-sonnet-4-6"
+    # PR15: dispatch now strips a matching ``<provider>/`` prefix and forwards
+    # ``custom_llm_provider`` explicitly so LiteLLM can't silently route to
+    # a different provider based on bare-model-string heuristics.
+    assert captured_kwargs["model"] == "claude-sonnet-4-6"
+    assert captured_kwargs["custom_llm_provider"] == "anthropic"
     assert captured_kwargs["api_base"] == "https://api.anthropic.com/v1"
     assert captured_kwargs["api_key"] == "sk-ant-real-key-XYZ"
     assert captured_kwargs["temperature"] == 0.2
@@ -528,6 +532,10 @@ async def test_e2e_ollama_v1_no_auth_passes_placeholder_api_key() -> None:
     # api_base IS passed so LiteLLM routes to localhost.
     assert captured_kwargs["api_base"] == "http://localhost:11434/v1"
     assert captured_kwargs["model"] == "qwen2.5:14b"
+    # PR15: ``custom_llm_provider`` is the load-bearing routing signal —
+    # without it, LiteLLM 400s on ``qwen2.5:14b`` because no model registry
+    # entry resolves it.
+    assert captured_kwargs["custom_llm_provider"] == "openai"
 
 
 # ─── E2E #8: extra_headers from Endpoint + Assignment merge ─────────────
