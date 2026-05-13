@@ -12,12 +12,12 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@chat-adapter/discord": "4.26.0",
-    "@chat-adapter/slack": "4.26.0",
-    "@chat-adapter/state-redis": "4.26.0",
-    "@chat-adapter/teams": "4.26.0",
-    "@chat-adapter/telegram": "4.26.0",
-    "chat": "4.26.0",
+    "@chat-adapter/discord": "4.28.1",
+    "@chat-adapter/slack": "4.28.1",
+    "@chat-adapter/state-redis": "4.28.1",
+    "@chat-adapter/teams": "4.28.1",
+    "@chat-adapter/telegram": "4.28.1",
+    "chat": "4.28.1",
     "chat-adapter-mattermost": "1.1.2",
     "dotenv": "^17.4.2",
     "ioredis": "^5.4.0"
