@@ -188,7 +188,13 @@ describe("AgentModelsTab", () => {
     await waitFor(() => expect(screen.getByText("Gemini balanced")).toBeTruthy());
     fireEvent.click(screen.getByText("Gemini balanced"));
 
-    await waitFor(() => expect(screen.getByText(/Applied 'Gemini balanced' — 1 updated/)).toBeTruthy());
+    // CI runners are slower than local — the toast lands after the POST
+    // returns + a setState flush. Default 1000ms waitFor times out on CI;
+    // 5000ms gives generous headroom without slowing the happy path locally.
+    await waitFor(
+      () => expect(screen.getByText(/Applied 'Gemini balanced' — 1 updated/)).toBeTruthy(),
+      { timeout: 5000 },
+    );
   });
 
   it("a vision-required consumer with a no-vision model shows the red capability badge", async () => {
