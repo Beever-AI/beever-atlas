@@ -58,8 +58,9 @@ describe("AddEndpointPanel", () => {
     expect(nameInput.value).toBe("Anthropic Claude");
     const baseUrlInput = screen.getByDisplayValue("https://api.anthropic.com/v1") as HTMLInputElement;
     expect(baseUrlInput).toBeTruthy();
-    // models prefilled, comma-separated
-    expect(screen.getByDisplayValue(/claude-haiku-4-5/)).toBeTruthy();
+    // models prefilled as chips
+    expect(screen.getByText("claude-haiku-4-5")).toBeTruthy();
+    expect(screen.getByText("claude-sonnet-4-6")).toBeTruthy();
   });
 
   it("submitting calls onCreate with the right shape", async () => {
@@ -77,6 +78,25 @@ describe("AddEndpointPanel", () => {
     expect(req.auth_type).toBe("api_key");
     expect(req.api_key).toBe("sk-test-123");
     expect(req.models).toEqual(["gpt-4o-mini", "gpt-4o", "gpt-4.1", "o4-mini"]);
+  });
+
+  it("models can be added and removed as chips, reflected in the request", async () => {
+    render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} initialPresetKey="openai" />);
+    // openai default models present as chips
+    expect(screen.getByText("gpt-4o-mini")).toBeTruthy();
+    // remove one
+    fireEvent.click(screen.getByLabelText("remove model gpt-4o-mini"));
+    expect(screen.queryByText("gpt-4o-mini")).toBeNull();
+    // add one (via Enter on the model input)
+    const modelInput = screen.getByLabelText("add a model");
+    fireEvent.change(modelInput, { target: { value: "gpt-4o-2025" } });
+    fireEvent.keyDown(modelInput, { key: "Enter" });
+    expect(screen.getByText("gpt-4o-2025")).toBeTruthy();
+    // save → request reflects the edit
+    fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-x" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0][0].models).toEqual(["gpt-4o", "gpt-4.1", "o4-mini", "gpt-4o-2025"]);
   });
 
   it("renders the docs_url 'Get an API key' link", () => {
@@ -139,7 +159,9 @@ describe("AddEndpointPanel", () => {
       expect(screen.getByText("Edit endpoint")).toBeTruthy();
       expect((screen.getByDisplayValue("OpenAI prod") as HTMLInputElement).value).toBe("OpenAI prod");
       expect(screen.getByDisplayValue("https://api.openai.com/v1")).toBeTruthy();
-      expect(screen.getByDisplayValue(/gpt-4o-mini/)).toBeTruthy();
+      // models render as chips
+      expect(screen.getByText("gpt-4o-mini")).toBeTruthy();
+      expect(screen.getByText("gpt-4o")).toBeTruthy();
       // No preset chips in edit mode (the preset is shown as a read-only label).
       expect(screen.queryByText("Anthropic Claude")).toBeNull();
     });

@@ -155,11 +155,12 @@ describe("EndpointsTab", () => {
 
     fireEvent.click(screen.getByText("Edit"));
 
-    // Editor opens prefilled with the endpoint's name + models.
+    // Editor opens prefilled with the endpoint's name + models (chips).
     await waitFor(() => expect(screen.getByText("Edit endpoint")).toBeTruthy());
     const nameInput = screen.getByDisplayValue("OpenAI prod") as HTMLInputElement;
     expect(nameInput).toBeTruthy();
-    expect(screen.getByDisplayValue(/gpt-4o-mini/)).toBeTruthy();
+    // "gpt-4o-mini" renders as a model chip in the editor (and possibly on the card too).
+    expect(screen.getAllByText("gpt-4o-mini").length).toBeGreaterThan(0);
 
     fireEvent.change(nameInput, { target: { value: "OpenAI staging" } });
     fireEvent.click(screen.getByText("Save changes"));

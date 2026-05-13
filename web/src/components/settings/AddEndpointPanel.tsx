@@ -111,7 +111,7 @@ export function AddEndpointPanel({
   // In edit mode the field starts hidden behind a "Replace key" link.
   const [revealKeyInput, setRevealKeyInput] = useState(!isEdit);
   const [models, setModels] = useState<string[]>(isEdit ? existing!.models : (preset?.default_models ?? []));
-  const [modelsRaw, setModelsRaw] = useState((isEdit ? existing!.models : (preset?.default_models ?? [])).join(", "));
+  const [modelInput, setModelInput] = useState("");
 
   // Advanced section — collapsed by default in both modes.
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -137,16 +137,19 @@ export function AddEndpointPanel({
     setPresetKey(key);
     const p = getEndpointPreset(key);
     setBaseUrl(p?.base_url ?? "");
-    const nextModels = p?.default_models ?? [];
-    setModels(nextModels);
-    setModelsRaw(nextModels.join(", "));
+    setModels(p?.default_models ?? []);
     setName(p?.label ?? key);
     setErr(null);
   }
 
-  function commitModels(raw: string) {
-    setModelsRaw(raw);
-    setModels(raw.split(",").map((m) => m.trim()).filter(Boolean));
+  function addModel() {
+    const m = modelInput.trim();
+    setModelInput("");
+    if (!m || models.includes(m)) return;
+    setModels([...models, m]);
+  }
+  function removeModel(m: string) {
+    setModels(models.filter((x) => x !== m));
   }
 
   function commitTags(raw: string) {
@@ -227,7 +230,7 @@ export function AddEndpointPanel({
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? "Edit endpoint" : "Add endpoint"}
-        className="relative z-10 w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+        className="relative z-10 w-full max-w-2xl bg-card border border-border rounded-2xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-border shrink-0">
@@ -252,7 +255,7 @@ export function AddEndpointPanel({
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 space-y-4 overflow-y-auto">
+        <div className="px-6 py-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
 
       {/* (1) Preset chips — create mode only */}
       {!isEdit && (
@@ -346,14 +349,55 @@ export function AddEndpointPanel({
             )}
           </div>
         )}
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label className="text-sm font-medium text-foreground">Models</label>
-          <input
-            className="w-full text-sm font-mono rounded-md border border-border bg-background px-2.5 py-1.5"
-            value={modelsRaw}
-            onChange={(e) => commitModels(e.target.value)}
-            placeholder="comma-separated model names"
-          />
+          <p className="text-xs text-muted-foreground">
+            The models this endpoint serves — pickable on the Embedding &amp; Agent-models tabs.
+            Add them by name, or hit <span className="font-medium">Discover</span> on the endpoint card after saving.
+          </p>
+          {models.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {models.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-mono text-foreground"
+                >
+                  {m}
+                  <button
+                    type="button"
+                    onClick={() => removeModel(m)}
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label={`remove model ${m}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <input
+              className="flex-1 min-w-0 text-sm font-mono rounded-md border border-border bg-background px-2.5 py-1.5"
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addModel();
+                }
+              }}
+              placeholder="add a model…"
+              aria-label="add a model"
+            />
+            <button
+              type="button"
+              onClick={addModel}
+              disabled={!modelInput.trim()}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add
+            </button>
+          </div>
         </div>
         {preset?.docs_url && (
           <a
