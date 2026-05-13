@@ -44,31 +44,57 @@ def _closest_tool_match(requested: str, available: list[str]) -> str | None:
     """Return the most likely real tool name when the LLM hallucinated a
     near-miss (e.g. ``list_channels`` → ``list_channels_tool``).
 
-    Strategy: prefer prefix/suffix and substring matches (covers the
-    common ``_tool``/``_v2`` suffix-drop pattern), then fall back to
-    ``difflib.get_close_matches`` for typos / underscore-vs-dash drift.
+    Strategy:
+      1. Exact / dash↔underscore swap — unambiguous, return immediately.
+      2. Prefix/suffix-drop family (``foo`` ↔ ``foo_tool``) — unambiguous
+         when the bare names match exactly under the suffix.
+      3. Generic typo distance via ``difflib.get_close_matches`` (cutoff
+         0.7) — handles underscore/dash drift and single-char typos.
+      4. Substring containment (``search`` matching ``search_facts``)
+         only as a LAST resort, because it has many ambiguous matches.
+         When multiple substring candidates exist, pick the one with
+         the shortest edit distance to the request rather than iteration
+         order — that's the difference between guessing "search_facts"
+         and "search_qa_history" when the LLM said just "search".
     """
     req = requested.lower()
-    # Prefix / suffix match — handles ``list_channels`` ↔ ``list_channels_tool``
-    # in both directions, and dash↔underscore swaps.
     norm = req.replace("-", "_")
+
+    # 1) Exact match (handles dash↔underscore swap too)
     for cand in available:
         c = cand.lower()
         if c == req or c == norm:
             return cand
-        # The LLM dropped or added a ``_tool``/``_v2`` suffix
+
+    # 2) Suffix family — only when the BARE part matches exactly, so
+    # ``list_channels`` resolves to ``list_channels_tool`` but ``search``
+    # does NOT match ``search_facts`` here.
+    for cand in available:
+        c = cand.lower()
         if c.startswith(norm + "_") or norm.startswith(c + "_"):
             return cand
-        # The LLM used a substring of a longer name
-        if norm in c or c in norm:
-            return cand
-    # Generic fuzzy match for typos
-    close = difflib.get_close_matches(req, [c.lower() for c in available], n=1, cutoff=0.7)
+
+    # 3) Generic fuzzy typo match
+    lower_available = [c.lower() for c in available]
+    close = difflib.get_close_matches(norm, lower_available, n=1, cutoff=0.7)
     if close:
-        # difflib returns the lowercased version; recover original case
         for cand in available:
             if cand.lower() == close[0]:
                 return cand
+
+    # 4) Substring containment — last resort, pick BEST match by edit
+    # distance instead of first-seen so an ambiguous ``search`` query
+    # picks the closest candidate deterministically.
+    substring_candidates = [
+        cand for cand in available if (norm in cand.lower() or cand.lower() in norm)
+    ]
+    if substring_candidates:
+        substring_candidates.sort(
+            key=lambda cand: difflib.SequenceMatcher(None, norm, cand.lower()).ratio(),
+            reverse=True,
+        )
+        return substring_candidates[0]
+
     return None
 
 
@@ -128,8 +154,25 @@ def install_resilient_tool_resolver() -> None:
 
     Called once at server boot. Safe to call again — the patch tags the
     function with a marker attribute so re-installation is a no-op.
+
+    Defensive: ``_get_tool`` is a private ADK symbol that could be
+    renamed or moved by a future ADK release. When it's missing, log a
+    clear warning and return — the operator will see the warning at
+    boot and can pin a known-good ADK version. The agent stream still
+    runs unpatched; behaviour reverts to ADK's hard ``ValueError`` on
+    unknown tool names (the original ADK contract).
     """
     from google.adk.flows.llm_flows import functions as adk_functions
+
+    if not hasattr(adk_functions, "_get_tool"):
+        logger.warning(
+            "resilient_tool_resolver: ADK's flows.llm_flows.functions._get_tool "
+            "is missing — likely an ADK version upgrade renamed it. Falling back "
+            "to the unpatched contract (hard ValueError on hallucinated tool "
+            "names). Pin the working ADK range in pyproject.toml or update this "
+            "patch."
+        )
+        return
 
     if getattr(adk_functions._get_tool, "_beever_resilient", False):
         return

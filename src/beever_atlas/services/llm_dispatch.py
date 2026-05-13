@@ -330,7 +330,7 @@ async def dispatch_completion(
     """
     import litellm  # type: ignore[import-untyped]
 
-    from beever_atlas.services.llm_call_log import record_call
+    from beever_atlas.services.llm_call_log import _DISPATCH_OWNS_RECORDING, record_call
 
     throttle = get_llm_throttle()
     est_tokens = _estimate_completion_tokens(messages)
@@ -342,15 +342,61 @@ async def dispatch_completion(
     api_base_for_log = kwargs.get("api_base") if isinstance(kwargs.get("api_base"), str) else None
     consumer_for_log = kwargs.pop("_log_consumer", None)
     started_at = time.monotonic()
-    async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
-        try:
-            response = await litellm.acompletion(
-                model=litellm_model,
-                messages=messages,
-                custom_llm_provider=litellm_provider,
-                **kwargs,
-            )
-        except BaseException as exc:
+    # Tell the ``CustomLogger`` in services/llm_call_log that we own the
+    # ring-buffer entry for this call. The CustomLogger fires from inside
+    # ``litellm.acompletion``'s await frame; without this contextvar guard,
+    # every dispatch_completion call would record TWICE (once here, once
+    # from the callback). Reset in ``finally`` so concurrent dispatch calls
+    # on the same event loop each see their own value.
+    _owns_recording_token = _DISPATCH_OWNS_RECORDING.set(True)
+    try:
+        async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
+            try:
+                response = await litellm.acompletion(
+                    model=litellm_model,
+                    messages=messages,
+                    custom_llm_provider=litellm_provider,
+                    **kwargs,
+                )
+            except BaseException as exc:
+                record_call(
+                    started_at=started_at,
+                    kind="completion",
+                    consumer=consumer_for_log,
+                    provider=litellm_provider,
+                    model=litellm_model,
+                    api_base=api_base_for_log,
+                    exc=exc,
+                )
+                if _is_429(exc):
+                    throttle.report_429(provider, endpoint_id=endpoint_id)
+                elif _is_ollama_connect_error(exc, provider):
+                    # Force-invalidate the Ollama health cache so the next
+                    # ``resolve_model`` re-probes immediately rather than waiting
+                    # out the 30s TTL. Defensive: never let this crash dispatch.
+                    try:
+                        from beever_atlas.llm.provider import get_llm_provider
+
+                        get_llm_provider().invalidate_ollama_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Per-Endpoint circuit breaker: a non-429 failure is a real
+                # outage signal — record it so the Endpoint's breaker can trip
+                # and the resolver can route Assignments with a fallback away
+                # from it. 429s are rate-limit, not outage — handled by the
+                # throttle cooldown above, not the breaker. Defensive.
+                if endpoint_id and not _is_429(exc):
+                    await _record_breaker_failure(endpoint_id, exc)
+                raise
+            # Some providers return a 429 inline on the response body without
+            # raising. Sniff status_code on the response just in case.
+            status_code = getattr(response, "status_code", None)
+            if status_code == 429:
+                throttle.report_429(provider, endpoint_id=endpoint_id)
+            elif endpoint_id:
+                # Clean response — record success so a recovering Endpoint's
+                # half-open probe closes the breaker.
+                await _record_breaker_success(endpoint_id)
             record_call(
                 started_at=started_at,
                 kind="completion",
@@ -358,47 +404,11 @@ async def dispatch_completion(
                 provider=litellm_provider,
                 model=litellm_model,
                 api_base=api_base_for_log,
-                exc=exc,
+                response=response,
             )
-            if _is_429(exc):
-                throttle.report_429(provider, endpoint_id=endpoint_id)
-            elif _is_ollama_connect_error(exc, provider):
-                # Force-invalidate the Ollama health cache so the next
-                # ``resolve_model`` re-probes immediately rather than waiting
-                # out the 30s TTL. Defensive: never let this crash dispatch.
-                try:
-                    from beever_atlas.llm.provider import get_llm_provider
-
-                    get_llm_provider().invalidate_ollama_cache()
-                except Exception:  # noqa: BLE001
-                    pass
-            # Per-Endpoint circuit breaker: a non-429 failure is a real
-            # outage signal — record it so the Endpoint's breaker can trip
-            # and the resolver can route Assignments with a fallback away
-            # from it. 429s are rate-limit, not outage — handled by the
-            # throttle cooldown above, not the breaker. Defensive.
-            if endpoint_id and not _is_429(exc):
-                await _record_breaker_failure(endpoint_id, exc)
-            raise
-        # Some providers return a 429 inline on the response body without
-        # raising. Sniff status_code on the response just in case.
-        status_code = getattr(response, "status_code", None)
-        if status_code == 429:
-            throttle.report_429(provider, endpoint_id=endpoint_id)
-        elif endpoint_id:
-            # Clean response — record success so a recovering Endpoint's
-            # half-open probe closes the breaker.
-            await _record_breaker_success(endpoint_id)
-        record_call(
-            started_at=started_at,
-            kind="completion",
-            consumer=consumer_for_log,
-            provider=litellm_provider,
-            model=litellm_model,
-            api_base=api_base_for_log,
-            response=response,
-        )
-        return response
+            return response
+    finally:
+        _DISPATCH_OWNS_RECORDING.reset(_owns_recording_token)
 
 
 async def _record_breaker_failure(endpoint_id: str, exc: BaseException) -> None:
@@ -519,7 +529,7 @@ async def dispatch_embedding(
     """
     import litellm  # type: ignore[import-untyped]
 
-    from beever_atlas.services.llm_call_log import record_call
+    from beever_atlas.services.llm_call_log import _DISPATCH_OWNS_RECORDING, record_call
 
     throttle = get_llm_throttle()
     est_tokens = _estimate_embedding_tokens(input)
@@ -528,6 +538,9 @@ async def dispatch_embedding(
         kwargs["timeout"] = timeout
     api_base_for_log = kwargs.get("api_base") if isinstance(kwargs.get("api_base"), str) else None
     started_at = time.monotonic()
+    # See ``dispatch_completion`` — same contextvar guard so the CustomLogger
+    # in the ring buffer doesn't double-record this embedding call.
+    _owns_recording_token = _DISPATCH_OWNS_RECORDING.set(True)
     # Per-call ``drop_params`` overrides any global state and bypasses most
     # of LiteLLM's pre-flight validation for provider-specific kwargs.
     kwargs.setdefault("drop_params", True)
@@ -550,15 +563,31 @@ async def dispatch_embedding(
             if "dimensions" not in allowed:
                 allowed.append("dimensions")
             kwargs["allowed_openai_params"] = allowed
-    async with throttle.acquire(provider, est_tokens):
-        try:
-            response = await litellm.aembedding(
-                model=litellm_model,
-                input=input,
-                custom_llm_provider=litellm_provider,
-                **kwargs,
-            )
-        except BaseException as exc:
+    try:
+        async with throttle.acquire(provider, est_tokens):
+            try:
+                response = await litellm.aembedding(
+                    model=litellm_model,
+                    input=input,
+                    custom_llm_provider=litellm_provider,
+                    **kwargs,
+                )
+            except BaseException as exc:
+                record_call(
+                    started_at=started_at,
+                    kind="embedding",
+                    consumer=None,
+                    provider=litellm_provider,
+                    model=litellm_model,
+                    api_base=api_base_for_log,
+                    exc=exc,
+                )
+                if _is_429(exc):
+                    throttle.report_429(provider)
+                raise
+            status_code = getattr(response, "status_code", None)
+            if status_code == 429:
+                throttle.report_429(provider)
             record_call(
                 started_at=started_at,
                 kind="embedding",
@@ -566,24 +595,11 @@ async def dispatch_embedding(
                 provider=litellm_provider,
                 model=litellm_model,
                 api_base=api_base_for_log,
-                exc=exc,
+                response=response,
             )
-            if _is_429(exc):
-                throttle.report_429(provider)
-            raise
-        status_code = getattr(response, "status_code", None)
-        if status_code == 429:
-            throttle.report_429(provider)
-        record_call(
-            started_at=started_at,
-            kind="embedding",
-            consumer=None,
-            provider=litellm_provider,
-            model=litellm_model,
-            api_base=api_base_for_log,
-            response=response,
-        )
-        return response
+            return response
+    finally:
+        _DISPATCH_OWNS_RECORDING.reset(_owns_recording_token)
 
 
 __all__ = [

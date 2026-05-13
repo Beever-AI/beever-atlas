@@ -277,21 +277,15 @@ async def _refresh_llm_provider() -> None:
     its first request after boot) and an Assignment switch silently has
     no effect at runtime.
 
+    Order matters: clear the agent cache FIRST, then reload provider
+    overrides. The reverse order has a brief window where a concurrent
+    request can hit ``get_agent_for_mode`` and read the stale cached
+    agent built with the previous model. Clearing first guarantees the
+    next request rebuilds — at worst it momentarily uses the OLD
+    overrides (next reload fixes it), never a stale cached agent.
+
     Best-effort — never let a hydration failure fail the save.
     """
-    try:
-        from beever_atlas.llm.provider import get_llm_provider
-
-        await get_llm_provider().reload_from_db()
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "assignments: LLMProvider.reload_from_db failed (non-fatal)",
-            exc_info=True,
-        )
-
-    # Drop cached LlmAgents. Independent try block — provider reload and
-    # cache reset are decoupled; a failure in one shouldn't suppress the
-    # other.
     try:
         from beever_atlas.agents.query.qa_agent import reset_agent_cache
 
@@ -299,6 +293,16 @@ async def _refresh_llm_provider() -> None:
     except Exception:  # noqa: BLE001
         logger.warning(
             "assignments: qa_agent.reset_agent_cache failed (non-fatal)",
+            exc_info=True,
+        )
+
+    try:
+        from beever_atlas.llm.provider import get_llm_provider
+
+        await get_llm_provider().reload_from_db()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "assignments: LLMProvider.reload_from_db failed (non-fatal)",
             exc_info=True,
         )
 

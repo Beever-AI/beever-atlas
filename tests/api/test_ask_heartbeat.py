@@ -104,3 +104,46 @@ async def test_heartbeat_elapsed_ms_is_realistic():
     assert first_heartbeat.elapsed_ms >= 40, (
         f"first heartbeat elapsed_ms {first_heartbeat.elapsed_ms} too small"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_underlying_iterator():
+    """When the SSE client disconnects mid-stream, the wrapper's ``finally``
+    block must cancel the pending fetch task and call ``aclose()`` on the
+    underlying iterator so the agent run cleanly stops instead of leaking.
+    """
+    closed = asyncio.Event()
+    cancelled_or_returned = asyncio.Event()
+
+    class _TrackedIter:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                await asyncio.sleep(60.0)
+            except asyncio.CancelledError:
+                cancelled_or_returned.set()
+                raise
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            closed.set()
+
+    async def _consume_with_cancel():
+        async for ev in _stream_with_heartbeats(_TrackedIter(), interval_seconds=0.05):
+            del ev  # drain — we cancel from outside
+
+    task = asyncio.create_task(_consume_with_cancel())
+    await asyncio.sleep(0.15)  # let the wrapper start fetching
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # The finally block in _stream_with_heartbeats must have run:
+    # (a) cancelled the pending __anext__ task
+    # (b) called aclose() on the iterator
+    assert cancelled_or_returned.is_set(), "underlying __anext__ task not cancelled"
+    assert closed.is_set(), "aclose() not called on the underlying iterator"

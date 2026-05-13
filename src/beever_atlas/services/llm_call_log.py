@@ -18,14 +18,51 @@ Size bound: 50 entries (~10KB). Process-local — restarts reset the log.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
+
+
+# Set to True by ``services/llm_dispatch.dispatch_completion`` /
+# ``dispatch_embedding`` / ``dispatch_assignment`` while they're running their
+# own ``record_call``. The LiteLLM CustomLogger checks this flag and skips
+# recording, so the same dispatched call doesn't land in the ring buffer twice.
+#
+# Per-task context — set/reset via ``contextvars.ContextVar.set``/``.reset``
+# so concurrent dispatch calls on different asyncio tasks each see their own
+# value. The CustomLogger callback fires from within ``litellm.acompletion``'s
+# await frame, which runs in the same task that called dispatch, so the flag
+# is visible at the right moment.
+_DISPATCH_OWNS_RECORDING: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_beever_dispatch_owns_recording", default=False
+)
+
+
+def _strip_url_credentials(url: str) -> str:
+    """Remove ``user:pass@`` from a URL before it lands in the ring buffer.
+
+    Operators sometimes configure an Endpoint ``base_url`` with embedded
+    HTTP Basic credentials (corporate proxy, signed-tunnel forwarder, etc.).
+    Without this scrub, those credentials would appear in the
+    ``/api/settings/debug/recent-llm-calls`` response and in operator log
+    lines. Returns the URL unchanged when no userinfo is present.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            host = parsed.hostname or ""
+            netloc = f"{host}:{parsed.port}" if parsed.port else host
+            return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:  # noqa: BLE001 — bad URLs fall through to original
+        pass
+    return url
 
 
 @dataclass
@@ -219,8 +256,15 @@ def register_litellm_observer() -> None:
             # LiteLLM often appends a trailing "/" to the nested copy
             # (``https://api.z.ai/api/paas/v4/`` vs the operator-saved
             # ``…/v4``). Strip so the ring buffer matches what the UI
-            # compares against in lastByModel.
-            api_base = api_base_raw.rstrip("/") if isinstance(api_base_raw, str) else None
+            # compares against in lastByModel. Also strip any embedded
+            # ``user:pass@`` userinfo so operators who proxy through
+            # ``https://x:y@proxy/v1`` don't leak the credential into
+            # the debug surface.
+            api_base = (
+                _strip_url_credentials(api_base_raw.rstrip("/"))
+                if isinstance(api_base_raw, str)
+                else None
+            )
             consumer: str | None = None
             metadata = kwargs.get("metadata") if isinstance(kwargs.get("metadata"), dict) else None
             if metadata:
@@ -276,35 +320,12 @@ def register_litellm_observer() -> None:
         except Exception:  # noqa: BLE001 — never crash the callback
             pass
 
-    def _on_success(kwargs: dict[str, Any], response: Any, start_time: Any, end_time: Any) -> None:
-        _record_from_kwargs(kwargs, response, None, start_time, end_time)
-
-    def _on_failure(
-        kwargs: dict[str, Any], exc: BaseException, start_time: Any, end_time: Any
-    ) -> None:
-        _record_from_kwargs(kwargs, None, exc, start_time, end_time)
-
-    # Avoid duplicate registration on hot reload — LiteLLM allows multiple
-    # but we only want one record per call.
-    if not any(
-        getattr(cb, "__name__", "") == "_on_success" and getattr(cb, "__module__", "") == __name__
-        for cb in (litellm.success_callback or [])
-    ):
-        litellm.success_callback.append(_on_success)
-    if not any(
-        getattr(cb, "__name__", "") == "_on_failure" and getattr(cb, "__module__", "") == __name__
-        for cb in (litellm.failure_callback or [])
-    ):
-        litellm.failure_callback.append(_on_failure)
-
-    # The function-style ``success_callback`` does NOT fire for streamed
-    # completions — and ADK's LiteLlm wrapper streams every agent turn.
-    # LiteLLM's ``CustomLogger`` API surfaces stream-aware async hooks
-    # (``async_log_success_event`` / ``async_log_failure_event``) that DO
-    # fire on stream completion, so register one alongside the function
-    # callbacks. Together they cover every code path: ADK streamed calls,
-    # dispatch_completion non-stream calls, embedding calls, and the
-    # Test Connection probe.
+    # LiteLLM's ``CustomLogger`` API fires for BOTH streamed and non-streamed
+    # completions, so it is the single source of truth for the ring buffer.
+    # The legacy function-style ``success_callback`` / ``failure_callback`` is
+    # NOT registered here — it would fire alongside ``CustomLogger`` for every
+    # non-streamed call, producing duplicate entries (and the function-style
+    # variant misses streamed calls entirely anyway).
     try:
         from litellm.integrations.custom_logger import CustomLogger  # type: ignore[import-untyped]
     except Exception:  # noqa: BLE001
@@ -312,9 +333,22 @@ def register_litellm_observer() -> None:
 
     class _RingBufferLogger(CustomLogger):  # type: ignore[misc]
         async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):  # noqa: D401, ANN001
+            # ``dispatch_completion`` / ``dispatch_embedding`` /
+            # ``dispatch_assignment`` each call ``record_call`` directly so
+            # they can capture circuit-breaker and 429 sniffing state at the
+            # exact moment the dispatch returns. When this CustomLogger fires
+            # from inside that same dispatch path, skip — the dispatch wrapper
+            # has already written the canonical entry. Without this guard,
+            # every non-ADK call would record twice (dispatch + CustomLogger).
+            if _DISPATCH_OWNS_RECORDING.get():
+                return
             _record_from_kwargs(kwargs, response_obj, None, start_time, end_time)
 
         async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):  # noqa: D401, ANN001
+            # See success-event docstring — same dispatch-owns-recording
+            # guard so a failed dispatch call doesn't record twice.
+            if _DISPATCH_OWNS_RECORDING.get():
+                return
             # CustomLogger's failure hook receives the exception via
             # ``response_obj`` (it carries the upstream error object). The
             # nested ``kwargs["exception"]`` is the canonical exception

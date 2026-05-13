@@ -152,15 +152,23 @@ class LLMProvider:
                 cred = get_runtime_credential(ep_id)
                 if isinstance(cred, str):
                     api_key = cred
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 # Credential cache miss is non-fatal — LiteLLM will surface
                 # the resulting 401 with a clear message via the recent-calls
                 # debug surface; better than crashing the agent build.
-                logger.debug(
-                    "LLMProvider.resolve_model: credential lookup for %s/%s failed",
+                #
+                # NEVER pass ``exc_info=True`` here — ``api_key`` and ``cred``
+                # live in this scope and a structured log handler (JSON,
+                # Sentry, etc.) would serialise the locals and leak the
+                # credential. Log the exception class + agent + ep only.
+                # WARNING (not DEBUG) — operator needs a visible signal when
+                # credential resolution fails for an explicit Assignment;
+                # the subsequent upstream 401 then makes sense.
+                logger.warning(
+                    "LLMProvider.resolve_model: credential lookup for agent=%s ep=%s failed (%s)",
                     agent_name,
                     ep_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
 
         # Defer the (provider, model, drop_base_url) decision to the
@@ -195,17 +203,19 @@ class LLMProvider:
                     model_str = routed_model
                 if drop_base_url:
                     api_base = None
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 # ``route_for_endpoint`` raises for embedding-only presets
                 # (jina_ai, voyage, cohere) — a chat consumer pointed at one
                 # of those is operator error; fall through with the
                 # un-routed model string so LiteLLM surfaces a clear error.
-                logger.debug(
+                # No ``exc_info=True`` — ``api_key`` is in this scope and a
+                # structured log handler would leak it via traceback locals.
+                logger.warning(
                     "LLMProvider.resolve_model: route_for_endpoint failed "
-                    "for agent=%s preset=%r (using preset_to_provider default)",
+                    "for agent=%s preset=%r (%s) — using preset default",
                     agent_name,
                     preset,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
 
         # Credential fallback for two cases the per-Endpoint cache can't
@@ -222,17 +232,26 @@ class LLMProvider:
         #     upstream ignores the value. ``dispatch_assignment`` uses the
         #     same placeholder; mirror that here so the ADK agent path
         #     doesn't 400 differently from the dispatch path.
+        #
+        # SECURITY: ``placeholder-no-auth`` MUST NOT leak to a real auth'd
+        # upstream (it would send an ``Authorization: Bearer placeholder-
+        # no-auth`` header and burn rate-limit on a meaningless probe).
+        # Gate the fallback to known no-auth presets only. For any other
+        # preset that ends up missing a credential, return None and let
+        # LiteLLM raise a clear ``api_key client option must be set``
+        # error — operator-actionable, no accidental real-upstream call.
+        _NO_AUTH_PRESETS = frozenset({"ollama", "ollama_chat", "vllm", "lmstudio"})
         if api_key is None and model_str.startswith("openai/"):
             import os
 
             if preset == "google_ai":
                 api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-            if api_key is None:
+            if api_key is None and preset in _NO_AUTH_PRESETS:
                 # ``placeholder-no-auth`` matches dispatch_assignment's
                 # behaviour for ``auth_type=none`` OpenAI-compat endpoints
-                # (Ollama). The upstream ignores it; the openai SDK just
-                # needs *something* in the field to skip its client-side
-                # check.
+                # (Ollama, local vLLM/LM Studio). The upstream ignores it;
+                # the openai SDK just needs *something* in the field to
+                # skip its client-side check.
                 api_key = "placeholder-no-auth"
 
         return resolve_model_object(model_str, api_key=api_key, api_base=api_base)

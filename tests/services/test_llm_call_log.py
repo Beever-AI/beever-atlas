@@ -231,6 +231,48 @@ async def test_dispatch_assignment_threads_consumer_into_log(
     assert snap[0]["model"] == "gemini-3.1-flash-lite"
 
 
+def test_strip_url_credentials_removes_basic_auth_userinfo() -> None:
+    """Operator-configured base_url with embedded ``user:pass@`` MUST NOT
+    leak to the ring buffer / log line / debug endpoint."""
+    from beever_atlas.services.llm_call_log import _strip_url_credentials
+
+    assert (
+        _strip_url_credentials("https://alice:secret123@proxy.corp.example/v1")
+        == "https://proxy.corp.example/v1"
+    )
+    # Username-only (still leaky on some servers)
+    assert (
+        _strip_url_credentials("https://token-xyz@gateway.example.com:8443/api/v1")
+        == "https://gateway.example.com:8443/api/v1"
+    )
+    # Clean URLs pass through unchanged
+    assert _strip_url_credentials("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert _strip_url_credentials("http://localhost:11434/v1") == "http://localhost:11434/v1"
+    # Bad input doesn't crash
+    assert _strip_url_credentials("") == ""
+
+
+def test_dispatch_owns_recording_contextvar_skips_custom_logger() -> None:
+    """When the dispatch wrapper sets ``_DISPATCH_OWNS_RECORDING``, the
+    CustomLogger must skip its own recording to avoid double-entry.
+
+    This is the dedup mechanism that keeps the ring buffer accurate when a
+    dispatched call ALSO triggers LiteLLM's success_callback.
+    """
+    from beever_atlas.services.llm_call_log import _DISPATCH_OWNS_RECORDING
+
+    # When the flag is False (default) the CustomLogger would record;
+    # we don't test the callback directly here — we just verify the
+    # contextvar's contract.
+    assert _DISPATCH_OWNS_RECORDING.get() is False
+    token = _DISPATCH_OWNS_RECORDING.set(True)
+    try:
+        assert _DISPATCH_OWNS_RECORDING.get() is True
+    finally:
+        _DISPATCH_OWNS_RECORDING.reset(token)
+    assert _DISPATCH_OWNS_RECORDING.get() is False
+
+
 def test_snapshot_serialisation_shape() -> None:
     """Every field in the dataclass must round-trip through ``asdict``."""
     import time
