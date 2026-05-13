@@ -64,6 +64,15 @@ class LLMProvider:
         self._logged_deprecations: set[str] = set()
         # Per-agent model overrides loaded from MongoDB (empty until reload)
         self._agent_overrides: dict[str, str] = {}
+        # PR-ν.1: per-agent endpoint_id (populated from llm_assignments). Used by
+        # ``resolve_model`` to fetch the endpoint's credential + base_url and
+        # forward them to LiteLLM, so agent calls against custom endpoints
+        # (Z.AI, OpenRouter, etc.) actually authenticate.
+        self._agent_endpoint_overrides: dict[str, str] = {}
+        # Cached endpoint metadata keyed by id, populated alongside
+        # ``_agent_endpoint_overrides`` so ``resolve_model`` doesn't have to
+        # round-trip MongoDB on every agent call.
+        self._endpoint_meta: dict[str, dict[str, Any]] = {}
         # Ollama health cache: (reachable, monotonic_timestamp). ``None`` = never
         # probed (or force-invalidated). See _OLLAMA_TTL_SECONDS for refresh window.
         self._ollama_cache: tuple[bool, float] | None = None
@@ -91,12 +100,20 @@ class LLMProvider:
     def resolve_model(self, agent_name: str) -> Any:
         """Resolve the model for a specific agent.
 
-        Priority: MongoDB override → default map → LLM_FAST_MODEL env var.
+        Priority: MongoDB Assignment → legacy MongoDB override → default map → LLM_FAST_MODEL.
         Returns a string (Gemini bare strings, flag-off path) or a
         ``LiteLlm`` instance (every other path, including Gemini when
         ``LLM_USE_LITELLM_FOR_GEMINI=True``).
+
+        PR-ν.1: when the agent has an Assignment, also looks up the
+        Assignment's endpoint to fetch its base_url + runtime credential
+        and forwards both to the ``LiteLlm`` wrapper. Without this, an
+        agent on a custom endpoint (Z.AI, OpenRouter, custom proxy) ends
+        up calling LiteLLM with no api_key and 401s with
+        ``AuthenticationError`` while LiteLLM falls back to
+        ``OPENAI_API_KEY`` from env.
         """
-        # 1. Check MongoDB overrides
+        # 1. Check MongoDB overrides (Assignment-derived + legacy)
         model_str = self._agent_overrides.get(agent_name)
         # 2. Fall back to default map
         if not model_str:
@@ -117,7 +134,36 @@ class LLMProvider:
                 )
                 return _OLLAMA_FALLBACK
 
-        return resolve_model_object(model_str)
+        # Look up the Assignment's endpoint credential + base_url. Optional —
+        # for agents driven by the legacy ``agent_model_config`` map (no
+        # ``_agent_endpoint_overrides`` row) we pass through with no extras,
+        # preserving the historical behaviour where LiteLLM picks up
+        # provider-default env vars.
+        api_key: str | None = None
+        api_base: str | None = None
+        ep_id = self._agent_endpoint_overrides.get(agent_name)
+        if ep_id:
+            ep_meta = self._endpoint_meta.get(ep_id)
+            if ep_meta and isinstance(ep_meta.get("base_url"), str):
+                api_base = ep_meta["base_url"]
+            try:
+                from beever_atlas.llm.agent_credentials import get_runtime_credential
+
+                cred = get_runtime_credential(ep_id)
+                if isinstance(cred, str):
+                    api_key = cred
+            except Exception:  # noqa: BLE001
+                # Credential cache miss is non-fatal — LiteLLM will surface
+                # the resulting 401 with a clear message via the recent-calls
+                # debug surface; better than crashing the agent build.
+                logger.debug(
+                    "LLMProvider.resolve_model: credential lookup for %s/%s failed",
+                    agent_name,
+                    ep_id,
+                    exc_info=True,
+                )
+
+        return resolve_model_object(model_str, api_key=api_key, api_base=api_base)
 
     def get_model_string(self, agent_name: str) -> str:
         """Get the raw model string for an agent (without LiteLlm wrapping).
@@ -379,6 +425,16 @@ class LLMProvider:
                 ep_by_id = {e.get("id"): e for e in endpoints if e.get("id")}
                 from beever_atlas.llm.endpoints import preset_to_provider
 
+                # Reset endpoint maps so a deleted Assignment stops being
+                # honoured after the next reload.
+                self._agent_endpoint_overrides.clear()
+                self._endpoint_meta.clear()
+                for ep in endpoints:
+                    if ep.get("id"):
+                        self._endpoint_meta[ep["id"]] = {
+                            "preset": ep.get("preset"),
+                            "base_url": ep.get("base_url"),
+                        }
                 for a in assignments:
                     consumer = a.get("consumer")
                     model = a.get("model")
@@ -394,6 +450,7 @@ class LLMProvider:
                     provider = preset_to_provider(ep.get("preset", "openai"))
                     bare = model.split("/", 1)[-1] if "/" in model else model
                     overrides[consumer] = f"{provider}/{bare}"
+                    self._agent_endpoint_overrides[consumer] = ep_id
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "LLMProvider.reload_from_db: llm_assignments hydration failed "

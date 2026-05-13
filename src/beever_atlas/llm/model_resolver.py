@@ -95,7 +95,12 @@ SUPPORTED_PROVIDERS: tuple[str, ...] = (
 )
 
 
-def resolve_model_object(model_string: str) -> Any:
+def resolve_model_object(
+    model_string: str,
+    *,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> Any:
     """Convert a model string to an ADK-compatible model object.
 
     Behaviour depends on ``settings.llm_use_litellm_for_gemini``:
@@ -110,14 +115,29 @@ def resolve_model_object(model_string: str) -> Any:
         as before this change. Other prefixed strings still wrap in LiteLLM.
 
     Ollama always wraps regardless of the flag (its current behaviour).
+
+    PR-ν.1: ``api_key`` and ``api_base`` — when provided — are forwarded to
+    the ``LiteLlm`` constructor so per-Endpoint credentials reach the
+    underlying ``litellm.acompletion`` call. Without these, an agent using
+    a custom-preset endpoint (e.g. Z.AI's GLM via ``openai`` provider) hits
+    LiteLLM's fallback path of reading ``OPENAI_API_KEY`` from env and
+    400s with ``AuthenticationError``. Pass-through is optional so the
+    legacy callers that don't know about per-Endpoint credentials still
+    work.
     """
     settings = get_settings()
+
+    extra: dict[str, Any] = {}
+    if api_key:
+        extra["api_key"] = api_key
+    if api_base:
+        extra["api_base"] = api_base
 
     if model_string.startswith("ollama_chat/"):
         os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
         from google.adk.models.lite_llm import LiteLlm
 
-        return LiteLlm(model=model_string)
+        return LiteLlm(model=model_string, **extra)
 
     if not settings.llm_use_litellm_for_gemini:
         # Legacy native path — bare Gemini strings consumed by ADK directly.
@@ -135,7 +155,7 @@ def resolve_model_object(model_string: str) -> Any:
 
     from google.adk.models.lite_llm import LiteLlm
 
-    return LiteLlm(model=model_string)
+    return LiteLlm(model=model_string, **extra)
 
 
 def is_ollama_model(model_string: str) -> bool:
