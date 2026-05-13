@@ -75,6 +75,83 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
+class _HeartbeatSentinel:
+    """Yielded by ``_stream_with_heartbeats`` whenever the underlying
+    agent stream has been silent for the heartbeat interval. The QA
+    SSE loop translates this into a synthetic ``thinking`` event so
+    slow non-Gemini models (Ollama gemma/llama, GLM, …) don't leave
+    the UI blank between request-acceptance and first-token-arrival.
+    """
+
+    __slots__ = ("elapsed_ms",)
+
+    def __init__(self, elapsed_ms: int) -> None:
+        self.elapsed_ms = elapsed_ms
+
+
+async def _stream_with_heartbeats(stream, interval_seconds: float = 4.0):
+    """Async-iterate ``stream`` and yield a :class:`_HeartbeatSentinel`
+    every ``interval_seconds`` of silence.
+
+    Why this exists
+    ---------------
+    Gemini-via-ADK emits ``thought`` parts during reasoning so the UI can
+    show "Thought for X.Xs ›" while the model is working. LiteLLM-routed
+    models (Ollama, GLM, OpenAI compat shims, …) have no thought channel —
+    the SSE connection is dead silent until the first token. On slow local
+    inference (gemma4:e4b, llama3.2 on CPU) that gap can be 30-60 seconds,
+    during which the user sees nothing and assumes the system has hung.
+
+    The heartbeat fires only until the first real event arrives — once
+    the model starts producing tool calls or text deltas, the natural
+    event stream takes over. After that, ADK / Gemini's own thinking
+    pipeline handles progress reporting unchanged.
+
+    Cancellation: the wrapper's task cancellation is propagated to the
+    underlying iterator via ``aclose()`` so an SSE-client disconnect
+    cleanly stops both the agent run and the heartbeat ticking.
+    """
+    aiter = stream.__aiter__()
+    started_at = time.monotonic()
+    # PEP 479: catching ``StopAsyncIteration`` inside an async generator and
+    # ``return``ing converts the implicit StopIteration into a RuntimeError.
+    # Use ``anext(default=…)`` so iterator exhaustion surfaces as a sentinel
+    # value, no exception involved.
+    _STREAM_END = object()
+    # ``asyncio.wait_for`` cancels its inner coroutine on timeout, which
+    # would corrupt the async iterator (we'd be cancelling the underlying
+    # __anext__ mid-flight every heartbeat interval). Instead, launch one
+    # long-lived task per pending fetch and ``shield`` it so timeouts only
+    # interrupt the WAIT, not the fetch itself.
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(anext(aiter, _STREAM_END))
+            try:
+                event = await asyncio.wait_for(
+                    asyncio.shield(pending), timeout=interval_seconds
+                )
+            except asyncio.TimeoutError:
+                # ``pending`` keeps running — reused on the next iteration.
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                yield _HeartbeatSentinel(elapsed_ms)
+                continue
+            pending = None  # consumed; fresh task next iteration
+            if event is _STREAM_END:
+                return
+            yield event
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+        aclose = getattr(aiter, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _extract_citations_from_text(text: str) -> list[dict]:
     """Extract citation-format lines from agent response text.
 
@@ -419,10 +496,41 @@ async def _run_agent_stream(
                 session_id=session.id,
                 new_message=new_message,
             )
-        async for event in _stream:
+        _heartbeat_synthetic_thinking_open = False
+        _seen_real_event = False
+        async for event in _stream_with_heartbeats(_stream, interval_seconds=4.0):
             if await request.is_disconnected():
                 logger.info("Client disconnected, stopping agent stream")
                 break
+
+            # Heartbeat tick — synthetic ``thinking`` event so the UI shows
+            # "Thought for X.Xs ›" with a live-ticking timer while the
+            # model is silent. Only meaningful BEFORE the first real event
+            # arrives; once tool calls or text deltas start, the natural
+            # stream handles progress.
+            if isinstance(event, _HeartbeatSentinel):
+                if not _seen_real_event:
+                    _heartbeat_synthetic_thinking_open = True
+                    yield _sse_event(
+                        "thinking",
+                        {
+                            "text": "",
+                            "elapsed_ms": event.elapsed_ms,
+                            "synthetic": True,
+                        },
+                    )
+                continue
+
+            # First real event after one or more heartbeats — close the
+            # synthetic thinking indicator before processing the event so
+            # the UI cleanly transitions from "Working…" to actual output.
+            if _heartbeat_synthetic_thinking_open and not _seen_real_event:
+                yield _sse_event(
+                    "thinking_done",
+                    {"duration_ms": None, "synthetic": True},
+                )
+                _heartbeat_synthetic_thinking_open = False
+            _seen_real_event = True
 
             if event.error_code or event.error_message:
                 yield _sse_event(
