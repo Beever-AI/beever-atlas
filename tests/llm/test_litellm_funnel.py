@@ -24,9 +24,7 @@ from beever_atlas.llm.model_resolver import (
 
 def _settings_with_flag(monkeypatch, *, flag: bool) -> None:
     """Force the cutover flag explicitly + clear any conflicting env."""
-    monkeypatch.setenv(
-        "LLM_USE_LITELLM_FOR_GEMINI", "true" if flag else "false"
-    )
+    monkeypatch.setenv("LLM_USE_LITELLM_FOR_GEMINI", "true" if flag else "false")
     # ``get_settings`` is ``@lru_cache``-decorated; clear it so the next call
     # re-reads env and observes the patched flag value.
     from beever_atlas.infra.config import get_settings

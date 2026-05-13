@@ -203,9 +203,7 @@ def test_yaml_loads_endpoints_and_assignments(tmp_path: Path) -> None:
     assert config.preset == "claude-quality-gemini-fast"
 
 
-def test_yaml_interpolates_env_var(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_yaml_interpolates_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ANTHROPIC_KEY", "sk-ant-from-env")
     yaml_text = textwrap.dedent(
         """
@@ -262,9 +260,7 @@ async def test_apply_idempotent_second_run_zero_changes() -> None:
 
     config = _Config(
         endpoints=[
-            _EndpointSpec(
-                name="openai", preset="openai", api_key="sk", base_url="https://x"
-            )
+            _EndpointSpec(name="openai", preset="openai", api_key="sk", base_url="https://x")
         ],
         assignments=[],
     )
@@ -281,9 +277,7 @@ async def test_apply_assignment_with_unknown_endpoint_raises() -> None:
 
     config = _Config(
         endpoints=[],
-        assignments=[
-            _AssignmentSpec(consumer="qa_agent", endpoint="missing-ep", model="x")
-        ],
+        assignments=[_AssignmentSpec(consumer="qa_agent", endpoint="missing-ep", model="x")],
     )
     stores = _stores()
     with pytest.raises(RuntimeError, match="unknown endpoint"):

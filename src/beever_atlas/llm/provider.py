@@ -331,14 +331,10 @@ class LLMProvider:
         credential = get_runtime_credential(target_endpoint.id)
         api_key: str | None = credential if isinstance(credential, str) else None
         aws_creds: dict[str, str] | None = (
-            credential
-            if isinstance(credential, dict) and "access_key_id" in credential
-            else None
+            credential if isinstance(credential, dict) and "access_key_id" in credential else None
         )
         vertex_creds: dict[str, str] | None = (
-            credential
-            if isinstance(credential, dict) and "sa_json" in credential
-            else None
+            credential if isinstance(credential, dict) and "sa_json" in credential else None
         )
 
         # Pick the LiteLLM provider + model id from the Endpoint's
@@ -368,9 +364,7 @@ class LLMProvider:
             )
             drop_base_url = False
 
-        resolved_base_url = (
-            None if drop_base_url else (target_endpoint.base_url or None)
-        )
+        resolved_base_url = None if drop_base_url else (target_endpoint.base_url or None)
 
         return ResolvedAssignment(
             consumer=consumer,
@@ -488,12 +482,8 @@ class LLMProvider:
             # Source 1: llm_assignments × endpoints. Build the full
             # ``<provider>/<model>`` string the resolver needs.
             try:
-                assignments = await stores.mongodb.db["llm_assignments"].find(
-                    {}
-                ).to_list(None)
-                endpoints = await stores.mongodb.db["endpoints"].find({}).to_list(
-                    None
-                )
+                assignments = await stores.mongodb.db["llm_assignments"].find({}).to_list(None)
+                endpoints = await stores.mongodb.db["endpoints"].find({}).to_list(None)
                 ep_by_id = {e.get("id"): e for e in endpoints if e.get("id")}
                 from beever_atlas.llm.endpoints import preset_to_provider
 

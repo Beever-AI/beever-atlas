@@ -99,9 +99,7 @@ async def test_heartbeat_elapsed_ms_is_realistic():
     async for ev in _stream_with_heartbeats(_silent_then(), interval_seconds=0.06):
         result.append(ev)
 
-    first_heartbeat = next(
-        r for r in result if isinstance(r, _HeartbeatSentinel)
-    )
+    first_heartbeat = next(r for r in result if isinstance(r, _HeartbeatSentinel))
     # first interval is 60ms — heartbeat fires shortly after that
     assert first_heartbeat.elapsed_ms >= 40, (
         f"first heartbeat elapsed_ms {first_heartbeat.elapsed_ms} too small"

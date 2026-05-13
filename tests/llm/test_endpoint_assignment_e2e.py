@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -264,12 +264,8 @@ async def test_e2e_two_openai_endpoints_throttle_independently() -> None:
         return _mock_litellm_response()
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        await dispatch_assignment(
-            assignment=r_prod, messages=[{"role": "user", "content": "x"}]
-        )
-        await dispatch_assignment(
-            assignment=r_staging, messages=[{"role": "user", "content": "y"}]
-        )
+        await dispatch_assignment(assignment=r_prod, messages=[{"role": "user", "content": "x"}])
+        await dispatch_assignment(assignment=r_staging, messages=[{"role": "user", "content": "y"}])
 
     throttle = get_llm_throttle()
     bucket_keys = set(throttle._buckets.keys())
@@ -342,9 +338,7 @@ async def test_e2e_failover_routes_to_fallback(
         return _mock_litellm_response()
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        await dispatch_assignment(
-            assignment=resolved, messages=[{"role": "user", "content": "x"}]
-        )
+        await dispatch_assignment(assignment=resolved, messages=[{"role": "user", "content": "x"}])
 
     # Dispatch went to the fallback Endpoint's URL + key.
     assert captured_kwargs["api_base"] == fallback.base_url
@@ -471,9 +465,7 @@ async def test_e2e_response_format_json_translates_to_openai_shape() -> None:
         return _mock_litellm_response('{"k": "v"}')
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        await dispatch_assignment(
-            assignment=resolved, messages=[{"role": "user", "content": "x"}]
-        )
+        await dispatch_assignment(assignment=resolved, messages=[{"role": "user", "content": "x"}])
 
     assert captured_kwargs["response_format"] == {"type": "json_object"}
 
@@ -523,9 +515,7 @@ async def test_e2e_ollama_v1_no_auth_passes_placeholder_api_key() -> None:
         return _mock_litellm_response()
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        await dispatch_assignment(
-            assignment=resolved, messages=[{"role": "user", "content": "x"}]
-        )
+        await dispatch_assignment(assignment=resolved, messages=[{"role": "user", "content": "x"}])
 
     # Placeholder api_key injected — LiteLLM openai SDK rejects missing keys.
     assert captured_kwargs["api_key"] == "placeholder-no-auth"
@@ -579,9 +569,7 @@ async def test_e2e_extra_headers_merge_endpoint_and_assignment() -> None:
         return _mock_litellm_response()
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        await dispatch_assignment(
-            assignment=resolved, messages=[{"role": "user", "content": "x"}]
-        )
+        await dispatch_assignment(assignment=resolved, messages=[{"role": "user", "content": "x"}])
 
     headers = captured_kwargs["extra_headers"]
     assert headers["X-Endpoint"] == "ep"
@@ -608,8 +596,10 @@ async def test_e2e_put_blocks_qa_agent_on_non_tool_model() -> None:
 
     stores = _stores()
 
-    with patch("beever_atlas.api.endpoints.get_stores", return_value=stores), \
-         patch("beever_atlas.api.assignments.get_stores", return_value=stores):
+    with (
+        patch("beever_atlas.api.endpoints.get_stores", return_value=stores),
+        patch("beever_atlas.api.assignments.get_stores", return_value=stores),
+    ):
         app = FastAPI()
         app.include_router(ep_api.router)
         app.include_router(asn_api.router)

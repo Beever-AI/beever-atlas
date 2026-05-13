@@ -129,9 +129,7 @@ async def _stream_with_heartbeats(stream, interval_seconds: float = 4.0):
             if pending is None:
                 pending = asyncio.ensure_future(anext(aiter, _STREAM_END))
             try:
-                event = await asyncio.wait_for(
-                    asyncio.shield(pending), timeout=interval_seconds
-                )
+                event = await asyncio.wait_for(asyncio.shield(pending), timeout=interval_seconds)
             except asyncio.TimeoutError:
                 # ``pending`` keeps running — reused on the next iteration.
                 elapsed_ms = int((time.monotonic() - started_at) * 1000)

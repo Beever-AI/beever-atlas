@@ -84,9 +84,7 @@ class _FakeCollection:
 def _make_stores() -> Any:
     endpoints_coll = _FakeCollection()
     assignments_coll = _FakeCollection()
-    mongodb = SimpleNamespace(
-        db={"endpoints": endpoints_coll, "llm_assignments": assignments_coll}
-    )
+    mongodb = SimpleNamespace(db={"endpoints": endpoints_coll, "llm_assignments": assignments_coll})
     return SimpleNamespace(mongodb=mongodb)
 
 
@@ -1373,9 +1371,7 @@ def test_create_endpoint_skips_seed_for_operator_deployed_preset(
     assert body["models"] == []
 
 
-def test_update_endpoint_role(
-    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_update_endpoint_role(app_and_client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """PUT /endpoints/{id} writes through ``role``; subsequent Test uses the
     new role to pick the probe path."""
     _app, client, _stores = app_and_client

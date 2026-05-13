@@ -177,7 +177,11 @@ async def upsert_assignment(consumer: str, req: UpdateAssignmentRequest) -> Assi
     if consumer not in DEFAULT_CONSUMERS:
         raise HTTPException(
             status_code=422,
-            detail={"error": "unknown_consumer", "consumer": consumer, "valid": list(DEFAULT_CONSUMERS)},
+            detail={
+                "error": "unknown_consumer",
+                "consumer": consumer,
+                "valid": list(DEFAULT_CONSUMERS),
+            },
         )
     # Verify Endpoint exists.
     endpoint = await _endpoint_store().get(req.endpoint_id)
@@ -203,9 +207,7 @@ async def upsert_assignment(consumer: str, req: UpdateAssignmentRequest) -> Assi
         # Build suggestions across every existing Endpoint × its curated models.
         all_endpoints = await _endpoint_store().list()
         candidates = [
-            (e.id, f"{_preset_to_provider(e.preset)}/{m}")
-            for e in all_endpoints
-            for m in e.models
+            (e.id, f"{_preset_to_provider(e.preset)}/{m}") for e in all_endpoints for m in e.models
         ]
         suggested = suggest_compatible_assignments(consumer, candidates, n=3)
         raise HTTPException(

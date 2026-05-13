@@ -54,7 +54,9 @@ class _FakeCollection:
     def __init__(self) -> None:
         self._docs: list[dict[str, Any]] = []
 
-    def find(self, query: dict[str, Any], _projection: dict[str, Any] | None = None) -> _AsyncCursor:
+    def find(
+        self, query: dict[str, Any], _projection: dict[str, Any] | None = None
+    ) -> _AsyncCursor:
         return _AsyncCursor([d for d in self._docs if self._matches(d, query)])
 
     async def find_one(

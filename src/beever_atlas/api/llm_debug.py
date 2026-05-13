@@ -57,9 +57,7 @@ async def recent_llm_calls() -> RecentLLMCallsResponse:
     Bounded to the last 50 calls. Process-local — uvicorn restart resets.
     """
     rows: list[dict[str, Any]] = _snapshot()
-    return RecentLLMCallsResponse(
-        calls=[RecentLLMCallResponse(**r) for r in rows]
-    )
+    return RecentLLMCallsResponse(calls=[RecentLLMCallResponse(**r) for r in rows])
 
 
 __all__ = ["router"]

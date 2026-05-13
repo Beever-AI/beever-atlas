@@ -119,9 +119,7 @@ async def _clear_checkpoint_safely() -> None:
     """Delete the ``reembed_state`` checkpoint doc, never raising."""
     try:
         stores = get_stores()
-        await stores.mongodb.db["reembed_state"].delete_one(
-            {"_id": "reembed_state"}
-        )
+        await stores.mongodb.db["reembed_state"].delete_one({"_id": "reembed_state"})
     except Exception as cleanup_exc:  # noqa: BLE001
         logger.warning(
             "reembed: failed to clear stale checkpoint after job failure: %s",

@@ -209,9 +209,7 @@ def get_endpoint_preset(key: str) -> EndpointPreset | None:
 # ``scripts/atlas_apply.py`` so the URL table never drifts across three files.
 BASE_URL_BY_PRESET: dict[str, str] = {
     key: url
-    for key, url in (
-        (p.get("key", ""), p.get("base_url", "")) for p in ENDPOINT_PRESETS
-    )
+    for key, url in ((p.get("key", ""), p.get("base_url", "")) for p in ENDPOINT_PRESETS)
     if key and url
 }
 
@@ -280,9 +278,7 @@ def _preset_gemini_balanced(endpoints: list[Endpoint]) -> dict[str, Assignment]:
         "summarizer": _build_assignment("summarizer", google, "gemini-2.5-flash-lite"),
         "image_describer": _build_assignment("image_describer", media_ep, media_model),
         "video_analyzer": _build_assignment("video_analyzer", google, "gemini-2.5-flash"),
-        "audio_transcriber": _build_assignment(
-            "audio_transcriber", google, "gemini-2.5-flash"
-        ),
+        "audio_transcriber": _build_assignment("audio_transcriber", google, "gemini-2.5-flash"),
         "document_digester": _build_assignment("document_digester", google, "gemini-2.5-flash"),
         "echo": _build_assignment("echo", google, "gemini-2.5-flash-lite"),
         "wiki_compiler": _build_assignment("wiki_compiler", google, "gemini-2.5-flash"),
@@ -306,12 +302,8 @@ def _preset_openai_quality(endpoints: list[Endpoint]) -> dict[str, Assignment]:
         ),
         "fact_extractor": _build_assignment("fact_extractor", openai, "gpt-4o-mini"),
         "entity_extractor": _build_assignment("entity_extractor", openai, "gpt-4o-mini"),
-        "cross_batch_validator": _build_assignment(
-            "cross_batch_validator", openai, "gpt-4o-mini"
-        ),
-        "coreference_resolver": _build_assignment(
-            "coreference_resolver", openai, "gpt-4o-mini"
-        ),
+        "cross_batch_validator": _build_assignment("cross_batch_validator", openai, "gpt-4o-mini"),
+        "coreference_resolver": _build_assignment("coreference_resolver", openai, "gpt-4o-mini"),
         "contradiction_detector": _build_assignment(
             "contradiction_detector", openai, "gpt-4o-mini"
         ),
@@ -373,9 +365,7 @@ def _preset_claude_quality_gemini_fast(endpoints: list[Endpoint]) -> dict[str, A
         "document_digester": _build_assignment("document_digester", google, "gemini-2.5-flash"),
         "echo": _build_assignment("echo", google, "gemini-2.5-flash-lite"),
         "wiki_compiler": _build_assignment("wiki_compiler", anthropic, "claude-sonnet-4-6"),
-        "wiki_maintainer": _build_assignment(
-            "wiki_maintainer", anthropic, "claude-sonnet-4-6"
-        ),
+        "wiki_maintainer": _build_assignment("wiki_maintainer", anthropic, "claude-sonnet-4-6"),
         "qa_router": _build_assignment("qa_router", anthropic, "claude-haiku-4-5"),
         "qa_agent": _build_assignment("qa_agent", anthropic, "claude-sonnet-4-6"),
         "csv_mapper": _build_assignment(
@@ -390,29 +380,19 @@ def _preset_fully_local(endpoints: list[Endpoint]) -> dict[str, Assignment]:
         raise PresetRequirementsNotMet(["ollama"], [e.preset for e in endpoints])
     return {
         # Embedding uses Ollama too — the local nomic-embed-text model.
-        "embedding": _build_assignment(
-            "embedding", ollama, "nomic-embed-text", dimensions=768
-        ),
+        "embedding": _build_assignment("embedding", ollama, "nomic-embed-text", dimensions=768),
         "fact_extractor": _build_assignment("fact_extractor", ollama, "qwen2.5:14b"),
         "entity_extractor": _build_assignment("entity_extractor", ollama, "qwen2.5:14b"),
-        "cross_batch_validator": _build_assignment(
-            "cross_batch_validator", ollama, "qwen2.5:14b"
-        ),
-        "coreference_resolver": _build_assignment(
-            "coreference_resolver", ollama, "qwen2.5:14b"
-        ),
+        "cross_batch_validator": _build_assignment("cross_batch_validator", ollama, "qwen2.5:14b"),
+        "coreference_resolver": _build_assignment("coreference_resolver", ollama, "qwen2.5:14b"),
         "contradiction_detector": _build_assignment(
             "contradiction_detector", ollama, "qwen2.5:14b"
         ),
         "summarizer": _build_assignment("summarizer", ollama, "qwen2.5:14b"),
-        "image_describer": _build_assignment(
-            "image_describer", ollama, "llama3.2-vision"
-        ),
+        "image_describer": _build_assignment("image_describer", ollama, "llama3.2-vision"),
         "video_analyzer": _build_assignment("video_analyzer", ollama, "llama3.2-vision"),
         "audio_transcriber": _build_assignment("audio_transcriber", ollama, "qwen2.5:14b"),
-        "document_digester": _build_assignment(
-            "document_digester", ollama, "llama3.2-vision"
-        ),
+        "document_digester": _build_assignment("document_digester", ollama, "llama3.2-vision"),
         "echo": _build_assignment("echo", ollama, "phi4"),
         "wiki_compiler": _build_assignment("wiki_compiler", ollama, "qwen2.5:14b"),
         "wiki_maintainer": _build_assignment("wiki_maintainer", ollama, "qwen2.5:14b"),

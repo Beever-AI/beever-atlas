@@ -70,9 +70,7 @@ def test_lookup_unknown_returns_none() -> None:
 
 
 def test_lookup_by_id_equivalent_to_lookup() -> None:
-    assert lookup_by_id("anthropic/claude-sonnet-4-6") == lookup(
-        "anthropic", "claude-sonnet-4-6"
-    )
+    assert lookup_by_id("anthropic/claude-sonnet-4-6") == lookup("anthropic", "claude-sonnet-4-6")
 
 
 def test_is_known_smoke() -> None:

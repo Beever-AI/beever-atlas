@@ -160,9 +160,7 @@ def test_apply_claude_gemini_missing_both_raises() -> None:
 def test_apply_claude_gemini_missing_gemini_raises() -> None:
     """Only Anthropic configured → still missing Google AI."""
     with pytest.raises(PresetRequirementsNotMet) as exc:
-        apply_preset(
-            "claude-quality-gemini-fast", [_make_endpoint("anthropic")]
-        )
+        apply_preset("claude-quality-gemini-fast", [_make_endpoint("anthropic")])
     assert exc.value.required == ["google_ai"]
 
 

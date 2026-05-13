@@ -350,28 +350,62 @@ def test_route_openai_v1_uses_bare_model() -> None:
     [
         # Cohere — native handler regardless of url (/v1 is Cohere's OWN shape,
         # not OpenAI-compat — /embed not /embeddings).
-        ("cohere", "cohere/embed-english-v3.0", "https://api.cohere.ai/v1",
-         "cohere", "cohere/embed-english-v3.0", False),
+        (
+            "cohere",
+            "cohere/embed-english-v3.0",
+            "https://api.cohere.ai/v1",
+            "cohere",
+            "cohere/embed-english-v3.0",
+            False,
+        ),
         # Voyage — native, no shim.
-        ("voyage", "voyage/voyage-3", "https://api.voyageai.com/v1",
-         "voyage", "voyage/voyage-3", False),
+        (
+            "voyage",
+            "voyage/voyage-3",
+            "https://api.voyageai.com/v1",
+            "voyage",
+            "voyage/voyage-3",
+            False,
+        ),
         # Mistral — native, no shim.
-        ("mistral", "mistral/mistral-embed", "https://api.mistral.ai/v1",
-         "mistral", "mistral/mistral-embed", False),
+        (
+            "mistral",
+            "mistral/mistral-embed",
+            "https://api.mistral.ai/v1",
+            "mistral",
+            "mistral/mistral-embed",
+            False,
+        ),
         # Bedrock — native SDK path.
-        ("bedrock", "bedrock/amazon.titan-embed-text-v2:0", None,
-         "bedrock", "bedrock/amazon.titan-embed-text-v2:0", False),
+        (
+            "bedrock",
+            "bedrock/amazon.titan-embed-text-v2:0",
+            None,
+            "bedrock",
+            "bedrock/amazon.titan-embed-text-v2:0",
+            False,
+        ),
         # vLLM proxy — preset maps to ``openai``, /v1 → rule 2 (bare).
-        ("openai", "openai/llama-3-embed", "https://vllm.internal/v1",
-         "openai", "llama-3-embed", False),
+        (
+            "openai",
+            "openai/llama-3-embed",
+            "https://vllm.internal/v1",
+            "openai",
+            "llama-3-embed",
+            False,
+        ),
         # LiteLLM Proxy — preset maps to ``openai``, /v1 → rule 2.
-        ("openai", "openai/proxy-model", "https://litellm-proxy.internal/v1",
-         "openai", "proxy-model", False),
+        (
+            "openai",
+            "openai/proxy-model",
+            "https://litellm-proxy.internal/v1",
+            "openai",
+            "proxy-model",
+            False,
+        ),
         # Empty / missing api_base — native handler with no override.
-        ("mistral", "mistral/mistral-embed", None,
-         "mistral", "mistral/mistral-embed", False),
-        ("mistral", "mistral/mistral-embed", "",
-         "mistral", "mistral/mistral-embed", False),
+        ("mistral", "mistral/mistral-embed", None, "mistral", "mistral/mistral-embed", False),
+        ("mistral", "mistral/mistral-embed", "", "mistral", "mistral/mistral-embed", False),
     ],
 )
 def test_route_embedding_matrix(
@@ -384,9 +418,7 @@ def test_route_embedding_matrix(
 ) -> None:
     """PR-ζ.4: comprehensive coverage of the routing decision tree across
     every provider switch operators can realistically configure."""
-    got_provider, got_model, got_drop = emb._route_embedding_for_dispatch(
-        provider, model, api_base
-    )
+    got_provider, got_model, got_drop = emb._route_embedding_for_dispatch(provider, model, api_base)
     assert got_provider == exp_provider
     assert got_model == exp_model
     assert got_drop is exp_drop
@@ -409,9 +441,7 @@ async def test_aembedding_call_strips_api_base_for_gemini(monkeypatch):
 
         return _R()
 
-    monkeypatch.setattr(
-        "beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch
-    )
+    monkeypatch.setattr("beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch)
 
     await emb._aembedding_call(
         model="gemini/text-embedding-004",
@@ -449,9 +479,7 @@ async def test_aembedding_call_keeps_api_base_for_jina_v1_shim(monkeypatch):
 
         return _R()
 
-    monkeypatch.setattr(
-        "beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch
-    )
+    monkeypatch.setattr("beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch)
 
     await emb._aembedding_call(
         model="jina_ai/jina-embeddings-v4",

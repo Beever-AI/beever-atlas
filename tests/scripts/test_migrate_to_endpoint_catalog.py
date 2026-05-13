@@ -83,9 +83,7 @@ def _stores(
                 "embedding_settings": _FakeCollection(
                     [embedding_settings] if embedding_settings else []
                 ),
-                "embedding_secret": _FakeCollection(
-                    [embedding_secret] if embedding_secret else []
-                ),
+                "embedding_secret": _FakeCollection([embedding_secret] if embedding_secret else []),
                 "agent_model_config": _FakeCollection(
                     [agent_model_config] if agent_model_config else []
                 ),

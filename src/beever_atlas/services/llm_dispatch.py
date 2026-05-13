@@ -453,9 +453,11 @@ async def dispatch_assignment(
         kwargs["api_base"] = assignment.base_url
     if assignment.api_key:
         kwargs["api_key"] = assignment.api_key
-    elif assignment.provider == "openai" and not getattr(
-        assignment, "aws_credentials", None
-    ) and not getattr(assignment, "vertex_credentials", None):
+    elif (
+        assignment.provider == "openai"
+        and not getattr(assignment, "aws_credentials", None)
+        and not getattr(assignment, "vertex_credentials", None)
+    ):
         # OpenAI-compat routing with no api_key (e.g. ``auth_type=none`` for a
         # local Ollama / vLLM / LM Studio endpoint). LiteLLM's ``openai``
         # provider 400s client-side without a key even when the upstream
@@ -476,9 +478,9 @@ async def dispatch_assignment(
         kwargs["max_tokens"] = assignment.max_tokens
     if assignment.response_format is not None:
         # OpenAI shape: ``{"type": "json_object"}`` for JSON mode, ``{"type": "text"}`` otherwise.
-        kwargs["response_format"] = {"type": (
-            "json_object" if assignment.response_format == "json" else "text"
-        )}
+        kwargs["response_format"] = {
+            "type": ("json_object" if assignment.response_format == "json" else "text")
+        }
 
     # Caller kwargs win — they're the most specific intent.
     kwargs.update(call_kwargs)

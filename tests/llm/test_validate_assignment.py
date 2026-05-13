@@ -21,31 +21,23 @@ def test_vision_agents_require_vision() -> None:
 
 
 def test_qa_agent_compatible_with_claude_sonnet() -> None:
-    missing = validate_assignment_compatibility(
-        "qa_agent", "anthropic/claude-sonnet-4-6"
-    )
+    missing = validate_assignment_compatibility("qa_agent", "anthropic/claude-sonnet-4-6")
     assert missing == []
 
 
 def test_qa_agent_incompatible_with_deepseek_reasoner() -> None:
     """The reasoner model lacks tool-calling — drives the 422 gate."""
-    missing = validate_assignment_compatibility(
-        "qa_agent", "deepseek/deepseek-reasoner"
-    )
+    missing = validate_assignment_compatibility("qa_agent", "deepseek/deepseek-reasoner")
     assert missing == ["tools"]
 
 
 def test_image_describer_incompatible_with_non_vision() -> None:
-    missing = validate_assignment_compatibility(
-        "image_describer", "deepseek/deepseek-chat"
-    )
+    missing = validate_assignment_compatibility("image_describer", "deepseek/deepseek-chat")
     assert missing == ["vision"]
 
 
 def test_image_describer_compatible_with_gemini_flash() -> None:
-    missing = validate_assignment_compatibility(
-        "image_describer", "gemini/gemini-2.5-flash"
-    )
+    missing = validate_assignment_compatibility("image_describer", "gemini/gemini-2.5-flash")
     assert missing == []
 
 
@@ -67,9 +59,7 @@ def test_operator_override_can_unblock_assignment() -> None:
 
 def test_unknown_model_defaults_to_blocked_for_tool_agents() -> None:
     """No catalog entry + no override + heuristic-fails → blocked."""
-    missing = validate_assignment_compatibility(
-        "qa_agent", "custom/totally-mystery"
-    )
+    missing = validate_assignment_compatibility("qa_agent", "custom/totally-mystery")
     assert "tools" in missing
 
 

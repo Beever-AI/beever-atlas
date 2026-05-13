@@ -195,7 +195,11 @@ def register_litellm_observer() -> None:
             # (qa_agent etc.) the top-level slot is always None. Prefer
             # the nested copy so the ring buffer reflects where the call
             # actually went on the wire.
-            litellm_params = kwargs.get("litellm_params") if isinstance(kwargs.get("litellm_params"), dict) else None
+            litellm_params = (
+                kwargs.get("litellm_params")
+                if isinstance(kwargs.get("litellm_params"), dict)
+                else None
+            )
             provider = (
                 kwargs.get("custom_llm_provider")
                 or (litellm_params.get("custom_llm_provider") if litellm_params else None)
@@ -205,7 +209,13 @@ def register_litellm_observer() -> None:
             model = kwargs.get("model") or ""
             api_base_top = kwargs.get("api_base")
             api_base_nested = litellm_params.get("api_base") if litellm_params else None
-            api_base_raw = api_base_top if isinstance(api_base_top, str) else api_base_nested if isinstance(api_base_nested, str) else None
+            api_base_raw = (
+                api_base_top
+                if isinstance(api_base_top, str)
+                else api_base_nested
+                if isinstance(api_base_nested, str)
+                else None
+            )
             # LiteLLM often appends a trailing "/" to the nested copy
             # (``https://api.z.ai/api/paas/v4/`` vs the operator-saved
             # ``…/v4``). Strip so the ring buffer matches what the UI
@@ -269,14 +279,22 @@ def register_litellm_observer() -> None:
     def _on_success(kwargs: dict[str, Any], response: Any, start_time: Any, end_time: Any) -> None:
         _record_from_kwargs(kwargs, response, None, start_time, end_time)
 
-    def _on_failure(kwargs: dict[str, Any], exc: BaseException, start_time: Any, end_time: Any) -> None:
+    def _on_failure(
+        kwargs: dict[str, Any], exc: BaseException, start_time: Any, end_time: Any
+    ) -> None:
         _record_from_kwargs(kwargs, None, exc, start_time, end_time)
 
     # Avoid duplicate registration on hot reload — LiteLLM allows multiple
     # but we only want one record per call.
-    if not any(getattr(cb, "__name__", "") == "_on_success" and getattr(cb, "__module__", "") == __name__ for cb in (litellm.success_callback or [])):
+    if not any(
+        getattr(cb, "__name__", "") == "_on_success" and getattr(cb, "__module__", "") == __name__
+        for cb in (litellm.success_callback or [])
+    ):
         litellm.success_callback.append(_on_success)
-    if not any(getattr(cb, "__name__", "") == "_on_failure" and getattr(cb, "__module__", "") == __name__ for cb in (litellm.failure_callback or [])):
+    if not any(
+        getattr(cb, "__name__", "") == "_on_failure" and getattr(cb, "__module__", "") == __name__
+        for cb in (litellm.failure_callback or [])
+    ):
         litellm.failure_callback.append(_on_failure)
 
     # The function-style ``success_callback`` does NOT fire for streamed
@@ -301,8 +319,10 @@ def register_litellm_observer() -> None:
             # ``response_obj`` (it carries the upstream error object). The
             # nested ``kwargs["exception"]`` is the canonical exception
             # when present.
-            exc = kwargs.get("exception") if isinstance(kwargs.get("exception"), BaseException) else (
-                response_obj if isinstance(response_obj, BaseException) else None
+            exc = (
+                kwargs.get("exception")
+                if isinstance(kwargs.get("exception"), BaseException)
+                else (response_obj if isinstance(response_obj, BaseException) else None)
             )
             _record_from_kwargs(kwargs, None, exc, start_time, end_time)
 

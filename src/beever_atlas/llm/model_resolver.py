@@ -167,15 +167,15 @@ def is_ollama_model(model_string: str) -> bool:
 # rejects assignments where the model lacks every flag listed for the agent.
 # See design D5 in ``openspec/changes/agent-llm-provider-pluggable/``.
 AGENT_CAPABILITIES: dict[str, set[str]] = {
-    "qa_agent":          {"tools"},
-    "qa_router":         {"tools"},
-    "image_describer":   {"vision"},
-    "video_analyzer":    {"vision"},
+    "qa_agent": {"tools"},
+    "qa_router": {"tools"},
+    "image_describer": {"vision"},
+    "video_analyzer": {"vision"},
     "document_digester": {"vision"},
     "audio_transcriber": {"audio"},
     # ``structured-output`` is recorded for future use — no current flag.
-    "csv_mapper":        {"structured-output"},
-    "decomposer":        {"structured-output"},
+    "csv_mapper": {"structured-output"},
+    "decomposer": {"structured-output"},
 }
 
 
@@ -277,8 +277,5 @@ def validate_model_string(model_string: str) -> str | None:
         )
     prefix = model_string.split("/", 1)[0]
     if prefix not in SUPPORTED_PROVIDERS:
-        return (
-            f"Unsupported provider {prefix!r}. Supported: "
-            f"{', '.join(SUPPORTED_PROVIDERS)}."
-        )
+        return f"Unsupported provider {prefix!r}. Supported: {', '.join(SUPPORTED_PROVIDERS)}."
     return None

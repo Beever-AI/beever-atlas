@@ -503,10 +503,9 @@ def estimate_monthly_cost(
         else:
             in_tokens = volume.get("input_tokens", 0)
             out_tokens = volume.get("output_tokens", 0)
-            cost = (
-                (in_tokens / 1_000_000) * spec.get("input_cost_per_m", 0.0)
-                + (out_tokens / 1_000_000) * spec.get("output_cost_per_m", 0.0)
-            )
+            cost = (in_tokens / 1_000_000) * spec.get("input_cost_per_m", 0.0) + (
+                out_tokens / 1_000_000
+            ) * spec.get("output_cost_per_m", 0.0)
         per_consumer[consumer] = round(cost, 4)
         total += cost
 

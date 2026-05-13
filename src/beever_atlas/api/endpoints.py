@@ -622,9 +622,7 @@ def _looks_like_model_reject(exc: BaseException) -> bool:
     return any(p in msg for p in _MODEL_REJECT_PHRASES)
 
 
-def _probe_candidates(
-    endpoint: Endpoint, desired: Literal["chat", "embedding"]
-) -> list[str]:
+def _probe_candidates(endpoint: Endpoint, desired: Literal["chat", "embedding"]) -> list[str]:
     """Return the ordered list of model ids to try for a ``desired`` kind probe.
 
     Resolution:
@@ -718,9 +716,7 @@ def pick_probe_model(
             desired = "chat"
         else:
             # role == "both" | "auto" — preset's natural side wins.
-            desired = (
-                "embedding" if endpoint.preset in _EMBEDDING_NATURAL_PRESETS else "chat"
-            )
+            desired = "embedding" if endpoint.preset in _EMBEDDING_NATURAL_PRESETS else "chat"
     else:
         desired = intent
 
@@ -797,13 +793,9 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
             # etc.) and the bare model id LiteLLM expects.
             provider = preset_to_provider(endpoint.preset)
             bare = model_id.removeprefix("models/")
-            litellm_model = (
-                model_id if "/" in model_id else f"{provider}/{bare}"
-            )
-            routed_provider, routed_model, drop_api_base = (
-                _route_embedding_for_dispatch(
-                    provider, litellm_model, endpoint.base_url
-                )
+            litellm_model = model_id if "/" in model_id else f"{provider}/{bare}"
+            routed_provider, routed_model, drop_api_base = _route_embedding_for_dispatch(
+                provider, litellm_model, endpoint.base_url
             )
             return routed_provider, routed_model, drop_api_base
         return _build_probe_model(endpoint, model_id)
@@ -827,9 +819,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
         # macOS IPv6-first / Ollama-binds-IPv4 ~75s connect stall. Scoped to
         # Ollama only — cloud providers handle IPv6 fine. Stored Endpoint is
         # not mutated; only the value forwarded to LiteLLM.
-        extra_kwargs["api_base"] = _rewrite_ollama_localhost(
-            endpoint.preset, endpoint.base_url
-        )
+        extra_kwargs["api_base"] = _rewrite_ollama_localhost(endpoint.preset, endpoint.base_url)
         # Opt-in SSRF guard — refuse private/link-local/metadata targets before
         # we attach the credential and probe. Off by default (local presets
         # legitimately point at localhost); see ``llm_endpoint_ssrf_guard``.
@@ -848,9 +838,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
     # Build the ordered candidate list — preset-preferred first, then the
     # rest of ``endpoint.models``. The first candidate is what we already
     # routed above; only re-resolve provider/full_model on retry.
-    desired_kind: Literal["chat", "embedding"] = (
-        "embedding" if use_embedding_path else "chat"
-    )
+    desired_kind: Literal["chat", "embedding"] = "embedding" if use_embedding_path else "chat"
     candidates = _probe_candidates(endpoint, desired_kind)
     if probed_model in candidates:
         # Make sure ``probed_model`` is at the head so the first attempt
@@ -872,9 +860,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 drop_base_url,
             )
         else:
-            attempt_provider, attempt_model, attempt_drop_base = _resolve_probe(
-                candidate
-            )
+            attempt_provider, attempt_model, attempt_drop_base = _resolve_probe(candidate)
             # Re-honour drop_base_url on retry (native Gemini path).
             if attempt_drop_base:
                 extra_kwargs.pop("api_base", None)
@@ -925,9 +911,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
     # All attempts failed (or the first failure was not a model-rejection).
     assert last_exc is not None
     api_base = extra_kwargs.get("api_base")
-    friendly = _friendly_probe_error(
-        last_exc, api_base if isinstance(api_base, str) else None
-    )
+    friendly = _friendly_probe_error(last_exc, api_base if isinstance(api_base, str) else None)
     if friendly is not None:
         error_msg = friendly
     else:

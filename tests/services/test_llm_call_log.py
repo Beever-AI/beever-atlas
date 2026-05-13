@@ -186,7 +186,9 @@ async def test_dispatch_completion_records_a_call(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
-async def test_dispatch_assignment_threads_consumer_into_log(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_assignment_threads_consumer_into_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``dispatch_assignment`` must forward the consumer name so the debug
     UI can show "qa_agent" instead of just the bare model."""
     import litellm  # type: ignore[import-untyped]

@@ -114,7 +114,9 @@ def app_and_client(monkeypatch: pytest.MonkeyPatch) -> Any:
         _tmp.cleanup()
 
 
-def _seed_endpoint(client: TestClient, *, preset: str, models: list[str], name: str | None = None) -> dict:
+def _seed_endpoint(
+    client: TestClient, *, preset: str, models: list[str], name: str | None = None
+) -> dict:
     """Helper — POSTs an Endpoint and returns the response body."""
     resp = client.post(
         "/api/settings/endpoints",
@@ -182,9 +184,7 @@ def test_put_rejects_unknown_endpoint(app_and_client: Any) -> None:
 def test_put_rejects_incompatible_qa_agent_assignment(app_and_client: Any) -> None:
     """deepseek-reasoner lacks tools → 422 with suggestions."""
     _app, client, _stores = app_and_client
-    ds = _seed_endpoint(
-        client, preset="deepseek", models=["deepseek-reasoner", "deepseek-chat"]
-    )
+    ds = _seed_endpoint(client, preset="deepseek", models=["deepseek-reasoner", "deepseek-chat"])
     # Also seed an OpenAI endpoint so suggestions can find a compatible alternative.
     _seed_endpoint(client, preset="openai", models=["gpt-4o-mini"])
 

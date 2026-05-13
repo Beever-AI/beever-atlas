@@ -286,7 +286,9 @@ async def _aembedding_call(
     from beever_atlas.services.llm_dispatch import dispatch_embedding
 
     eff_provider = provider or model.split("/", 1)[0]
-    api_base = extra_kwargs.get("api_base") if isinstance(extra_kwargs.get("api_base"), str) else None
+    api_base = (
+        extra_kwargs.get("api_base") if isinstance(extra_kwargs.get("api_base"), str) else None
+    )
     routed_provider, routed_model, drop_api_base = _route_embedding_for_dispatch(
         eff_provider, model, api_base
     )

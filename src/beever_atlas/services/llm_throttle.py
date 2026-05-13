@@ -57,6 +57,7 @@ def _make_bucket_key(provider: str, endpoint_id: str | None) -> str:
         return f"{base}:{endpoint_id}"
     return base
 
+
 # Provider RPM/TPM defaults — public free-tier or paid-tier-1 limits as
 # documented by each vendor. Conservative on purpose; operators with
 # higher quota override per-provider via env. Sources:
