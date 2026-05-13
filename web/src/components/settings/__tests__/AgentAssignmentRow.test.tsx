@@ -248,19 +248,27 @@ describe("AgentAssignmentRow", () => {
     expect(labels.some((l) => l.includes("Chat ok"))).toBe(true);
   });
 
-  it("shows the suggested-fix button when a suggestion is provided for an incompatible row", async () => {
-    const onUpsert = vi.fn(async () => makeAssignment());
+  // PR-μ: removed the "Use {suggested}" button + red banner. With
+  // saves now sent as ``force: true`` (PR-λ.6), the backend doesn't
+  // return ``suggested`` anymore, and gating operators by a
+  // substring-based capability classifier created more false-positive
+  // lockouts than it prevented bad picks. Truth is now the runtime
+  // "Last call" indicator (PR-λ.2).
+  it("PR-μ: model dropdown shows every chat model without disabling on capability", () => {
     render(
       <AgentAssignmentRow
-        consumer="image_describer"
-        assignment={makeAssignment({ consumer: "image_describer", model: "o4-mini" })}
+        consumer="qa_agent"
+        assignment={makeAssignment({ endpoint_id: "ep-1", model: "gpt-4o-mini" })}
         endpoints={[ep]}
-        required={["vision"]}
-        suggested={["gpt-4o"]}
-        onUpsert={onUpsert}
+        required={["tools"]}
+        onUpsert={async () => makeAssignment()}
       />,
     );
-    fireEvent.click(screen.getByText("Use gpt-4o"));
-    await waitFor(() => expect(onUpsert).toHaveBeenCalledWith("image_describer", { endpoint_id: "ep-1", model: "gpt-4o" }));
+    const modelSelect = screen.getByLabelText("qa_agent model") as HTMLSelectElement;
+    const options = Array.from(modelSelect.options);
+    // No "(incompatible)" suffix anywhere.
+    expect(options.some((o) => /incompatible/i.test(o.text))).toBe(false);
+    // No disabled options (all picks land at runtime, not pre-save).
+    expect(options.some((o) => o.disabled)).toBe(false);
   });
 });

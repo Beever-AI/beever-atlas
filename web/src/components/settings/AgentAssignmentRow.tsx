@@ -121,7 +121,10 @@ export function AgentAssignmentRow({
   assignment: a,
   endpoints,
   required,
-  suggested,
+  // PR-μ: ``suggested`` is part of the prop interface (callers still pass
+  // it from the 422 catch-handler in case the API ever returns one), but
+  // the component no longer renders the red-banner+suggested-fix surface.
+  // Destructuring it would trip ``--noUnusedParameters``; ignore it here.
   lastCall,
   onUpsert,
   onToast,
@@ -238,7 +241,9 @@ export function AgentAssignmentRow({
     });
   }
 
-  const suggestedFix = suggested && suggested.length > 0 ? suggested[0] : null;
+  // PR-μ: ``suggested`` from a 422 response no longer reaches us (saves
+  // are force=true now); the suggested-fix button was only ever shown
+  // alongside the removed red banner.
 
   return (
     <div className="group hover:bg-muted/30 transition-colors">
@@ -318,14 +323,18 @@ export function AgentAssignmentRow({
                   {a.model}
                 </option>
               )}
-              {chatModels.map((m) => {
-                const ok = isCompatible(provPrefix, m, required);
-                return (
-                  <option key={m} value={m} disabled={!ok}>
-                    {m}{ok ? "" : " (incompatible)"}
-                  </option>
-                );
-              })}
+              {chatModels.map((m) => (
+                // PR-μ: capability info is INFORMATIONAL (see the badge
+                // tooltips on the row), not a gate. Atlas's classifier is
+                // substring-based and structurally cannot enumerate every
+                // model in the world — disabling options creates more
+                // false-positive lockouts than it prevents wrong choices.
+                // The runtime "Last call" indicator (PR-λ.2) is now the
+                // authoritative source of "does this combo actually work".
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
             </select>
           )}
 
@@ -382,21 +391,11 @@ export function AgentAssignmentRow({
         </div>
       </div>
 
-      {/* Incompatible-model banner + suggested fix */}
-      {a && currentEp && !compat && (
-        <div className="mx-3 mb-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-center gap-2">
-          <span>Current model can't satisfy this agent's requirements.</span>
-          {suggestedFix && (
-            <button
-              type="button"
-              onClick={() => void save({ endpoint_id: a.endpoint_id, model: suggestedFix })}
-              className="ml-auto rounded border border-destructive/40 px-2 py-0.5 font-medium hover:bg-destructive/15"
-            >
-              Use {suggestedFix}
-            </button>
-          )}
-        </div>
-      )}
+      {/* PR-μ: red "incompatible" banner removed. The substring-based
+          classifier produces too many false positives (the operator can
+          set ANY model name; we can't enumerate the universe). Truth
+          source is now the "Last call" indicator above — a real failed
+          call shows red there with a credential-safe error string. */}
 
       {/* Advanced params drawer */}
       {expanded && a && currentEp && (
