@@ -170,7 +170,7 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
     health = await _run_probe(effective_settings)
 
     if not health.ok:
-        # Probe failure mode handling — PR-ζ.5:
+        # Probe failure mode handling — PR-η:
         #
         # The boot guard's job is to prevent **data corruption** (a wrong-dim
         # model silently overwriting indexed vectors). A transport / config
@@ -179,28 +179,22 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
         # being mixed. Crashing the whole app on a config error is hostile:
         # the operator can't reach the UI to fix the model they typed wrong.
         #
-        # New policy:
-        #   * Probe transport / config failure → persist + log + CONTINUE.
-        #     UI's ``embedding-migration/status`` + the front-end "Re-embed
-        #     required" banner surface the failure so the operator can
-        #     pick a working model in Settings and trigger a real probe
-        #     via the Test Connection button.
-        #   * Probe succeeds with wrong dimension → still raise (real
-        #     data-corruption risk — see the next branch).
-        #   * ``EMBEDDING_DIM_GUARD=false`` continues to bypass *everything*
-        #     including the wrong-dim case (escape hatch for advanced users).
-        await _safe_set_meta(
-            stores,
-            provider=effective_settings.embedding_provider,
-            model=effective_settings.embedding_model,
-            dimensions=effective_settings.embedding_dimensions,
-            ok=False,
-            error=health.error,
-        )
+        # We deliberately do NOT touch ``embedding_meta`` here. The meta doc
+        # is the source of truth for **what's actually in Weaviate**. Writing
+        # the configured-but-unvalidated model name into it corrupts that
+        # source — a future ``/state`` lookup would see "persisted_dim ==
+        # desired_dim" and report ``migration_required=False`` even though
+        # no migration has run and the stored vectors are at a different dim.
+        # That's exactly the bug PR-η is fixing.
+        #
+        # The probe error is already returned in ``health.error`` and logged
+        # here; the UI surfaces it via ``/embedding-migration/state`` which
+        # cross-checks ``embedding_meta`` against actual Weaviate vector dim.
         logger.error(
             "embedding_health: probe failed — app will start in degraded mode "
             "(no embeddings until config is fixed in Settings → Embedding). "
-            "Underlying error: %s",
+            "embedding_meta intentionally not touched (preserving source of "
+            "truth for stored vector dim). Underlying error: %s",
             health.error,
         )
         return health

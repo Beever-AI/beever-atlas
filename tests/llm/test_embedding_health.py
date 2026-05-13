@@ -295,10 +295,12 @@ async def test_probe_failure_is_soft_fail_app_still_starts(monkeypatch):
     # API + UI can surface it.
     assert h.ok is False
     assert h.error == "auth failed"
-    # The failure WAS persisted to ``embedding_meta`` for diagnosis + UI.
-    assert len(set_meta_calls) == 1
-    assert set_meta_calls[0]["ok"] is False
-    assert set_meta_calls[0]["error"] == "auth failed"
+    # PR-η: the failure must NOT touch ``embedding_meta`` — that doc is the
+    # source of truth for what's ACTUALLY stored in Weaviate. Writing the
+    # configured-but-unvalidated model name into it would corrupt the
+    # source: a later ``/state`` lookup would see "persisted == desired"
+    # and report ``migration_required=False`` even though no migration ran.
+    assert set_meta_calls == []
 
 
 @pytest.mark.asyncio

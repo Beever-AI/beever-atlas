@@ -180,6 +180,31 @@ async def reembed_state() -> ReembedStateResponse:
             exc_info=True,
         )
 
+    # PR-η: authoritative dim check against actual Weaviate vectors. A failed
+    # migration (or a wishful boot probe) can leave ``embedding_meta`` pointing
+    # at a model that was never actually re-embedded. The on-disk vectors are
+    # the ground truth — if their dim disagrees with meta, meta is stale and
+    # we override ``persisted_dimensions`` so the UI sees the real mixed-dim
+    # state and surfaces "Re-embed required".
+    actual_dim: int | None = None
+    if (fact_count or 0) > 0:
+        try:
+            actual_dim = await stores.weaviate.sample_fact_vector_dim()
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "embedding_migration: sample_fact_vector_dim failed (non-fatal)",
+                exc_info=True,
+            )
+    if actual_dim is not None and persisted_dimensions != actual_dim:
+        logger.warning(
+            "embedding_migration: embedding_meta dim=%s disagrees with actual "
+            "Weaviate vector dim=%s — using actual dim as source of truth "
+            "(meta was likely corrupted by a failed migration or boot probe)",
+            persisted_dimensions,
+            actual_dim,
+        )
+        persisted_dimensions = actual_dim
+
     migration_required = bool(
         persisted_dimensions is not None
         and desired_dimensions is not None

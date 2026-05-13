@@ -550,6 +550,41 @@ class WeaviateStore:
 
         return await asyncio.to_thread(_list)
 
+    async def sample_fact_vector_dim(self) -> int | None:
+        """Return the dimension of one stored ``MemoryFact`` vector, or None.
+
+        Authoritative source of truth for "what's actually in the index" —
+        independent of ``embedding_meta`` which can drift if a migration
+        fails mid-flight or a boot probe writes its configured intent
+        without actually re-embedding data. Used by ``/state`` to detect
+        a stale ``embedding_meta`` and force ``migration_required=True``
+        when the configured dim doesn't match the on-disk vectors.
+
+        Returns ``None`` when the collection has no objects (fresh install)
+        or when Weaviate is unreachable — the caller should fall back to
+        ``embedding_meta`` in either case.
+        """
+
+        def _sample() -> int | None:
+            collection = self._collection()
+            res = collection.query.fetch_objects(limit=1, include_vector=True)
+            if not res.objects:
+                return None
+            v = res.objects[0].vector
+            # Weaviate v4 returns ``vector`` as a dict when the collection has
+            # named vector configs, else a flat list. Handle both.
+            if isinstance(v, dict):
+                for _name, vec in v.items():
+                    if vec:
+                        return len(vec)
+                return None
+            return len(v) if v else None
+
+        try:
+            return await asyncio.to_thread(_sample)
+        except Exception:  # noqa: BLE001 — never crash callers on a probe miss
+            return None
+
     async def count_facts(self, channel_id: str | None = None) -> int:
         """Return total count of facts, optionally scoped to a channel."""
 
