@@ -121,9 +121,24 @@ def _classify_google_ai(model_id: str) -> ModelKind | None:
         return "embedding"
     if model_id.startswith("imagen-"):
         return "image_gen"
+    if model_id.startswith("veo-"):
+        return "other"
     if model_id == "aqa" or model_id.startswith("learnlm-"):
         return "other"
     if model_id.startswith("gemini-"):
+        # Carve specialised Gemini variants out of the chat bucket — the
+        # ``/v1beta/openai/`` shim returns ``INVALID_ARGUMENT: 'This model
+        # only supports Interactions API.'`` for these, so probing one of
+        # them as a "chat" model breaks Test even though the model id
+        # superficially looks like a chat model.
+        if (
+            "-live" in model_id
+            or "-image-generation" in model_id
+            or "-tts" in model_id
+            or "-native-audio" in model_id
+            or "-realtime" in model_id
+        ):
+            return "other"
         return "chat"
     return None
 

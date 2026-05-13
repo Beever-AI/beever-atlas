@@ -6,7 +6,7 @@ import os
 import tempfile
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -512,7 +512,14 @@ def test_test_endpoint_jina_uses_embedding_path(
     app_and_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Jina (preset=jina_ai, embedding-only) probes via ``litellm.aembedding``,
-    NOT ``acompletion`` — the chat path 400s with ``LiteLLMUnknownProvider``."""
+    NOT ``acompletion`` — the chat path 400s with ``LiteLLMUnknownProvider``.
+
+    Routing nuance (PR-δ): when ``base_url`` ends in ``/v1`` (the default for
+    the ``jina_ai`` preset), the probe goes through LiteLLM's ``openai``
+    provider against Jina's OpenAI-shaped ``/v1/embeddings`` shim — that
+    sidesteps quirks in LiteLLM's native ``jina_ai`` handler (URL builder /
+    pinned host) which produced a misleading ``Connection refused`` in
+    practice."""
     _app, client, stores = app_and_client
     endpoint_id = _seed_endpoint(
         stores,
@@ -546,17 +553,51 @@ def test_test_endpoint_jina_uses_embedding_path(
 
     # The completion path must NOT have been touched — Jina has no chat route.
     assert comp_calls == []
-    # The embedding probe ran exactly once with the canonical LiteLLM model id.
-    # PR15: dispatch passes ``custom_llm_provider`` explicitly so the bare
-    # model id is forwarded (any matching prefix gets stripped to avoid
-    # redundancy + the silent-mis-route trap).
+    # PR-δ: ``base_url`` ending in ``/v1`` triggers OpenAI-compat routing —
+    # the bare model id reaches LiteLLM's openai SDK with the shim ``api_base``.
     assert len(embed_calls) == 1
     kw = embed_calls[0]
     assert kw["model"] == "jina-embeddings-v4"
-    assert kw["custom_llm_provider"] == "jina_ai"
+    assert kw["custom_llm_provider"] == "openai"
     assert kw["api_base"] == "https://api.jina.ai/v1"
     assert kw["api_key"] == "jina-secret-key-AAAA"
     assert kw["input"] == ["test"]
+
+
+def test_test_endpoint_jina_native_base_url_still_uses_jina_provider(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If an operator points a Jina endpoint at a non-OpenAI-compat URL
+    (no ``/v1`` suffix — e.g. a private gateway), fall back to LiteLLM's
+    native ``jina_ai`` provider. We only re-route when the shim path
+    is recognisable."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="jina_ai",
+        base_url="https://gateway.internal/jina",
+        models=["jina-embeddings-v4"],
+        api_key="jina-secret-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    embed_calls: list[dict[str, Any]] = []
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        embed_calls.append(kwargs)
+        return _fake_litellm_embedding_response()
+
+    monkeypatch.setattr(litellm, "aembedding", fake_aembedding)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    assert len(embed_calls) == 1
+    kw = embed_calls[0]
+    assert kw["custom_llm_provider"] == "jina_ai"
+    assert kw["api_base"] == "https://gateway.internal/jina"
 
 
 def test_test_endpoint_google_ai_openai_compat_uses_openai_provider(
@@ -989,6 +1030,126 @@ def test_test_endpoint_picks_chat_model_for_chat_role(
     body = resp.json()
     assert body["ok"] is True
     assert captured["model"] == "gpt-4o-mini"
+    assert body["probed_model"] == "gpt-4o-mini"
+    assert body["probed_kind"] == "chat"
+
+
+def test_test_endpoint_prefers_known_good_model_over_alphabetical_first(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-δ: Test probe walks the preset-preferred model list before falling
+    back to ``endpoint.models`` order. Prevents ``models[0]`` landing on an
+    experimental Gemini variant that the OpenAI shim 400s on."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="google_ai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        # An alphabetical-first id that's NOT in the preferred list, plus a
+        # preferred one that should beat it.
+        models=["gemini-1.0-pro", "gemini-2.5-flash"],
+        role="chat",
+        model_kinds={
+            "gemini-1.0-pro": "chat",
+            "gemini-2.5-flash": "chat",
+        },
+        api_key="AIza-test-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    # Preferred wins over models[0].
+    assert captured["model"] == "gemini-2.5-flash"
+    assert body["probed_model"] == "gemini-2.5-flash"
+
+
+def test_test_endpoint_retries_next_candidate_on_model_reject(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-δ: when the first probe fails with a 4xx pointing at the model id
+    (``INVALID_ARGUMENT`` / ``model not found``), Test retries against the
+    next preferred candidate. Operators with 40+ chat-tagged Gemini models
+    don't have to manually shuffle ``endpoint.models`` to get a green Test."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="google_ai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        # Preferred order puts gemini-2.5-flash first; the legacy id below
+        # is the live/realtime variant the shim rejects.
+        models=["models/gemini-2.5-flash-live-preview", "models/gemini-2.5-flash"],
+        role="chat",
+        model_kinds={
+            # ``model_kinds`` is the canonical map — only mark the
+            # working one as chat. The live model is correctly absent
+            # so the probe walks the preferred list directly.
+            "models/gemini-2.5-flash": "chat",
+        },
+        api_key="AIza-test-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    call_models: list[str] = []
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        call_models.append(kwargs["model"])
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    # Picker correctly skipped the live variant and reached the stable one.
+    assert call_models == ["gemini-2.5-flash"]
+    assert body["probed_model"] == "models/gemini-2.5-flash"
+
+
+def test_test_endpoint_failure_includes_probed_model_in_error(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-δ: a failing Test surfaces ``[probed <model>]`` in the error string
+    and exposes ``probed_model`` in the response, so operators can tell which
+    specific model to move to advanced."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint_with_role(
+        stores,
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        models=["gpt-4o-mini"],
+        role="chat",
+        model_kinds={"gpt-4o-mini": "chat"},
+        api_key="sk-test-key-AAAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    async def fake_acompletion(**_kwargs: Any) -> MagicMock:
+        # Raise a non-model-reject failure so we don't trigger the retry
+        # path; we just want to verify the error envelope shape.
+        raise RuntimeError("upstream is angry")
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert "[probed gpt-4o-mini]" in body["error"]
     assert body["probed_model"] == "gpt-4o-mini"
     assert body["probed_kind"] == "chat"
 

@@ -39,6 +39,17 @@ CASES: list[tuple[str, str, ModelKind]] = [
     ("google_ai", "imagen-3.0-generate-001", "image_gen"),
     ("google_ai", "aqa", "other"),
     ("google_ai", "learnlm-1.5-pro-experimental", "other"),
+    # Specialised Gemini variants — must NOT land in the chat bucket because
+    # the ``/v1beta/openai/`` shim rejects them with
+    # ``INVALID_ARGUMENT: 'This model only supports Interactions API.'``.
+    ("google_ai", "gemini-2.0-flash-live-001", "other"),
+    ("google_ai", "gemini-2.5-flash-live-preview", "other"),
+    ("google_ai", "gemini-2.5-flash-image-generation", "other"),
+    ("google_ai", "gemini-2.5-flash-tts", "other"),
+    ("google_ai", "gemini-2.5-flash-tts-preview", "other"),
+    ("google_ai", "gemini-2.0-flash-native-audio-thinking-dialog", "other"),
+    ("google_ai", "gemini-2.5-flash-realtime-preview", "other"),
+    ("google_ai", "veo-2.0-generate-001", "other"),
     # ── Anthropic ────────────────────────────────────────────────────────
     ("anthropic", "claude-haiku-4-5", "chat"),
     ("anthropic", "claude-sonnet-4-6", "chat"),

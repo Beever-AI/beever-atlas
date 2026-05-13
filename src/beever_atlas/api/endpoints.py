@@ -531,6 +531,135 @@ def _build_probe_model(endpoint: Endpoint, model_id: str) -> tuple[str, str, boo
 _EMBEDDING_NATURAL_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage"})
 
 
+# Preferred probe model order, per preset, per kind. The Test probe walks
+# these first — falling back to the first matching ``endpoint.models`` entry
+# only when none of the preferred ids are configured on the Endpoint. This
+# guards against ``endpoint.models[0]`` landing on a model the provider's
+# OpenAI-compat shim rejects (e.g. ``models/gemini-2.5-flash-image-preview``
+# returning ``INVALID_ARGUMENT: 'This model only supports Interactions API'``).
+# Order matters: cheaper / faster / more-stable variants come first.
+_PROBE_PREFERRED: dict[str, dict[str, tuple[str, ...]]] = {
+    "openai": {
+        "chat": ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"),
+        "embedding": ("text-embedding-3-small", "text-embedding-3-large"),
+    },
+    "google_ai": {
+        "chat": (
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-2.5-pro",
+            "gemini-1.5-pro",
+        ),
+        "embedding": ("text-embedding-004", "gemini-embedding-001"),
+    },
+    "anthropic": {
+        "chat": ("claude-haiku-4-5", "claude-3-5-haiku-latest", "claude-3-haiku-20240307"),
+    },
+    "mistral": {
+        "chat": ("mistral-small-latest", "mistral-large-latest"),
+        "embedding": ("mistral-embed",),
+    },
+    "groq": {
+        "chat": ("llama-3.1-8b-instant", "llama-3.3-70b-versatile"),
+    },
+    "deepseek": {"chat": ("deepseek-chat",)},
+    "xai": {"chat": ("grok-2-mini", "grok-2")},
+    "cohere": {"embedding": ("embed-english-v3.0", "embed-multilingual-v3.0")},
+    "voyage": {"embedding": ("voyage-3", "voyage-3-lite", "voyage-large-2")},
+    "jina_ai": {"embedding": ("jina-embeddings-v3", "jina-embeddings-v2-base-en")},
+}
+
+
+# Substrings in upstream 4xx error messages that indicate the *picked model
+# id* is the problem — not the credential, not the endpoint. When the probe
+# trips one of these we retry against the next preferred candidate before
+# returning a failure, so operators with 40+ chat-tagged Gemini models don't
+# have to manually shuffle ``endpoint.models`` to get a green Test.
+_MODEL_REJECT_PHRASES: tuple[str, ...] = (
+    "invalid_argument",
+    "only supports interactions api",
+    "model not found",
+    "unsupported model",
+    "model_not_found",
+    "no such model",
+    "is not supported",
+    "does not support",
+    "incompatible model",
+)
+
+
+def _looks_like_model_reject(exc: BaseException) -> bool:
+    """Return True iff the exception message points at the picked model id."""
+    msg = str(exc).lower()
+    return any(p in msg for p in _MODEL_REJECT_PHRASES)
+
+
+def _probe_candidates(
+    endpoint: Endpoint, desired: Literal["chat", "embedding"]
+) -> list[str]:
+    """Return the ordered list of model ids to try for a ``desired`` kind probe.
+
+    Resolution:
+      1. Preset-preferred ids (``_PROBE_PREFERRED``) that ARE in
+         ``endpoint.models`` AND match the desired kind (per
+         :func:`_kind_matches`).
+      2. Remaining ``endpoint.models`` entries that match the desired kind.
+      3. Pre-α fallback: ``endpoint.models[0]`` so Test still tries SOMETHING
+         on a freshly-imported endpoint that hasn't been re-Discovered.
+
+    De-duplicated while preserving order.
+    """
+    preferred = _PROBE_PREFERRED.get(endpoint.preset, {}).get(desired, ())
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    has_kinds = bool(endpoint.model_kinds)
+
+    def _kind_matches(mid: str) -> bool:
+        """Decide whether ``mid`` is eligible for a ``desired``-kind probe.
+
+        * If ``model_kinds`` is non-empty (post-α doc): trust the persisted
+          map — only accept ids whose kind == desired. Missing-from-map ids
+          were classifier-dropped (reranker/VLM/image-gen/etc.) and would
+          400 the probe.
+        * If ``model_kinds`` is empty (pre-α doc): trust the live classifier.
+          Accept when the classifier returns ``desired``; tolerate ``None``
+          (unknown) only as a last resort via the fallback below.
+        """
+        if has_kinds:
+            return endpoint.model_kinds.get(mid) == desired
+        inferred = classify_model(endpoint.preset, mid)
+        return inferred == desired
+
+    def _accept(mid: str) -> None:
+        if mid in seen:
+            return
+        if not _kind_matches(mid):
+            return
+        seen.add(mid)
+        ordered.append(mid)
+
+    # Preset-preferred first — match against bare ids AND ``models/``-prefixed
+    # ids (Gemini discovery returns ``models/gemini-2.5-flash`` shape).
+    for pref in preferred:
+        for mid in endpoint.models:
+            if mid == pref or mid == f"models/{pref}":
+                _accept(mid)
+                break
+
+    # Then the rest in ``endpoint.models`` order.
+    for mid in endpoint.models:
+        _accept(mid)
+
+    # Pre-α fallback — at least try ``models[0]`` so we don't 422 on a
+    # freshly-imported endpoint that has not been re-Discovered yet.
+    if not ordered and endpoint.models:
+        ordered.append(endpoint.models[0])
+
+    return ordered
+
+
 def pick_probe_model(
     endpoint: Endpoint,
     intent: Literal["auto", "chat", "embedding"] = "auto",
@@ -538,8 +667,8 @@ def pick_probe_model(
     """Pick the model + kind to probe for Test Connection.
 
     Resolution:
-      * If ``intent`` is "chat" or "embedding" → first model in
-        ``endpoint.models`` whose ``model_kinds`` value matches.
+      * If ``intent`` is "chat" or "embedding" → first preferred-or-matching
+        entry in ``endpoint.models`` (see :func:`_probe_candidates`).
       * If "auto" → resolve from ``endpoint.role``:
           - role="embedding"           → kind="embedding"
           - role="chat"                → kind="chat"
@@ -568,24 +697,25 @@ def pick_probe_model(
     else:
         desired = intent
 
-    # First model in ``endpoint.models`` whose ``model_kinds`` value matches.
-    for mid in endpoint.models:
-        kind = endpoint.model_kinds.get(mid)
-        if kind == desired:
-            return mid, desired
+    candidates = _probe_candidates(endpoint, desired)
+    if candidates:
+        # First candidate — preset-preferred ids come first when configured.
+        head = candidates[0]
+        # When the head's classifier kind disagrees with ``desired`` and the
+        # endpoint's stored ``model_kinds`` is empty (pre-α doc), trust the
+        # classifier — it's a better guide than ``desired`` for legacy docs.
+        if not endpoint.model_kinds:
+            inferred = classify_model(endpoint.preset, head)
+            if inferred in ("chat", "embedding"):
+                return head, inferred
+        return head, desired
 
-    # Fallback — pre-α document without model_kinds, or no model of the
-    # desired kind. Probe ``models[0]`` with the classifier's best guess
-    # so we don't 422 the operator; classifier may return a non-chat/
-    # embedding kind (e.g. reranker) — coerce to ``desired`` so the caller
-    # still picks a probe path.
+    # Defensive fallback (should not reach — _probe_candidates already
+    # appends models[0] when nothing else matches).
     fallback_id = endpoint.models[0]
     inferred = classify_model(endpoint.preset, fallback_id)
     if inferred in ("chat", "embedding"):
         return fallback_id, inferred
-    # Classifier dropped this id (reranker / image_gen / …). Trust the
-    # caller's intent — old endpoints with role=auto + a single non-chat /
-    # non-embedding model probe via ``desired``'s path.
     return fallback_id, desired
 
 
@@ -622,19 +752,35 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
     # those must route through the embedding probe regardless.
     is_embedding_only = endpoint.preset in _EMBEDDING_ONLY_PRESETS
     use_embedding_path = is_embedding_only or probed_kind == "embedding"
-    if use_embedding_path:
-        # Embedding probe — use the legacy provider prefix + ``preset/<model>``
-        # shape that LiteLLM's ``aembedding`` accepts. ``route_for_endpoint``
-        # is chat-only.
-        provider = preset_to_provider(endpoint.preset)
-        full_model = (
-            probed_model
-            if "/" in probed_model
-            else f"{provider}/{probed_model.removeprefix('models/')}"
-        )
-        drop_base_url = False
-    else:
-        provider, full_model, drop_base_url = _build_probe_model(endpoint, probed_model)
+
+    def _resolve_probe(model_id: str) -> tuple[str, str, bool]:
+        """Pick LiteLLM ``(provider, full_model, drop_base_url)`` for ``model_id``."""
+        if use_embedding_path:
+            # Jina / Cohere expose an OpenAI-shaped ``/v1/embeddings`` shim
+            # alongside their native API. Routing the probe through LiteLLM's
+            # ``openai`` provider sidesteps native-handler quirks (e.g. URL
+            # double-prefixing, ignored ``api_base``) and uses the most-tested
+            # SDK path. We only switch when ``base_url`` actually looks like
+            # the OpenAI-compat shim (ends in ``/v1``); native ``/api``
+            # endpoints keep their native provider.
+            shim_compat = (
+                endpoint.preset in {"jina_ai", "cohere"}
+                and (endpoint.base_url or "").rstrip("/").endswith("/v1")
+            )
+            if shim_compat:
+                provider = "openai"
+                bare = model_id.removeprefix("models/")
+                return provider, bare, False
+            provider = preset_to_provider(endpoint.preset)
+            full_model = (
+                model_id
+                if "/" in model_id
+                else f"{provider}/{model_id.removeprefix('models/')}"
+            )
+            return provider, full_model, False
+        return _build_probe_model(endpoint, model_id)
+
+    provider, full_model, drop_base_url = _resolve_probe(probed_model)
 
     # Pull credentials from runtime cache (populated at boot or via PUT hot-reload).
     credential = get_runtime_credential(endpoint_id)
@@ -671,56 +817,108 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 await _store().record_test_result(endpoint_id, ok=False, error=msg)
                 return TestConnectionResponse(ok=False, error=msg)
 
-    started = time.monotonic()
-    try:
-        if use_embedding_path:
-            # Embedding probe — route through ``litellm.aembedding``. Required
-            # for embedding-only providers (Jina, Voyage, Cohere) AND for
-            # chat-capable providers whose role + model_kinds say "probe an
-            # embedding model" (e.g. OpenAI endpoint with role="embedding").
-            await dispatch_embedding(
-                provider=provider,
-                model=full_model,
-                input=["test"],
-                timeout=_PROBE_TIMEOUT_SECONDS,
-                **extra_kwargs,
-            )
-        else:
-            await dispatch_completion(
-                provider=provider,
-                model=full_model,
-                messages=[{"role": "user", "content": "hi"}],
-                max_tokens=1,
-                timeout=_PROBE_TIMEOUT_SECONDS,
-                **extra_kwargs,
-            )
-    except Exception as exc:  # noqa: BLE001
-        # Friendly path first — turn known transport failures (timeout,
-        # connection refused) into operator-readable messages. These strings
-        # are crafted to avoid any ``_CREDENTIAL_MARKERS`` substring so the
-        # redactor below leaves them intact.
-        api_base = extra_kwargs.get("api_base")
-        friendly = _friendly_probe_error(exc, api_base if isinstance(api_base, str) else None)
-        if friendly is not None:
-            error_msg = friendly
-        else:
-            # Sanitise the error before returning it — some LiteLLM SDK
-            # exceptions embed the full request kwargs (including ``api_key``)
-            # in their repr. When the message looks like it could carry
-            # credential fragments, drop the body and return only the
-            # exception class + a generic note.
-            raw = _redact_credential_fragments(str(exc)[:200])
-            error_msg = f"{type(exc).__name__}: {raw}"
-        await _store().record_test_result(endpoint_id, ok=False, error=error_msg)
-        return TestConnectionResponse(ok=False, error=error_msg)
+    # Build the ordered candidate list — preset-preferred first, then the
+    # rest of ``endpoint.models``. The first candidate is what we already
+    # routed above; only re-resolve provider/full_model on retry.
+    desired_kind: Literal["chat", "embedding"] = (
+        "embedding" if use_embedding_path else "chat"
+    )
+    candidates = _probe_candidates(endpoint, desired_kind)
+    if probed_model in candidates:
+        # Make sure ``probed_model`` is at the head so the first attempt
+        # matches what we resolved above.
+        candidates = [probed_model] + [c for c in candidates if c != probed_model]
+    elif not candidates:
+        candidates = [probed_model]
+    # Bound retries — at most 3 attempts including the first.
+    candidates = candidates[:3]
 
-    latency_ms = int((time.monotonic() - started) * 1000)
-    await _store().record_test_result(endpoint_id, ok=True)
+    started = time.monotonic()
+    last_exc: BaseException | None = None
+    last_attempt_model = probed_model
+    for attempt_idx, candidate in enumerate(candidates):
+        if attempt_idx == 0:
+            attempt_provider, attempt_model, attempt_drop_base = (
+                provider,
+                full_model,
+                drop_base_url,
+            )
+        else:
+            attempt_provider, attempt_model, attempt_drop_base = _resolve_probe(
+                candidate
+            )
+            # Re-honour drop_base_url on retry (native Gemini path).
+            if attempt_drop_base:
+                extra_kwargs.pop("api_base", None)
+            elif endpoint.base_url:
+                extra_kwargs["api_base"] = _rewrite_ollama_localhost(
+                    endpoint.preset, endpoint.base_url
+                )
+        last_attempt_model = candidate
+        try:
+            if use_embedding_path:
+                # Embedding probe — route through ``litellm.aembedding``.
+                # Required for embedding-only providers (Jina, Voyage, Cohere)
+                # AND for chat-capable providers whose role + model_kinds say
+                # "probe an embedding model".
+                await dispatch_embedding(
+                    provider=attempt_provider,
+                    model=attempt_model,
+                    input=["test"],
+                    timeout=_PROBE_TIMEOUT_SECONDS,
+                    **extra_kwargs,
+                )
+            else:
+                await dispatch_completion(
+                    provider=attempt_provider,
+                    model=attempt_model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=1,
+                    timeout=_PROBE_TIMEOUT_SECONDS,
+                    **extra_kwargs,
+                )
+            # Success — the candidate that worked is our probed model.
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await _store().record_test_result(endpoint_id, ok=True)
+            return TestConnectionResponse(
+                ok=True,
+                latency_ms=latency_ms,
+                probed_model=candidate,
+                probed_kind=desired_kind,
+            )
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            # Only retry on model-rejection signals — credential / network
+            # failures aren't going to be fixed by picking a different model.
+            if _looks_like_model_reject(exc) and attempt_idx + 1 < len(candidates):
+                continue
+            break
+
+    # All attempts failed (or the first failure was not a model-rejection).
+    assert last_exc is not None
+    api_base = extra_kwargs.get("api_base")
+    friendly = _friendly_probe_error(
+        last_exc, api_base if isinstance(api_base, str) else None
+    )
+    if friendly is not None:
+        error_msg = friendly
+    else:
+        # Sanitise the error before returning it — some LiteLLM SDK
+        # exceptions embed the full request kwargs (including ``api_key``)
+        # in their repr. When the message looks like it could carry
+        # credential fragments, drop the body and return only the
+        # exception class + a generic note.
+        raw = _redact_credential_fragments(str(last_exc)[:200])
+        error_msg = f"{type(last_exc).__name__}: {raw}"
+    # Surface which model was probed so operators know which entry to move
+    # to advanced — invaluable when ``endpoint.models`` has 40+ chat entries.
+    error_msg = f"[probed {last_attempt_model}] {error_msg}"
+    await _store().record_test_result(endpoint_id, ok=False, error=error_msg)
     return TestConnectionResponse(
-        ok=True,
-        latency_ms=latency_ms,
-        probed_model=probed_model,
-        probed_kind=("embedding" if use_embedding_path else "chat"),
+        ok=False,
+        error=error_msg,
+        probed_model=last_attempt_model,
+        probed_kind=desired_kind,
     )
 
 
