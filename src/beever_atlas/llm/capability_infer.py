@@ -50,6 +50,10 @@ def infer_capabilities(model_string: str) -> dict[str, Any]:
         or "grok" in s
         or "firefunction" in s
         or "nous-hermes2" in s
+        # Zhipu AI / Z.AI GLM family. ``glm-4`` and ``glm-4.5`` ship native
+        # function-calling (Zhipu's "tools" param mirrors OpenAI's shape).
+        or "glm-4" in s
+        or "chatglm" in s
     )
 
     # Vision — multimodal models.
