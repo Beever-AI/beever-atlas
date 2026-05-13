@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   CircleDot,
+  Gauge,
   Globe,
   HardDrive,
   HelpCircle,
   Languages,
   Loader2,
+  Lock,
   PlugZap,
   Plus,
   X,
@@ -16,11 +20,16 @@ import { useEndpoints } from "@/hooks/useEndpoints";
 import { useAssignments } from "@/hooks/useAssignments";
 import { useReembedStatus } from "@/hooks/useReembedStatus";
 import { useToast } from "@/hooks/useToast";
-import { endpointSupportsEmbedding, presetSupportsEmbedding } from "@/lib/aiSetup";
+import {
+  endpointSupportsEmbedding,
+  getEndpointPreset,
+  presetSupportsEmbedding,
+} from "@/lib/aiSetup";
 import {
   estimateMigrationCost,
   formatCost,
   lookupModel,
+  modelsForProvider,
 } from "@/lib/knownEmbeddingModels";
 import type { Assignment, Endpoint } from "@/lib/aiSetup";
 import { AddEndpointPanel } from "./AddEndpointPanel";
@@ -36,51 +45,93 @@ function presetToEmbeddingProvider(preset: string): string {
   return preset;
 }
 
+// Sentinel value for the "Other (custom model)…" <option>. A model name will
+// never literally be this string.
+const CUSTOM_MODEL_OPTION = "__custom__";
+
+/**
+ * Clean display label for an endpoint <option> — mirrors
+ * ``EndpointCard.resolveDisplayName``: an endpoint hydrated from the env shim
+ * gets a noisy ``"<preset> (from GOOGLE_API_KEY)"`` name + the
+ * ``migrated-from-env`` tag, so for those we show the preset's friendly label
+ * + a discreet "(auto-detected)" hint instead of the raw name; otherwise the
+ * operator-set name as-is. Never a ``(preset)`` suffix.
+ */
+function endpointLabel(e: Endpoint): string {
+  const autoName = e.name.startsWith(`${e.preset} (from `) && e.name.endsWith(")");
+  const taggedFromEnv = e.tags.includes("migrated-from-env");
+  if (autoName || taggedFromEnv) {
+    const friendly = getEndpointPreset(e.preset)?.label ?? e.preset;
+    return `${friendly} (auto-detected)`;
+  }
+  return e.name;
+}
+
 interface DraftState {
   endpoint_id: string;
+  /** The known/selected model name. When ``customModel`` is non-empty this is
+   *  ignored in favour of it (the <select> shows the "Other…" option). */
   model: string;
-  dimensions: number | null;
+  /** Non-empty ⇒ a free-text custom model name (the "Other…" escape hatch). */
+  customModel: string;
   task: string | null;
 }
 
-function draftFromAssignment(a: Assignment | undefined): DraftState | null {
+/** The effective model name a draft resolves to (custom wins). */
+function effectiveModel(d: DraftState): string {
+  return d.customModel.trim() || d.model;
+}
+
+function draftFromAssignment(
+  a: Assignment | undefined,
+  endpointById: Record<string, Endpoint>,
+): DraftState | null {
   if (!a) return null;
+  const e = endpointById[a.endpoint_id];
+  const provider = e ? presetToEmbeddingProvider(e.preset) : "";
+  const known = provider ? modelsForProvider(provider) : [];
+  const isKnown = a.model !== "" && known.includes(a.model);
   return {
     endpoint_id: a.endpoint_id,
-    model: a.model,
-    dimensions: a.dimensions,
+    model: isKnown ? a.model : "",
+    customModel: a.model !== "" && !isKnown ? a.model : "",
     task: a.task,
   };
 }
 
 function isDirty(a: Assignment | undefined, d: DraftState | null): boolean {
   if (!a || !d) return false;
-  return (
-    d.endpoint_id !== a.endpoint_id ||
-    d.model !== a.model ||
-    d.dimensions !== a.dimensions ||
-    d.task !== a.task
-  );
+  return d.endpoint_id !== a.endpoint_id || effectiveModel(d) !== a.model || (d.task ?? "") !== (a.task ?? "");
 }
 
 /**
- * ``/settings/embedding`` — replaces ``EmbeddingSettings`` visually but binds
- * the *config* to the ``embedding`` Assignment + its Endpoint via
- * ``useAssignments``/``useEndpoints`` (NOT ``useEmbeddingSettings``).
+ * ``/settings/embedding`` — binds the embedding *config* to the ``embedding``
+ * Assignment + its Endpoint (``useAssignments`` / ``useEndpoints``) and the
+ * re-embed machinery to ``useReembedStatus``.
  *
- * ProviderTile-grid reuse note (plan Q7): ``ProviderTile`` is keyed on the
- * ``EmbeddingProvider`` enum + ``knownEmbeddingModels`` lookups, which doesn't
- * cleanly map onto "pick an *endpoint*". Per the plan's explicit fallback we
- * use a plain Endpoint ``<select>`` + Model ``<select>`` here and keep
- * ``ProviderTile``-style preset chips only inside ``AddEndpointPanel``. The
- * capability/cost pills below still come from ``knownEmbeddingModels``.
+ * Layout (top → bottom):
+ *   1. Intro line + the "?" provider-help drawer.
+ *   2. Re-embed status region — prominent, near the top: running progress
+ *      banner / "re-embed required" banner / "last re-embed failed" banner /
+ *      a quiet "up to date" pill. While a job is running the config form is
+ *      locked (the operator shouldn't change the target mid-job).
+ *   3. The embedding switch — endpoint picker (clean labels, "+ Add embedding
+ *      endpoint"), Model picker sourced from ``KNOWN_EMBEDDING_MODELS`` for the
+ *      chosen endpoint's *provider* (chat models are never offered) with an
+ *      "Other (custom model)…" escape hatch, a read-only dim/cost line (no
+ *      Dimensions input — the dim is a property of the model), an Advanced
+ *      ``task`` hint, Test Connection, and explicit Save / Discard.
+ *   4. Toasts.
  *
- * Re-embed (PR6 landed): triggered via the non-deprecated
- * ``/api/settings/embedding-migration/*`` surface through ``useReembedStatus``
- * — the server does the dual-write (Assignment config → legacy
- * ``embedding_settings`` doc) inside ``/spawn``. The "Start re-embed" action
- * is disabled (with the backend's ``reason``) when the chosen endpoint's
- * provider can't drive the re-embed job.
+ * On Save: ``asn.upsert("embedding", { endpoint_id, model, dimensions, task })``
+ * where ``dimensions`` is the known model's ``dim`` (from ``lookupModel``) or
+ * ``null`` for a custom/unknown model — the backend probes the model and the
+ * dim-guard records the real dimension at re-embed time. Then, if a re-embed is
+ * warranted (there's persisted data AND the new model's dim/provider differs,
+ * or it can't be determined), the ``MigrationConfirmModal`` opens; on confirm
+ * ``reembed.startMigration()`` runs (it hits the non-deprecated
+ * ``/api/settings/embedding-migration/spawn`` which reads the just-saved
+ * Assignment server-side — so the order is upsert first, then startMigration).
  */
 export function EmbeddingTab() {
   const ep = useEndpoints();
@@ -95,57 +146,84 @@ export function EmbeddingTab() {
   const [showHelp, setShowHelp] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showAddEndpoint, setShowAddEndpoint] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  // The migration-confirm modal: ``null`` = closed, otherwise the context the
+  // modal previews (the persisted snapshot it's migrating *from* + whether the
+  // config was already saved or still pending a save-then-spawn).
+  const [confirm, setConfirm] = useState<{ afterSave: boolean } | null>(null);
   const [startingMigration, setStartingMigration] = useState(false);
 
   const assignment = useMemo(
     () => asn.assignments.find((a) => a.consumer === "embedding"),
     [asn.assignments],
   );
-  const embeddingEndpoints = useMemo(
-    () => ep.endpoints.filter((e) => endpointSupportsEmbedding(e)),
-    [ep.endpoints],
-  );
   const endpointById = useMemo(
     () => Object.fromEntries(ep.endpoints.map((e) => [e.id, e])) as Record<string, Endpoint>,
     [ep.endpoints],
   );
+  const embeddingEndpoints = useMemo(
+    () => ep.endpoints.filter((e) => endpointSupportsEmbedding(e)),
+    [ep.endpoints],
+  );
 
-  // Initialise the draft once the assignment loads.
+  // Initialise the draft once both the assignment + endpoints have loaded
+  // (we need the endpoint map to tell a known model from a custom one).
   useEffect(() => {
-    if (assignment && !draft) setDraft(draftFromAssignment(assignment));
-  }, [assignment, draft]);
+    if (assignment && !draft && ep.endpoints.length > 0) {
+      setDraft(draftFromAssignment(assignment, endpointById));
+    }
+  }, [assignment, draft, ep.endpoints.length, endpointById]);
 
   const chosenEndpoint: Endpoint | undefined = draft ? endpointById[draft.endpoint_id] : undefined;
   const provider = chosenEndpoint ? presetToEmbeddingProvider(chosenEndpoint.preset) : "";
-  const spec = draft && provider ? lookupModel(provider, draft.model) : null;
+  const knownModels = provider ? modelsForProvider(provider) : [];
+  const effModel = draft ? effectiveModel(draft) : "";
+  const usingCustom = !!draft && (draft.customModel.trim().length > 0 || knownModels.length === 0);
+  const spec = provider && effModel && !usingCustom ? lookupModel(provider, effModel) : null;
+  const knownDim = spec?.dim ?? null;
   const dirty = isDirty(assignment, draft);
-  // Whether the backend will accept a re-embed for the *currently-chosen*
-  // endpoint. ``reembed.reembedSupported`` reflects the *saved* Assignment's
-  // endpoint; if the draft's endpoint differs we still gate the action but
-  // surface the backend's reason once the Assignment is saved + state re-read.
+
+  // ── Re-embed state derived from the hook ──────────────────────────────────
+  const running = !!reembed.status?.running;
+  const persisted = reembed.persisted;
+  const factCount = persisted?.count ?? 0;
+  // Re-embed support for the *currently chosen* endpoint. ``reembedSupported``
+  // reflects the *saved* Assignment's endpoint — if the draft's endpoint
+  // differs we still gate the action and surface the backend reason once the
+  // Assignment has been saved + the state re-read. For a custom endpoint
+  // (preset with no known embedding models, e.g. ``custom``/``litellm_proxy``)
+  // the backend may also refuse — we lean on its ``reembedSupportReason``.
   const canReembed = reembed.reembedSupported;
+  const migrationCost = useMemo(() => estimateMigrationCost(factCount, spec), [factCount, spec]);
+
+  // Form is read-only while a job runs OR while loading.
+  const formLocked = running;
 
   function handleEndpoint(id: string) {
     const e = endpointById[id];
     if (!draft || !e) return;
-    // Preserve the model if the new endpoint still offers it; else default to
-    // the first model the new endpoint advertises.
-    const nextModel = e.models.includes(draft.model) ? draft.model : (e.models[0] ?? draft.model);
-    const nextSpec = lookupModel(presetToEmbeddingProvider(e.preset), nextModel);
-    setDraft({
-      ...draft,
-      endpoint_id: id,
-      model: nextModel,
-      dimensions: nextSpec?.dim ?? draft.dimensions,
-    });
+    const nextProvider = presetToEmbeddingProvider(e.preset);
+    const nextKnown = modelsForProvider(nextProvider);
+    // Keep the model if the new provider still knows it; else default to its
+    // first known embedding model (or the custom escape hatch when it has none).
+    let model = "";
+    let customModel = "";
+    const cur = effectiveModel(draft);
+    if (cur && nextKnown.includes(cur)) model = cur;
+    else if (nextKnown.length > 0) model = nextKnown[0];
+    else customModel = cur; // no known models for this provider — preserve as custom
+    setDraft({ ...draft, endpoint_id: id, model, customModel });
     setTestResult(null);
   }
 
-  function handleModel(model: string) {
+  function handleModelSelect(value: string) {
     if (!draft) return;
-    const nextSpec = lookupModel(provider, model);
-    setDraft({ ...draft, model, dimensions: nextSpec?.dim ?? draft.dimensions });
+    if (value === CUSTOM_MODEL_OPTION) {
+      // Switch to the free-text escape hatch. Seed it with the current model
+      // name so the user can tweak rather than retype.
+      setDraft({ ...draft, model: "", customModel: draft.customModel || draft.model || "" });
+    } else {
+      setDraft({ ...draft, model: value, customModel: "" });
+    }
     setTestResult(null);
   }
 
@@ -163,25 +241,52 @@ export function EmbeddingTab() {
     }
   }
 
+  /**
+   * Decide whether saving this draft warrants a re-embed: yes when there's
+   * persisted data AND (the new known dim differs from the persisted dim, OR
+   * the new provider differs from the persisted provider, OR we genuinely
+   * can't tell — a custom/unknown model). Conservative on purpose.
+   */
+  function needsReembedAfterSave(): boolean {
+    if (!persisted || (persisted.count ?? 0) <= 0) return false;
+    if (provider && persisted.provider && provider !== persisted.provider) return true;
+    if (knownDim != null && persisted.dim != null) {
+      // Same provider + a known dim that matches what's in storage → the new
+      // vectors land in the same space, no re-embed needed.
+      return knownDim !== persisted.dim;
+    }
+    // Can't determine the new dim (custom/unknown model) but there *is* data —
+    // be conservative and offer the re-embed.
+    return true;
+  }
+
   async function handleSave() {
     if (!draft || !assignment) return;
-    // Snapshot the target before the awaits — ``assignment`` updates async.
     const target: DraftState = { ...draft };
+    const targetModel = effectiveModel(target);
+    if (!targetModel) {
+      showToast("Pick (or type) an embedding model first", "error");
+      return;
+    }
     setSaving(true);
     try {
       await asn.upsert("embedding", {
         endpoint_id: target.endpoint_id,
-        model: target.model,
-        dimensions: target.dimensions,
+        model: targetModel,
+        // Known model → its dim; custom/unknown → null (backend probes + the
+        // dim-guard records the real dimension at re-embed time).
+        dimensions: knownDim,
         task: target.task,
       });
-      // The re-embed *target* now derives server-side from the ``embedding``
-      // Assignment (see ``POST /api/settings/embedding-migration/spawn``), so
-      // saving the Assignment is all that's needed — no client-side dual-write.
       await ep.refetch();
       await reembed.refetchStatus();
       setDraft(target);
-      showToast("Embedding model saved");
+      if (needsReembedAfterSave()) {
+        showToast("Embedding model saved — re-embed needed");
+        setConfirm({ afterSave: true });
+      } else {
+        showToast("Embedding model saved");
+      }
     } catch (e: any) {
       showToast(e?.message ?? "Failed to save embedding model", "error");
     } finally {
@@ -190,12 +295,8 @@ export function EmbeddingTab() {
   }
 
   async function handleStartReembed() {
-    if (!draft || !provider || draft.dimensions == null) {
-      setConfirmOpen(false);
-      return;
-    }
     if (!canReembed) {
-      setConfirmOpen(false);
+      setConfirm(null);
       showToast(
         reembed.reembedSupportReason ??
           `Re-embedding via a "${chosenEndpoint?.preset}" endpoint isn't supported yet — pick a direct provider (Jina, OpenAI, Gemini, Voyage, Ollama, …) to re-embed now.`,
@@ -205,11 +306,11 @@ export function EmbeddingTab() {
     }
     setStartingMigration(true);
     try {
-      // ``/spawn`` server-side dual-writes the Assignment's config into the
-      // legacy embedding_settings doc + credential, then spawns the job.
+      // ``/spawn`` reads the just-saved ``embedding`` Assignment server-side,
+      // dual-writes the legacy embedding_settings doc, then spawns the job.
       await reembed.startMigration();
       await reembed.refetchStatus();
-      setConfirmOpen(false);
+      setConfirm(null);
       showToast("Re-embed started — watch progress above");
     } catch (e: any) {
       showToast(e?.message ?? "Failed to start re-embed", "error");
@@ -220,8 +321,6 @@ export function EmbeddingTab() {
 
   const isLoading = ep.isLoading || asn.isLoading;
   const noEndpoints = !ep.isLoading && embeddingEndpoints.length === 0;
-  const factCount = reembed.persisted?.count ?? 0;
-  const migrationCost = useMemo(() => estimateMigrationCost(factCount, spec), [factCount, spec]);
 
   return (
     <div className="space-y-5">
@@ -246,253 +345,296 @@ export function EmbeddingTab() {
         <div className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">{ep.error || asn.error}</div>
       )}
 
-      {/* ── Re-embed progress block ─────────────────────────────────────── */}
-      {reembed.status?.running && (() => {
-        const processed = reembed.status.processed ?? 0;
-        const total = reembed.status.total ?? 0;
+      {/* ── Re-embed status region — prominent, near the top ─────────────── */}
+      {running && (() => {
+        const processed = reembed.status?.processed ?? 0;
+        const total = reembed.status?.total ?? 0;
         const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-        const startedAt = reembed.status.started_at ? Date.parse(reembed.status.started_at) : null;
+        const startedAt = reembed.status?.started_at ? Date.parse(reembed.status.started_at) : null;
         const elapsedSec = startedAt ? (Date.now() - startedAt) / 1000 : 0;
         const etaMin =
           processed > 0 && total > processed
             ? Math.max(1, Math.round(((total - processed) / processed) * elapsedSec / 60))
             : null;
         return (
-          <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
-            <Loader2 className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 mt-0.5" />
-            <div className="text-xs flex-1 space-y-1.5">
-              <div className="font-medium text-amber-700 dark:text-amber-300 flex items-center justify-between gap-2">
-                <span>Re-embedding in progress · {reembed.status.stage ?? "starting"}</span>
-                <span className="text-amber-600/80 dark:text-amber-400/80 font-mono">
-                  {pct}%{etaMin != null ? ` · ETA ${etaMin}m` : ""}
-                </span>
-              </div>
-              {total > 0 && (
-                <div className="h-1.5 rounded-full bg-amber-500/20 overflow-hidden">
-                  <div className="h-full bg-amber-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3.5">
+            <div className="flex items-start gap-3">
+              <Loader2 className="h-4 w-4 animate-spin text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                    Re-embedding in progress
+                  </span>
+                  <span className="font-mono text-xs text-amber-600/90 dark:text-amber-400/90">
+                    {pct}%{etaMin != null ? ` · ~${etaMin}m left` : ""}
+                  </span>
                 </div>
-              )}
-              <div className="text-amber-600/80 dark:text-amber-400/80">
-                {processed.toLocaleString()} / {total.toLocaleString()} rows · Search degraded to keyword-only · Sync paused
+                <div className="h-1.5 rounded-full bg-amber-500/20 overflow-hidden">
+                  <div className="h-full bg-amber-500 transition-all duration-700 ease-out" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="text-xs text-amber-700/90 dark:text-amber-300/90">
+                  {processed.toLocaleString()} / {total.toLocaleString()} facts · {reembed.status?.stage ?? "starting"} ·
+                  search degraded to keyword-only · sync paused
+                </div>
+                <Link
+                  to="/activity"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+                >
+                  <Gauge className="w-3 h-3" /> View in Activity
+                </Link>
               </div>
             </div>
           </div>
         );
       })()}
 
-      {reembed.failedError && !reembed.status?.running && (
-        <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-3">
-          <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
-          <div className="text-xs text-destructive space-y-1 flex-1">
-            <div className="font-medium">Re-embed failed</div>
-            <div className="font-mono text-[11px] break-all">{reembed.failedError}</div>
-            <div className="text-destructive/80">
-              Check the backend log for a full traceback. Click "Start re-embed" to retry — the migration is idempotent.
+      {reembed.failedError && !running && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+              <div className="text-xs text-destructive space-y-1 min-w-0">
+                <div className="text-sm font-semibold">Last re-embed failed</div>
+                <div className="font-mono text-[11px] break-all">{reembed.failedError}</div>
+                <div className="text-destructive/80">
+                  Search is still on the old model. The re-embed is idempotent — retrying is safe.
+                </div>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setConfirm({ afterSave: false })}
+              disabled={!draft || !canReembed}
+              title={!canReembed ? (reembed.reembedSupportReason ?? "Re-embed not supported for this endpoint") : undefined}
+              className="text-xs px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 font-medium shrink-0"
+            >
+              Retry
+            </button>
           </div>
         </div>
       )}
 
-      {reembed.migrationRequired && !reembed.status?.running && (
-        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3 flex-1">
-            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-            <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
-              <div className="font-medium">Re-embed required</div>
-              <div className="text-amber-600/90 dark:text-amber-400/90">
-                {reembed.persisted ? (
-                  <>
-                    {(reembed.persisted.count ?? 0).toLocaleString()} stored vectors are still at{" "}
-                    <code className="font-mono">
-                      {reembed.persisted.provider}/{reembed.persisted.model}
-                      {reembed.persisted.dim != null ? ` @ ${reembed.persisted.dim}d` : ""}
-                    </code>
-                    . Search falls back to keyword-only until the re-embed completes.
-                  </>
-                ) : (
-                  <>The saved config differs from what's in storage. Search falls back to keyword-only until the re-embed completes.</>
+      {reembed.migrationRequired && !running && !reembed.failedError && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1 min-w-0">
+                <div className="text-sm font-semibold">Re-embed required</div>
+                <div className="text-amber-700/90 dark:text-amber-300/90">
+                  You've changed the embedding model.{" "}
+                  {persisted ? (
+                    <>
+                      {(persisted.count ?? 0).toLocaleString()} facts are still on the old model (
+                      <code className="font-mono">
+                        {persisted.provider}/{persisted.model}
+                        {persisted.dim != null ? ` @ ${persisted.dim}d` : ""}
+                      </code>
+                      ); search uses the old vectors until you re-embed.
+                    </>
+                  ) : (
+                    <>The saved config differs from what's in storage; search uses the old vectors until you re-embed.</>
+                  )}
+                </div>
+                {!canReembed && reembed.reembedSupportReason && (
+                  <div className="text-amber-600/80 dark:text-amber-400/80">{reembed.reembedSupportReason}</div>
                 )}
               </div>
             </div>
-            {!canReembed && reembed.reembedSupportReason && (
-              <div className="text-amber-600/80 dark:text-amber-400/80 mt-1">
-                {reembed.reembedSupportReason}
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setConfirm({ afterSave: false })}
+              disabled={!draft || !canReembed}
+              title={!canReembed ? (reembed.reembedSupportReason ?? "Re-embed not supported for this endpoint") : undefined}
+              className="text-xs px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium shrink-0"
+            >
+              Start re-embed
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            disabled={!draft || !provider || draft.dimensions == null || !canReembed}
-            title={!canReembed ? (reembed.reembedSupportReason ?? "Re-embed not supported for this endpoint") : undefined}
-            className="text-xs px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium shrink-0"
-          >
-            Start re-embed
-          </button>
         </div>
       )}
 
-      {/* ── Endpoint + model picker ─────────────────────────────────────── */}
-      {isLoading && !assignment ? (
+      {!running && !reembed.failedError && !reembed.migrationRequired && persisted && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 px-3 py-1.5 text-xs">
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          <span>
+            <span className="font-medium">Embeddings up to date</span> — {(persisted.count ?? 0).toLocaleString()} facts on{" "}
+            <code className="font-mono">{persisted.provider}/{persisted.model}</code>
+          </span>
+        </div>
+      )}
+
+      {/* ── The embedding switch — config form ──────────────────────────── */}
+      {isLoading && !draft ? (
         <div className="text-sm text-muted-foreground py-8 text-center">Loading embedding configuration…</div>
       ) : noEndpoints ? (
         <div className="rounded-xl border-2 border-dashed border-border bg-card p-6 text-center space-y-3">
-          <div className="text-sm font-medium text-foreground">No embedding-capable endpoint yet</div>
+          <div className="text-sm font-medium text-foreground">Add an embedding provider to start</div>
           <p className="text-xs text-muted-foreground max-w-md mx-auto">
-            Add a Jina, Voyage, OpenAI, Gemini, or Ollama endpoint, then pick it here as the embedding model.
+            Atlas needs an embedding endpoint before semantic search works. Good defaults:{" "}
+            <span className="font-medium text-foreground">Jina v4</span> (multilingual),{" "}
+            <span className="font-medium text-foreground">OpenAI text-embedding-3-large</span>, or{" "}
+            <span className="font-medium text-foreground">Voyage 3-large</span>. Ollama runs locally and is free.
           </p>
-          {!showAddEndpoint && (
-            <button
-              type="button"
-              onClick={() => setShowAddEndpoint(true)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90"
-            >
-              <Plus className="w-4 h-4" />
-              Add embedding endpoint
-            </button>
-          )}
-          {showAddEndpoint && (
-            <div className="text-left">
-              <AddEndpointPanel
-                presetFilter={presetSupportsEmbedding}
-                onCancel={() => setShowAddEndpoint(false)}
-                onCreate={async (req) => {
-                  await ep.create(req);
-                  setShowAddEndpoint(false);
-                  showToast(`Endpoint '${req.name}' added`);
-                }}
-              />
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowAddEndpoint(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium hover:bg-primary/90"
+          >
+            <Plus className="w-4 h-4" />
+            Add embedding endpoint
+          </button>
         </div>
       ) : draft ? (
-        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
-          {/* Capability / cost pills */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            {spec ? (
-              <>
-                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
-                  spec.multilingual
-                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                }`}>
-                  <Languages className="w-3 h-3" />
-                  {spec.multilingual ? "Multilingual" : "English-leaning"}
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border">
-                  {formatCost(spec)}
-                </span>
-                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
-                  spec.local ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" : "bg-muted text-muted-foreground border-border"
-                }`}>
-                  {spec.local ? <HardDrive className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
-                  {spec.local ? "Local" : "Cloud"}
-                </span>
-              </>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border">
-                <CircleDot className="w-3 h-3" />
-                Custom model — verify with Test Connection
-              </span>
-            )}
-          </div>
+        <div
+          className={`rounded-xl border border-border bg-card p-4 space-y-4 transition-opacity ${
+            formLocked ? "opacity-60 pointer-events-none select-none" : ""
+          }`}
+          aria-disabled={formLocked || undefined}
+        >
+          {formLocked && (
+            <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-500/10 rounded-md px-3 py-2">
+              <Lock className="w-3.5 h-3.5 shrink-0" />
+              Embedding config is locked while re-embedding — wait for the job above to finish.
+            </div>
+          )}
 
-          {/* Endpoint select */}
+          {/* Endpoint / provider select */}
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Embedding endpoint</span>
+            <span className="text-xs font-medium text-muted-foreground">Provider / endpoint</span>
             <div className="flex items-center gap-2">
               <select
                 aria-label="embedding endpoint"
                 value={draft.endpoint_id}
                 onChange={(e) => handleEndpoint(e.target.value)}
+                disabled={formLocked}
                 className="flex-1 text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
               >
                 {!embeddingEndpoints.some((e) => e.id === draft.endpoint_id) && draft.endpoint_id && (
-                  <option value={draft.endpoint_id}>{endpointById[draft.endpoint_id]?.name ?? draft.endpoint_id} (not embedding-capable)</option>
+                  <option value={draft.endpoint_id}>
+                    {endpointById[draft.endpoint_id] ? endpointLabel(endpointById[draft.endpoint_id]) : draft.endpoint_id} (not embedding-capable)
+                  </option>
                 )}
                 {embeddingEndpoints.map((e) => (
                   <option key={e.id} value={e.id}>
-                    {e.name} ({e.preset})
+                    {endpointLabel(e)}
                   </option>
                 ))}
               </select>
               <button
                 type="button"
-                onClick={() => setShowAddEndpoint((v) => !v)}
-                className="inline-flex items-center gap-1 text-xs px-2.5 py-2 rounded-md border border-border hover:bg-muted shrink-0"
+                onClick={() => setShowAddEndpoint(true)}
+                disabled={formLocked}
+                className="inline-flex items-center gap-1 text-xs px-2.5 py-2 rounded-md border border-border hover:bg-muted shrink-0 disabled:opacity-50"
               >
                 <Plus className="w-3 h-3" />
-                Add
+                Add embedding endpoint
               </button>
             </div>
           </label>
 
-          {showAddEndpoint && (
-            <AddEndpointPanel
-              presetFilter={presetSupportsEmbedding}
-              onCancel={() => setShowAddEndpoint(false)}
-              onCreate={async (req) => {
-                await ep.create(req);
-                setShowAddEndpoint(false);
-                showToast(`Endpoint '${req.name}' added`);
-              }}
-            />
-          )}
-
-          {/* Model select */}
+          {/* Model select — embedding models for the chosen provider only,
+              plus the "Other (custom model)…" escape hatch. */}
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">Model</span>
             <select
               aria-label="embedding model"
-              value={draft.model}
-              onChange={(e) => handleModel(e.target.value)}
+              value={usingCustom ? CUSTOM_MODEL_OPTION : draft.model}
+              onChange={(e) => handleModelSelect(e.target.value)}
+              disabled={formLocked}
               className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
-              {chosenEndpoint && chosenEndpoint.models.length === 0 && (
-                <option value={draft.model}>{draft.model || "(no models — run Discover on the Endpoints tab)"}</option>
-              )}
-              {chosenEndpoint && !chosenEndpoint.models.includes(draft.model) && draft.model && (
-                <option value={draft.model}>{draft.model}</option>
-              )}
-              {chosenEndpoint?.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {/* When the saved model is unknown for this provider keep it as a
+                  visible option (so the <select> isn't blank) — but in practice
+                  ``usingCustom`` already routes those to the custom input. */}
+              {knownModels.map((m) => {
+                const s = lookupModel(provider, m);
+                const label = s
+                  ? `${m} — ${s.dim}-dim, ${s.multilingual ? "multilingual" : "English-leaning"}, ${formatCost(s)}`
+                  : m;
+                return (
+                  <option key={m} value={m}>
+                    {label}
+                  </option>
+                );
+              })}
+              <option value={CUSTOM_MODEL_OPTION}>Other (custom model)…</option>
             </select>
           </label>
 
-          {/* Dimensions */}
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">
-              Dimensions {spec && <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">· auto</span>}
-            </span>
-            <input
-              type="number"
-              aria-label="embedding dimensions"
-              min={1}
-              max={8192}
-              value={draft.dimensions ?? ""}
-              onChange={(e) => setDraft({ ...draft, dimensions: e.target.value === "" ? null : (Number(e.target.value) || 0) })}
-              className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </label>
+          {/* Custom model free-text input — revealed by "Other (custom model)…" */}
+          {usingCustom && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Custom model name</span>
+              <input
+                type="text"
+                aria-label="custom embedding model"
+                value={draft.customModel}
+                onChange={(e) => setDraft({ ...draft, customModel: e.target.value, model: "" })}
+                disabled={formLocked}
+                placeholder={
+                  provider === "ollama" ? "e.g. nomic-embed-text:v1.5" : "e.g. text-embedding-3-large or a proxy model id"
+                }
+                className="text-sm font-mono bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </label>
+          )}
 
-          {/* Cost line — re-embed preview */}
-          {factCount > 0 && (
-            <div className="text-xs text-muted-foreground">
-              Re-embedding {factCount.toLocaleString()} stored facts at this model ≈{" "}
-              {spec?.local || (spec && spec.cost_per_m === 0) ? (
-                <span className="font-mono">$0.00 (local)</span>
-              ) : spec ? (
-                <span className="font-mono">~${migrationCost.dollars.toFixed(2)}</span>
-              ) : (
-                <span>unknown — verify with Test Connection</span>
+          {/* Read-only model facts — dim · multilingual · cost, or the
+              custom-model note. No Dimensions input (the dim is a property of
+              the model; the backend probes it and the dim-guard records the
+              real dimension at re-embed time). */}
+          {!usingCustom && spec ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border font-mono">
+                {spec.dim}-dim
+              </span>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
+                spec.multilingual
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+              }`}>
+                <Languages className="w-3 h-3" />
+                {spec.multilingual ? "multilingual" : "English-leaning"}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border">
+                {formatCost(spec)}
+              </span>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
+                spec.local ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" : "bg-muted text-muted-foreground border-border"
+              }`}>
+                {spec.local ? <HardDrive className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
+                {spec.local ? "local" : "cloud"}
+              </span>
+              {factCount > 0 && (
+                <span className="text-muted-foreground">
+                  · re-embedding {factCount.toLocaleString()} facts ≈{" "}
+                  {spec.local || spec.cost_per_m === 0 ? (
+                    <span className="font-mono">$0.00 (local)</span>
+                  ) : (
+                    <span className="font-mono">~${migrationCost.dollars.toFixed(2)}</span>
+                  )}
+                </span>
               )}
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+              <CircleDot className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <div className="space-y-0.5">
+                <div>Dimension verified at re-embed time — the backend probes the model on first use.</div>
+                {reembed.reembedSupportReason && (
+                  <div className="text-amber-600/80 dark:text-amber-400/80">
+                    Heads up: {reembed.reembedSupportReason}
+                  </div>
+                )}
+                {!reembed.reembedSupportReason && (
+                  <div>Re-embed support depends on the provider — confirm with Test Connection first.</div>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Advanced — task */}
+          {/* Advanced — task hint (collapsed) */}
           <div>
             <button
               type="button"
@@ -504,12 +646,15 @@ export function EmbeddingTab() {
             </button>
             {showAdvanced && (
               <label className="flex flex-col gap-1.5 mt-3">
-                <span className="text-xs font-medium text-muted-foreground">Task (optional — e.g. retrieval.passage)</span>
+                <span className="text-xs font-medium text-muted-foreground">
+                  Task (optional — e.g. <code className="font-mono">retrieval.passage</code>)
+                </span>
                 <input
                   type="text"
                   aria-label="embedding task"
                   value={draft.task ?? ""}
                   onChange={(e) => setDraft({ ...draft, task: e.target.value || null })}
+                  disabled={formLocked}
                   placeholder="leave blank for provider default"
                   className="text-sm bg-background border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
@@ -536,7 +681,7 @@ export function EmbeddingTab() {
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              disabled={testing}
+              disabled={testing || formLocked}
               onClick={handleTest}
               className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
             >
@@ -546,15 +691,16 @@ export function EmbeddingTab() {
             {dirty && (
               <button
                 type="button"
-                onClick={() => setDraft(draftFromAssignment(assignment))}
-                className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted"
+                onClick={() => setDraft(draftFromAssignment(assignment, endpointById))}
+                disabled={formLocked}
+                className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50"
               >
                 Discard
               </button>
             )}
             <button
               type="button"
-              disabled={!dirty || saving}
+              disabled={!dirty || saving || formLocked}
               onClick={handleSave}
               className="text-xs px-4 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 font-medium"
             >
@@ -564,15 +710,27 @@ export function EmbeddingTab() {
         </div>
       ) : null}
 
+      {showAddEndpoint && (
+        <AddEndpointPanel
+          presetFilter={presetSupportsEmbedding}
+          onCancel={() => setShowAddEndpoint(false)}
+          onCreate={async (req) => {
+            await ep.create(req);
+            setShowAddEndpoint(false);
+            showToast(`Endpoint '${req.name}' added`);
+          }}
+        />
+      )}
+
       {showHelp && <HelpDrawer onClose={() => setShowHelp(false)} />}
 
-      {confirmOpen && draft && (
+      {confirm && draft && (
         <MigrationConfirmModal
           factCount={factCount}
           targetProvider={provider || (chosenEndpoint?.preset ?? "")}
-          targetModel={draft.model}
+          targetModel={effModel}
           submitting={startingMigration}
-          onCancel={() => setConfirmOpen(false)}
+          onCancel={() => setConfirm(null)}
           onConfirm={handleStartReembed}
         />
       )}
@@ -593,7 +751,7 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
       >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">Picking an embedding provider</h3>
-          <button type="button" className="text-xs px-2 py-1 rounded-md hover:bg-muted" onClick={onClose}>
+          <button type="button" className="text-xs px-2 py-1 rounded-md hover:bg-muted" onClick={onClose} aria-label="Close help">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -603,18 +761,22 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
             Chinese / Japanese / mixed-language content.
           </HelpSection>
           <HelpSection title="OpenAI text-embedding-3-large">
-            3072-dim, ~$0.13 / 1M tokens. The most popular default; multilingual; supports ``dimensions=`` resizing.
+            3072-dim, ~$0.13 / 1M tokens. The most popular default; multilingual; supports <code className="font-mono">dimensions=</code> resizing.
           </HelpSection>
           <HelpSection title="Voyage 3-large">
-            1024-dim, ~$0.18 / 1M tokens. Strong English; multilingual; honors a ``task=`` kwarg similar to Jina.
+            1024-dim, ~$0.18 / 1M tokens. Strong English; multilingual; honors a <code className="font-mono">task=</code> kwarg similar to Jina.
           </HelpSection>
           <HelpSection title="Gemini gemini-embedding-001">
             3072-dim default (Matryoshka-truncatable), ~$0.025 / 1M tokens. Reuses your Google AI key; multilingual.
           </HelpSection>
           <HelpSection title="Ollama (local)">
-            ``nomic-embed-text`` 768d / ``mxbai-embed-large`` 1024d — free, local. Quality varies by model and is
+            <code className="font-mono">nomic-embed-text</code> 768d / <code className="font-mono">mxbai-embed-large</code> 1024d — free, local. Quality varies by model and is
             generally English-leaning. Best for self-hosted isolation; not recommended for multilingual channels.
           </HelpSection>
+          <p>
+            Self-hosted or proxy model not in the list? Pick the matching endpoint and choose
+            <span className="font-medium"> "Other (custom model)…"</span> — the backend probes its dimension on first use.
+          </p>
           <p>Switching providers on a populated install requires a one-time re-embed — kick it off from the banner above.</p>
         </div>
       </div>
@@ -631,7 +793,7 @@ function HelpSection({ title, children }: { title: string; children: React.React
   );
 }
 
-// ── salvaged: MigrationConfirmModal ────────────────────────────────────────
+// ── salvaged: MigrationConfirmModal (cost-preview re-embed confirmation) ────
 
 function MigrationConfirmModal({
   factCount,
@@ -650,21 +812,37 @@ function MigrationConfirmModal({
 }) {
   const spec = useMemo(() => lookupModel(targetProvider, targetModel), [targetProvider, targetModel]);
   const cost = useMemo(() => estimateMigrationCost(factCount, spec), [factCount, spec]);
+
+  // Escape closes — matches the rest of the Settings modals.
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") onCancel();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} aria-hidden="true" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Confirm re-embed"
+        className="relative z-10 w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl"
+      >
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
-            Re-embed required
+            Re-embed everything
           </h3>
-          <button type="button" onClick={onCancel} className="text-muted-foreground hover:text-foreground">
+          <button type="button" onClick={onCancel} className="text-muted-foreground hover:text-foreground" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="px-5 py-4 space-y-3 text-sm">
           <p>
-            Re-embedding switches every stored fact + entity-name vector to{" "}
+            This switches every stored fact + entity-name vector to{" "}
             <span className="font-mono">{targetProvider}/{targetModel}</span>. Search degrades to keyword-only
             (BM25) for a few minutes while the job runs; sync is paused during the window.
           </p>
@@ -685,11 +863,10 @@ function MigrationConfirmModal({
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            The job runs in the background; progress streams into the ingestion activity feed and the banner above.
-            Resumable on failure.
+            Runs in the background; progress streams into the Activity feed and the banner above. Resumable on failure.
           </p>
         </div>
-        <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2 bg-muted/30 rounded-b-2xl">
           <button type="button" className="text-xs px-3 py-1.5 rounded-md border border-border hover:bg-muted" onClick={onCancel} disabled={submitting}>
             Cancel
           </button>

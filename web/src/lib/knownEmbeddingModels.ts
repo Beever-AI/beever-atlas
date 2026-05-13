@@ -30,6 +30,18 @@ export function lookupModel(provider: string, model: string): EmbeddingModelSpec
   return KNOWN_EMBEDDING_MODELS[`${provider}/${model}`] ?? null;
 }
 
+/**
+ * The known embedding model names for one provider key (e.g. ``"gemini"`` →
+ * ``["gemini-embedding-001"]``). Drives the Model ``<select>`` on the
+ * Embedding tab — the provider key comes from the chosen endpoint's preset.
+ */
+export function modelsForProvider(provider: string): string[] {
+  const prefix = `${provider}/`;
+  return Object.keys(KNOWN_EMBEDDING_MODELS)
+    .filter((k) => k.startsWith(prefix))
+    .map((k) => k.slice(prefix.length));
+}
+
 export function formatCost(spec: EmbeddingModelSpec | null): string {
   if (!spec) return "Cost: unknown";
   if (spec.local || spec.cost_per_m === 0) return "Free (local)";
