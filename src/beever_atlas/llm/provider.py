@@ -163,31 +163,77 @@ class LLMProvider:
                     exc_info=True,
                 )
 
-        # Three-rule provider routing — mirrors the embedding-side decision
-        # tree in ``llm/embeddings.py::_route_embedding_for_dispatch``.
+        # Defer the (provider, model, drop_base_url) decision to the
+        # canonical router in ``services/llm_dispatch.route_for_endpoint`` —
+        # the same rules ``dispatch_completion`` uses. Without this, the
+        # ADK agent path would diverge from the dispatch path on every
+        # OpenAI-compat shim (Gemini ``/openai/``, Ollama ``/v1``, vLLM,
+        # LM Studio, OpenRouter, …) and produce broken URLs like
+        # ``http://localhost:11434/v1/api/generate`` (preset=ollama with
+        # native handler ``ollama/`` + shim base) or
+        # ``…/v1beta/openai//models/gemini-2.5-flash:generateContent``
+        # (preset=google_ai with native ``gemini/`` + shim base).
+        preset = ""
+        if ep_id:
+            preset = self._endpoint_meta.get(ep_id, {}).get("preset", "")
+            try:
+                from beever_atlas.services.llm_dispatch import route_for_endpoint
+
+                bare_model = model_str.split("/", 1)[1] if "/" in model_str else model_str
+                routed_provider, routed_model, drop_base_url = route_for_endpoint(
+                    preset=preset,
+                    base_url=api_base or "",
+                    model=bare_model,
+                )
+                # ``route_for_endpoint`` returns ``model`` either bare
+                # (when provider==openai shim path) or already prefixed
+                # (when native LiteLLM provider). Make sure the final
+                # model string carries the provider prefix LiteLLM needs.
+                if "/" not in routed_model:
+                    model_str = f"{routed_provider}/{routed_model}"
+                else:
+                    model_str = routed_model
+                if drop_base_url:
+                    api_base = None
+            except Exception:  # noqa: BLE001
+                # ``route_for_endpoint`` raises for embedding-only presets
+                # (jina_ai, voyage, cohere) — a chat consumer pointed at one
+                # of those is operator error; fall through with the
+                # un-routed model string so LiteLLM surfaces a clear error.
+                logger.debug(
+                    "LLMProvider.resolve_model: route_for_endpoint failed "
+                    "for agent=%s preset=%r (using preset_to_provider default)",
+                    agent_name,
+                    preset,
+                    exc_info=True,
+                )
+
+        # Credential fallback for two cases the per-Endpoint cache can't
+        # cover on its own:
         #
-        # The Endpoint table stores a single ``base_url`` per Endpoint
-        # (e.g. the Gemini OpenAI-compat shim URL). LiteLLM has two
-        # incompatible handlers for Gemini:
-        #
-        #   1. native ``gemini/<m>`` — uses google-genai SDK, builds its
-        #      own URL from the model name. Must NOT receive an api_base
-        #      pointing at the shim — it would compose
-        #      ``<shim_base>/models/<m>:generateContent`` and 404.
-        #   2. OpenAI-compat ``openai/<m>`` — uses the openai SDK, needs
-        #      an api_base ending in ``/openai/`` or ``/v1``.
-        #
-        # Rule of thumb: ``gemini/`` model id → drop api_base (let the
-        # native handler reach Google directly); ``openai/`` model id →
-        # keep api_base (the shim needs it); everything else passes
-        # through unchanged.
-        if model_str.startswith("gemini/") and api_base:
-            logger.debug(
-                "LLMProvider.resolve_model: dropping api_base=%r for native "
-                "gemini handler (would build wrong URL)",
-                api_base,
-            )
-            api_base = None
+        # (a) Pre-migration installs where the operator's API key still
+        #     lives in env vars (GOOGLE_API_KEY, OPENAI_API_KEY, …) and the
+        #     Endpoint document was synthesised without an encrypted_key.
+        #     Without this fallback, switching qa_agent to Gemini surfaces
+        #     a 401 even though the env key is right there.
+        # (b) ``auth_type=none`` presets (Ollama, local vLLM/LM Studio)
+        #     routed through the OpenAI-compat shim — LiteLLM's openai SDK
+        #     400s client-side without an api_key set, even when the
+        #     upstream ignores the value. ``dispatch_assignment`` uses the
+        #     same placeholder; mirror that here so the ADK agent path
+        #     doesn't 400 differently from the dispatch path.
+        if api_key is None and model_str.startswith("openai/"):
+            import os
+
+            if preset == "google_ai":
+                api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+            if api_key is None:
+                # ``placeholder-no-auth`` matches dispatch_assignment's
+                # behaviour for ``auth_type=none`` OpenAI-compat endpoints
+                # (Ollama). The upstream ignores it; the openai SDK just
+                # needs *something* in the field to skip its client-side
+                # check.
+                api_key = "placeholder-no-auth"
 
         return resolve_model_object(model_str, api_key=api_key, api_base=api_base)
 
