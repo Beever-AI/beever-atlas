@@ -68,6 +68,94 @@ def normalize_litellm_model(model_string: str) -> str:
     return model_string
 
 
+# Presets whose ``base_url`` carries an OpenAI-compatible shim by default.
+# These speak the OpenAI HTTP shape (``POST <base>/chat/completions``) regardless
+# of who's serving the other side, so routing them through LiteLLM's ``openai``
+# provider sidesteps every native-API quirk (Gemini's ``/v1beta`` path, Ollama's
+# ``/api/chat`` path, etc.).
+_OPENAI_COMPAT_PRESETS: frozenset[str] = frozenset(
+    {"vllm", "lmstudio", "openrouter", "litellm_proxy", "custom"}
+)
+
+# Embedding-only presets — chat dispatch is undefined for them; callers must
+# route to ``dispatch_embedding`` instead. Kept here so ``route_for_endpoint``
+# can refuse gracefully rather than emit a bogus model string.
+_EMBEDDING_ONLY_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage", "cohere"})
+
+
+def route_for_endpoint(
+    preset: str,
+    base_url: str | None,
+    model: str,
+) -> tuple[str, str, bool]:
+    """Resolve ``(litellm_provider, litellm_model_id, drop_base_url)`` for a chat
+    dispatch against an Endpoint with the given ``(preset, base_url, model)``.
+
+    The third element ``drop_base_url`` is True when the caller MUST omit
+    ``api_base`` from the LiteLLM call (the native-Gemini case — LiteLLM's
+    ``gemini`` provider routes through Google's default host and breaks if a
+    custom ``api_base`` is supplied).
+
+    Routing matrix — picks the LiteLLM provider that talks the same HTTP shape
+    as the actual server on the other end:
+
+    * ``google_ai`` + base_url contains ``/openai/`` → ``openai`` provider, bare
+      model (LiteLLM POSTs ``<base>/chat/completions`` to Google's OpenAI-compat
+      shim — the native-Gemini path would 404 on ``/v1beta/openai/`` because it
+      appends its own native path).
+    * ``google_ai`` + any other base_url → ``gemini`` provider, ``gemini/<model>``,
+      drop ``api_base`` (let LiteLLM hit Google's native default host).
+    * ``ollama`` / ``ollama_chat`` + base_url ends in ``/v1`` → ``openai`` provider,
+      bare model (Ollama's OpenAI-compat shim accepts ``POST /v1/chat/completions``).
+      LiteLLM's ``ollama_chat`` provider POSTs to ``<base>/api/chat`` — with a
+      ``/v1`` base_url that resolves to ``/v1/api/chat`` which 404s.
+    * ``ollama`` / ``ollama_chat`` + native base_url → ``ollama_chat`` provider,
+      ``ollama_chat/<model>`` (native ``/api/chat`` path).
+    * Any preset in ``_OPENAI_COMPAT_PRESETS`` (vLLM, LM Studio, OpenRouter,
+      LiteLLM Proxy, Custom) → ``openai`` provider, bare model.
+    * Operator-supplied fully-prefixed model (``foo/bar``, not ``models/bar``)
+      → trust the prefix, pass through.
+    * Any other preset → use ``preset_to_provider(preset)`` and ``<provider>/<model>``;
+      ``base_url`` is honoured (these accept their native URLs and operators may
+      set a regional endpoint).
+    * Embedding-only presets (jina_ai, voyage, cohere) — raise ``ValueError``;
+      caller should route to ``dispatch_embedding`` instead.
+    """
+    from beever_atlas.llm.endpoints import preset_to_provider
+
+    if preset in _EMBEDDING_ONLY_PRESETS:
+        raise ValueError(
+            f"route_for_endpoint: preset {preset!r} is embedding-only; "
+            "route to dispatch_embedding instead of chat dispatch"
+        )
+
+    # Operator-supplied fully-prefixed LiteLLM id wins — trust it.
+    if "/" in model and not model.startswith("models/"):
+        return model.split("/", 1)[0], model, False
+
+    # Strip Gemini's native-API ``models/`` discovery prefix.
+    bare_model = model.removeprefix("models/")
+    base = (base_url or "").rstrip("/")
+
+    if preset == "google_ai":
+        if "/openai/" in (base_url or ""):
+            return "openai", bare_model, False
+        # Native Gemini path — drop the base_url so LiteLLM uses Google's default.
+        return "gemini", f"gemini/{bare_model}", True
+
+    if preset in ("ollama", "ollama_chat"):
+        if base.endswith("/v1"):
+            return "openai", bare_model, False
+        return "ollama_chat", f"ollama_chat/{bare_model}", False
+
+    if preset in _OPENAI_COMPAT_PRESETS:
+        return "openai", bare_model, False
+
+    # Native LiteLLM provider (anthropic, mistral, groq, openai, …).
+    provider = preset_to_provider(preset)
+    return provider, f"{provider}/{bare_model}", False
+
+
 def sniff_provider(model_string: str) -> str:
     """Extract the LiteLLM provider prefix from a model identifier.
 
@@ -252,6 +340,15 @@ async def dispatch_assignment(
         kwargs["api_base"] = assignment.base_url
     if assignment.api_key:
         kwargs["api_key"] = assignment.api_key
+    elif assignment.provider == "openai" and not getattr(
+        assignment, "aws_credentials", None
+    ) and not getattr(assignment, "vertex_credentials", None):
+        # OpenAI-compat routing with no api_key (e.g. ``auth_type=none`` for a
+        # local Ollama / vLLM / LM Studio endpoint). LiteLLM's ``openai``
+        # provider 400s client-side without a key even when the upstream
+        # ignores it; pass a placeholder. Native LiteLLM providers (anthropic,
+        # gemini, etc.) take their own path — leave them untouched.
+        kwargs["api_key"] = "placeholder-no-auth"
     if getattr(assignment, "aws_credentials", None):
         kwargs["aws_access_key_id"] = assignment.aws_credentials["access_key_id"]
         kwargs["aws_secret_access_key"] = assignment.aws_credentials["secret_access_key"]
@@ -307,4 +404,11 @@ async def dispatch_embedding(
         return response
 
 
-__all__ = ["dispatch_completion", "dispatch_embedding"]
+__all__ = [
+    "dispatch_completion",
+    "dispatch_embedding",
+    "dispatch_assignment",
+    "normalize_litellm_model",
+    "route_for_endpoint",
+    "sniff_provider",
+]

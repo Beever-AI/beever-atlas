@@ -324,10 +324,12 @@ async def test_e2e_failover_routes_to_fallback(
     provider = LLMProvider(_settings_stub())
     resolved = await provider.resolve_for_call("qa_agent", stores=stores)
     assert resolved is not None
-    # Resolved to the FALLBACK endpoint.
+    # Resolved to the FALLBACK endpoint. The fallback uses Google's OpenAI-compat
+    # ``/openai/`` shim → routes through LiteLLM's ``openai`` provider (the
+    # native ``gemini`` path 404s against the shim URL).
     assert resolved.endpoint_id == fallback.id
     assert resolved.api_key == "AIzaSy-fallback"
-    assert resolved.provider == "gemini"
+    assert resolved.provider == "openai"
 
     captured_kwargs: dict[str, Any] = {}
 
@@ -476,9 +478,11 @@ async def test_e2e_response_format_json_translates_to_openai_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_e2e_ollama_endpoint_no_auth_no_api_key_kwarg() -> None:
-    """Local Ollama Endpoints have ``auth_type=none``; dispatch must NOT pass
-    an api_key kwarg (would confuse LiteLLM's Ollama backend)."""
+async def test_e2e_ollama_v1_no_auth_passes_placeholder_api_key() -> None:
+    """Local Ollama Endpoints with ``/v1`` base_url have ``auth_type=none`` AND
+    route through LiteLLM's ``openai`` provider (the OpenAI-compat shim). LiteLLM's
+    ``openai`` provider rejects a missing api_key client-side even when the
+    upstream server ignores it, so dispatch passes a harmless placeholder."""
     stores = _stores()
     ep_store = EndpointStore(stores.mongodb)
     endpoint = await ep_store.create(
@@ -503,6 +507,9 @@ async def test_e2e_ollama_endpoint_no_auth_no_api_key_kwarg() -> None:
     provider = LLMProvider(_settings_stub())
     resolved = await provider.resolve_for_call("fact_extractor", stores=stores)
     assert resolved is not None
+    # ``/v1`` shim ⇒ openai provider, bare model.
+    assert resolved.provider == "openai"
+    assert resolved.litellm_model == "qwen2.5:14b"
     assert resolved.api_key is None
 
     captured_kwargs: dict[str, Any] = {}
@@ -516,10 +523,11 @@ async def test_e2e_ollama_endpoint_no_auth_no_api_key_kwarg() -> None:
             assignment=resolved, messages=[{"role": "user", "content": "x"}]
         )
 
-    # No api_key kwarg passed when auth_type=none.
-    assert "api_key" not in captured_kwargs
-    # But api_base IS passed so LiteLLM routes to localhost.
+    # Placeholder api_key injected — LiteLLM openai SDK rejects missing keys.
+    assert captured_kwargs["api_key"] == "placeholder-no-auth"
+    # api_base IS passed so LiteLLM routes to localhost.
     assert captured_kwargs["api_base"] == "http://localhost:11434/v1"
+    assert captured_kwargs["model"] == "qwen2.5:14b"
 
 
 # ─── E2E #8: extra_headers from Endpoint + Assignment merge ─────────────
@@ -697,6 +705,9 @@ async def test_e2e_preset_apply_then_dispatch() -> None:
                 messages=[{"role": "user", "content": "test"}],
             )
 
-    # All 4 dispatches hit gemini/* model identifiers.
-    assert all(m.startswith("gemini/") for m in captured_models)
+    # ``google_ai`` Endpoint with the ``/openai/`` shim base_url routes through
+    # LiteLLM's ``openai`` provider with bare model ids (the shim 404s under
+    # the native ``gemini/`` path).
+    assert all(not m.startswith("gemini/") for m in captured_models), captured_models
+    assert "gemini-2.5-flash" in captured_models  # bare, no provider prefix
     assert len(captured_models) == 4

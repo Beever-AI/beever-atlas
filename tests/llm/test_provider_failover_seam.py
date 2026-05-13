@@ -189,9 +189,14 @@ async def test_resolve_for_call_routes_to_fallback_when_breaker_open(
     result = await provider.resolve_for_call("qa_agent", stores=stores)
     assert result is not None
     assert result.endpoint_id == fallback_id
-    assert result.provider == "gemini"
+    # The fallback Endpoint's base_url is Google's OpenAI-compat ``/openai/``
+    # shim, so the resolver routes it through LiteLLM's ``openai`` provider
+    # with a bare model id (the shim 404s under the native ``gemini/`` path).
+    assert result.provider == "openai"
     # Model name from Assignment is preserved on fallback (operator's choice).
-    assert result.litellm_model == "gemini/claude-sonnet-4-6"
+    assert result.litellm_model == "claude-sonnet-4-6"
+    # api_base honoured for OpenAI-compat routing.
+    assert result.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 @pytest.mark.asyncio
@@ -272,6 +277,119 @@ async def test_resolve_for_call_combines_endpoint_and_assignment_headers() -> No
     assert result is not None
     assert result.extra_headers["X-Endpoint-Header"] == "yes"
     assert result.extra_headers["X-Assignment-Header"] == "yes"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_routes_google_ai_openai_compat_through_openai() -> None:
+    """``google_ai`` Endpoint with the ``/openai/`` shim base_url → resolver
+    returns ``provider=openai`` with a bare model id and the base_url honoured.
+    Documents the routing rule that fixes the production ``GeminiException -
+    NotFound`` bug — LiteLLM's native ``gemini`` provider expects Google's
+    native API path, not the OpenAI-compat shim."""
+    stores = _make_stores()
+    ep_store = EndpointStore(stores.mongodb)
+    google = await ep_store.create(
+        name="google",
+        preset="google_ai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        auth_type="api_key",
+        plaintext_credential="AIza-key",
+        models=["models/gemini-2.5-flash"],
+    )
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="qa_agent", endpoint_id=google.id, model="gemini-2.5-flash")
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("qa_agent", stores=stores)
+    assert result is not None
+    assert result.provider == "openai"
+    assert result.litellm_model == "gemini-2.5-flash"
+    assert result.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_routes_google_ai_native_drops_base_url() -> None:
+    """``google_ai`` Endpoint with no base_url → resolver returns the native
+    ``gemini`` provider and DROPS the api_base (LiteLLM's ``gemini`` provider
+    routes through Google's default host and breaks if api_base is set)."""
+    stores = _make_stores()
+    ep_store = EndpointStore(stores.mongodb)
+    google = await ep_store.create(
+        name="google-native",
+        preset="google_ai",
+        base_url="",
+        auth_type="api_key",
+        plaintext_credential="AIza-key",
+        models=["gemini-2.5-flash"],
+    )
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="qa_agent", endpoint_id=google.id, model="gemini-2.5-flash")
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("qa_agent", stores=stores)
+    assert result is not None
+    assert result.provider == "gemini"
+    assert result.litellm_model == "gemini/gemini-2.5-flash"
+    assert result.base_url is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_routes_ollama_v1_through_openai() -> None:
+    """``ollama`` Endpoint with ``/v1`` base_url → resolver returns
+    ``provider=openai`` with a bare model id (the OpenAI-compat shim accepts
+    ``/v1/chat/completions``; LiteLLM's ``ollama_chat`` POSTs to ``/api/chat``)."""
+    stores = _make_stores()
+    ep_store = EndpointStore(stores.mongodb)
+    ollama = await ep_store.create(
+        name="ollama-shim",
+        preset="ollama",
+        base_url="http://localhost:11434/v1",
+        auth_type="none",
+        plaintext_credential=None,
+        models=["gemma4:e2b"],
+    )
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="fact_extractor", endpoint_id=ollama.id, model="gemma4:e2b")
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("fact_extractor", stores=stores)
+    assert result is not None
+    assert result.provider == "openai"
+    assert result.litellm_model == "gemma4:e2b"
+    assert result.base_url == "http://localhost:11434/v1"
+
+
+@pytest.mark.asyncio
+async def test_resolve_for_call_routes_ollama_native_keeps_ollama_chat() -> None:
+    """``ollama`` Endpoint with the native base_url → ``provider=ollama_chat``
+    with the prefixed model id (native ``/api/chat`` path)."""
+    stores = _make_stores()
+    ep_store = EndpointStore(stores.mongodb)
+    ollama = await ep_store.create(
+        name="ollama-native",
+        preset="ollama",
+        base_url="http://localhost:11434",
+        auth_type="none",
+        plaintext_credential=None,
+        models=["llama3.2:latest"],
+    )
+    asn_store = AssignmentStore(stores.mongodb)
+    await asn_store.upsert(
+        Assignment(consumer="fact_extractor", endpoint_id=ollama.id, model="llama3.2:latest")
+    )
+
+    provider = LLMProvider(_make_settings())
+    result = await provider.resolve_for_call("fact_extractor", stores=stores)
+    assert result is not None
+    assert result.provider == "ollama_chat"
+    assert result.litellm_model == "ollama_chat/llama3.2:latest"
+    assert result.base_url == "http://localhost:11434"
 
 
 @pytest.mark.asyncio

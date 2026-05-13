@@ -444,12 +444,14 @@ def test_test_endpoint_jina_uses_embedding_path(
     assert kw["input"] == ["test"]
 
 
-def test_test_endpoint_google_ai_strips_models_prefix(
+def test_test_endpoint_google_ai_openai_compat_uses_openai_provider(
     app_and_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Google AI's ``/models`` discovery returns ``models/gemini-2.5-flash``.
-    The probe must strip that native-API prefix and reattach the LiteLLM
-    ``gemini/`` prefix — ``google_ai → gemini`` via ``preset_to_provider``."""
+    """Google AI's ``/openai/`` shim speaks OpenAI's HTTP shape — route through
+    LiteLLM's ``openai`` provider with a bare model. LiteLLM's native ``gemini``
+    provider expects Google's native API path, not the OpenAI-compat shim, so
+    routing the shim through ``gemini/`` produces ``GeminiException - NotFound``.
+    Also: ``models/`` discovery prefix must be stripped."""
     _app, client, stores = app_and_client
     endpoint_id = _seed_endpoint(
         stores,
@@ -473,18 +475,55 @@ def test_test_endpoint_google_ai_strips_models_prefix(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    # ``models/`` stripped, ``gemini/`` prepended — what LiteLLM expects.
-    assert captured["model"] == "gemini/gemini-2.5-flash"
+    # ``/openai/`` shim → bare model + openai provider; api_base honoured.
+    assert captured["model"] == "gemini-2.5-flash"
     assert captured["api_base"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
     assert captured["api_key"] == "AIza-test-key-XYZ-ABCD"
     assert captured["max_tokens"] == 1
 
 
-def test_test_endpoint_ollama_v1_base_url_uses_ollama_chat(
+def test_test_endpoint_google_ai_native_drops_api_base(
     app_and_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ollama with ``/v1`` base_url ⇒ OpenAI-compat shim ⇒ ``ollama_chat`` provider.
-    Plain ``ollama`` POSTs to the native ``/api/generate`` which 404s under ``/v1``."""
+    """Google AI with no base_url → native ``gemini`` provider, ``gemini/<model>``,
+    ``api_base`` is NOT passed (LiteLLM's gemini provider routes through Google's
+    default host; a custom api_base breaks the native path)."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="google_ai",
+        base_url="",
+        models=["gemini-2.5-flash"],
+        api_key="AIza-test-key-XYZ-ABCD",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    assert captured["model"] == "gemini/gemini-2.5-flash"
+    # Native Gemini path — no api_base.
+    assert "api_base" not in captured
+    assert captured["api_key"] == "AIza-test-key-XYZ-ABCD"
+
+
+def test_test_endpoint_ollama_v1_base_url_uses_openai_provider(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ollama with ``/v1`` base_url ⇒ OpenAI-compat shim ⇒ ``openai`` provider
+    with a bare model. LiteLLM's ``ollama_chat`` POSTs to ``<base>/api/chat``
+    — with ``/v1`` that becomes ``/v1/api/chat`` which 404s. The ``openai``
+    provider POSTs to ``<base>/chat/completions`` which is what the shim expects."""
     _app, client, stores = app_and_client
     endpoint_id = _seed_endpoint(
         stores,
@@ -509,19 +548,20 @@ def test_test_endpoint_ollama_v1_base_url_uses_ollama_chat(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    # ``ollama_chat`` routes to ``/v1/chat/completions`` — the OpenAI-compat path.
-    assert captured["model"] == "ollama_chat/gemma4:e2b"
+    # OpenAI-compat path — bare model id, api_base honoured.
+    assert captured["model"] == "gemma4:e2b"
     assert captured["api_base"] == "http://localhost:11434/v1"
-    # ``auth_type=none`` ⇒ no api_key passed.
-    assert "api_key" not in captured
+    # ``auth_type=none`` + openai provider ⇒ placeholder api_key (LiteLLM's
+    # openai SDK rejects a missing key client-side; server ignores the value).
+    assert captured["api_key"] == "placeholder-no-auth"
 
 
-def test_test_endpoint_ollama_native_base_url_uses_plain_ollama(
+def test_test_endpoint_ollama_native_base_url_uses_ollama_chat(
     app_and_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ollama with the native base_url (no ``/v1``) keeps the plain ``ollama``
-    provider — that path POSTs to ``/api/generate``, which is what the native
-    daemon expects."""
+    """Ollama with the native base_url (no ``/v1``) keeps the ``ollama_chat``
+    provider — that path POSTs to ``<base>/api/chat``, which is what the native
+    Ollama daemon expects."""
     _app, client, stores = app_and_client
     endpoint_id = _seed_endpoint(
         stores,
@@ -546,8 +586,43 @@ def test_test_endpoint_ollama_native_base_url_uses_plain_ollama(
     assert resp.status_code == 200, resp.text
     assert resp.json()["ok"] is True
 
-    assert captured["model"] == "ollama/llama3.2:latest"
+    assert captured["model"] == "ollama_chat/llama3.2:latest"
     assert captured["api_base"] == "http://localhost:11434"
+    # auth_type=none + ollama_chat provider (not openai) ⇒ no placeholder needed.
+    assert "api_key" not in captured
+
+
+def test_test_endpoint_anthropic_uses_native_provider(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native LiteLLM providers (anthropic, mistral, groq) keep their preset
+    prefix and honour the base_url."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="anthropic",
+        base_url="https://api.anthropic.com/v1",
+        models=["claude-sonnet-4-6"],
+        api_key="sk-ant-test-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    assert captured["model"] == "anthropic/claude-sonnet-4-6"
+    assert captured["api_base"] == "https://api.anthropic.com/v1"
+    assert captured["api_key"] == "sk-ant-test-key-AAAA"
 
 
 def test_test_endpoint_openai_passes_through_prefixed_model(

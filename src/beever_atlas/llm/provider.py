@@ -158,8 +158,9 @@ class LLMProvider:
         """
         from beever_atlas.llm.agent_credentials import get_runtime_credential
         from beever_atlas.llm.assignments import AssignmentStore, ResolvedAssignment
-        from beever_atlas.llm.endpoints import EndpointStore, preset_to_provider
+        from beever_atlas.llm.endpoints import EndpointStore
         from beever_atlas.services.circuit_breaker import get_breaker_for_endpoint
+        from beever_atlas.services.llm_dispatch import route_for_endpoint
 
         if stores is None:
             from beever_atlas.stores import get_stores
@@ -222,12 +223,35 @@ class LLMProvider:
             else None
         )
 
-        # Convert the bare ``model`` field into a fully-qualified LiteLLM id.
-        provider_prefix = preset_to_provider(target_endpoint.preset)
-        litellm_model = (
-            assignment.model
-            if "/" in assignment.model
-            else f"{provider_prefix}/{assignment.model}"
+        # Pick the LiteLLM provider + model id from the Endpoint's
+        # ``(preset, base_url, model)`` tuple. ``route_for_endpoint`` is the
+        # single source of truth shared with the Test Connection probe so the
+        # two paths can't disagree (operator sees Test pass / dispatch 404).
+        # Embedding-only presets raise ValueError there; fall back to the
+        # legacy prefix logic for the ``embedding`` consumer so existing
+        # callers keep working.
+        try:
+            provider_prefix, litellm_model, drop_base_url = route_for_endpoint(
+                target_endpoint.preset,
+                target_endpoint.base_url or None,
+                assignment.model,
+            )
+        except ValueError:
+            # Embedding-only preset — chat dispatch isn't valid for this
+            # ResolvedAssignment, but we still need to construct the record
+            # (the embedding consumer reads it). Use the legacy shape.
+            from beever_atlas.llm.endpoints import preset_to_provider as _p2p
+
+            provider_prefix = _p2p(target_endpoint.preset)
+            litellm_model = (
+                assignment.model
+                if "/" in assignment.model
+                else f"{provider_prefix}/{assignment.model}"
+            )
+            drop_base_url = False
+
+        resolved_base_url = (
+            None if drop_base_url else (target_endpoint.base_url or None)
         )
 
         return ResolvedAssignment(
@@ -235,7 +259,7 @@ class LLMProvider:
             endpoint_id=target_endpoint.id,
             provider=provider_prefix,
             litellm_model=litellm_model,
-            base_url=target_endpoint.base_url or None,
+            base_url=resolved_base_url,
             api_key=api_key,
             aws_credentials=aws_creds,
             vertex_credentials=vertex_creds,

@@ -376,39 +376,17 @@ async def delete_endpoint(endpoint_id: str) -> None:
 _EMBEDDING_ONLY_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage", "cohere"})
 
 
-def _build_probe_model(endpoint: Endpoint) -> tuple[str, str]:
-    """Return ``(litellm_provider_prefix, fully_qualified_model_id)`` for a probe.
+def _build_probe_model(endpoint: Endpoint) -> tuple[str, str, bool]:
+    """Return ``(litellm_provider, model_id, drop_base_url)`` for a probe.
 
-    Mirrors the resolution logic in ``LLMProvider.resolve_for_call`` so the Test
-    Connection probe hits LiteLLM with the same model string the real dispatch
-    path would build. Specifically:
-
-      * Provider prefix comes from ``preset_to_provider(endpoint.preset)`` —
-        NOT a sniff on the model string (``models/gemini-...`` confuses sniffing).
-      * Native-API model-name prefixes (Gemini returns ``models/...`` from its
-        ``/models`` discovery) are stripped before reattaching the LiteLLM prefix.
-      * If the operator already wrote a fully-prefixed LiteLLM id (``gemini/...``,
-        ``openai/...``) we pass it through.
-      * Ollama with an OpenAI-compat ``/v1`` base_url uses ``ollama_chat`` (which
-        POSTs to ``/v1/chat/completions``); plain ``ollama`` POSTs to the native
-        ``/api/generate`` and 404s against a ``/v1`` URL.
+    Thin wrapper around :func:`route_for_endpoint` — the single source of truth
+    for ``(preset, base_url, model)`` → ``(provider, litellm_model)`` resolution
+    shared between the Test Connection probe and ``LLMProvider.resolve_for_call``.
+    Both paths must agree or operators get "Test passes / dispatch 404s".
     """
-    raw = endpoint.models[0]
-    base_provider = preset_to_provider(endpoint.preset)
+    from beever_atlas.services.llm_dispatch import route_for_endpoint
 
-    # Ollama base_url quirk: ``/v1`` ⇒ OpenAI-compat shim ⇒ ``ollama_chat`` path.
-    if base_provider == "ollama" and endpoint.base_url.rstrip("/").endswith("/v1"):
-        provider = "ollama_chat"
-    else:
-        provider = base_provider
-
-    # Operator already supplied a LiteLLM prefix — trust it.
-    if "/" in raw and not raw.startswith("models/"):
-        return raw.split("/", 1)[0], raw
-
-    # Strip Gemini's native-API prefix.
-    stripped = raw.removeprefix("models/")
-    return provider, f"{provider}/{stripped}"
+    return route_for_endpoint(endpoint.preset, endpoint.base_url, endpoint.models[0])
 
 
 @router.post("/{endpoint_id}/test", response_model=TestConnectionResponse)
@@ -436,14 +414,34 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
             ok=False, error="endpoint_has_no_models: configure at least one model before testing"
         )
 
-    provider, full_model = _build_probe_model(endpoint)
+    is_embedding_only = endpoint.preset in _EMBEDDING_ONLY_PRESETS
+    if is_embedding_only:
+        # Embedding-only presets aren't routed through ``route_for_endpoint``
+        # (it's chat-only — would raise ValueError). Probe-side they still use
+        # the legacy provider prefix + ``preset/<model>`` shape that LiteLLM's
+        # ``aembedding`` accepts.
+        raw_model = endpoint.models[0]
+        provider = preset_to_provider(endpoint.preset)
+        full_model = (
+            raw_model if "/" in raw_model else f"{provider}/{raw_model.removeprefix('models/')}"
+        )
+        drop_base_url = False
+    else:
+        provider, full_model, drop_base_url = _build_probe_model(endpoint)
 
     # Pull credentials from runtime cache (populated at boot or via PUT hot-reload).
     credential = get_runtime_credential(endpoint_id)
     extra_kwargs: dict[str, Any] = {}
     if isinstance(credential, str):
         extra_kwargs["api_key"] = credential
-    if endpoint.base_url:
+    elif endpoint.auth_type == "none" and provider == "openai":
+        # LiteLLM's ``openai`` provider rejects a missing api_key client-side
+        # even when the upstream server doesn't validate it (local Ollama /
+        # vLLM / LM Studio). Pass a harmless placeholder — the server ignores
+        # it. Without this, ``auth_type=none`` + OpenAI-compat routing 400s
+        # at the SDK boundary before the request leaves the process.
+        extra_kwargs["api_key"] = "placeholder-no-auth"
+    if endpoint.base_url and not drop_base_url:
         extra_kwargs["api_base"] = endpoint.base_url
         # Opt-in SSRF guard — refuse private/link-local/metadata targets before
         # we attach the credential and probe. Off by default (local presets
@@ -459,8 +457,6 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 msg = f"base_url_blocked: {exc}"
                 await _store().record_test_result(endpoint_id, ok=False, error=msg)
                 return TestConnectionResponse(ok=False, error=msg)
-
-    is_embedding_only = endpoint.preset in _EMBEDDING_ONLY_PRESETS
 
     started = time.monotonic()
     try:
