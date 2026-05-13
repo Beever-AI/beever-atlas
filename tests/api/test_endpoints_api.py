@@ -1300,6 +1300,79 @@ def test_create_endpoint_defaults_role_auto_for_chat_only_preset(
     assert body["role"] == "auto"
 
 
+def test_create_endpoint_seeds_models_from_catalog_when_empty(
+    app_and_client: Any,
+) -> None:
+    """PR-ε: creating a commercial-preset endpoint without ``models`` seeds
+    ``endpoint.models`` + ``endpoint.model_kinds`` from Atlas's curated
+    catalog. Operator lands ready-to-use without a Discover click — and
+    with zero risk of pulling experimental / Live / fine-tune ids that
+    break Test downstream."""
+    _app, client, _stores = app_and_client
+    resp = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "OpenAI",
+            "preset": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-test-key-AAAA",
+            # No ``models`` — auto-seed should kick in.
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    # Catalog seed populated both chat and embedding entries.
+    assert body["models"], "expected catalog seed to populate models"
+    assert any(m.startswith("gpt-") for m in body["models"])
+    assert any(m.startswith("text-embedding-") for m in body["models"])
+    # model_kinds correctly tagged.
+    assert body["model_kinds"]["gpt-4o-mini"] == "chat"
+    assert body["model_kinds"]["text-embedding-3-small"] == "embedding"
+
+
+def test_create_endpoint_skips_seed_when_models_supplied(
+    app_and_client: Any,
+) -> None:
+    """Operator-supplied ``models`` are respected verbatim — no catalog
+    seed overrides explicit input."""
+    _app, client, _stores = app_and_client
+    resp = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "OpenAI custom",
+            "preset": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth_type": "api_key",
+            "api_key": "sk-test-key-AAAA",
+            "models": ["gpt-5-experimental"],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["models"] == ["gpt-5-experimental"]
+
+
+def test_create_endpoint_skips_seed_for_operator_deployed_preset(
+    app_and_client: Any,
+) -> None:
+    """Operator-deployed presets (ollama, custom, vllm, …) do NOT auto-seed —
+    their model list IS the source of truth; we don't know what's installed."""
+    _app, client, _stores = app_and_client
+    resp = client.post(
+        "/api/settings/endpoints",
+        json={
+            "name": "Ollama",
+            "preset": "ollama",
+            "base_url": "http://localhost:11434/v1",
+            "auth_type": "none",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["models"] == []
+
+
 def test_update_endpoint_role(
     app_and_client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

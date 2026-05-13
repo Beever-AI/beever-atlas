@@ -49,6 +49,75 @@ def preset_to_provider(preset: str) -> str:
     return _PRESET_TO_PROVIDER.get(preset, preset)
 
 
+# Commercial presets whose Discover/auto-populate should read from Atlas's
+# curated ``KNOWN_MODELS`` catalog instead of hitting the provider's
+# ``/models`` API.
+#
+# Why: provider catalogs are noisy — OpenAI returns hundreds of internal
+# variants ("o4-mini-deep-research-alpha-2025-..."), Gemini returns Live /
+# Realtime / TTS models that 400 on the OpenAI-compat shim, Jina returns
+# ``jina-ai/jina-code-embeddings-0.5b`` entries that 422 the inference API.
+# Walking those produces models that look valid but break Test / dispatch
+# in non-obvious ways. The curated catalog is small (~3-5 per provider),
+# every entry is one we've actually validated, and the catalog version
+# travels with the Atlas release.
+#
+# Operator-deployed presets (ollama, vllm, lmstudio, openrouter,
+# litellm_proxy, custom) keep the upstream-``/models``-API path — the
+# model list there IS the source of truth (operator chose what to host).
+_CATALOG_DISCOVERY_PRESETS: frozenset[str] = frozenset(
+    {
+        "openai",
+        "google_ai",
+        "anthropic",
+        "mistral",
+        "deepseek",
+        "groq",
+        "together_ai",
+        "xai",
+        "minimax",
+        "cohere",
+        "voyage",
+        "jina_ai",
+    }
+)
+
+
+def catalog_models_for_preset(preset: str) -> tuple[list[str], list[str]]:
+    """Return ``(chat_ids, embedding_ids)`` curated for ``preset``.
+
+    Reads from ``llm/known_models.py``'s ``KNOWN_MODELS`` dict — the
+    canonical source of truth for models Atlas has tested end-to-end.
+
+    Returns ids in their *bare* shape (no ``provider/`` prefix), the same
+    way an operator would type them and the same way ``endpoint.models``
+    is stored. For ``google_ai``, the catalog keys use ``gemini/`` (the
+    LiteLLM provider prefix); we strip that here.
+
+    Returns ``([], [])`` for presets not present in the catalog.
+    """
+    from beever_atlas.llm.known_models import KNOWN_MODELS
+
+    provider_prefix = preset_to_provider(preset)
+    chat: list[str] = []
+    embedding: list[str] = []
+    for catalog_key, spec in KNOWN_MODELS.items():
+        if "/" not in catalog_key:
+            continue
+        key_prefix, bare_id = catalog_key.split("/", 1)
+        if key_prefix != provider_prefix:
+            continue
+        kind = spec.get("kind", "chat")
+        if kind == "embedding":
+            embedding.append(bare_id)
+        elif kind == "both":
+            chat.append(bare_id)
+            embedding.append(bare_id)
+        else:
+            chat.append(bare_id)
+    return sorted(set(chat)), sorted(set(embedding))
+
+
 # Substrings that, if present in an upstream error body or an SDK exception
 # repr, mean the text may carry a credential fragment (Bearer token, OpenAI
 # ``sk-`` key, Google ``AIzaSy`` key, AWS ``AKIA`` id / secret, a service-
@@ -437,6 +506,36 @@ async def discover_models(
     """
     import httpx
 
+    # Commercial providers — load Atlas's curated catalog instead of hitting
+    # the upstream ``/models`` endpoint. Returns 3-5 known-good entries with
+    # zero ``dropped`` bucket, so the UI never surfaces models that 400 / 422
+    # at Test or dispatch time. See ``_CATALOG_DISCOVERY_PRESETS`` for why.
+    if endpoint.preset in _CATALOG_DISCOVERY_PRESETS:
+        chat_ids, embedding_ids = catalog_models_for_preset(endpoint.preset)
+        kept = sorted(set(chat_ids + embedding_ids))
+        if not kept:
+            # Defensive — catalog drift would otherwise produce an empty
+            # discovery silently. Operators see the underlying cause.
+            return DiscoveryResult(
+                ok=False,
+                models=[],
+                models_by_kind={"chat": [], "embedding": []},
+                dropped={},
+                error=(
+                    f"catalog_empty_for_preset: {endpoint.preset}. "
+                    "Update ``llm/known_models.py`` or enter models manually."
+                ),
+            )
+        return DiscoveryResult(
+            ok=True,
+            models=kept,
+            models_by_kind={
+                "chat": sorted(set(chat_ids)),
+                "embedding": sorted(set(embedding_ids)),
+            },
+            dropped={},
+        )
+
     if endpoint.preset in ("bedrock", "vertex_ai"):
         return DiscoveryResult(
             ok=False,
@@ -596,8 +695,10 @@ __all__ = [
     "DiscoveryResult",
     "Endpoint",
     "EndpointStore",
+    "catalog_models_for_preset",
     "discover_models",
     "encrypt_endpoint_credential",
     "decrypt_endpoint_credential",
     "preset_to_provider",
+    "_CATALOG_DISCOVERY_PRESETS",
 ]

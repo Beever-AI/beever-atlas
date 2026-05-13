@@ -34,8 +34,13 @@ def _make_response(*, status: int = 200, payload: Any = None) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_openai_shape_returns_ids() -> None:
-    """``GET {base_url}/models`` returns ``data[].id``."""
+async def test_custom_preset_openai_shape_returns_ids() -> None:
+    """``GET {base_url}/models`` returns ``data[].id`` for non-catalog presets.
+
+    PR-ε: commercial presets (openai, anthropic, …) now read the curated
+    catalog and never hit upstream. The upstream-``/models`` path is reserved
+    for operator-deployed presets (custom, vllm, lmstudio, openrouter,
+    litellm_proxy, ollama)."""
     payload = {
         "data": [
             {"id": "gpt-4o-mini", "object": "model"},
@@ -49,10 +54,11 @@ async def test_openai_shape_returns_ids() -> None:
         client_instance.get = AsyncMock(return_value=_make_response(payload=payload))
         client_cls.return_value = client_instance
 
-        result = await discover_models(_endpoint("openai"))
+        result = await discover_models(_endpoint("custom"))
 
     assert result["ok"] is True
-    # PR-α: kept ids are sorted (chat + embedding union).
+    # ``custom`` doesn't have per-preset classifier rules — the generic
+    # name-pattern fallback tags gpt-* as chat. Same kept set, no dropped.
     assert result["models"] == ["gpt-4.1", "gpt-4o-mini"]
     assert result["models_by_kind"]["chat"] == ["gpt-4.1", "gpt-4o-mini"]
     assert result["models_by_kind"]["embedding"] == []
@@ -120,7 +126,7 @@ async def test_timeout_surfaces_structured_error() -> None:
         client_instance.get = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
         client_cls.return_value = client_instance
 
-        result = await discover_models(_endpoint("openai"), timeout_seconds=10.0)
+        result = await discover_models(_endpoint("custom"), timeout_seconds=10.0)
 
     assert result["ok"] is False
     assert "discovery_timeout" in result["error"]
@@ -138,7 +144,7 @@ async def test_http_error_surfaces_status_code() -> None:
         )
         client_cls.return_value = client_instance
 
-        result = await discover_models(_endpoint("openai"))
+        result = await discover_models(_endpoint("custom"))
 
     assert result["ok"] is False
     assert "discovery_http_401" in result["error"]
@@ -162,7 +168,10 @@ async def test_invalid_response_shape_returns_error() -> None:
 
 @pytest.mark.asyncio
 async def test_credential_passed_as_bearer_header() -> None:
-    """Plaintext credential becomes ``Authorization: Bearer <key>``."""
+    """Plaintext credential becomes ``Authorization: Bearer <key>``.
+
+    PR-ε: tested via ``custom`` preset since commercial presets now skip
+    the HTTP call entirely (catalog path)."""
     captured_headers: dict[str, dict[str, str]] = {}
 
     async def fake_get(url: str, *, headers: dict[str, str], **_kw: Any) -> MagicMock:
@@ -176,7 +185,7 @@ async def test_credential_passed_as_bearer_header() -> None:
         client_instance.get = AsyncMock(side_effect=fake_get)
         client_cls.return_value = client_instance
 
-        await discover_models(_endpoint("openai"), plaintext_credential="sk-test")
+        await discover_models(_endpoint("custom"), plaintext_credential="sk-test")
 
     assert captured_headers["headers"]["Authorization"] == "Bearer sk-test"
 
@@ -205,7 +214,10 @@ def test_redact_credential_fragments() -> None:
 
 @pytest.mark.asyncio
 async def test_discovery_http_error_body_is_redacted_when_secretish() -> None:
-    """An upstream error page that echoes the auth header doesn't leak it."""
+    """An upstream error page that echoes the auth header doesn't leak it.
+
+    PR-ε: tested via ``custom`` preset since commercial presets short-circuit
+    to the catalog before any HTTP call."""
     with patch("httpx.AsyncClient") as client_cls:
         client_instance = MagicMock()
         client_instance.__aenter__ = AsyncMock(return_value=client_instance)
@@ -217,7 +229,7 @@ async def test_discovery_http_error_body_is_redacted_when_secretish() -> None:
         )
         client_cls.return_value = client_instance
 
-        result = await discover_models(_endpoint("openai"))
+        result = await discover_models(_endpoint("custom"))
 
     assert result["ok"] is False
     assert "discovery_http_400" in result["error"]
@@ -276,114 +288,77 @@ async def test_ssrf_guard_off_by_default_allows_localhost() -> None:
     assert result["models"] == ["gemma3:4b"]
 
 
-# ─── PR-α: classification filters out non-chat/non-embedding ids ────────────
+# ─── PR-ε: catalog-discovery returns curated KNOWN_MODELS for commercial presets ─
 
 
 @pytest.mark.asyncio
-async def test_jina_filters_reranker_vlm_clip_segmenter_into_dropped() -> None:
-    """Jina's ``/v1/models`` lists rerankers, VLMs, CLIP, segmenters, readers,
-    embeddings. Discovery keeps only the embeddings; everything else lands
-    in the per-category ``dropped`` map."""
-    payload = {
-        "data": [
-            {"id": "jina-embeddings-v4"},
-            {"id": "jina-embeddings-v3"},
-            {"id": "jina-reranker-v2-base-multilingual"},
-            {"id": "jina-vlm"},
-            {"id": "jina-clip-v1"},
-            {"id": "jina-segmenter-v1"},
-            {"id": "reader-lm-1.5b"},
-        ]
-    }
+async def test_commercial_preset_does_not_hit_upstream() -> None:
+    """Discover for a catalog preset (e.g. ``openai``) MUST NOT issue any
+    HTTP request — the result comes straight from the curated catalog so
+    we can't accidentally pull experimental / live / fine-tune models that
+    break Test or dispatch downstream."""
+    called = MagicMock()
     with patch("httpx.AsyncClient") as client_cls:
         client_instance = MagicMock()
         client_instance.__aenter__ = AsyncMock(return_value=client_instance)
         client_instance.__aexit__ = AsyncMock(return_value=None)
-        client_instance.get = AsyncMock(return_value=_make_response(payload=payload))
-        client_cls.return_value = client_instance
-
-        result = await discover_models(_endpoint("jina_ai"))
-
-    assert result["ok"] is True
-    assert result["models_by_kind"]["embedding"] == [
-        "jina-embeddings-v3",
-        "jina-embeddings-v4",
-    ]
-    assert result["models_by_kind"]["chat"] == []
-    # Kept list = sorted union of chat + embedding.
-    assert result["models"] == ["jina-embeddings-v3", "jina-embeddings-v4"]
-    assert set(result["dropped"].keys()) == {"reranker", "clip", "segmenter", "reader"}
-    assert result["dropped"]["reranker"] == ["jina-reranker-v2-base-multilingual"]
-    assert result["dropped"]["clip"] == ["jina-clip-v1", "jina-vlm"]
-    assert result["dropped"]["segmenter"] == ["jina-segmenter-v1"]
-    assert result["dropped"]["reader"] == ["reader-lm-1.5b"]
-
-
-@pytest.mark.asyncio
-async def test_openai_filters_whisper_tts_dalle_ft_into_dropped() -> None:
-    """OpenAI discovery: chat + embedding kept; whisper, TTS, DALL-E,
-    ft:* fine-tunes, legacy completion models all routed to dropped."""
-    payload = {
-        "data": [
-            {"id": "gpt-4o-mini"},
-            {"id": "gpt-4.1"},
-            {"id": "text-embedding-3-small"},
-            {"id": "text-embedding-3-large"},
-            {"id": "whisper-1"},
-            {"id": "tts-1"},
-            {"id": "dall-e-3"},
-            {"id": "ft:gpt-4o-mini:acme::abcd1234"},
-            {"id": "babbage-002"},
-            {"id": "omni-moderation-latest"},
-        ]
-    }
-    with patch("httpx.AsyncClient") as client_cls:
-        client_instance = MagicMock()
-        client_instance.__aenter__ = AsyncMock(return_value=client_instance)
-        client_instance.__aexit__ = AsyncMock(return_value=None)
-        client_instance.get = AsyncMock(return_value=_make_response(payload=payload))
+        client_instance.get = AsyncMock(side_effect=called)
         client_cls.return_value = client_instance
 
         result = await discover_models(_endpoint("openai"))
 
     assert result["ok"] is True
-    assert result["models_by_kind"]["chat"] == ["gpt-4.1", "gpt-4o-mini"]
-    assert result["models_by_kind"]["embedding"] == [
-        "text-embedding-3-large",
-        "text-embedding-3-small",
-    ]
-    # Each non-kept category populated correctly.
-    assert result["dropped"]["audio_stt"] == ["whisper-1"]
-    assert result["dropped"]["audio_synth"] == ["tts-1"]
-    assert result["dropped"]["image_gen"] == ["dall-e-3"]
-    assert result["dropped"]["fine_tune"] == ["ft:gpt-4o-mini:acme::abcd1234"]
-    assert result["dropped"]["other"] == ["babbage-002"]
-    assert result["dropped"]["moderation"] == ["omni-moderation-latest"]
+    # Catalog-sourced result — no dropped models because we never see anything
+    # we wouldn't keep.
+    assert result["dropped"] == {}
+    # The HTTP client was never invoked.
+    called.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_anthropic_discovery_uses_x_api_key_header() -> None:
-    """Anthropic's /v1/models route accepts ONLY x-api-key + anthropic-version;
-    Authorization: Bearer would 401. PR-α adopts the canonical header shape."""
-    captured: dict[str, dict[str, str]] = {}
+async def test_jina_catalog_returns_only_embedding_ids() -> None:
+    """Jina (embedding-only preset) catalog returns embedding ids only —
+    no rerankers, no VLMs, no CLIP, no code-embedding variants that break
+    the inference API. Replaces the upstream-``/models`` filter test."""
+    result = await discover_models(_endpoint("jina_ai"))
+    assert result["ok"] is True
+    assert result["models_by_kind"]["chat"] == []
+    # Every model in ``models`` is in the embedding bucket; specific ids
+    # come from ``llm/known_models.py`` — assert the catalog is non-empty
+    # AND every entry is a recognisable jina-embeddings-* id.
+    assert result["models"]
+    for mid in result["models"]:
+        assert mid.startswith("jina-embeddings-"), f"unexpected jina catalog entry: {mid}"
+    assert result["dropped"] == {}
 
-    async def fake_get(url: str, *, headers: dict[str, str], **_kw: Any) -> MagicMock:
-        captured["headers"] = dict(headers)
-        return _make_response(payload={"data": [{"id": "claude-haiku-4-5"}]})
 
-    with patch("httpx.AsyncClient") as client_cls:
-        client_instance = MagicMock()
-        client_instance.__aenter__ = AsyncMock(return_value=client_instance)
-        client_instance.__aexit__ = AsyncMock(return_value=None)
-        client_instance.get = AsyncMock(side_effect=fake_get)
-        client_cls.return_value = client_instance
+@pytest.mark.asyncio
+async def test_openai_catalog_separates_chat_and_embedding() -> None:
+    """OpenAI catalog populates both chat and embedding buckets."""
+    result = await discover_models(_endpoint("openai"))
+    assert result["ok"] is True
+    assert result["models_by_kind"]["chat"]
+    assert result["models_by_kind"]["embedding"]
+    # gpt-4o-mini is in the catalog as a chat model.
+    assert "gpt-4o-mini" in result["models_by_kind"]["chat"]
+    # text-embedding-3-small is in the catalog as an embedding model.
+    assert "text-embedding-3-small" in result["models_by_kind"]["embedding"]
+    assert result["dropped"] == {}
 
-        await discover_models(
-            _endpoint("anthropic", base_url="https://api.anthropic.com/v1"),
-            plaintext_credential="sk-ant-test-key",
-        )
 
-    assert captured["headers"]["x-api-key"] == "sk-ant-test-key"
-    assert captured["headers"]["anthropic-version"] == "2023-06-01"
-    # The legacy Bearer shape must NOT leak through alongside x-api-key.
-    assert "Authorization" not in captured["headers"]
+@pytest.mark.asyncio
+async def test_google_ai_catalog_excludes_live_and_image_variants() -> None:
+    """The Gemini catalog excludes Live / Image / Realtime / TTS variants
+    that 400 on the OpenAI-compat shim — PR-ε's whole reason to exist."""
+    result = await discover_models(_endpoint("google_ai"))
+    assert result["ok"] is True
+    # Every chat entry is a stable Gemini chat id.
+    for mid in result["models_by_kind"]["chat"]:
+        assert mid.startswith("gemini-"), f"unexpected google_ai catalog entry: {mid}"
+        # Critically, NONE of the variants that triggered ``This model only
+        # supports Interactions API`` in production.
+        assert "-live" not in mid
+        assert "-image-generation" not in mid
+        assert "-tts" not in mid
+        assert "-realtime" not in mid
+    assert result["dropped"] == {}

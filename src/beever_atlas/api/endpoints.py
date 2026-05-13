@@ -290,6 +290,28 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
     else:
         role = "auto"
 
+    # PR-ε: seed ``models`` + ``model_kinds`` from Atlas's curated catalog
+    # for commercial presets when the operator didn't supply any models.
+    # Goal: the endpoint lands usable without requiring a Discover click,
+    # AND with zero risk of pulling an upstream-only / experimental model
+    # that breaks Test or dispatch downstream.
+    from beever_atlas.llm.endpoints import (
+        _CATALOG_DISCOVERY_PRESETS,
+        catalog_models_for_preset,
+    )
+
+    seed_models = list(req.models)
+    seed_kinds: dict[str, str] = {}
+    if not seed_models and req.preset in _CATALOG_DISCOVERY_PRESETS:
+        chat_ids, embedding_ids = catalog_models_for_preset(req.preset)
+        seed_models = sorted(set(chat_ids + embedding_ids))
+        seed_kinds = {mid: "chat" for mid in chat_ids}
+        # ``both``-kind models appear in both buckets; the embedding tag wins
+        # for the picker because operators usually want embedding-side probing
+        # for dual-purpose models on a dedicated embedding endpoint.
+        for mid in embedding_ids:
+            seed_kinds[mid] = "embedding"
+
     store = _store()
     try:
         endpoint = await store.create(
@@ -298,16 +320,21 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
             base_url=req.base_url,
             auth_type=req.auth_type,
             plaintext_credential=plaintext,
-            models=req.models,
+            models=seed_models,
             rpm=req.rpm,
             headers=req.headers,
             tags=req.tags,
         )
-        # Persist the role via update() — the store's ``create()`` doesn't
-        # accept ``role`` directly. Skip the round-trip when the default
-        # ``"auto"`` already matches the dataclass default.
+        # Persist the role + seeded ``model_kinds`` via update() — the store's
+        # ``create()`` doesn't accept those. Skip the round-trip when the
+        # defaults already match.
+        update_kwargs: dict[str, Any] = {}
         if role != "auto":
-            updated = await store.update(endpoint.id, role=role)
+            update_kwargs["role"] = role
+        if seed_kinds:
+            update_kwargs["model_kinds"] = seed_kinds  # type: ignore[assignment]
+        if update_kwargs:
+            updated = await store.update(endpoint.id, **update_kwargs)
             if updated is not None:
                 endpoint = updated
     except RuntimeError as exc:
