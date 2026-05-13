@@ -170,8 +170,25 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
     health = await _run_probe(effective_settings)
 
     if not health.ok:
-        # Probe failure: persist the failure for diagnosis. Re-raise unless
-        # the operator opted out of the guard.
+        # Probe failure mode handling — PR-ζ.5:
+        #
+        # The boot guard's job is to prevent **data corruption** (a wrong-dim
+        # model silently overwriting indexed vectors). A transport / config
+        # failure (model not found, auth failure, network issue) is NOT a
+        # corruption risk — no vectors are being produced, so nothing is
+        # being mixed. Crashing the whole app on a config error is hostile:
+        # the operator can't reach the UI to fix the model they typed wrong.
+        #
+        # New policy:
+        #   * Probe transport / config failure → persist + log + CONTINUE.
+        #     UI's ``embedding-migration/status`` + the front-end "Re-embed
+        #     required" banner surface the failure so the operator can
+        #     pick a working model in Settings and trigger a real probe
+        #     via the Test Connection button.
+        #   * Probe succeeds with wrong dimension → still raise (real
+        #     data-corruption risk — see the next branch).
+        #   * ``EMBEDDING_DIM_GUARD=false`` continues to bypass *everything*
+        #     including the wrong-dim case (escape hatch for advanced users).
         await _safe_set_meta(
             stores,
             provider=effective_settings.embedding_provider,
@@ -180,17 +197,13 @@ async def probe_and_validate(settings: Settings, stores: Any) -> EmbeddingHealth
             ok=False,
             error=health.error,
         )
-        if not effective_settings.embedding_dim_guard:
-            logger.warning(
-                "embedding_health: probe failed but EMBEDDING_DIM_GUARD=false — "
-                "continuing despite error: %s",
-                health.error,
-            )
-            return health
-        raise EmbeddingDimensionMismatch(
-            "Embedding probe failed: %s. Cannot validate provider configuration. "
-            "Fix credentials/network or set EMBEDDING_DIM_GUARD=false to bypass." % health.error
+        logger.error(
+            "embedding_health: probe failed — app will start in degraded mode "
+            "(no embeddings until config is fixed in Settings → Embedding). "
+            "Underlying error: %s",
+            health.error,
         )
+        return health
 
     # Probe succeeded with some dimension. Compare against effective config.
     if health.dim != effective_settings.embedding_dimensions:

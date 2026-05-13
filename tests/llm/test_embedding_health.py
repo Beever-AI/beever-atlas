@@ -259,19 +259,46 @@ async def test_weaviate_unreachable_skips_count_check(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_probe_failure_aborts(monkeypatch):
-    """Probe call itself fails → fatal unless DIM_GUARD off."""
+async def test_probe_failure_is_soft_fail_app_still_starts(monkeypatch):
+    """PR-ζ.5: a probe transport / config failure must NOT crash the app.
+
+    Rationale: the boot guard's job is to prevent data corruption from a
+    wrong-dim model writing vectors of the wrong shape into the index.
+    A transport failure (404 / auth / network) doesn't produce any
+    vectors — so there's no corruption risk. Crashing the whole app on
+    a config mistake is hostile: the operator can't reach the UI to fix
+    the model they typed wrong. Now we log + persist + continue, and
+    the UI's ``embedding-migration/status`` + the front-end "Re-embed
+    required" banner surface the failure so the operator can fix it
+    interactively.
+
+    The wrong-dim case (probe succeeds but returns vectors of the wrong
+    length) still raises — see ``test_probe_dim_disagrees_with_configured_aborts``.
+    """
     cfg = _settings()
+    set_meta_calls: list[dict[str, object]] = []
+
+    async def fake_set_meta(_stores, **kw):
+        set_meta_calls.append(kw)
+
     stores = _stores(persisted_meta=None, fact_count=0)
 
     async def fake_probe(_settings):
         return EmbeddingHealth(ok=False, dim=None, latency_ms=0, error="auth failed")
 
     monkeypatch.setattr(health_mod, "_run_probe", fake_probe)
-    with pytest.raises(EmbeddingDimensionMismatch) as excinfo:
-        await probe_and_validate(cfg, stores)
+    monkeypatch.setattr(health_mod, "_safe_set_meta", fake_set_meta)
 
-    assert "auth failed" in str(excinfo.value)
+    h = await probe_and_validate(cfg, stores)
+
+    # App didn't crash — health bubbled up with the underlying error so the
+    # API + UI can surface it.
+    assert h.ok is False
+    assert h.error == "auth failed"
+    # The failure WAS persisted to ``embedding_meta`` for diagnosis + UI.
+    assert len(set_meta_calls) == 1
+    assert set_meta_calls[0]["ok"] is False
+    assert set_meta_calls[0]["error"] == "auth failed"
 
 
 @pytest.mark.asyncio
