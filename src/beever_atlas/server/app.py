@@ -163,6 +163,20 @@ async def lifespan(app: FastAPI):
     await stores.startup()
     init_stores(stores)
     init_llm_provider(settings)
+    # PR-ν: hydrate per-agent model overrides from llm_assignments
+    # (new) + agent_model_config (legacy). Without this, ``resolve_model``
+    # falls back to the static DEFAULT_AGENT_MODELS map until the first
+    # ``reload_from_db`` triggered by a UI save — i.e. agent code keeps
+    # using the seed model from env even after the operator saved a
+    # different one in Settings.
+    try:
+        from beever_atlas.llm.provider import get_llm_provider
+
+        await get_llm_provider().reload_from_db()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "lifespan: LLMProvider.reload_from_db failed (non-fatal)", exc_info=True
+        )
     # PR-λ.7: hook LiteLLM's success/failure callbacks so the
     # ``/api/settings/debug/recent-llm-calls`` ring buffer captures ALL
     # litellm activity — including agent calls that bypass our

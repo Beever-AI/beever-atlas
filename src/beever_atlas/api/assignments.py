@@ -246,6 +246,10 @@ async def upsert_assignment(consumer: str, req: UpdateAssignmentRequest) -> Assi
         task=req.task,
     )
     saved = await _store().upsert(assignment)
+    # PR-ν: hot-reload LLMProvider so the new model takes effect on the
+    # next agent call — without this, agent code keeps dispatching the
+    # previous model until uvicorn restart.
+    await _refresh_llm_provider()
     return _assignment_to_response(saved)
 
 
@@ -255,6 +259,27 @@ async def delete_assignment(consumer: str) -> None:
     if not deleted:
         raise HTTPException(
             status_code=404, detail={"error": "assignment_not_found", "consumer": consumer}
+        )
+    # PR-ν: hot-reload so the consumer falls back to the default map
+    # immediately, not after the next restart.
+    await _refresh_llm_provider()
+
+
+async def _refresh_llm_provider() -> None:
+    """Refresh ``LLMProvider`` agent overrides from the persistent state.
+
+    Pulls from ``llm_assignments`` + legacy ``agent_model_config`` so a
+    UI-saved Assignment takes effect on the very next agent call.
+    Best-effort — never let a hydration failure fail the save.
+    """
+    try:
+        from beever_atlas.llm.provider import get_llm_provider
+
+        await get_llm_provider().reload_from_db()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "assignments: LLMProvider.reload_from_db failed (non-fatal)",
+            exc_info=True,
         )
 
 

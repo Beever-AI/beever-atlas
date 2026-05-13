@@ -328,15 +328,90 @@ class LLMProvider:
         )
 
     async def reload_from_db(self) -> None:
-        """Load per-agent model config from MongoDB."""
+        """Load per-agent model config from MongoDB.
+
+        PR-ν: merges TWO sources, with the NEW one taking precedence:
+
+          1. ``llm_assignments`` collection (new Endpoint+Assignment data
+             model — this is what the Settings UI writes to). Each row maps
+             ``consumer`` → ``endpoint_id`` + ``model``; we resolve the
+             endpoint's preset+base_url into the ``<provider>/<model>``
+             form ``resolve_model`` expects.
+          2. ``agent_model_config`` collection (legacy doc, still set by
+             a few internal flows). Used only for consumers without an
+             Assignment row.
+
+        Previously this only read source #2 — which is why operators saw
+        Settings → Agent models save successfully (#1) but agent code
+        kept dispatching the OLD model (it only read #2). The bug is
+        invisible until the operator actually inspects the dispatched
+        model string, e.g. via the new "Last call" indicator.
+        """
         try:
             from beever_atlas.stores import get_stores
 
-            doc = await get_stores().mongodb.get_agent_model_config()
-            overrides = doc.get("models", {}) if doc else {}
+            stores = get_stores()
+            overrides: dict[str, str] = {}
+
+            # Source 2 first — legacy doc — so source 1 (Assignments)
+            # overwrites on collisions.
+            try:
+                doc = await stores.mongodb.get_agent_model_config()
+                if doc:
+                    legacy = doc.get("models", {}) or {}
+                    if isinstance(legacy, dict):
+                        overrides.update(legacy)
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "LLMProvider.reload_from_db: legacy agent_model_config read failed",
+                    exc_info=True,
+                )
+
+            # Source 1: llm_assignments × endpoints. Build the full
+            # ``<provider>/<model>`` string the resolver needs.
+            try:
+                assignments = await stores.mongodb.db["llm_assignments"].find(
+                    {}
+                ).to_list(None)
+                endpoints = await stores.mongodb.db["endpoints"].find({}).to_list(
+                    None
+                )
+                ep_by_id = {e.get("id"): e for e in endpoints if e.get("id")}
+                from beever_atlas.llm.endpoints import preset_to_provider
+
+                for a in assignments:
+                    consumer = a.get("consumer")
+                    model = a.get("model")
+                    ep_id = a.get("endpoint_id")
+                    if not (consumer and model and ep_id):
+                        continue
+                    if consumer == "embedding":
+                        # Embedding has its own runtime + dispatch path.
+                        continue
+                    ep = ep_by_id.get(ep_id)
+                    if ep is None:
+                        continue
+                    provider = preset_to_provider(ep.get("preset", "openai"))
+                    bare = model.split("/", 1)[-1] if "/" in model else model
+                    overrides[consumer] = f"{provider}/{bare}"
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "LLMProvider.reload_from_db: llm_assignments hydration failed "
+                    "(legacy overrides still applied)",
+                    exc_info=True,
+                )
+
             self.reload(overrides)
+            logger.info(
+                "LLMProvider: hydrated %d agent model overrides from "
+                "llm_assignments + agent_model_config",
+                len(overrides),
+            )
         except Exception:
-            logger.warning("LLMProvider: failed to load model config from MongoDB", exc_info=True)
+            logger.warning(
+                "LLMProvider: failed to load model config from MongoDB",
+                exc_info=True,
+            )
 
     @property
     def fast(self) -> str:
