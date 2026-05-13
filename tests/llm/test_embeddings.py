@@ -257,81 +257,164 @@ def test_jina_key_bridge_seeds_target_when_unset(monkeypatch):
     assert os.environ["JINA_AI_API_KEY"] == "legacy-key-123"
 
 
-# ─── PR-ζ: embedding dispatch routing for OpenAI-compat shims ─────────────
+# ─── PR-ζ.3: embedding dispatch routing — Gemini native + shim OpenAI ───
 
 
-def test_route_gemini_openai_compat_shim_uses_openai_provider() -> None:
-    """Gemini ``/v1beta/openai/`` shim accepts ``POST /v1beta/openai/embeddings``
-    in OpenAI shape. LiteLLM's native ``gemini`` embedding handler 404s
-    against the shim URL — route via ``openai`` instead so LiteLLM hits the
-    right endpoint."""
-    provider, model = emb._route_embedding_for_dispatch(
+def test_route_gemini_always_native_drops_api_base_shim_url() -> None:
+    """PR-ζ.3: Gemini ``/v1beta/openai/`` shim 404s on embeddings (the shim
+    internally proxies to ``v1main`` where ``text-embedding-*`` models don't
+    exist). Route through LiteLLM's NATIVE gemini handler and DROP api_base
+    so LiteLLM uses Google's default native URL —
+    ``/v1beta/models/<model>:batchEmbedContents`` — which works."""
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "gemini",
         "gemini/text-embedding-004",
         "https://generativelanguage.googleapis.com/v1beta/openai/",
     )
-    assert provider == "openai"
-    assert model == "text-embedding-004"
+    assert provider == "gemini"
+    assert model == "gemini/text-embedding-004"
+    assert drop_api_base is True
 
 
-def test_route_gemini_native_keeps_native_provider() -> None:
-    """A Gemini endpoint pointed at the native API (no ``/openai/`` in the
-    URL) stays on LiteLLM's native ``gemini`` handler. We only re-route
-    when the OpenAI-compat shim path is recognisable."""
-    provider, model = emb._route_embedding_for_dispatch(
+def test_route_gemini_always_native_drops_api_base_native_url_too() -> None:
+    """Even when api_base looks native, drop it — LiteLLM's gemini handler
+    builds its own URL; a custom api_base would confuse the URL builder."""
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "gemini",
         "gemini/text-embedding-004",
         "https://generativelanguage.googleapis.com",
     )
     assert provider == "gemini"
     assert model == "gemini/text-embedding-004"
+    assert drop_api_base is True
 
 
 def test_route_jina_v1_shim_uses_openai_provider() -> None:
-    """Jina's ``/v1/embeddings`` shim is OpenAI-shaped — route via openai
-    SDK to sidestep native-handler quirks."""
-    provider, model = emb._route_embedding_for_dispatch(
+    """Jina's ``/v1/embeddings`` shim is genuinely OpenAI-shaped — route via
+    openai SDK, keep api_base."""
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "jina_ai",
         "jina_ai/jina-embeddings-v4",
         "https://api.jina.ai/v1",
     )
     assert provider == "openai"
     assert model == "jina-embeddings-v4"
+    assert drop_api_base is False
 
 
 def test_route_jina_non_shim_keeps_native_provider() -> None:
     """An operator-supplied non-``/v1`` Jina URL (e.g. private gateway)
     stays on native handler — they explicitly opted out of the shim."""
-    provider, model = emb._route_embedding_for_dispatch(
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "jina_ai",
         "jina_ai/jina-embeddings-v4",
         "https://gateway.internal/jina",
     )
     assert provider == "jina_ai"
     assert model == "jina_ai/jina-embeddings-v4"
+    assert drop_api_base is False
 
 
 def test_route_ollama_v1_shim_uses_openai_provider() -> None:
     """Ollama's OpenAI-compat shim accepts ``/v1/embeddings`` — route via
     openai SDK, same as the chat side."""
-    provider, model = emb._route_embedding_for_dispatch(
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "ollama",
         "ollama/nomic-embed-text",
         "http://localhost:11434/v1",
     )
     assert provider == "openai"
     assert model == "nomic-embed-text"
+    assert drop_api_base is False
 
 
 def test_route_openai_passes_through() -> None:
     """OpenAI itself stays openai — no rewrite needed."""
-    provider, model = emb._route_embedding_for_dispatch(
+    provider, model, drop_api_base = emb._route_embedding_for_dispatch(
         "openai",
         "openai/text-embedding-3-small",
         "https://api.openai.com/v1",
     )
     assert provider == "openai"
     assert model == "openai/text-embedding-3-small"
+    assert drop_api_base is False
+
+
+@pytest.mark.asyncio
+async def test_aembedding_call_strips_api_base_for_gemini(monkeypatch):
+    """PR-ζ.3: when routing Gemini embedding to the native handler,
+    ``_aembedding_call`` MUST strip ``api_base`` from the dispatch kwargs.
+    LiteLLM's native gemini embedding handler builds its own URL — passing
+    a stale shim ``api_base`` would 404."""
+    captured_dispatch: dict[str, Any] = {}
+
+    async def fake_dispatch(**kwargs):
+        captured_dispatch.update(kwargs)
+
+        class _R:
+            def model_dump(self):
+                return {"data": [{"embedding": [0.1] * 8}]}
+
+        return _R()
+
+    monkeypatch.setattr(
+        "beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch
+    )
+
+    await emb._aembedding_call(
+        model="gemini/text-embedding-004",
+        chunk=["hello"],
+        extra_kwargs={
+            "api_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key": "AIza-test",
+            "dimensions": 768,
+        },
+        provider="gemini",
+    )
+
+    # Routed to native gemini handler.
+    assert captured_dispatch["provider"] == "gemini"
+    assert captured_dispatch["model"] == "gemini/text-embedding-004"
+    # The shim api_base was stripped — LiteLLM uses Google's default native URL.
+    assert "api_base" not in captured_dispatch
+    # Other kwargs survive the strip.
+    assert captured_dispatch["api_key"] == "AIza-test"
+    assert captured_dispatch["dimensions"] == 768
+
+
+@pytest.mark.asyncio
+async def test_aembedding_call_keeps_api_base_for_jina_v1_shim(monkeypatch):
+    """For Jina ``/v1`` shim routing (openai provider), api_base is REQUIRED —
+    LiteLLM's openai SDK posts to ``<api_base>/embeddings``."""
+    captured_dispatch: dict[str, Any] = {}
+
+    async def fake_dispatch(**kwargs):
+        captured_dispatch.update(kwargs)
+
+        class _R:
+            def model_dump(self):
+                return {"data": [{"embedding": [0.1] * 8}]}
+
+        return _R()
+
+    monkeypatch.setattr(
+        "beever_atlas.services.llm_dispatch.dispatch_embedding", fake_dispatch
+    )
+
+    await emb._aembedding_call(
+        model="jina_ai/jina-embeddings-v4",
+        chunk=["hello"],
+        extra_kwargs={
+            "api_base": "https://api.jina.ai/v1",
+            "api_key": "jina-test",
+        },
+        provider="jina_ai",
+    )
+
+    assert captured_dispatch["provider"] == "openai"
+    assert captured_dispatch["model"] == "jina-embeddings-v4"
+    # api_base survives — needed for the openai SDK to find the shim.
+    assert captured_dispatch["api_base"] == "https://api.jina.ai/v1"
 
 
 @pytest.mark.asyncio

@@ -187,38 +187,52 @@ def _build_extra_kwargs(cfg: Settings, *, task: str) -> dict[str, Any]:
 
 def _route_embedding_for_dispatch(
     provider: str, model: str, api_base: str | None
-) -> tuple[str, str]:
-    """Rewrite ``(provider, model)`` so the embedding dispatch lands on the
-    HTTP shape the actual server expects.
+) -> tuple[str, str, bool]:
+    """Rewrite ``(provider, model)`` and decide whether to drop ``api_base``.
 
-    Same idea as :func:`services.llm_dispatch.route_for_endpoint` for chat,
-    but applied to the embedding path. The rule that bit us in production:
+    Returns ``(litellm_provider, litellm_model, drop_api_base)``. When
+    ``drop_api_base`` is True, the caller MUST strip ``api_base`` from the
+    dispatch kwargs so LiteLLM uses its built-in default for the provider.
 
-    * ``provider="gemini"`` + ``api_base`` contains ``/openai/`` →
-      Google AI's OpenAI-compat shim accepts ``POST /v1beta/openai/embeddings``
-      in OpenAI shape. LiteLLM's native ``gemini`` embedding handler hits
-      the native ``/v1beta/models/<model>:embedContent`` endpoint instead,
-      which 404s against the shim URL. Route via ``openai`` provider with
-      the bare model id; LiteLLM POSTs ``<api_base>/embeddings`` and wins.
-    * ``provider="jina_ai"`` / ``"cohere"`` + ``api_base`` ends in ``/v1``
-      → same trick. Their ``/v1/embeddings`` endpoints are OpenAI-shaped.
-    * ``provider="ollama"`` / ``"ollama_chat"`` + ``api_base`` ends in
-      ``/v1`` → likewise (OpenAI-compat shim path).
-    * Anything else passes through unchanged.
+    Routing matrix:
 
-    Mirrors the test-probe ``_resolve_probe`` switch in ``api/endpoints.py``
-    so Test and the re-embed migration agree on the wire shape.
+    * ``provider="gemini"`` → ALWAYS route through LiteLLM's native
+      ``gemini`` embedding handler, **drop api_base**. Reason: Google's
+      OpenAI-compat shim at ``/v1beta/openai/embeddings`` internally
+      proxies to ``v1main`` where ``text-embedding-004`` does not exist,
+      producing ``404 NOT_FOUND … is not found for API version v1main``.
+      The native handler hits ``/v1beta/models/<model>:batchEmbedContents``
+      directly with a working endpoint, and auto-maps ``dimensions=`` to
+      Google's ``outputDimensionality`` field — so we don't need the
+      ``allowed_openai_params=['dimensions']`` workaround for this path.
+      Mirrors the chat-side native-Gemini routing in
+      :func:`services.llm_dispatch.route_for_endpoint`.
+    * ``provider in ("jina_ai", "cohere")`` + ``api_base`` ends in ``/v1``
+      → openai provider, bare model, keep api_base. Their ``/v1/embeddings``
+      endpoints are genuinely OpenAI-shaped and the shim works.
+    * ``provider in ("ollama", "ollama_chat")`` + ``api_base`` ends in
+      ``/v1`` → openai provider, bare model, keep api_base. Same trick.
+    * Anything else passes through unchanged with api_base kept.
+
+    Aligned with ``_resolve_probe`` in ``api/endpoints.py`` so Test and the
+    re-embed migration agree on the wire shape — the gating constraint per
+    the architecture review: "Test passes / dispatch 404s" is a failure
+    mode and both lanes must use the same routing.
     """
     base = (api_base or "").rstrip("/")
     bare = model.split("/", 1)[1] if "/" in model else model
 
-    if provider == "gemini" and "/openai/" in (api_base or ""):
-        return "openai", bare
+    if provider == "gemini":
+        # Native Gemini embedding handler — drop api_base unconditionally so
+        # LiteLLM uses Google's default native URL. Even when the operator
+        # configured a /v1beta/openai/ shim base, that path is unusable for
+        # embeddings on Google's side.
+        return "gemini", f"gemini/{bare}", True
     if provider in ("jina_ai", "cohere") and base.endswith("/v1"):
-        return "openai", bare
+        return "openai", bare, False
     if provider in ("ollama", "ollama_chat") and base.endswith("/v1"):
-        return "openai", bare
-    return provider, model
+        return "openai", bare, False
+    return provider, model, False
 
 
 async def _aembedding_call(
@@ -235,25 +249,30 @@ async def _aembedding_call(
     kwarg is the LiteLLM prefix (``jina_ai``, ``openai``, …) — extracted by
     the caller from the resolved ``provider/model`` model string.
 
-    PR-ζ: applies :func:`_route_embedding_for_dispatch` so OpenAI-compat
-    shims (Gemini ``/v1beta/openai/``, Jina ``/v1``, Ollama ``/v1``, etc.)
-    reach LiteLLM's well-tested ``openai`` SDK path instead of each
-    provider's native handler — matches what the Test probe does.
+    PR-ζ.3: applies :func:`_route_embedding_for_dispatch`. For Gemini, this
+    means routing through LiteLLM's native embedding handler and DROPPING
+    ``api_base`` from the dispatch kwargs (Google's OpenAI-compat shim is
+    broken for embeddings; we use the native ``v1beta/models/*:embedContent``
+    path instead).
     """
     from beever_atlas.services.llm_dispatch import dispatch_embedding
 
     eff_provider = provider or model.split("/", 1)[0]
     api_base = extra_kwargs.get("api_base") if isinstance(extra_kwargs.get("api_base"), str) else None
-    routed_provider, routed_model = _route_embedding_for_dispatch(
+    routed_provider, routed_model, drop_api_base = _route_embedding_for_dispatch(
         eff_provider, model, api_base
     )
+    # Mutate-safely: caller may reuse extra_kwargs across chunks.
+    dispatch_kwargs = dict(extra_kwargs)
+    if drop_api_base:
+        dispatch_kwargs.pop("api_base", None)
 
     response = await dispatch_embedding(
         provider=routed_provider,
         model=routed_model,
         input=chunk,
         timeout=_DEFAULT_TIMEOUT_SECONDS,
-        **extra_kwargs,
+        **dispatch_kwargs,
     )
     # LiteLLM normalises every provider to OpenAI shape:
     #   response["data"] = [{"embedding": [...], "index": ...}, ...]
