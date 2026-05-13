@@ -257,6 +257,83 @@ def test_jina_key_bridge_seeds_target_when_unset(monkeypatch):
     assert os.environ["JINA_AI_API_KEY"] == "legacy-key-123"
 
 
+# ─── PR-ζ: embedding dispatch routing for OpenAI-compat shims ─────────────
+
+
+def test_route_gemini_openai_compat_shim_uses_openai_provider() -> None:
+    """Gemini ``/v1beta/openai/`` shim accepts ``POST /v1beta/openai/embeddings``
+    in OpenAI shape. LiteLLM's native ``gemini`` embedding handler 404s
+    against the shim URL — route via ``openai`` instead so LiteLLM hits the
+    right endpoint."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "gemini",
+        "gemini/text-embedding-004",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+    )
+    assert provider == "openai"
+    assert model == "text-embedding-004"
+
+
+def test_route_gemini_native_keeps_native_provider() -> None:
+    """A Gemini endpoint pointed at the native API (no ``/openai/`` in the
+    URL) stays on LiteLLM's native ``gemini`` handler. We only re-route
+    when the OpenAI-compat shim path is recognisable."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "gemini",
+        "gemini/text-embedding-004",
+        "https://generativelanguage.googleapis.com",
+    )
+    assert provider == "gemini"
+    assert model == "gemini/text-embedding-004"
+
+
+def test_route_jina_v1_shim_uses_openai_provider() -> None:
+    """Jina's ``/v1/embeddings`` shim is OpenAI-shaped — route via openai
+    SDK to sidestep native-handler quirks."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "jina_ai",
+        "jina_ai/jina-embeddings-v4",
+        "https://api.jina.ai/v1",
+    )
+    assert provider == "openai"
+    assert model == "jina-embeddings-v4"
+
+
+def test_route_jina_non_shim_keeps_native_provider() -> None:
+    """An operator-supplied non-``/v1`` Jina URL (e.g. private gateway)
+    stays on native handler — they explicitly opted out of the shim."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "jina_ai",
+        "jina_ai/jina-embeddings-v4",
+        "https://gateway.internal/jina",
+    )
+    assert provider == "jina_ai"
+    assert model == "jina_ai/jina-embeddings-v4"
+
+
+def test_route_ollama_v1_shim_uses_openai_provider() -> None:
+    """Ollama's OpenAI-compat shim accepts ``/v1/embeddings`` — route via
+    openai SDK, same as the chat side."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "ollama",
+        "ollama/nomic-embed-text",
+        "http://localhost:11434/v1",
+    )
+    assert provider == "openai"
+    assert model == "nomic-embed-text"
+
+
+def test_route_openai_passes_through() -> None:
+    """OpenAI itself stays openai — no rewrite needed."""
+    provider, model = emb._route_embedding_for_dispatch(
+        "openai",
+        "openai/text-embedding-3-small",
+        "https://api.openai.com/v1",
+    )
+    assert provider == "openai"
+    assert model == "openai/text-embedding-3-small"
+
+
 @pytest.mark.asyncio
 async def test_dimensions_kwarg_forwarded(monkeypatch):
     captured: dict[str, Any] = {}

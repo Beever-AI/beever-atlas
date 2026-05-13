@@ -185,6 +185,42 @@ def _build_extra_kwargs(cfg: Settings, *, task: str) -> dict[str, Any]:
     return kwargs
 
 
+def _route_embedding_for_dispatch(
+    provider: str, model: str, api_base: str | None
+) -> tuple[str, str]:
+    """Rewrite ``(provider, model)`` so the embedding dispatch lands on the
+    HTTP shape the actual server expects.
+
+    Same idea as :func:`services.llm_dispatch.route_for_endpoint` for chat,
+    but applied to the embedding path. The rule that bit us in production:
+
+    * ``provider="gemini"`` + ``api_base`` contains ``/openai/`` →
+      Google AI's OpenAI-compat shim accepts ``POST /v1beta/openai/embeddings``
+      in OpenAI shape. LiteLLM's native ``gemini`` embedding handler hits
+      the native ``/v1beta/models/<model>:embedContent`` endpoint instead,
+      which 404s against the shim URL. Route via ``openai`` provider with
+      the bare model id; LiteLLM POSTs ``<api_base>/embeddings`` and wins.
+    * ``provider="jina_ai"`` / ``"cohere"`` + ``api_base`` ends in ``/v1``
+      → same trick. Their ``/v1/embeddings`` endpoints are OpenAI-shaped.
+    * ``provider="ollama"`` / ``"ollama_chat"`` + ``api_base`` ends in
+      ``/v1`` → likewise (OpenAI-compat shim path).
+    * Anything else passes through unchanged.
+
+    Mirrors the test-probe ``_resolve_probe`` switch in ``api/endpoints.py``
+    so Test and the re-embed migration agree on the wire shape.
+    """
+    base = (api_base or "").rstrip("/")
+    bare = model.split("/", 1)[1] if "/" in model else model
+
+    if provider == "gemini" and "/openai/" in (api_base or ""):
+        return "openai", bare
+    if provider in ("jina_ai", "cohere") and base.endswith("/v1"):
+        return "openai", bare
+    if provider in ("ollama", "ollama_chat") and base.endswith("/v1"):
+        return "openai", bare
+    return provider, model
+
+
 async def _aembedding_call(
     *,
     model: str,
@@ -198,12 +234,23 @@ async def _aembedding_call(
     so the per-provider rate-limit throttle gates the call. The ``provider``
     kwarg is the LiteLLM prefix (``jina_ai``, ``openai``, …) — extracted by
     the caller from the resolved ``provider/model`` model string.
+
+    PR-ζ: applies :func:`_route_embedding_for_dispatch` so OpenAI-compat
+    shims (Gemini ``/v1beta/openai/``, Jina ``/v1``, Ollama ``/v1``, etc.)
+    reach LiteLLM's well-tested ``openai`` SDK path instead of each
+    provider's native handler — matches what the Test probe does.
     """
     from beever_atlas.services.llm_dispatch import dispatch_embedding
 
+    eff_provider = provider or model.split("/", 1)[0]
+    api_base = extra_kwargs.get("api_base") if isinstance(extra_kwargs.get("api_base"), str) else None
+    routed_provider, routed_model = _route_embedding_for_dispatch(
+        eff_provider, model, api_base
+    )
+
     response = await dispatch_embedding(
-        provider=provider or model.split("/", 1)[0],
-        model=model,
+        provider=routed_provider,
+        model=routed_model,
         input=chunk,
         timeout=_DEFAULT_TIMEOUT_SECONDS,
         **extra_kwargs,
