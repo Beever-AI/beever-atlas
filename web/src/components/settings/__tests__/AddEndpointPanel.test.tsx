@@ -34,6 +34,22 @@ describe("AddEndpointPanel", () => {
     onCancel = vi.fn<() => void>();
   });
 
+  it("renders as a modal — backdrop + dialog role — and Escape closes it via onCancel", () => {
+    render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} />);
+    // Dialog chrome present.
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByLabelText("Close")).toBeTruthy();
+    // Escape routes to onCancel.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking the ✕ close button calls onCancel", () => {
+    render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} />);
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("clicking a preset chip prefills name + base URL + models", () => {
     render(<AddEndpointPanel onCreate={onCreate} onCancel={onCancel} />);
     fireEvent.click(screen.getByText("Anthropic Claude"));

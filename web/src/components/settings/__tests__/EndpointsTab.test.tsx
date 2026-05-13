@@ -102,15 +102,18 @@ describe("EndpointsTab", () => {
     await waitFor(() => expect(screen.getByText("OpenAI prod")).toBeTruthy());
     // Masked credential is rendered by the card.
     expect(screen.getByText("sk-p...1234")).toBeTruthy();
-    // usedByCount — qa_agent points at ep-1 → "1 jobs".
-    expect(screen.getByText(/1 jobs/)).toBeTruthy();
+    // usedByCount — qa_agent points at ep-1 → demoted "used by 1 agent" line.
+    expect(screen.getByText(/used by 1 agent/i)).toBeTruthy();
+    // The old noise chips are gone.
+    expect(screen.queryByText(/\bjobs\b/)).toBeNull();
+    expect(screen.queryByText(/RPM/)).toBeNull();
     // Test / Discover / Delete buttons.
     expect(screen.getByText("Test")).toBeTruthy();
     expect(screen.getByText("Discover")).toBeTruthy();
     expect(screen.getByText("Delete")).toBeTruthy();
   });
 
-  it("'Add endpoint' button reveals the AddEndpointPanel", async () => {
+  it("'Add endpoint' button opens the AddEndpointPanel modal", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
@@ -125,7 +128,9 @@ describe("EndpointsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Add endpoint/i }));
 
-    await waitFor(() => expect(screen.getByText("Base URL")).toBeTruthy());
+    // A modal dialog appears with the create form.
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    expect(screen.getByText("Base URL")).toBeTruthy();
     expect(screen.getByText("API key")).toBeTruthy();
     expect(screen.getByText("Models")).toBeTruthy();
   });
@@ -189,5 +194,32 @@ describe("EndpointsTab", () => {
     fireEvent.click(screen.getByText("Delete"));
 
     await waitFor(() => expect(screen.getByText(/in use by: qa_agent/i)).toBeTruthy());
+  });
+
+  it("adding a model via the card's add-input PUTs the endpoint with the extended model list", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const putBodies: any[] = [];
+    fetchMock.mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/endpoints/ep-1") && init?.method === "PUT") {
+        putBodies.push(JSON.parse(init.body as string));
+        return makeResponse({ ...ENDPOINT, models: [...ENDPOINT.models, "gpt-4.1"] });
+      }
+      if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [ENDPOINT] });
+      if (url.includes("/api/settings/assignments"))
+        return makeResponse({ assignments: [], default_consumers: [], capabilities: {} });
+      return makeResponse({});
+    });
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("OpenAI prod")).toBeTruthy());
+
+    // 2 models (<= 8) → the model list is expanded by default; the add-input is present.
+    const addInput = screen.getByLabelText("Add a model") as HTMLInputElement;
+    fireEvent.change(addInput, { target: { value: "gpt-4.1" } });
+    fireEvent.keyDown(addInput, { key: "Enter" });
+
+    await waitFor(() => expect(putBodies.length).toBe(1));
+    expect(putBodies[0].models).toEqual(["gpt-4o-mini", "gpt-4o", "gpt-4.1"]);
   });
 });

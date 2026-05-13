@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, type Mock } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { EndpointCard } from "../EndpointCard";
 import type { Endpoint } from "@/lib/aiSetup";
 
@@ -26,25 +26,78 @@ function makeEndpoint(overrides: Partial<Endpoint> = {}): Endpoint {
 }
 
 describe("EndpointCard", () => {
-  it("renders name, preset, masked credential, status pill and body stats", () => {
+  it("renders name, family chip, masked credential, status pill and the host line", () => {
     render(
       <EndpointCard
         endpoint={makeEndpoint()}
         usedByCount={3}
+        usedByConsumers={["qa_agent", "embedding"]}
         onTest={() => {}}
         onDiscover={() => {}}
         onDelete={() => {}}
       />,
     );
     expect(screen.getByText("OpenAI prod")).toBeTruthy();
-    expect(screen.getByText("openai")).toBeTruthy();
+    // Family chip from the preset identity (no longer the raw preset key).
+    expect(screen.getByText("OpenAI")).toBeTruthy();
     expect(screen.getByText("sk-p...1234")).toBeTruthy();
-    // untested status pill (no last_test, no testResult)
     expect(screen.getByText("untested")).toBeTruthy();
-    // body stats
-    expect(screen.getByText(/2 models/)).toBeTruthy();
-    expect(screen.getByText(/3 jobs/)).toBeTruthy();
-    expect(screen.getByText(/500 RPM/)).toBeTruthy();
+    // Host (not the full URL) is shown.
+    expect(screen.getByText("api.openai.com")).toBeTruthy();
+    // The "used by N agents" demoted line.
+    expect(screen.getByText(/used by 3 agents/i)).toBeTruthy();
+  });
+
+  it("does NOT render the old noise chips (jobs / RPM / #tag)", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ rpm: 500, tags: ["prod"] })}
+        usedByCount={3}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.queryByText(/\bjobs\b/)).toBeNull();
+    expect(screen.queryByText(/RPM/)).toBeNull();
+    expect(screen.queryByText("#prod")).toBeNull();
+  });
+
+  it("uses the preset's friendly label and an 'auto-detected' badge for an env-hydrated endpoint", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({
+          preset: "google_ai",
+          name: "google_ai (from GOOGLE_API_KEY)",
+          tags: ["migrated-from-env"],
+          base_url: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    // Clean title, not the noisy auto-generated name.
+    expect(screen.getByText("Google AI (Gemini)")).toBeTruthy();
+    expect(screen.queryByText("google_ai (from GOOGLE_API_KEY)")).toBeNull();
+    // The discreet badge naming the env var.
+    expect(screen.getByText(/auto-detected from/i)).toBeTruthy();
+    expect(screen.getByText("GOOGLE_API_KEY")).toBeTruthy();
+  });
+
+  it("keeps an operator-set name as-is (no auto-detected badge)", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ name: "Prod Gemini", preset: "google_ai" })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText("Prod Gemini")).toBeTruthy();
+    expect(screen.queryByText(/auto-detected from/i)).toBeNull();
   });
 
   it("calls onTest when the Test button is clicked", () => {
@@ -147,7 +200,49 @@ describe("EndpointCard", () => {
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
 
-  it("expanding the model stat shows the model-name chips", () => {
+  it("shows the base URL as a host and falls back to the raw string when it doesn't parse", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ preset: "ollama", auth_type: "none", base_url: "localhost:11434" })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText("localhost:11434")).toBeTruthy();
+  });
+
+  it("shows '(no base URL — set in Edit)' when base_url is empty", () => {
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ preset: "custom", base_url: "" })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.getByText(/no base URL — set in Edit/i)).toBeTruthy();
+  });
+
+  it("copies the full base URL to the clipboard when the copy button is clicked", () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint()}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Copy endpoint URL"));
+    expect(writeText).toHaveBeenCalledWith("https://api.openai.com/v1");
+  });
+
+  it("renders model chips expanded-by-default for short lists", () => {
     render(
       <EndpointCard
         endpoint={makeEndpoint({ models: ["gpt-4o-mini", "gpt-4o", "o4-mini"] })}
@@ -157,14 +252,68 @@ describe("EndpointCard", () => {
         onDelete={() => {}}
       />,
     );
-    // Chips not visible until expanded.
-    expect(screen.queryByText("o4-mini")).toBeNull();
-    fireEvent.click(screen.getByText("3 models"));
+    // <= 8 models → expanded without a click.
     expect(screen.getByText("gpt-4o-mini")).toBeTruthy();
     expect(screen.getByText("o4-mini")).toBeTruthy();
   });
 
-  it("shows '(no models — run Discover)' and disables the model toggle when there are no models", () => {
+  it("collapses long model lists (> 8) until the toggle is clicked", () => {
+    const many = Array.from({ length: 10 }, (_, i) => `m-${i}`);
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ models: many })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.queryByText("m-9")).toBeNull();
+    fireEvent.click(screen.getByText("10 models"));
+    expect(screen.getByText("m-9")).toBeTruthy();
+  });
+
+  it("clicking a model chip's ✕ calls onUpdateModels without that model", async () => {
+    const onUpdateModels: Mock<(models: string[]) => Promise<void>> = vi
+      .fn<(models: string[]) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ models: ["gpt-4o-mini", "gpt-4o"] })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+        onUpdateModels={onUpdateModels}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Remove model gpt-4o-mini"));
+    await waitFor(() => expect(onUpdateModels).toHaveBeenCalledTimes(1));
+    expect(onUpdateModels.mock.calls[0][0]).toEqual(["gpt-4o"]);
+  });
+
+  it("typing in the add-model input and pressing Enter calls onUpdateModels with the extended list", async () => {
+    const onUpdateModels: Mock<(models: string[]) => Promise<void>> = vi
+      .fn<(models: string[]) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    render(
+      <EndpointCard
+        endpoint={makeEndpoint({ models: ["gpt-4o-mini"] })}
+        usedByCount={0}
+        onTest={() => {}}
+        onDiscover={() => {}}
+        onDelete={() => {}}
+        onUpdateModels={onUpdateModels}
+      />,
+    );
+    const input = screen.getByLabelText("Add a model") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "gpt-4.1" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onUpdateModels).toHaveBeenCalledTimes(1));
+    expect(onUpdateModels.mock.calls[0][0]).toEqual(["gpt-4o-mini", "gpt-4.1"]);
+  });
+
+  it("shows '(no models — …)' and disables the model toggle when there are no models", () => {
     render(
       <EndpointCard
         endpoint={makeEndpoint({ models: [] })}
@@ -176,24 +325,6 @@ describe("EndpointCard", () => {
     );
     expect(screen.getByText("0 models")).toBeTruthy();
     expect((screen.getByText("0 models") as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/no models — run Discover/i)).toBeTruthy();
-  });
-
-  it("renders the supplied editor in place of the body when isEditing", () => {
-    render(
-      <EndpointCard
-        endpoint={makeEndpoint()}
-        usedByCount={0}
-        isEditing
-        editor={<div>EDITOR HERE</div>}
-        onTest={() => {}}
-        onDiscover={() => {}}
-        onDelete={() => {}}
-      />,
-    );
-    expect(screen.getByText("EDITOR HERE")).toBeTruthy();
-    // Body stats / buttons are hidden while editing.
-    expect(screen.queryByText("Test")).toBeNull();
-    expect(screen.queryByText("2 models")).toBeNull();
+    expect(screen.getByText(/no models/i)).toBeTruthy();
   });
 });

@@ -14,11 +14,13 @@ import { EndpointsEmptyState } from "./EndpointsEmptyState";
 import { ToastViewport } from "./ToastViewport";
 
 /**
- * The Endpoint catalog page (``/settings/endpoints``). Composes the PR2
- * ``EndpointCard`` (one per endpoint) + ``AddEndpointPanel`` (inline, behind an
- * "Add endpoint" button) + ``useToast``/``ToastViewport``. Uses ``useEndpoints``
- * for CRUD/test/discover and ``useAssignments`` *read-only* (the ``usedByCount``
- * + a friendly "in use by …" message when a delete is blocked).
+ * The Endpoint catalog page (``/settings/endpoints``). Composes the
+ * ``EndpointCard`` grid (one per endpoint) + a single ``AddEndpointPanel``
+ * *modal* (page-level) used for both create — when ``showAdd`` — and edit —
+ * when ``editingId`` is set — + ``useToast``/``ToastViewport``. Uses
+ * ``useEndpoints`` for CRUD/test/discover/model-edit and ``useAssignments``
+ * *read-only* (the "used by N agents" line + a friendly "in use by …" message
+ * when a delete is blocked).
  */
 export function EndpointsTab() {
   const ep = useEndpoints();
@@ -125,10 +127,24 @@ export function EndpointsTab() {
     setBusyId(id);
     try {
       // Let a failure propagate — ``AddEndpointPanel`` catches it and surfaces
-      // the message inline (the editor stays open).
+      // the message inline (the modal stays open).
       await ep.update(id, req);
       setEditingId(null);
       showToast(`'${req.name?.trim() || fallbackName}' updated`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // Persist a model-list edit made directly on a card (chip ✕ / "+ add model").
+  // Mirrors ``handleDiscover``'s ``ep.update(id, { models })`` write.
+  async function handleUpdateModels(id: string, name: string, models: string[]) {
+    setBusyId(id);
+    try {
+      await ep.update(id, { models });
+      showToast(`'${name}' models updated`);
+    } catch (e: any) {
+      showToast(e?.message ?? "Failed to update models", "error");
     } finally {
       setBusyId(null);
     }
@@ -158,6 +174,13 @@ export function EndpointsTab() {
   }
 
   const noEndpoints = !ep.isLoading && ep.endpoints.length === 0;
+  const editingEndpoint = editingId ? ep.endpoints.find((e) => e.id === editingId) ?? null : null;
+
+  function openAdd() {
+    setShowAdd(true);
+    setEditingId(null);
+    setPresetError(null);
+  }
 
   return (
     <div className="space-y-4">
@@ -171,52 +194,33 @@ export function EndpointsTab() {
         <div className="text-xs text-destructive bg-destructive/10 rounded-md px-3 py-2">{ep.error}</div>
       )}
 
-      {/* Add-endpoint affordance — inline expanding panel */}
+      {/* Header row — count + "Add endpoint" (opens the modal) */}
       {!noEndpoints && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">
             {ep.endpoints.length} {ep.endpoints.length === 1 ? "endpoint" : "endpoints"} configured
           </span>
-          {!showAdd && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowAdd(true);
-                setEditingId(null);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
-            >
-              <Plus className="w-4 h-4" />
-              Add endpoint
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={openAdd}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+          >
+            <Plus className="w-4 h-4" />
+            Add endpoint
+          </button>
         </div>
-      )}
-
-      {showAdd && (
-        <AddEndpointPanel
-          onCancel={() => setShowAdd(false)}
-          onCreate={async (req) => {
-            await ep.create(req);
-            setShowAdd(false);
-            setPresetError(null);
-            showToast(`Endpoint '${req.name}' added`);
-          }}
-        />
       )}
 
       {presetError && (
         <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive flex items-center gap-2 flex-wrap">
           <span>{presetError}</span>
-          {!showAdd && (
-            <button
-              type="button"
-              onClick={() => setShowAdd(true)}
-              className="ml-auto rounded border border-destructive/40 px-2 py-0.5 font-medium hover:bg-destructive/15"
-            >
-              Add endpoint
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={openAdd}
+            className="ml-auto rounded border border-destructive/40 px-2 py-0.5 font-medium hover:bg-destructive/15"
+          >
+            Add endpoint
+          </button>
         </div>
       )}
 
@@ -228,49 +232,51 @@ export function EndpointsTab() {
           ))}
         </div>
       ) : noEndpoints ? (
-        !showAdd && (
-          <EndpointsEmptyState
-            onAdd={() => setShowAdd(true)}
-            onApplyPreset={handleApplyPreset}
-            busy={asn.isLoading}
-          />
-        )
+        <EndpointsEmptyState onAdd={openAdd} onApplyPreset={handleApplyPreset} busy={asn.isLoading} />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 items-start">
-          {ep.endpoints.map((e) => {
-            const isEditing = editingId === e.id;
-            return (
-              <EndpointCard
-                key={e.id}
-                endpoint={e}
-                usedByCount={usedByCount[e.id] ?? 0}
-                usedByConsumers={consumersUsing(e.id)}
-                busy={busyId === e.id}
-                testResult={testResults[e.id] ?? null}
-                discoverResult={discoverResults[e.id] ?? null}
-                isEditing={isEditing}
-                editor={
-                  isEditing ? (
-                    <AddEndpointPanel
-                      mode="edit"
-                      existing={e}
-                      onCancel={() => setEditingId(null)}
-                      onUpdate={(req) => handleUpdate(e.id, e.name, req)}
-                    />
-                  ) : undefined
-                }
-                onEdit={() => {
-                  setEditingId(e.id);
-                  setShowAdd(false);
-                  setPresetError(null);
-                }}
-                onTest={() => handleTest(e.id)}
-                onDiscover={() => handleDiscover(e.id)}
-                onDelete={() => handleDelete(e.id, e.name)}
-              />
-            );
-          })}
+          {ep.endpoints.map((e) => (
+            <EndpointCard
+              key={e.id}
+              endpoint={e}
+              usedByCount={usedByCount[e.id] ?? 0}
+              usedByConsumers={consumersUsing(e.id)}
+              busy={busyId === e.id}
+              testResult={testResults[e.id] ?? null}
+              discoverResult={discoverResults[e.id] ?? null}
+              onEdit={() => {
+                setEditingId(e.id);
+                setShowAdd(false);
+                setPresetError(null);
+              }}
+              onTest={() => handleTest(e.id)}
+              onDiscover={() => handleDiscover(e.id)}
+              onDelete={() => handleDelete(e.id, e.name)}
+              onUpdateModels={(models) => handleUpdateModels(e.id, e.name, models)}
+            />
+          ))}
         </div>
+      )}
+
+      {/* Add / edit modal — page-level, one at a time */}
+      {showAdd && (
+        <AddEndpointPanel
+          onCancel={() => setShowAdd(false)}
+          onCreate={async (req) => {
+            await ep.create(req);
+            setShowAdd(false);
+            setPresetError(null);
+            showToast(`Endpoint '${req.name}' added`);
+          }}
+        />
+      )}
+      {editingEndpoint && (
+        <AddEndpointPanel
+          mode="edit"
+          existing={editingEndpoint}
+          onCancel={() => setEditingId(null)}
+          onUpdate={(req) => handleUpdate(editingEndpoint.id, editingEndpoint.name, req)}
+        />
       )}
 
       <ToastViewport toasts={toasts} onDismiss={dismissToast} />
