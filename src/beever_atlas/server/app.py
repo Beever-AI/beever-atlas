@@ -163,6 +163,19 @@ async def lifespan(app: FastAPI):
     await stores.startup()
     init_stores(stores)
     init_llm_provider(settings)
+    # PR-λ.7: hook LiteLLM's success/failure callbacks so the
+    # ``/api/settings/debug/recent-llm-calls`` ring buffer captures ALL
+    # litellm activity — including agent calls that bypass our
+    # ``dispatch_completion`` / ``dispatch_assignment`` wrappers via
+    # Google ADK's ``LiteLlm`` model wrapper.
+    try:
+        from beever_atlas.services.llm_call_log import register_litellm_observer
+
+        register_litellm_observer()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "lifespan: register_litellm_observer failed (non-fatal)", exc_info=True
+        )
 
     # PR-E: hydrate the DB-stored encrypted API key into the runtime so the
     # embedding shim can use it without round-tripping to MongoDB on every

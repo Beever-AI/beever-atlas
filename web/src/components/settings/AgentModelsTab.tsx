@@ -518,7 +518,20 @@ export function AgentModelsTab() {
                           endpoints={ep.endpoints}
                           required={asn.capabilities[c] ?? []}
                           suggested={incompatibleSuggestions[c]}
-                          lastCall={recent.lastForConsumer(c)}
+                          lastCall={(() => {
+                            // PR-λ.7: prefer consumer-tagged calls (dispatch
+                            // wrappers) but fall back to (api_base, model)
+                            // match. Most agent calls go via Google ADK's
+                            // ``LiteLlm`` wrapper which the LiteLLM callback
+                            // records without a consumer tag — we attribute
+                            // them by matching the assignment's endpoint+model.
+                            const direct = recent.lastForConsumer(c);
+                            if (direct) return direct;
+                            const a = assignmentByConsumer[c];
+                            if (!a) return null;
+                            const epRec = endpointById[a.endpoint_id];
+                            return recent.lastByModel(epRec?.base_url, a.model);
+                          })()}
                           onUpsert={upsertWithCapture}
                           onToast={showToast}
                           shouldToastSave={shouldToastSave}

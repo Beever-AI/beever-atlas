@@ -29,6 +29,13 @@ export interface UseRecentLLMCallsResult {
   calls: RecentLLMCall[];
   /** Most recent call for a given consumer, or null. */
   lastForConsumer: (consumer: string) => RecentLLMCall | null;
+  /**
+   * Most recent call attributable to a given (api_base, model) tuple.
+   * Catches the qa_agent path which goes via Google ADK's ``LiteLlm``
+   * wrapper — the LiteLLM callback can't see the consumer name, so we
+   * match by what the call carries on the wire.
+   */
+  lastByModel: (apiBase: string | null | undefined, model: string) => RecentLLMCall | null;
 }
 
 export function useRecentLLMCalls(pollMs: number = 15_000): UseRecentLLMCallsResult {
@@ -66,7 +73,25 @@ export function useRecentLLMCalls(pollMs: number = 15_000): UseRecentLLMCallsRes
     return null;
   };
 
-  return { calls, lastForConsumer };
+  const lastByModel = (
+    apiBase: string | null | undefined,
+    model: string,
+  ): RecentLLMCall | null => {
+    if (!model) return null;
+    const targetBase = (apiBase ?? "").replace(/\/+$/, "");
+    for (const c of calls) {
+      // Match the bare model id (LiteLLM may strip an explicit ``<provider>/``
+      // prefix during dispatch — we record what hit the wire).
+      const bare = c.model.includes("/") ? c.model.split("/", 2)[1] : c.model;
+      if (bare !== model) continue;
+      const callBase = (c.api_base ?? "").replace(/\/+$/, "");
+      if (apiBase && callBase && callBase !== targetBase) continue;
+      return c;
+    }
+    return null;
+  };
+
+  return { calls, lastForConsumer, lastByModel };
 }
 
 /** Format a recency hint like "2 min ago" / "12s ago" / "just now". */

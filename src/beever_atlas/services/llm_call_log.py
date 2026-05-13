@@ -131,4 +131,86 @@ def clear() -> None:
     _recent.clear()
 
 
-__all__ = ["RecentLLMCall", "record_call", "snapshot", "clear"]
+def register_litellm_observer() -> None:
+    """Hook LiteLLM's success/failure callbacks to record every call.
+
+    PR-λ.7: ``dispatch_completion`` / ``dispatch_assignment`` only see a
+    subset of LLM traffic — agent code (qa_agent, fact_extractor, …) uses
+    Google ADK's ``LiteLlm`` wrapper which calls ``litellm.acompletion``
+    directly, bypassing our dispatch wrappers entirely. As a result the
+    in-row "Last call" indicator never lit up for agent traffic.
+
+    LiteLLM's own success_callback / failure_callback hooks fire on every
+    request regardless of who initiated it, so registering a callback here
+    catches the full picture: dispatch wrappers, Google ADK calls, the
+    Test Connection probe, the re-embed migration, everything.
+
+    Idempotent — re-registering at boot in tests / hot reload is safe.
+    """
+    try:
+        import litellm  # type: ignore[import-untyped]
+    except Exception:  # noqa: BLE001
+        return
+
+    def _record_from_kwargs(
+        kwargs: dict[str, Any],
+        response: Any | None,
+        exc: BaseException | None,
+        start_time: Any,
+        end_time: Any,
+    ) -> None:
+        try:
+            import time as _time
+
+            # Translate litellm's wall-clock times into a monotonic offset for
+            # the recorder. When start_time is missing fall back to now-elapsed
+            # so latency_ms is at least non-None for successes.
+            started_at = _time.monotonic()
+            if start_time is not None and end_time is not None:
+                try:
+                    elapsed = float(end_time - start_time) if hasattr(end_time, "__sub__") else 0.0
+                    started_at = _time.monotonic() - elapsed
+                except Exception:  # noqa: BLE001
+                    pass
+
+            provider = (
+                kwargs.get("custom_llm_provider")
+                or kwargs.get("litellm_provider")
+                or ""
+            )
+            model = kwargs.get("model") or ""
+            api_base = kwargs.get("api_base") if isinstance(kwargs.get("api_base"), str) else None
+            consumer: str | None = None
+            metadata = kwargs.get("metadata") if isinstance(kwargs.get("metadata"), dict) else None
+            if metadata:
+                v = metadata.get("consumer")
+                if isinstance(v, str):
+                    consumer = v
+            record_call(
+                started_at=started_at,
+                kind="completion",
+                consumer=consumer,
+                provider=str(provider),
+                model=str(model),
+                api_base=api_base,
+                response=response,
+                exc=exc,
+            )
+        except Exception:  # noqa: BLE001 — never crash the callback
+            pass
+
+    def _on_success(kwargs: dict[str, Any], response: Any, start_time: Any, end_time: Any) -> None:
+        _record_from_kwargs(kwargs, response, None, start_time, end_time)
+
+    def _on_failure(kwargs: dict[str, Any], exc: BaseException, start_time: Any, end_time: Any) -> None:
+        _record_from_kwargs(kwargs, None, exc, start_time, end_time)
+
+    # Avoid duplicate registration on hot reload — LiteLLM allows multiple
+    # but we only want one record per call.
+    if not any(getattr(cb, "__name__", "") == "_on_success" and getattr(cb, "__module__", "") == __name__ for cb in (litellm.success_callback or [])):
+        litellm.success_callback.append(_on_success)
+    if not any(getattr(cb, "__name__", "") == "_on_failure" and getattr(cb, "__module__", "") == __name__ for cb in (litellm.failure_callback or [])):
+        litellm.failure_callback.append(_on_failure)
+
+
+__all__ = ["RecentLLMCall", "record_call", "snapshot", "clear", "register_litellm_observer"]
