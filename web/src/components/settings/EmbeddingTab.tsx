@@ -28,6 +28,7 @@ import {
 import {
   estimateMigrationCost,
   formatCost,
+  formatDollars,
   lookupModel,
   modelsForProvider,
 } from "@/lib/knownEmbeddingModels";
@@ -174,9 +175,15 @@ export function EmbeddingTab() {
   }, [assignment, draft, ep.endpoints.length, endpointById]);
 
   const chosenEndpoint: Endpoint | undefined = draft ? endpointById[draft.endpoint_id] : undefined;
+  // ``desiredProvider``/``desiredModel`` — what the operator is *configuring*
+  // (the chosen endpoint's embedding-provider key + the effective model name,
+  // known or custom). Distinct from ``persisted`` below, which is what's
+  // actually running in Weaviate right now.
   const provider = chosenEndpoint ? presetToEmbeddingProvider(chosenEndpoint.preset) : "";
+  const desiredProvider = provider;
   const knownModels = provider ? modelsForProvider(provider) : [];
   const effModel = draft ? effectiveModel(draft) : "";
+  const desiredModel = effModel;
   const usingCustom = !!draft && (draft.customModel.trim().length > 0 || knownModels.length === 0);
   const spec = provider && effModel && !usingCustom ? lookupModel(provider, effModel) : null;
   const knownDim = spec?.dim ?? null;
@@ -186,6 +193,21 @@ export function EmbeddingTab() {
   const running = !!reembed.status?.running;
   const persisted = reembed.persisted;
   const factCount = persisted?.count ?? 0;
+  // True when there's data in storage AND it's running a *different*
+  // provider/model than what the operator has currently configured. The
+  // backend's ``migration_required`` only compares *dimensions* — and an
+  // unknown model has an unknown dim, so a botched hydration (chat model in
+  // the embedding Assignment) slips past it. This client-side name check
+  // catches that and is what flips the banner from green to amber.
+  const configMismatch =
+    !!persisted &&
+    (persisted.count ?? 0) > 0 &&
+    !!desiredProvider &&
+    !!desiredModel &&
+    (persisted.provider !== desiredProvider || persisted.model !== desiredModel);
+  // The amber "re-embed required" banner shows when the backend says so OR
+  // when the running model differs from the configured one.
+  const reembedRequired = reembed.migrationRequired || configMismatch;
   // Re-embed support for the *currently chosen* endpoint. ``reembedSupported``
   // reflects the *saved* Assignment's endpoint — if the draft's endpoint
   // differs we still gate the action and surface the backend reason once the
@@ -323,7 +345,7 @@ export function EmbeddingTab() {
   const noEndpoints = !ep.isLoading && embeddingEndpoints.length === 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* ── Intro ───────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground max-w-2xl">
@@ -414,16 +436,27 @@ export function EmbeddingTab() {
         </div>
       )}
 
-      {reembed.migrationRequired && !running && !reembed.failedError && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3.5">
+      {reembedRequired && !running && !reembed.failedError && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3 flex-1 min-w-0">
               <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1 min-w-0">
                 <div className="text-sm font-semibold">Re-embed required</div>
                 <div className="text-amber-700/90 dark:text-amber-300/90">
-                  You've changed the embedding model.{" "}
-                  {persisted ? (
+                  {persisted && desiredProvider && desiredModel ? (
+                    <>
+                      You've configured{" "}
+                      <code className="font-mono">{desiredProvider}/{desiredModel}</code>, but search is still
+                      running on{" "}
+                      <code className="font-mono">
+                        {persisted.provider}/{persisted.model}
+                        {persisted.dim != null ? ` @ ${persisted.dim}d` : ""}
+                      </code>{" "}
+                      ({(persisted.count ?? 0).toLocaleString()} facts).{" "}
+                      {dirty ? "Save your change and re-embed to apply it." : "Re-embed to apply it."}
+                    </>
+                  ) : persisted ? (
                     <>
                       {(persisted.count ?? 0).toLocaleString()} facts are still on the old model (
                       <code className="font-mono">
@@ -454,7 +487,7 @@ export function EmbeddingTab() {
         </div>
       )}
 
-      {!running && !reembed.failedError && !reembed.migrationRequired && persisted && (
+      {!running && !reembed.failedError && !reembedRequired && persisted && (
         <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 px-3 py-1.5 text-xs">
           <CheckCircle2 className="w-3.5 h-3.5" />
           <span>
@@ -462,6 +495,10 @@ export function EmbeddingTab() {
             <code className="font-mono">{persisted.provider}/{persisted.model}</code>
           </span>
         </div>
+      )}
+
+      {!running && !reembed.failedError && !reembedRequired && !persisted && (
+        <div className="text-xs text-muted-foreground">No facts embedded yet — search activates once the first facts land.</div>
       )}
 
       {/* ── The embedding switch — config form ──────────────────────────── */}
@@ -487,7 +524,7 @@ export function EmbeddingTab() {
         </div>
       ) : draft ? (
         <div
-          className={`rounded-xl border border-border bg-card p-4 space-y-4 transition-opacity ${
+          className={`rounded-xl border border-border bg-card p-4 space-y-3.5 transition-opacity ${
             formLocked ? "opacity-60 pointer-events-none select-none" : ""
           }`}
           aria-disabled={formLocked || undefined}
@@ -562,6 +599,25 @@ export function EmbeddingTab() {
             </select>
           </label>
 
+          {/* "Currently in use" reference — what's actually running in Weaviate
+              right now, distinct from what's being configured above. Always
+              shown when there's persisted data so the operator can spot a
+              config-vs-live mismatch immediately. */}
+          {persisted && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground -mt-1.5">
+              <CircleDot className="w-3 h-3 shrink-0" />
+              <span>
+                Currently in use:{" "}
+                <code className="font-mono text-foreground/80">{persisted.provider}/{persisted.model}</code>
+                {persisted.dim != null ? ` · ${persisted.dim}-dim` : ""}
+                {(persisted.count ?? 0) > 0 ? ` · ${(persisted.count ?? 0).toLocaleString()} facts` : ""}
+              </span>
+              <span className="ml-0.5 px-1 py-px rounded text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground border border-border">
+                live
+              </span>
+            </div>
+          )}
+
           {/* Custom model free-text input — revealed by "Other (custom model)…" */}
           {usingCustom && (
             <label className="flex flex-col gap-1.5">
@@ -580,41 +636,45 @@ export function EmbeddingTab() {
             </label>
           )}
 
-          {/* Read-only model facts — dim · multilingual · cost, or the
-              custom-model note. No Dimensions input (the dim is a property of
-              the model; the backend probes it and the dim-guard records the
-              real dimension at re-embed time). */}
+          {/* Read-only model facts — a tidy row of small pills (dim ·
+              multilingual · cost · cloud/local), then the re-embed-cost
+              estimate as a separate muted line when there's data. No
+              Dimensions input (the dim is a property of the model; the
+              backend probes it and the dim-guard records the real dimension
+              at re-embed time). */}
           {!usingCustom && spec ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border font-mono">
-                {spec.dim}-dim
-              </span>
-              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
-                spec.multilingual
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-              }`}>
-                <Languages className="w-3 h-3" />
-                {spec.multilingual ? "multilingual" : "English-leaning"}
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted text-muted-foreground border border-border">
-                {formatCost(spec)}
-              </span>
-              <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
-                spec.local ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" : "bg-muted text-muted-foreground border-border"
-              }`}>
-                {spec.local ? <HardDrive className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
-                {spec.local ? "local" : "cloud"}
-              </span>
-              {factCount > 0 && (
-                <span className="text-muted-foreground">
-                  · re-embedding {factCount.toLocaleString()} facts ≈{" "}
-                  {spec.local || spec.cost_per_m === 0 ? (
-                    <span className="font-mono">$0.00 (local)</span>
-                  ) : (
-                    <span className="font-mono">~${migrationCost.dollars.toFixed(2)}</span>
-                  )}
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border font-mono">
+                  {spec.dim}-dim
                 </span>
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border ${
+                  spec.multilingual
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                }`}>
+                  <Languages className="w-3 h-3" />
+                  {spec.multilingual ? "multilingual" : "English-leaning"}
+                </span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border">
+                  {formatCost(spec)}
+                </span>
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border ${
+                  spec.local ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30" : "bg-muted text-muted-foreground border-border"
+                }`}>
+                  {spec.local ? <HardDrive className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
+                  {spec.local ? "local" : "cloud"}
+                </span>
+              </div>
+              {factCount > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  Re-embedding {factCount.toLocaleString()} facts ≈{" "}
+                  {spec.local || spec.cost_per_m === 0 ? (
+                    <span className="font-mono">free (local)</span>
+                  ) : (
+                    <span className="font-mono">{formatDollars(migrationCost.dollars)}</span>
+                  )}
+                </div>
               )}
             </div>
           ) : (
@@ -766,12 +826,13 @@ function HelpDrawer({ onClose }: { onClose: () => void }) {
           <HelpSection title="Voyage 3-large">
             1024-dim, ~$0.18 / 1M tokens. Strong English; multilingual; honors a <code className="font-mono">task=</code> kwarg similar to Jina.
           </HelpSection>
-          <HelpSection title="Gemini gemini-embedding-001">
-            3072-dim default (Matryoshka-truncatable), ~$0.025 / 1M tokens. Reuses your Google AI key; multilingual.
+          <HelpSection title="Gemini (Google AI)">
+            <code className="font-mono">text-embedding-004</code> 768d or <code className="font-mono">gemini-embedding-001</code> 3072d
+            (Matryoshka-truncatable). Reuses your Google AI key; multilingual; per-request embeddings are currently free on the AI Studio key.
           </HelpSection>
           <HelpSection title="Ollama (local)">
-            <code className="font-mono">nomic-embed-text</code> 768d / <code className="font-mono">mxbai-embed-large</code> 1024d — free, local. Quality varies by model and is
-            generally English-leaning. Best for self-hosted isolation; not recommended for multilingual channels.
+            <code className="font-mono">nomic-embed-text</code> 768d / <code className="font-mono">mxbai-embed-large</code> 1024d (English-leaning), or
+            <code className="font-mono"> bge-m3</code> / <code className="font-mono">snowflake-arctic-embed2</code> 1024d (multilingual) — all free, local. Best for self-hosted isolation.
           </HelpSection>
           <p>
             Self-hosted or proxy model not in the list? Pick the matching endpoint and choose
@@ -851,10 +912,10 @@ function MigrationConfirmModal({
             <div>
               Estimated cost:{" "}
               {spec?.local || (spec && spec.cost_per_m === 0) ? (
-                <span className="font-mono">$0.00 (local)</span>
+                <span className="font-mono">free (local)</span>
               ) : spec ? (
                 <>
-                  <span className="font-mono">~${cost.dollars.toFixed(2)}</span>{" "}
+                  <span className="font-mono">{formatDollars(cost.dollars)}</span>{" "}
                   <span className="text-muted-foreground">({cost.tokens.toLocaleString()} tokens × ${spec.cost_per_m.toFixed(2)} / 1M)</span>
                 </>
               ) : (

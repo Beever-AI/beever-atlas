@@ -431,4 +431,99 @@ describe("EmbeddingTab", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Start re-embed/i }));
     await waitFor(() => expect(spawned).toBe(true));
   });
+
+  it("offers gemini-embedding-001 AND text-embedding-004 for a Google AI (Gemini) endpoint", async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        endpoints: [GOOGLE_AI_ENDPOINT, EMBEDDING_ENDPOINT],
+        assignment: mkAssignment("embedding", "ep-google", "gemini-embedding-001", 3072),
+        state: { ...STATE_OK, persisted_provider: null, persisted_model: null, fact_count: 0 },
+      }),
+    );
+    renderTab();
+    const modelSelect = (await screen.findByLabelText("embedding model")) as HTMLSelectElement;
+    const optionValues = Array.from(modelSelect.options).map((o) => o.value);
+    expect(optionValues).toContain("gemini-embedding-001");
+    expect(optionValues).toContain("text-embedding-004");
+    // The chat models from the endpoint's `models` list are NOT offered.
+    expect(optionValues).not.toContain("models/gemini-2.5-flash");
+    expect(optionValues).not.toContain("models/gemini-2.5-pro");
+  });
+
+  it("shows a 'Currently in use' line with the persisted provider/model", async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        state: {
+          ...STATE_OK,
+          persisted_provider: "jina_ai",
+          persisted_model: "jina-embeddings-v4",
+          persisted_dimensions: 2048,
+          fact_count: 1494,
+        },
+      }),
+    );
+    renderTab();
+    await screen.findByLabelText("embedding endpoint");
+    const line = await waitFor(() => screen.getByText(/Currently in use:/i));
+    // The reference line carries the persisted provider/model + fact count.
+    expect(within(line).getByText("jina_ai/jina-embeddings-v4")).toBeTruthy();
+    expect(line.textContent).toMatch(/1,494 facts/);
+    expect(line.textContent).toMatch(/2048-dim/);
+  });
+
+  it("shows the amber 'Re-embed required' banner when the configured model differs from persisted, even though migration_required is false", async () => {
+    // The trap from the bug report: the configured Assignment is a *chat* model
+    // on google_ai, but Weaviate is running jina_ai/jina-embeddings-v4. The
+    // backend's migration_required only compares dims (chat model dim unknown →
+    // false), so the client-side name check is what surfaces the mismatch.
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        endpoints: [GOOGLE_AI_ENDPOINT, EMBEDDING_ENDPOINT],
+        assignment: mkAssignment("embedding", "ep-google", "models/gemini-2.5-flash", null),
+        state: {
+          ...STATE_OK,
+          migration_required: false,
+          desired_provider: "gemini",
+          desired_model: "models/gemini-2.5-flash",
+          desired_dimensions: null,
+          persisted_provider: "jina_ai",
+          persisted_model: "jina-embeddings-v4",
+          persisted_dimensions: 2048,
+          fact_count: 1494,
+        },
+      }),
+    );
+    renderTab();
+    await screen.findByLabelText("embedding endpoint");
+    const heading = await waitFor(() => screen.getByText("Re-embed required"));
+    // The banner names both sides of the mismatch.
+    const banner = heading.closest("div.rounded-xl") as HTMLElement;
+    expect(within(banner).getByText("gemini/models/gemini-2.5-flash")).toBeTruthy();
+    expect(within(banner).getByText(/jina_ai\/jina-embeddings-v4/)).toBeTruthy();
+    expect(banner.textContent).toMatch(/1,494 facts/);
+    // …and the green "up to date" pill is NOT shown.
+    expect(screen.queryByText(/Embeddings up to date/i)).toBeNull();
+  });
+
+  it("shows the green 'up to date' pill only when the configured model == persisted", async () => {
+    // Configured = persisted = jina_ai/jina-embeddings-v4 and migration_required=false.
+    vi.mocked(globalThis.fetch).mockImplementation(
+      mkFetch({
+        assignment: mkAssignment("embedding", "ep-jina", "jina-embeddings-v4", 2048),
+        state: {
+          ...STATE_OK,
+          migration_required: false,
+          persisted_provider: "jina_ai",
+          persisted_model: "jina-embeddings-v4",
+          persisted_dimensions: 2048,
+          fact_count: 1494,
+        },
+      }),
+    );
+    renderTab();
+    await screen.findByLabelText("embedding endpoint");
+    await waitFor(() => expect(screen.getByText(/Embeddings up to date/i)).toBeTruthy());
+    expect(screen.getByText(/1,494 facts on/)).toBeTruthy();
+    expect(screen.queryByText("Re-embed required")).toBeNull();
+  });
 });
