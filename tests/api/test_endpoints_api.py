@@ -6,7 +6,7 @@ import os
 import tempfile
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -331,3 +331,309 @@ def test_list_response_never_includes_plaintext(app_and_client: Any) -> None:
     )
     list_text = client.get("/api/settings/endpoints").text
     assert secret not in list_text
+
+
+# ─── /test (Test Connection) ────────────────────────────────────────────
+
+
+def _seed_endpoint(
+    stores: Any,
+    *,
+    preset: str,
+    base_url: str,
+    models: list[str],
+    api_key: str | None = "test-key-AAAA-BBBB",
+    auth_type: str = "api_key",
+) -> str:
+    """Seed an Endpoint directly into the fake store and prime the runtime
+    credential cache. Bypasses the ``POST /endpoints`` create-allowlist (which
+    doesn't accept every preset key the UI exposes — out of scope for this
+    test module).
+    """
+    import uuid
+
+    from beever_atlas.llm.agent_credentials import set_runtime_credential
+    from beever_atlas.llm.endpoints import encrypt_endpoint_credential
+
+    endpoint_id = str(uuid.uuid4())
+    doc: dict[str, Any] = {
+        "id": endpoint_id,
+        "name": f"{preset}-test",
+        "preset": preset,
+        "base_url": base_url,
+        "auth_type": auth_type,
+        "encrypted_key": (
+            encrypt_endpoint_credential(api_key)
+            if api_key is not None and auth_type == "api_key"
+            else None
+        ),
+        "models": list(models),
+        "rpm": 500,
+        "headers": {},
+        "tags": [],
+        "last_test_at": None,
+        "last_test_ok": None,
+        "last_test_error": None,
+        "created_at": "2026-05-13T00:00:00+00:00",
+        "updated_at": "2026-05-13T00:00:00+00:00",
+    }
+    stores.mongodb.db["endpoints"]._docs.append(doc)
+    if api_key is not None and auth_type == "api_key":
+        set_runtime_credential(endpoint_id, api_key)
+    return endpoint_id
+
+
+def _fake_litellm_response() -> MagicMock:
+    """Minimal LiteLLM-shaped response — the dispatch wrappers only check
+    ``status_code`` (must NOT be 429) and ``.choices[0].message.content`` is
+    not asserted at all by ``dispatch_completion``."""
+    response = MagicMock()
+    response.status_code = 200
+    return response
+
+
+def _fake_litellm_embedding_response() -> dict[str, Any]:
+    """LiteLLM normalises every embedding provider to the OpenAI shape."""
+    return {"data": [{"embedding": [0.0] * 4, "index": 0}], "model": "x"}
+
+
+def test_test_endpoint_jina_uses_embedding_path(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jina (preset=jina_ai, embedding-only) probes via ``litellm.aembedding``,
+    NOT ``acompletion`` — the chat path 400s with ``LiteLLMUnknownProvider``."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="jina_ai",
+        base_url="https://api.jina.ai/v1",
+        models=["jina-embeddings-v4"],
+        api_key="jina-secret-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    embed_calls: list[dict[str, Any]] = []
+    comp_calls: list[dict[str, Any]] = []
+
+    async def fake_aembedding(**kwargs: Any) -> dict[str, Any]:
+        embed_calls.append(kwargs)
+        return _fake_litellm_embedding_response()
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        comp_calls.append(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "aembedding", fake_aembedding)
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["error"] is None
+
+    # The completion path must NOT have been touched — Jina has no chat route.
+    assert comp_calls == []
+    # The embedding probe ran exactly once with the canonical LiteLLM model id.
+    assert len(embed_calls) == 1
+    kw = embed_calls[0]
+    assert kw["model"] == "jina_ai/jina-embeddings-v4"
+    assert kw["api_base"] == "https://api.jina.ai/v1"
+    assert kw["api_key"] == "jina-secret-key-AAAA"
+    assert kw["input"] == ["test"]
+
+
+def test_test_endpoint_google_ai_strips_models_prefix(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Google AI's ``/models`` discovery returns ``models/gemini-2.5-flash``.
+    The probe must strip that native-API prefix and reattach the LiteLLM
+    ``gemini/`` prefix — ``google_ai → gemini`` via ``preset_to_provider``."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="google_ai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        models=["models/gemini-2.5-flash", "gemini-2.5-pro"],
+        api_key="AIza-test-key-XYZ-ABCD",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    # ``models/`` stripped, ``gemini/`` prepended — what LiteLLM expects.
+    assert captured["model"] == "gemini/gemini-2.5-flash"
+    assert captured["api_base"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert captured["api_key"] == "AIza-test-key-XYZ-ABCD"
+    assert captured["max_tokens"] == 1
+
+
+def test_test_endpoint_ollama_v1_base_url_uses_ollama_chat(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ollama with ``/v1`` base_url ⇒ OpenAI-compat shim ⇒ ``ollama_chat`` provider.
+    Plain ``ollama`` POSTs to the native ``/api/generate`` which 404s under ``/v1``."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="ollama",
+        base_url="http://localhost:11434/v1",
+        models=["gemma4:e2b", "gemma4:e4b"],
+        auth_type="none",
+        api_key=None,
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    # ``ollama_chat`` routes to ``/v1/chat/completions`` — the OpenAI-compat path.
+    assert captured["model"] == "ollama_chat/gemma4:e2b"
+    assert captured["api_base"] == "http://localhost:11434/v1"
+    # ``auth_type=none`` ⇒ no api_key passed.
+    assert "api_key" not in captured
+
+
+def test_test_endpoint_ollama_native_base_url_uses_plain_ollama(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ollama with the native base_url (no ``/v1``) keeps the plain ``ollama``
+    provider — that path POSTs to ``/api/generate``, which is what the native
+    daemon expects."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="ollama",
+        base_url="http://localhost:11434",
+        models=["llama3.2:latest"],
+        auth_type="none",
+        api_key=None,
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    assert captured["model"] == "ollama/llama3.2:latest"
+    assert captured["api_base"] == "http://localhost:11434"
+
+
+def test_test_endpoint_openai_passes_through_prefixed_model(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the operator already supplied a fully-prefixed LiteLLM id we trust
+    it — no extra prefix munging."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        models=["openai/gpt-4o-mini"],
+        api_key="sk-test-secret-key-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return _fake_litellm_response()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert captured["api_base"] == "https://api.openai.com/v1"
+    assert captured["api_key"] == "sk-test-secret-key-AAAA"
+
+
+def test_test_endpoint_returns_sanitised_error_on_dispatch_failure(
+    app_and_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dispatch failure returns 200 with ``ok=False`` and a redacted error
+    string — never leaking the api_key embedded in the exception repr."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="openai",
+        base_url="https://api.openai.com/v1",
+        models=["gpt-4o-mini"],
+        api_key="sk-LEAKY-SECRET-KEY-AAAA",
+    )
+
+    import litellm  # type: ignore[import-untyped]
+
+    async def boom(**_kwargs: Any) -> MagicMock:
+        # Exception text mimics a real LiteLLM repr that embeds api_key — the
+        # sanitiser must scrub it.
+        raise RuntimeError("auth failed for api_key=sk-LEAKY-SECRET-KEY-AAAA")
+
+    monkeypatch.setattr(litellm, "acompletion", boom)
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "sk-LEAKY-SECRET-KEY-AAAA" not in body["error"]
+    assert "RuntimeError" in body["error"]
+
+
+def test_test_endpoint_no_models_returns_actionable_error(app_and_client: Any) -> None:
+    """An Endpoint with an empty model list short-circuits before dispatch."""
+    _app, client, stores = app_and_client
+    endpoint_id = _seed_endpoint(
+        stores,
+        preset="openai",
+        base_url="https://x",
+        models=[],
+        api_key="sk-test-AAAA",
+    )
+
+    resp = client.post(f"/api/settings/endpoints/{endpoint_id}/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "endpoint_has_no_models" in body["error"]
+
+
+def test_test_endpoint_unknown_id_returns_404(app_and_client: Any) -> None:
+    _app, client, _stores = app_and_client
+    resp = client.post("/api/settings/endpoints/nonexistent-id/test")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "endpoint_not_found"

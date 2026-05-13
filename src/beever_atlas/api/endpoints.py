@@ -22,6 +22,7 @@ from beever_atlas.llm.endpoints import (
     _redact_credential_fragments,
     decrypt_endpoint_credential,
     discover_models,
+    preset_to_provider,
 )
 from beever_atlas.llm.model_resolver import SUPPORTED_PROVIDERS
 from beever_atlas.stores import get_stores
@@ -204,7 +205,20 @@ async def create_endpoint(req: CreateEndpointRequest) -> EndpointResponse:
         req.preset != "custom"
         and req.preset not in SUPPORTED_PROVIDERS
         and req.preset
-        not in ("google_ai", "ollama", "vllm", "lmstudio", "openrouter", "litellm_proxy")
+        not in (
+            "google_ai",
+            "ollama",
+            "vllm",
+            "lmstudio",
+            "openrouter",
+            "litellm_proxy",
+            # Embedding-only providers — LiteLLM exposes them under aembedding,
+            # not acompletion, so they aren't in SUPPORTED_PROVIDERS (the chat-
+            # completion allowlist) but the UI legitimately offers them as
+            # "+ Add embedding endpoint" options.
+            "jina_ai",
+            "voyage",
+        )
     ):
         # Allow the established preset keys (which differ from LiteLLM prefixes
         # in a few places — ``google_ai`` resolves to ``gemini/`` at dispatch
@@ -354,21 +368,63 @@ async def delete_endpoint(endpoint_id: str) -> None:
     set_runtime_credential(endpoint_id, None)
 
 
+# Presets whose providers expose ONLY an embeddings endpoint (no chat completion).
+# Probing these via ``litellm.acompletion`` always 400s — route to
+# ``litellm.aembedding`` instead. Mirrors ``presets.py`` ``embedding_only=True``
+# and the frontend's ``EMBEDDING_CAPABLE_PRESETS`` (which is the union;
+# embedding-ONLY is a strict subset).
+_EMBEDDING_ONLY_PRESETS: frozenset[str] = frozenset({"jina_ai", "voyage", "cohere"})
+
+
+def _build_probe_model(endpoint: Endpoint) -> tuple[str, str]:
+    """Return ``(litellm_provider_prefix, fully_qualified_model_id)`` for a probe.
+
+    Mirrors the resolution logic in ``LLMProvider.resolve_for_call`` so the Test
+    Connection probe hits LiteLLM with the same model string the real dispatch
+    path would build. Specifically:
+
+      * Provider prefix comes from ``preset_to_provider(endpoint.preset)`` —
+        NOT a sniff on the model string (``models/gemini-...`` confuses sniffing).
+      * Native-API model-name prefixes (Gemini returns ``models/...`` from its
+        ``/models`` discovery) are stripped before reattaching the LiteLLM prefix.
+      * If the operator already wrote a fully-prefixed LiteLLM id (``gemini/...``,
+        ``openai/...``) we pass it through.
+      * Ollama with an OpenAI-compat ``/v1`` base_url uses ``ollama_chat`` (which
+        POSTs to ``/v1/chat/completions``); plain ``ollama`` POSTs to the native
+        ``/api/generate`` and 404s against a ``/v1`` URL.
+    """
+    raw = endpoint.models[0]
+    base_provider = preset_to_provider(endpoint.preset)
+
+    # Ollama base_url quirk: ``/v1`` ⇒ OpenAI-compat shim ⇒ ``ollama_chat`` path.
+    if base_provider == "ollama" and endpoint.base_url.rstrip("/").endswith("/v1"):
+        provider = "ollama_chat"
+    else:
+        provider = base_provider
+
+    # Operator already supplied a LiteLLM prefix — trust it.
+    if "/" in raw and not raw.startswith("models/"):
+        return raw.split("/", 1)[0], raw
+
+    # Strip Gemini's native-API prefix.
+    stripped = raw.removeprefix("models/")
+    return provider, f"{provider}/{stripped}"
+
+
 @router.post("/{endpoint_id}/test", response_model=TestConnectionResponse)
 async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
-    """Probe-completion using the Endpoint's persisted credentials.
+    """Probe the Endpoint with its persisted credentials.
 
-    Issues a 1-token completion against the first model in ``endpoint.models``
-    via ``dispatch_completion``. Never persists anything except the
-    ``last_test_*`` stamps on the Endpoint document.
+    Issues a 1-token completion (or single embedding for embedding-only presets)
+    against the first model in ``endpoint.models``. Never persists anything
+    except the ``last_test_*`` stamps on the Endpoint document.
     """
     import time
 
     from beever_atlas.llm.agent_credentials import get_runtime_credential
     from beever_atlas.services.llm_dispatch import (
         dispatch_completion,
-        normalize_litellm_model,
-        sniff_provider,
+        dispatch_embedding,
     )
 
     endpoint = await _store().get(endpoint_id)
@@ -380,11 +436,7 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
             ok=False, error="endpoint_has_no_models: configure at least one model before testing"
         )
 
-    test_model = endpoint.models[0]
-    provider = sniff_provider(test_model)
-    full_model = normalize_litellm_model(
-        test_model if "/" in test_model else f"{endpoint.preset}/{test_model}"
-    )
+    provider, full_model = _build_probe_model(endpoint)
 
     # Pull credentials from runtime cache (populated at boot or via PUT hot-reload).
     credential = get_runtime_credential(endpoint_id)
@@ -408,15 +460,29 @@ async def test_endpoint(endpoint_id: str) -> TestConnectionResponse:
                 await _store().record_test_result(endpoint_id, ok=False, error=msg)
                 return TestConnectionResponse(ok=False, error=msg)
 
+    is_embedding_only = endpoint.preset in _EMBEDDING_ONLY_PRESETS
+
     started = time.monotonic()
     try:
-        await dispatch_completion(
-            provider=provider,
-            model=full_model,
-            messages=[{"role": "user", "content": "hi"}],
-            max_tokens=1,
-            **extra_kwargs,
-        )
+        if is_embedding_only:
+            # Embedding-only providers (Jina, Voyage, Cohere) have no chat
+            # completion route — LiteLLM 400s with ``LiteLLMUnknownProvider``
+            # the moment we try ``acompletion`` against them. Probe via the
+            # embedding path instead.
+            await dispatch_embedding(
+                provider=provider,
+                model=full_model,
+                input=["test"],
+                **extra_kwargs,
+            )
+        else:
+            await dispatch_completion(
+                provider=provider,
+                model=full_model,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1,
+                **extra_kwargs,
+            )
     except Exception as exc:  # noqa: BLE001
         # Sanitise the error before returning it — some LiteLLM SDK exceptions
         # embed the full request kwargs (including ``api_key``) in their repr.
