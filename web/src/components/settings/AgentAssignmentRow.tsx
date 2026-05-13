@@ -103,6 +103,22 @@ export function AgentAssignmentRow({
   shouldToastSave,
 }: AgentAssignmentRowProps) {
   const meta = metaForConsumer(consumer);
+  // PR-ι: agent assignments are chat-only. Hide endpoints that can't serve
+  // chat (Jina/Voyage presets, ``role === "embedding"`` operator-declared,
+  // or classifier ran with zero chat-tagged models).
+  const chatCapableEndpoints = endpoints.filter((e) => {
+    if (e.preset === "jina_ai" || e.preset === "voyage") return false;
+    if (e.role === "embedding") return false;
+    const kinds = e.model_kinds;
+    if (
+      kinds &&
+      Object.keys(kinds).length > 0 &&
+      !Object.values(kinds).some((k) => k === "chat")
+    ) {
+      return false;
+    }
+    return true;
+  });
   const endpointById = Object.fromEntries(endpoints.map((e) => [e.id, e]));
   const currentEp = a ? endpointById[a.endpoint_id] : undefined;
   const provPrefix = currentEp ? presetToProvider(currentEp.preset) : "";
@@ -187,8 +203,8 @@ export function AgentAssignmentRow({
   const suggestedFix = suggested && suggested.length > 0 ? suggested[0] : null;
 
   return (
-    <div className="group rounded-lg hover:bg-muted/30 transition-colors">
-      <div className="flex items-center gap-3 py-2.5 px-3">
+    <div className="group hover:bg-muted/30 transition-colors">
+      <div className="flex items-center gap-3 py-3 px-4">
         {/* Left: name + description + pills */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -212,23 +228,11 @@ export function AgentAssignmentRow({
             className="text-xs bg-background border border-border rounded-md px-2 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 hover:border-primary/40 transition-colors"
           >
             <option value="">— pick endpoint —</option>
-            {endpoints.map((e) => {
-              // PR-γ: surface a warning when an endpoint has zero chat models
-              // in its ``model_kinds`` classification. Only label when the
-              // backend has actually classified things — pre-α endpoints (no
-              // ``model_kinds``) keep the plain name.
-              const kinds = e.model_kinds;
-              const hasChatClassification =
-                !!kinds && Object.values(kinds).some((k) => k === "chat");
-              const classifierRan = !!kinds && Object.keys(kinds).length > 0;
-              const noChat = classifierRan && !hasChatClassification;
-              return (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                  {noChat ? " (no chat models — run Discover)" : ""}
-                </option>
-              );
-            })}
+            {chatCapableEndpoints.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
           </select>
           {currentEp && (
             <select
@@ -408,9 +412,11 @@ export function AgentAssignmentRow({
             }}
           >
             <option value="">(none)</option>
-            {endpoints.filter((e) => e.id !== a.endpoint_id).map((e) => (
-              <option key={e.id} value={e.id}>{e.name}</option>
-            ))}
+            {chatCapableEndpoints
+              .filter((e) => e.id !== a.endpoint_id)
+              .map((e) => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
           </select>
         </div>
       )}

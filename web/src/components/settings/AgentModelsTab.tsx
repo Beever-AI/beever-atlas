@@ -507,7 +507,7 @@ export function AgentModelsTab() {
                     />
                   </button>
                   {!isCollapsed && (
-                    <div className="border-t border-border p-1.5 space-y-0.5">
+                    <div className="border-t border-border bg-background/40 divide-y divide-border/40">
                       {visible.map((c) => (
                         <AgentAssignmentRow
                           key={c}

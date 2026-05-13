@@ -181,23 +181,71 @@ describe("AgentAssignmentRow", () => {
     expect(optionValues).toContain("text-embedding-3-large");
   });
 
-  it("PR-γ: when classifier produced zero chat models, the endpoint option carries the 'run Discover' hint", () => {
+  it("PR-ι: classifier produced zero chat models → endpoint is hidden from the chat-agent dropdown", () => {
     const noChat = makeEndpoint({
+      id: "ep-embed",
+      name: "Embed only",
       models: ["text-embedding-3-large"],
       model_kinds: { "text-embedding-3-large": "embedding" },
     });
+    const chatOk = makeEndpoint({ id: "ep-chat", name: "Chat ok" });
     render(
       <AgentAssignmentRow
         consumer="qa_agent"
         assignment={undefined}
-        endpoints={[noChat]}
+        endpoints={[noChat, chatOk]}
         required={[]}
         onUpsert={async () => makeAssignment()}
       />,
     );
     const endpointSelect = screen.getByLabelText("qa_agent endpoint") as HTMLSelectElement;
     const labels = Array.from(endpointSelect.options).map((o) => o.textContent ?? "");
-    expect(labels.some((l) => l.includes("(no chat models — run Discover)"))).toBe(true);
+    // The embedding-only endpoint is GONE from the dropdown (not labelled).
+    expect(labels.some((l) => l.includes("Embed only"))).toBe(false);
+    expect(labels.some((l) => l.includes("Chat ok"))).toBe(true);
+  });
+
+  it("PR-ι: jina_ai / voyage presets are hidden from chat-agent dropdown by preset alone", () => {
+    const jina = makeEndpoint({ id: "ep-jina", name: "Jina AI", preset: "jina_ai" });
+    const voyage = makeEndpoint({ id: "ep-voyage", name: "Voyage", preset: "voyage" });
+    const openai = makeEndpoint({ id: "ep-openai", name: "OpenAI", preset: "openai" });
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={undefined}
+        endpoints={[jina, voyage, openai]}
+        required={[]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const endpointSelect = screen.getByLabelText("qa_agent endpoint") as HTMLSelectElement;
+    const labels = Array.from(endpointSelect.options).map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.includes("Jina AI"))).toBe(false);
+    expect(labels.some((l) => l.includes("Voyage"))).toBe(false);
+    expect(labels.some((l) => l.includes("OpenAI"))).toBe(true);
+  });
+
+  it("PR-ι: endpoints with role='embedding' (operator-declared) are also hidden", () => {
+    const embedRole = makeEndpoint({
+      id: "ep-er",
+      name: "Custom embedding",
+      preset: "openai",
+      role: "embedding",
+    });
+    const chatOk = makeEndpoint({ id: "ep-chat", name: "Chat ok", preset: "openai", role: "chat" });
+    render(
+      <AgentAssignmentRow
+        consumer="qa_agent"
+        assignment={undefined}
+        endpoints={[embedRole, chatOk]}
+        required={[]}
+        onUpsert={async () => makeAssignment()}
+      />,
+    );
+    const endpointSelect = screen.getByLabelText("qa_agent endpoint") as HTMLSelectElement;
+    const labels = Array.from(endpointSelect.options).map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.includes("Custom embedding"))).toBe(false);
+    expect(labels.some((l) => l.includes("Chat ok"))).toBe(true);
   });
 
   it("shows the suggested-fix button when a suggestion is provided for an incompatible row", async () => {
