@@ -31,12 +31,45 @@ Idempotent — re-installing in tests / hot reload is safe.
 
 from __future__ import annotations
 
+import difflib
 import logging
 from typing import Any
 
 from google.adk.tools.base_tool import BaseTool
 
 logger = logging.getLogger(__name__)
+
+
+def _closest_tool_match(requested: str, available: list[str]) -> str | None:
+    """Return the most likely real tool name when the LLM hallucinated a
+    near-miss (e.g. ``list_channels`` → ``list_channels_tool``).
+
+    Strategy: prefer prefix/suffix and substring matches (covers the
+    common ``_tool``/``_v2`` suffix-drop pattern), then fall back to
+    ``difflib.get_close_matches`` for typos / underscore-vs-dash drift.
+    """
+    req = requested.lower()
+    # Prefix / suffix match — handles ``list_channels`` ↔ ``list_channels_tool``
+    # in both directions, and dash↔underscore swaps.
+    norm = req.replace("-", "_")
+    for cand in available:
+        c = cand.lower()
+        if c == req or c == norm:
+            return cand
+        # The LLM dropped or added a ``_tool``/``_v2`` suffix
+        if c.startswith(norm + "_") or norm.startswith(c + "_"):
+            return cand
+        # The LLM used a substring of a longer name
+        if norm in c or c in norm:
+            return cand
+    # Generic fuzzy match for typos
+    close = difflib.get_close_matches(req, [c.lower() for c in available], n=1, cutoff=0.7)
+    if close:
+        # difflib returns the lowercased version; recover original case
+        for cand in available:
+            if cand.lower() == close[0]:
+                return cand
+    return None
 
 
 class _UnknownToolStub(BaseTool):
@@ -57,21 +90,37 @@ class _UnknownToolStub(BaseTool):
         self._available = available_names
 
     async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:  # noqa: ARG002
+        suggestion = _closest_tool_match(self._requested, self._available)
         logger.warning(
             "resilient_tool_resolver: model called unknown tool %r — "
-            "returning soft error. Available: %s",
+            "returning soft error (did_you_mean=%r). Available: %s",
             self._requested,
+            suggestion,
             ", ".join(self._available),
         )
-        return {
+        # Smaller open-source models (Gemma 2B/4B, Llama 3.2 3B, …) often
+        # drop or add a name suffix when the agent registers 15+ tools.
+        # Including an explicit ``did_you_mean`` field lets weak models
+        # recover in one extra turn instead of giving up.
+        payload: dict[str, Any] = {
             "error": "tool_not_found",
             "requested_tool": self._requested,
             "available_tools": self._available,
-            "hint": (
-                f"The tool {self._requested!r} does not exist. Pick exactly one "
-                f"name from available_tools and retry. Tool names are case-sensitive."
-            ),
         }
+        if suggestion is not None:
+            payload["did_you_mean"] = suggestion
+            payload["hint"] = (
+                f"The tool {self._requested!r} does not exist. The closest "
+                f"available match is {suggestion!r} — retry the call with "
+                "EXACTLY that name."
+            )
+        else:
+            payload["hint"] = (
+                f"The tool {self._requested!r} does not exist. Pick exactly "
+                "one name from available_tools and retry. Tool names are "
+                "case-sensitive."
+            )
+        return payload
 
 
 def install_resilient_tool_resolver() -> None:

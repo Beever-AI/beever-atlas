@@ -87,7 +87,52 @@ async def test_stub_run_async_returns_structured_error():
     assert result["error"] == "tool_not_found"
     assert result["requested_tool"] == "people-profile"
     assert result["available_tools"] == ["find_experts", "search_facts"]
+    # No close match → falls back to the generic case-sensitive hint
     assert "case-sensitive" in result["hint"].lower()
+    assert "did_you_mean" not in result
+
+
+@pytest.mark.asyncio
+async def test_stub_suggests_closest_when_suffix_dropped():
+    """User-reported case: gemma4:e2b called 'list_channels' instead of
+    the real 'list_channels_tool'. The stub should auto-suggest the suffix
+    so a weak model can recover in one retry."""
+    stub = _UnknownToolStub(
+        "list_channels",
+        ["list_channels_tool", "list_skills", "search_qa_history"],
+    )
+
+    result = await stub.run_async(args={}, tool_context=MagicMock())
+
+    assert result["did_you_mean"] == "list_channels_tool"
+    assert "list_channels_tool" in result["hint"]
+
+
+@pytest.mark.asyncio
+async def test_stub_suggests_closest_when_typo():
+    """Generic typo fallback via difflib — covers swap/missing-char drift
+    (``sercch_facts`` → ``search_facts``)."""
+    stub = _UnknownToolStub(
+        "sercch_facts",
+        ["search_facts", "search_qa_history", "load_skill"],
+    )
+
+    result = await stub.run_async(args={}, tool_context=MagicMock())
+
+    assert result["did_you_mean"] == "search_facts"
+
+
+@pytest.mark.asyncio
+async def test_stub_suggests_closest_when_dash_used():
+    """Dash-vs-underscore drift — common with GLM-style models."""
+    stub = _UnknownToolStub(
+        "find-experts",
+        ["find_experts", "search_qa_history"],
+    )
+
+    result = await stub.run_async(args={}, tool_context=MagicMock())
+
+    assert result["did_you_mean"] == "find_experts"
 
 
 def test_unknown_tool_with_no_name_attribute_does_not_crash():
