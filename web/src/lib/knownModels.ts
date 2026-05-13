@@ -72,10 +72,17 @@ export function inferCapabilities(modelId: string): {
 } {
   const s = modelId.toLowerCase();
   return {
+    // PR-μ.1: keep this in sync with ``src/beever_atlas/llm/capability_infer.py``.
+    // The substring rules are intentionally conservative — operators can pick
+    // anything (UI no longer gates per PR-μ), this only colors the capability
+    // badge informationally. False negatives are fine; we just under-claim.
     supports_tools:
       s.includes("gpt-") || s.includes("claude") || s.includes("gemini") || s.includes("mistral") ||
-      s.includes("qwen") || s.includes("llama-3") || s.includes("llama3.3") || s.includes("minimax") ||
-      s.includes("deepseek-chat") || s.includes("grok"),
+      s.includes("qwen") || s.includes("llama-3") ||
+      s.includes("llama3.1") || s.includes("llama3.2") || s.includes("llama3.3") ||
+      s.includes("minimax") || s.includes("deepseek-chat") || s.includes("grok") ||
+      s.includes("firefunction") || s.includes("nous-hermes2") ||
+      s.includes("glm-4") || s.includes("chatglm"),
     supports_vision:
       s.includes("vision") || s.includes("-vl") || s.includes("gpt-4o") || s.includes("gpt-4.1") ||
       s.includes("claude") || s.includes("gemini") || s.includes("llava"),
