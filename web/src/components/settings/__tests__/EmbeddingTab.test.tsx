@@ -67,25 +67,17 @@ const IDLE_STATUS = {
   error: null,
 };
 
-const LEGACY_CONFIG_OK = {
-  provider: "jina_ai",
-  model: "jina-embeddings-v4",
-  dimensions: 2048,
-  rpm: 60,
-  api_base: "",
-  task: "",
-  has_api_key: true,
-  api_key_masked: "ji-...abcd",
-  source: "db",
-  dim_guard_enabled: true,
-  last_probe_at: null,
-  last_probe_ok: null,
-  last_probe_error: null,
+const STATE_OK = {
+  migration_required: false,
+  desired_provider: "jina_ai",
+  desired_model: "jina-embeddings-v4",
+  desired_dimensions: 2048,
   persisted_provider: "jina_ai",
   persisted_model: "jina-embeddings-v4",
   persisted_dimensions: 2048,
   fact_count: 0,
-  migration_required: false,
+  reembed_supported: true,
+  reason: null,
 };
 
 function renderTab() {
@@ -109,8 +101,8 @@ describe("EmbeddingTab", () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG_OK);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_OK);
       if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT, OPENAI_EMB_ENDPOINT] });
       if (url.includes("/api/settings/assignments"))
         return makeResponse({
@@ -134,8 +126,8 @@ describe("EmbeddingTab", () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG_OK);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_OK);
       if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT, OPENAI_EMB_ENDPOINT] });
       if (url.includes("/api/settings/assignments"))
         return makeResponse({
@@ -158,17 +150,20 @@ describe("EmbeddingTab", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: /Save Changes/i }) as HTMLButtonElement).disabled).toBe(false));
   });
 
-  it("Save calls asn.upsert('embedding', …)", async () => {
+  it("Save calls asn.upsert('embedding', …) without a legacy embedding PUT", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     let upsertBody: any = null;
+    let legacyEmbeddingPut = false;
     fetchMock.mockImplementation(async (input: any, init?: any) => {
       const url = String(input);
       if (url.includes("/api/settings/assignments/embedding") && init?.method === "PUT") {
         upsertBody = JSON.parse(String(init.body));
         return makeResponse(mkAssignment("embedding", "ep-openai", "text-embedding-3-large", 3072));
       }
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG_OK);
+      // Guard: the tab must NOT PUT the legacy embedding-config endpoint.
+      if (/\/api\/settings\/embedding($|\?)/.test(url) && init?.method === "PUT") legacyEmbeddingPut = true;
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_OK);
       if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT, OPENAI_EMB_ENDPOINT] });
       if (url.includes("/api/settings/assignments"))
         return makeResponse({
@@ -190,15 +185,16 @@ describe("EmbeddingTab", () => {
     await waitFor(() => expect(upsertBody).not.toBeNull());
     expect(upsertBody.endpoint_id).toBe("ep-openai");
     expect(upsertBody.model).toBe("text-embedding-3-large");
+    expect(legacyEmbeddingPut).toBe(false);
   });
 
   it("a running migration shows the amber progress bar with % / ETA", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status"))
+      if (url.includes("/api/settings/embedding-migration/status"))
         return makeResponse({ ...IDLE_STATUS, running: true, processed: 50, total: 200, stage: "embedding", started_at: new Date(Date.now() - 60_000).toISOString() });
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG_OK);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_OK);
       if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT] });
       if (url.includes("/api/settings/assignments"))
         return makeResponse({
@@ -220,10 +216,10 @@ describe("EmbeddingTab", () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding"))
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state"))
         return makeResponse({
-          ...LEGACY_CONFIG_OK,
+          ...STATE_OK,
           migration_required: true,
           persisted_provider: "openai",
           persisted_model: "text-embedding-3-large",
@@ -241,8 +237,49 @@ describe("EmbeddingTab", () => {
     });
 
     renderTab();
+    // Wait for the form to hydrate (assignment + endpoints loaded → draft set)
+    // *and* the migration state to resolve before reading the Start button —
+    // the button is disabled while ``draft`` is null too, not only when
+    // ``reembed_supported`` is false.
+    await screen.findByLabelText("embedding endpoint");
     await waitFor(() => expect(screen.getByText("Re-embed required")).toBeTruthy());
-    expect(screen.getByRole("button", { name: /Start re-embed/i })).toBeTruthy();
+    await waitFor(() => {
+      const startBtn = screen.getByRole("button", { name: /Start re-embed/i });
+      expect((startBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it("disables 'Start re-embed' + shows the reason when reembed_supported is false", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state"))
+        return makeResponse({
+          ...STATE_OK,
+          migration_required: true,
+          persisted_provider: "openai",
+          persisted_model: "text-embedding-3-large",
+          persisted_dimensions: 3072,
+          fact_count: 999,
+          reembed_supported: false,
+          reason: "endpoint preset 'anthropic' isn't a direct embedding provider — re-embed not yet supported via proxy endpoints",
+        });
+      if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT] });
+      if (url.includes("/api/settings/assignments"))
+        return makeResponse({
+          assignments: [mkAssignment("embedding", "ep-jina", "jina-embeddings-v4", 2048)],
+          default_consumers: ["embedding"],
+          capabilities: {},
+        });
+      return makeResponse({});
+    });
+
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Re-embed required")).toBeTruthy());
+    const startBtn = screen.getByRole("button", { name: /Start re-embed/i });
+    expect((startBtn as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/isn't a direct embedding provider/i)).toBeTruthy();
   });
 
   it("Test Connection shows an inline pass/fail banner", async () => {
@@ -252,8 +289,8 @@ describe("EmbeddingTab", () => {
       if (url.includes("/api/settings/endpoints/ep-jina/test") && init?.method === "POST") {
         return makeResponse({ ok: true, latency_ms: 123, error: null });
       }
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG_OK);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_OK);
       if (url.includes("/api/settings/endpoints")) return makeResponse({ endpoints: [EMBEDDING_ENDPOINT] });
       if (url.includes("/api/settings/assignments"))
         return makeResponse({

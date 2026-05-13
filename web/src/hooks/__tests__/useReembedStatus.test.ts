@@ -22,25 +22,17 @@ const IDLE_STATUS = {
   error: null,
 };
 
-const LEGACY_CONFIG = {
-  provider: "jina_ai",
-  model: "jina-embeddings-v4",
-  dimensions: 2048,
-  rpm: 60,
-  api_base: "",
-  task: "",
-  has_api_key: true,
-  api_key_masked: "ji-...abcd",
-  source: "db",
-  dim_guard_enabled: true,
-  last_probe_at: null,
-  last_probe_ok: null,
-  last_probe_error: null,
+const STATE_NEEDS_REEMBED = {
+  migration_required: true,
+  desired_provider: "jina_ai",
+  desired_model: "jina-embeddings-v4",
+  desired_dimensions: 2048,
   persisted_provider: "openai",
   persisted_model: "text-embedding-3-large",
   persisted_dimensions: 3072,
   fact_count: 1234,
-  migration_required: true,
+  reembed_supported: true,
+  reason: null,
 };
 
 beforeEach(() => {
@@ -53,12 +45,12 @@ afterEach(() => {
 });
 
 describe("useReembedStatus", () => {
-  it("surfaces migration_required + persisted_* from the legacy embedding read", async () => {
+  it("surfaces migration_required + persisted_* from GET /embedding-migration/state", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_NEEDS_REEMBED);
       return makeResponse({});
     });
 
@@ -71,7 +63,31 @@ describe("useReembedStatus", () => {
       dim: 3072,
       count: 1234,
     });
+    expect(result.current.reembedSupported).toBe(true);
+    expect(result.current.reembedSupportReason).toBeNull();
     // Stop the running poll loop so the test exits cleanly.
+    unmount();
+  });
+
+  it("surfaces reembed_supported=false + the reason for an unsupported endpoint", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state"))
+        return makeResponse({
+          ...STATE_NEEDS_REEMBED,
+          migration_required: false,
+          desired_provider: "anthropic",
+          reembed_supported: false,
+          reason: "endpoint preset 'anthropic' isn't a direct embedding provider — re-embed not yet supported via proxy endpoints",
+        });
+      return makeResponse({});
+    });
+
+    const { result, unmount } = renderHook(() => useReembedStatus());
+    await waitFor(() => expect(result.current.reembedSupported).toBe(false));
+    expect(result.current.reembedSupportReason).toMatch(/anthropic/);
     unmount();
   });
 
@@ -81,7 +97,7 @@ describe("useReembedStatus", () => {
     let statusCalls = 0;
     fetchMock.mockImplementation(async (input: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate/status")) {
+      if (url.includes("/api/settings/embedding-migration/status")) {
         statusCalls += 1;
         if (statusCalls === 1) {
           return makeResponse({ ...IDLE_STATUS, running: true, processed: 10, total: 100, stage: "embedding" });
@@ -91,13 +107,14 @@ describe("useReembedStatus", () => {
         }
         return makeResponse(IDLE_STATUS); // done
       }
-      if (url.includes("/api/settings/embedding")) return makeResponse({ ...LEGACY_CONFIG, migration_required: false });
+      if (url.includes("/api/settings/embedding-migration/state"))
+        return makeResponse({ ...STATE_NEEDS_REEMBED, migration_required: false });
       return makeResponse({});
     });
 
     const { result, unmount } = renderHook(() => useReembedStatus());
 
-    // Flush the initial poll + the on-mount legacy read.
+    // Flush the initial poll + the on-mount state read.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -126,17 +143,17 @@ describe("useReembedStatus", () => {
     unmount();
   });
 
-  it("startMigration POSTs the migrate endpoint", async () => {
+  it("startMigration POSTs the /embedding-migration/spawn endpoint", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
-    let migratePosted = false;
+    let spawnPosted = false;
     fetchMock.mockImplementation(async (input: any, init?: any) => {
       const url = String(input);
-      if (url.includes("/api/settings/embedding/migrate") && !url.includes("/status") && init?.method === "POST") {
-        migratePosted = true;
+      if (url.includes("/api/settings/embedding-migration/spawn") && init?.method === "POST") {
+        spawnPosted = true;
         return makeResponse({ job_id: "j1", status: "running" });
       }
-      if (url.includes("/api/settings/embedding/migrate/status")) return makeResponse(IDLE_STATUS);
-      if (url.includes("/api/settings/embedding")) return makeResponse(LEGACY_CONFIG);
+      if (url.includes("/api/settings/embedding-migration/status")) return makeResponse(IDLE_STATUS);
+      if (url.includes("/api/settings/embedding-migration/state")) return makeResponse(STATE_NEEDS_REEMBED);
       return makeResponse({});
     });
 
@@ -146,7 +163,7 @@ describe("useReembedStatus", () => {
     await act(async () => {
       await result.current.startMigration();
     });
-    expect(migratePosted).toBe(true);
+    expect(spawnPosted).toBe(true);
     unmount();
   });
 });

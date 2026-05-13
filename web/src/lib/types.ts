@@ -834,3 +834,30 @@ export interface EmbeddingMigrationStatus {
   finished_at: string | null;
   error: string | null;
 }
+
+/**
+ * ``GET /api/settings/embedding-migration/state`` (PR6) — dim-mismatch
+ * detection driven by the ``embedding`` Assignment (desired) vs the
+ * ``embedding_meta`` checkpoint (persisted, i.e. what's actually in storage).
+ * ``reembed_supported`` is false when the Assignment's endpoint resolves to a
+ * provider the legacy re-embed job can't drive (e.g. an Anthropic endpoint);
+ * ``reason`` explains why so the UI can disable "Start re-embed" helpfully.
+ */
+export interface EmbeddingReembedState {
+  migration_required: boolean;
+  desired_provider: string | null;
+  desired_model: string | null;
+  desired_dimensions: number | null;
+  persisted_provider: string | null;
+  persisted_model: string | null;
+  persisted_dimensions: number | null;
+  fact_count: number | null;
+  reembed_supported: boolean;
+  reason: string | null;
+}
+
+/** ``POST /api/settings/embedding-migration/spawn`` (PR6) response. */
+export interface EmbeddingReembedSpawnResponse {
+  job_id: string;
+  status: string; // "running" | "running_existing"
+}

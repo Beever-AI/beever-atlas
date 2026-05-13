@@ -2,30 +2,31 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type {
   EmbeddingMigrationStatus,
-  EmbeddingSettings,
-  EmbeddingUpdateRequest,
+  EmbeddingReembedSpawnResponse,
+  EmbeddingReembedState,
 } from "@/lib/types";
 
 /**
  * Re-embed migration machinery — extracted from ``useEmbeddingSettings`` so the
- * new ``EmbeddingTab`` can drive the progress UI while binding *config* to the
+ * ``EmbeddingTab`` can drive the progress UI while binding *config* to the
  * ``embedding`` Assignment instead of the legacy embedding-config API.
  *
- * ─── B-i tradeoff (documented in .omc/plans/settings-ai-tabs-restructure.md) ──
- * The ``/api/settings/embedding/migrate`` + ``/migrate/status`` endpoints AND
- * the ``GET /api/settings/embedding`` dim-mismatch read still live on the
- * *legacy* (Deprecation:-stamped) embedding API. We keep calling them here
- * because the re-embed job + dim guard + ``reembed_state`` checkpoint are real
- * backend infra that isn't going anywhere — only the *config-read/write* part
- * of the legacy embedding API is conceptually dead once Assignments own the
- * config. Re-homing ``/migrate*`` off the deprecated surface is the backend
- * follow-up (PR6, B-ii) and is intentionally out of scope here.
+ * ─── B-i re-home: PR6 landed ──────────────────────────────────────────────
+ * This hook now talks exclusively to the **non-deprecated**
+ * ``/api/settings/embedding-migration/*`` surface:
+ *   * ``POST /spawn``  — server-side dual-writes the ``embedding`` Assignment's
+ *     config into the legacy ``embedding_settings`` doc + credential, THEN
+ *     spawns the re-embed job. (The frontend used to do that dual-write
+ *     itself via a legacy ``PUT /api/settings/embedding`` — that's gone.)
+ *   * ``GET /status`` — current re-embed job state.
+ *   * ``GET /state``  — dim-mismatch detection (desired vs persisted) + a
+ *     ``reembed_supported`` flag derived from the Assignment's endpoint.
  *
- * ALSO B-i: ``EmbeddingTab`` must PUT the legacy ``/api/settings/embedding``
- * config (provider/model/dim) BEFORE triggering a re-embed so the legacy
- * ``/migrate`` endpoint sees the right target. That dual-write (new Assignment
- * + legacy embedding config) is exposed here as ``putLegacyConfig`` so the tab
- * doesn't reach into ``@/lib/api`` directly. KEEP THIS — see PR6 to remove.
+ * The only remaining legacy coupling is *server-side and invisible to this
+ * hook*: the re-embed *job* still reads its target from the
+ * ``embedding_settings`` Mongo doc (which ``/spawn`` populates) until the
+ * embedding *runtime* itself reads Assignments directly — a separate future
+ * change. Nothing here hits a Deprecation:-stamped route anymore.
  */
 
 export interface PersistedEmbeddingMeta {
@@ -36,36 +37,37 @@ export interface PersistedEmbeddingMeta {
 }
 
 export interface UseReembedStatusResult {
-  /** Latest migration status from ``/migrate/status`` (null until first poll). */
+  /** Latest migration status from ``/status`` (null until first poll). */
   status: EmbeddingMigrationStatus | null;
-  /** True when SAVED legacy config differs from what's actually in storage. */
+  /** True when the desired (Assignment) config differs from what's in storage. */
   migrationRequired: boolean;
-  /** What's currently in storage (Weaviate), per the legacy embedding read. */
+  /** What's currently in storage (Weaviate), per ``GET /state``'s persisted_*. */
   persisted: PersistedEmbeddingMeta | null;
   /** Error string of the most recent *failed* migration, if any. */
   failedError: string | null;
   /** True while a migration job is running (mirror of ``status?.running``). */
   isPolling: boolean;
-  /** POST ``/api/settings/embedding/migrate`` — spawn the re-embed job. */
-  startMigration: () => Promise<void>;
-  /** GET ``/api/settings/embedding/migrate/status`` — manual refetch. */
-  refetchStatus: () => Promise<EmbeddingMigrationStatus | null>;
   /**
-   * PUT ``/api/settings/embedding`` legacy config (B-i dual-write). Pass the
-   * target provider/model/dim so the legacy ``/migrate`` path re-embeds toward
-   * the same target the new Assignment now points at.
+   * True when the Assignment's endpoint resolves to a provider the re-embed
+   * job can drive. False ⇒ the "Start re-embed" action should be disabled.
+   * Defaults to ``true`` until the first ``/state`` read resolves so the UI
+   * doesn't flash a disabled state on mount.
    */
-  putLegacyConfig: (cfg: {
-    provider: string;
-    model: string;
-    dim: number;
-  }) => Promise<void>;
+  reembedSupported: boolean;
+  /** When ``reembedSupported`` is false, the backend's explanation. */
+  reembedSupportReason: string | null;
+  /** POST ``/api/settings/embedding-migration/spawn`` — spawn the re-embed job. */
+  startMigration: () => Promise<void>;
+  /** GET ``/api/settings/embedding-migration/status`` — manual refetch. */
+  refetchStatus: () => Promise<EmbeddingMigrationStatus | null>;
 }
 
 export function useReembedStatus(): UseReembedStatusResult {
   const [status, setStatus] = useState<EmbeddingMigrationStatus | null>(null);
   const [migrationRequired, setMigrationRequired] = useState(false);
   const [persisted, setPersisted] = useState<PersistedEmbeddingMeta | null>(null);
+  const [reembedSupported, setReembedSupported] = useState(true);
+  const [reembedSupportReason, setReembedSupportReason] = useState<string | null>(null);
 
   // Keep the latest "should we still poll" decision on a ref so the poll loop's
   // ``setTimeout`` callback always sees fresh state without re-subscribing.
@@ -74,36 +76,44 @@ export function useReembedStatus(): UseReembedStatusResult {
   const lastRunningRef = useRef(false);
 
   const startMigration = useCallback(async () => {
-    await api.post<{ job_id: string; status: string }>(
-      "/api/settings/embedding/migrate",
+    // The /spawn endpoint does the server-side dual-write (Assignment config →
+    // legacy embedding_settings doc + credential) then spawns the job. Errors
+    // (e.g. 422 unsupported_embedding_provider_for_reembed) surface via the
+    // thrown ApiError so callers can show them.
+    await api.post<EmbeddingReembedSpawnResponse>(
+      "/api/settings/embedding-migration/spawn",
       {},
     );
   }, []);
 
   const getMigrationStatus = useCallback(async () => {
     return api.get<EmbeddingMigrationStatus>(
-      "/api/settings/embedding/migrate/status",
+      "/api/settings/embedding-migration/status",
     );
   }, []);
 
-  // Re-read the legacy embedding doc to refresh the dim-mismatch detection
-  // (migration_required / persisted_*). Tolerates a missing/failed read.
-  const refetchLegacy = useCallback(async () => {
+  // Re-read the dim-mismatch state (migration_required / persisted_* /
+  // reembed_supported). Tolerates a missing/failed read.
+  const refetchState = useCallback(async () => {
     try {
-      const cfg = await api.get<EmbeddingSettings>("/api/settings/embedding");
-      setMigrationRequired(!!cfg.migration_required);
+      const s = await api.get<EmbeddingReembedState>(
+        "/api/settings/embedding-migration/state",
+      );
+      setMigrationRequired(!!s.migration_required);
+      setReembedSupported(!!s.reembed_supported);
+      setReembedSupportReason(s.reason ?? null);
       setPersisted(
-        cfg.persisted_provider != null && cfg.persisted_model != null
+        s.persisted_provider != null && s.persisted_model != null
           ? {
-              provider: cfg.persisted_provider,
-              model: cfg.persisted_model,
-              dim: cfg.persisted_dimensions,
-              count: cfg.fact_count,
+              provider: s.persisted_provider,
+              model: s.persisted_model,
+              dim: s.persisted_dimensions,
+              count: s.fact_count,
             }
           : null,
       );
     } catch {
-      // Legacy read failed — leave the last-known state in place.
+      // State read failed — leave the last-known state in place.
     }
   }, []);
 
@@ -118,30 +128,12 @@ export function useReembedStatus(): UseReembedStatusResult {
     }
   }, [getMigrationStatus]);
 
-  const putLegacyConfig = useCallback(
-    async (cfg: { provider: string; model: string; dim: number }) => {
-      // B-i dual-write: keep the legacy embedding config in sync with the new
-      // ``embedding`` Assignment so the legacy ``/migrate`` job (and the dim
-      // guard) target the right provider/model/dim. ``confirm_migration`` is
-      // set so the PUT does not error out with a dim-mismatch when we're
-      // deliberately about to kick off the re-embed.
-      const req: EmbeddingUpdateRequest = {
-        provider: cfg.provider,
-        model: cfg.model,
-        dimensions: cfg.dim,
-        confirm_migration: true,
-      };
-      await api.put<EmbeddingSettings>("/api/settings/embedding", req);
-    },
-    [],
-  );
-
   // Resilient poll loop — ported verbatim from ``EmbeddingSettings``:
   //   * 2s base delay; 4s back-off on a transient error.
   //   * Never stops on transient errors / undefined results — only on an
   //     authoritative ``running: false`` response. A single 5xx mid-migration
   //     previously froze "Re-embedding · 28%" on screen forever.
-  //   * On running → !running, refetch the legacy doc so the "Re-embed
+  //   * On running → !running, refetch the state doc so the "Re-embed
   //     required" banner re-evaluates against the now-current ``embedding_meta``.
   useEffect(() => {
     cancelledRef.current = false;
@@ -155,8 +147,8 @@ export function useReembedStatus(): UseReembedStatusResult {
         if (cancelledRef.current) return;
         setStatus(s);
         if (lastRunningRef.current && !s.running) {
-          // Just completed (or failed). Refresh the legacy embedding doc.
-          refetchLegacy();
+          // Just completed (or failed). Refresh the state doc.
+          refetchState();
         }
         lastRunningRef.current = s.running;
         pollUntilExplicitlyDone = s.running;
@@ -170,13 +162,13 @@ export function useReembedStatus(): UseReembedStatusResult {
     }
 
     // Prime the dim-mismatch read once on mount, then start polling status.
-    refetchLegacy();
+    refetchState();
     poll();
     return () => {
       cancelledRef.current = true;
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-  }, [getMigrationStatus, refetchLegacy]);
+  }, [getMigrationStatus, refetchState]);
 
   const failedError =
     status && !status.running && status.error ? status.error : null;
@@ -187,8 +179,9 @@ export function useReembedStatus(): UseReembedStatusResult {
     persisted,
     failedError,
     isPolling: !!status?.running,
+    reembedSupported,
+    reembedSupportReason,
     startMigration,
     refetchStatus,
-    putLegacyConfig,
   };
 }

@@ -43,6 +43,7 @@ from beever_atlas.api.config import router as config_router
 from beever_atlas.api.policies import router as policies_router
 from beever_atlas.api.models import router as models_router
 from beever_atlas.api.embedding_settings import router as embedding_settings_router
+from beever_atlas.api.embedding_migration import router as embedding_migration_router
 from beever_atlas.api.endpoints import router as endpoints_router
 from beever_atlas.api.assignments import router as assignments_router
 from beever_atlas.api.dev import router as dev_router
@@ -972,6 +973,12 @@ app.include_router(topics_router, dependencies=_auth)
 app.include_router(policies_router, dependencies=_auth)
 app.include_router(models_router, dependencies=_auth)
 app.include_router(embedding_settings_router, dependencies=_auth)
+# PR6 (settings-restructure B-i): non-deprecated home for the re-embed
+# machinery — reads the ``embedding`` Assignment as the source of truth and
+# writes through to the legacy ``embedding_settings`` doc as the job's input.
+# The legacy ``embedding_settings_router`` above stays mounted (unchanged)
+# until a future Phase-5 cleanup deletes its config read/write/test routes.
+app.include_router(embedding_migration_router, dependencies=_auth)
 # agent-llm-provider-pluggable PR-E: Endpoint + Assignment catalog APIs.
 app.include_router(endpoints_router, dependencies=_auth)
 app.include_router(assignments_router, dependencies=_auth)

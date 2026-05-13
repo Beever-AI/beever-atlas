@@ -35,6 +35,19 @@ from beever_atlas.llm.known_embedding_models import (
     SUPPORTED_PROVIDERS,
     is_known,
 )
+
+# The re-embed in-process registry + spawn/status helpers now live in a
+# shared service module so this legacy (deprecation-stamped) router AND the
+# new ``api/embedding_migration.py`` router share *one* registry. The
+# ``_active_migration`` dict is re-exported here (intentionally imported but
+# unused at module level — the F401 suppression below) so existing
+# callers/tests that reference ``embedding_settings._active_migration`` keep
+# working.
+from beever_atlas.services.embedding_migration_job import _active_migration  # noqa: F401
+from beever_atlas.services.embedding_migration_job import (
+    migration_status_snapshot,
+    spawn_reembed_job,
+)
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
@@ -501,91 +514,23 @@ async def test_embedding_connection(req: UpdateEmbeddingRequest) -> TestConnecti
 
 
 # ─── Re-embed migration job (PR-F) ─────────────────────────────────────────
-# A single in-process registry keeps things simple — re-embed is operator-
-# triggered + globally-singleton-by-design. Restart wipes state but the
-# checkpoint in MongoDB collection ``reembed_state`` survives.
-
-_active_migration: dict[str, Any] = {"task": None, "job_id": None, "started_at": None}
+# The in-process registry + spawn-the-job + status-snapshot logic now lives
+# in ``beever_atlas.services.embedding_migration_job`` (imported at module
+# top) so both this legacy (deprecation-stamped) router AND the new
+# ``api/embedding_migration.py`` router share *one* registry: a re-embed
+# triggered via either surface must dedupe against the other, and a
+# ``/status`` poll from either must reflect it. The route paths + response
+# shapes here are unchanged — zero behaviour change for the legacy
+# endpoints; they just delegate now.
 
 
 @router.post("/migrate", response_model=MigrateResponse)
 async def start_migration(req: MigrateRequest) -> MigrateResponse:
-    import asyncio
-    import uuid
-
-    existing = _active_migration.get("task")
-    if existing is not None and not existing.done():
-        return MigrateResponse(job_id=_active_migration["job_id"], status="running_existing")
-
-    job_id = str(uuid.uuid4())
-    _active_migration["job_id"] = job_id
-    _active_migration["started_at"] = datetime.now(tz=UTC).isoformat()
-    _active_migration["error"] = None
-
-    async def _run() -> None:
-        from scripts.reembed_facts import main as reembed_main
-
-        try:
-            # Reuse the server's stores singleton so the migration job
-            # does NOT call init_stores/startup/shutdown on a competing
-            # StoreClients instance — closing the migration's stores in
-            # ``finally`` previously also closed the server's MongoClient
-            # (singleton was overwritten), tripping every subsequent
-            # request with ``Cannot use MongoClient after close``.
-            await reembed_main(stores=get_stores())
-        except SystemExit as exc:
-            # Defensive: ``main`` no longer parses argv (that lived in the CLI
-            # wrapper), so SystemExit should not fire here. If it ever does
-            # (e.g. transitively-imported code calling sys.exit), trap it —
-            # bare ``raise`` would propagate through the Task and kill uvicorn.
-            _active_migration["error"] = f"SystemExit({exc.code})"
-            logger.error("reembed: SystemExit trapped to protect uvicorn: %s", exc)
-        except Exception as exc:  # noqa: BLE001
-            # Log the full traceback server-side so the operator can
-            # diagnose. Surface ONLY the exception class to the UI —
-            # raw exception strings frequently include internal URLs,
-            # hostnames, request IDs, and (in some provider SDKs)
-            # partial credentials. The class name is enough for the
-            # banner to communicate "re-embed failed: <type>", and the
-            # server log retains everything else.
-            _active_migration["error"] = (
-                f"{type(exc).__name__}: migration failed (see server logs for details)"
-            )
-            logger.error(
-                "reembed: migration task failed — %s",
-                exc,
-                exc_info=True,
-            )
-            raise
-
-    _active_migration["task"] = asyncio.create_task(_run())
-    return MigrateResponse(job_id=job_id, status="running")
+    job_id, status = spawn_reembed_job()
+    return MigrateResponse(job_id=job_id, status=status)
 
 
 @router.get("/migrate/status", response_model=MigrateStatusResponse)
 async def migration_status() -> MigrateStatusResponse:
-    stores = get_stores()
-    cp = await stores.mongodb.db["reembed_state"].find_one({"_id": "reembed_state"})
-    if cp:
-        cp.pop("_id", None)
-
-    task = _active_migration.get("task")
-    running = task is not None and not task.done()
-    finished_at: str | None = None
-    error = _active_migration.get("error")
-
-    if task is not None and task.done():
-        finished_at = (cp or {}).get("updated_at")
-        if task.exception() is not None:
-            error = error or str(task.exception())
-
-    return MigrateStatusResponse(
-        running=running,
-        job_id=_active_migration.get("job_id"),
-        stage=(cp or {}).get("stage"),
-        processed=(cp or {}).get("processed"),
-        total=(cp or {}).get("total"),
-        started_at=_active_migration.get("started_at"),
-        finished_at=finished_at,
-        error=error,
-    )
+    snapshot = await migration_status_snapshot()
+    return MigrateStatusResponse(**snapshot)

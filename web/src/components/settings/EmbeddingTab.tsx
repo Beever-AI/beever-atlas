@@ -36,25 +36,6 @@ function presetToEmbeddingProvider(preset: string): string {
   return preset;
 }
 
-// Providers the legacy ``/api/settings/embedding`` + ``/migrate`` surface
-// accepts (its ``EmbeddingProvider`` enum). An ``EMBEDDING_CAPABLE_PRESETS``
-// endpoint whose provider isn't in here (``custom`` / ``litellm_proxy``) can
-// still be *assigned* as the embedding endpoint, but can't drive the legacy
-// re-embed job — that needs the backend re-home (B-i / PR6). Until then we
-// block the "Start re-embed" action for those with a clear message rather
-// than letting the legacy ``PUT`` 422 with no guidance.
-const LEGACY_REEMBED_PROVIDERS = new Set<string>([
-  "jina_ai",
-  "openai",
-  "cohere",
-  "voyage",
-  "gemini",
-  "mistral",
-  "ollama",
-  "bedrock",
-  "vertex_ai",
-]);
-
 interface DraftState {
   endpoint_id: string;
   model: string;
@@ -94,9 +75,12 @@ function isDirty(a: Assignment | undefined, d: DraftState | null): boolean {
  * ``ProviderTile``-style preset chips only inside ``AddEndpointPanel``. The
  * capability/cost pills below still come from ``knownEmbeddingModels``.
  *
- * Re-embed: the ``/migrate*`` endpoints + the legacy ``/api/settings/embedding``
- * config write are intentional (B-i) — see ``useReembedStatus`` and the plan.
- * The backend re-home is PR6, out of scope here.
+ * Re-embed (PR6 landed): triggered via the non-deprecated
+ * ``/api/settings/embedding-migration/*`` surface through ``useReembedStatus``
+ * — the server does the dual-write (Assignment config → legacy
+ * ``embedding_settings`` doc) inside ``/spawn``. The "Start re-embed" action
+ * is disabled (with the backend's ``reason``) when the chosen endpoint's
+ * provider can't drive the re-embed job.
  */
 export function EmbeddingTab() {
   const ep = useEndpoints();
@@ -136,7 +120,11 @@ export function EmbeddingTab() {
   const provider = chosenEndpoint ? presetToEmbeddingProvider(chosenEndpoint.preset) : "";
   const spec = draft && provider ? lookupModel(provider, draft.model) : null;
   const dirty = isDirty(assignment, draft);
-  const canLegacyReembed = !!provider && LEGACY_REEMBED_PROVIDERS.has(provider);
+  // Whether the backend will accept a re-embed for the *currently-chosen*
+  // endpoint. ``reembed.reembedSupported`` reflects the *saved* Assignment's
+  // endpoint; if the draft's endpoint differs we still gate the action but
+  // surface the backend's reason once the Assignment is saved + state re-read.
+  const canReembed = reembed.reembedSupported;
 
   function handleEndpoint(id: string) {
     const e = endpointById[id];
@@ -179,9 +167,6 @@ export function EmbeddingTab() {
     if (!draft || !assignment) return;
     // Snapshot the target before the awaits — ``assignment`` updates async.
     const target: DraftState = { ...draft };
-    const prevProvider = presetToEmbeddingProvider(endpointById[assignment.endpoint_id]?.preset ?? "");
-    const providerOrModelOrDimChanged =
-      provider !== prevProvider || target.model !== assignment.model || target.dimensions !== assignment.dimensions;
     setSaving(true);
     try {
       await asn.upsert("embedding", {
@@ -190,17 +175,9 @@ export function EmbeddingTab() {
         dimensions: target.dimensions,
         task: target.task,
       });
-      // B-i dual-write: if the provider/model/dimensions changed, also push the
-      // legacy embedding config so the legacy ``/migrate`` path targets the new
-      // model on the next re-embed. (Backend re-home = PR6, out of scope.)
-      if (providerOrModelOrDimChanged && canLegacyReembed && target.dimensions != null) {
-        try {
-          await reembed.putLegacyConfig({ provider, model: target.model, dim: target.dimensions });
-        } catch {
-          // Legacy write failing isn't fatal — the new Assignment is the source
-          // of truth; the re-embed banner / dim guard will surface the mismatch.
-        }
-      }
+      // The re-embed *target* now derives server-side from the ``embedding``
+      // Assignment (see ``POST /api/settings/embedding-migration/spawn``), so
+      // saving the Assignment is all that's needed — no client-side dual-write.
       await ep.refetch();
       await reembed.refetchStatus();
       setDraft(target);
@@ -217,18 +194,19 @@ export function EmbeddingTab() {
       setConfirmOpen(false);
       return;
     }
-    if (!canLegacyReembed) {
+    if (!canReembed) {
       setConfirmOpen(false);
       showToast(
-        `Re-embedding via a "${chosenEndpoint?.preset}" endpoint isn't supported yet — pick a direct provider (Jina, OpenAI, Gemini, Voyage, Ollama, …) to re-embed now.`,
+        reembed.reembedSupportReason ??
+          `Re-embedding via a "${chosenEndpoint?.preset}" endpoint isn't supported yet — pick a direct provider (Jina, OpenAI, Gemini, Voyage, Ollama, …) to re-embed now.`,
         "error",
       );
       return;
     }
     setStartingMigration(true);
     try {
-      // Push the legacy config to the chosen target, THEN spawn the job.
-      await reembed.putLegacyConfig({ provider, model: draft.model, dim: draft.dimensions });
+      // ``/spawn`` server-side dual-writes the Assignment's config into the
+      // legacy embedding_settings doc + credential, then spawns the job.
       await reembed.startMigration();
       await reembed.refetchStatus();
       setConfirmOpen(false);
@@ -336,11 +314,17 @@ export function EmbeddingTab() {
                 )}
               </div>
             </div>
+            {!canReembed && reembed.reembedSupportReason && (
+              <div className="text-amber-600/80 dark:text-amber-400/80 mt-1">
+                {reembed.reembedSupportReason}
+              </div>
+            )}
           </div>
           <button
             type="button"
             onClick={() => setConfirmOpen(true)}
-            disabled={!draft || !provider || draft.dimensions == null}
+            disabled={!draft || !provider || draft.dimensions == null || !canReembed}
+            title={!canReembed ? (reembed.reembedSupportReason ?? "Re-embed not supported for this endpoint") : undefined}
             className="text-xs px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-medium shrink-0"
           >
             Start re-embed
