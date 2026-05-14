@@ -8,6 +8,13 @@ WORKDIR /app
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
+# scripts/ must ship with the image — server/app.py imports
+# ``scripts.migrate_to_endpoint_catalog`` at startup as the idempotent
+# Endpoint+Assignment seeding shim (the bridge between ``.env`` and the
+# DB-as-source-of-truth model). Without this COPY, the import raises
+# ModuleNotFoundError inside the container and the first-boot migration
+# never runs — the operator's UI surfaces an empty Endpoint catalog.
+COPY scripts/ scripts/
 
 # Install dependencies into a virtual env using the lockfile
 RUN uv sync --frozen --no-dev
@@ -28,6 +35,7 @@ RUN addgroup --system --gid 10001 app && \
 # Copy the built venv and source from builder, owned by `app`.
 COPY --chown=app:app --from=builder /app/.venv /app/.venv
 COPY --chown=app:app --from=builder /app/src /app/src
+COPY --chown=app:app --from=builder /app/scripts /app/scripts
 COPY --chown=app:app --from=builder /app/pyproject.toml /app/pyproject.toml
 
 # Ensure the venv is on PATH
