@@ -192,10 +192,18 @@ async def resolve_effective_settings(base: Settings | None = None) -> Settings:
         base = get_settings()
     try:
         overrides = await _load_db_overrides()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # SECURITY: ``_load_db_overrides`` decrypts the embedding API key
+        # internally (assigns ``overrides["api_key"] = db_key``). If the
+        # function raises mid-execution, that inner frame holds the
+        # plaintext ``db_key`` and the ``overrides`` dict containing it.
+        # ``exc_info=True`` walks back through that frame's locals. Log
+        # class + message only — same guard as ``F5`` /
+        # ``provider.py:160-163`` / ``agent_credentials.py:84-86``.
         logger.warning(
-            "embedding_runtime: resolve_effective_settings failed — falling back to env Settings",
-            exc_info=True,
+            "embedding_runtime: resolve_effective_settings failed — falling back to env Settings (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
         return base
     if not overrides:

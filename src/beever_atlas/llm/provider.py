@@ -343,8 +343,17 @@ class LLMProvider:
                     )
         except CircuitBreakerOpenForBothPrimaryAndFallback:
             raise
-        except Exception:  # noqa: BLE001 — breaker lookup must never crash resolve
-            logger.warning("LLMProvider: circuit breaker check failed", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — breaker lookup must never crash resolve
+            # SECURITY: ``resolve_for_call`` decrypts credentials a few lines
+            # below (``credential = get_runtime_credential(...)``); today
+            # this except runs BEFORE that assignment so no plaintext is
+            # on the stack, but defense-in-depth — never exc_info=True in
+            # a function that holds api_keys later in the same scope.
+            logger.warning(
+                "LLMProvider: circuit breaker check failed (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
         # Build the ResolvedAssignment carrying every dispatch-time param.
         credential = get_runtime_credential(target_endpoint.id)
@@ -492,16 +501,26 @@ class LLMProvider:
                     legacy = doc.get("models", {}) or {}
                     if isinstance(legacy, dict):
                         overrides.update(legacy)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                # Legacy doc has no credentials, but keep the no-exc_info
+                # pattern consistent across this whole function so future
+                # refactors don't accidentally widen the leak surface.
                 logger.debug(
-                    "LLMProvider.reload_from_db: legacy agent_model_config read failed",
-                    exc_info=True,
+                    "LLMProvider.reload_from_db: legacy agent_model_config read "
+                    "failed (%s: %s)",
+                    type(exc).__name__,
+                    exc,
                 )
 
             # Source 1: llm_assignments × endpoints. Build the full
             # ``<provider>/<model>`` string the resolver needs.
             try:
                 assignments = await stores.mongodb.db["llm_assignments"].find({}).to_list(None)
+                # SECURITY: ``endpoints`` docs include ``encrypted_key`` blobs
+                # (ciphertext + IV + tag). Keep them in this scope only as
+                # long as needed; the wrapper try/except below uses class +
+                # message logging (not exc_info=True) so the blobs do not
+                # bleed into log aggregators on failure.
                 endpoints = await stores.mongodb.db["endpoints"].find({}).to_list(None)
                 ep_by_id = {e.get("id"): e for e in endpoints if e.get("id")}
                 from beever_atlas.llm.endpoints import preset_to_provider
@@ -532,11 +551,15 @@ class LLMProvider:
                     bare = model.split("/", 1)[-1] if "/" in model else model
                     overrides[consumer] = f"{provider}/{bare}"
                     self._agent_endpoint_overrides[consumer] = ep_id
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                # SECURITY: this scope holds raw ``endpoints`` docs from
+                # MongoDB which contain ``encrypted_key`` envelopes. Log
+                # class + message only — never exc_info=True.
                 logger.warning(
                     "LLMProvider.reload_from_db: llm_assignments hydration failed "
-                    "(legacy overrides still applied)",
-                    exc_info=True,
+                    "non-fatal — legacy overrides still applied (%s: %s)",
+                    type(exc).__name__,
+                    exc,
                 )
 
             self.reload(overrides)
@@ -545,10 +568,14 @@ class LLMProvider:
                 "llm_assignments + agent_model_config",
                 len(overrides),
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # SECURITY: outer wrapper of reload_from_db — same scope holds
+            # raw endpoint docs with encrypted_key blobs. Class + message
+            # only.
             logger.warning(
-                "LLMProvider: failed to load model config from MongoDB",
-                exc_info=True,
+                "LLMProvider: failed to load model config from MongoDB (%s: %s)",
+                type(exc).__name__,
+                exc,
             )
 
     @property

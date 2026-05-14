@@ -188,10 +188,19 @@ async def lifespan(app: FastAPI):
                 result.get("endpoints_created", 0),
                 result.get("assignments_created", 0),
             )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # SECURITY: NEVER pass ``exc_info=True`` here. ``migrate_to_endpoint_catalog``
+        # holds ``env_value`` (the raw plaintext API key from os.environ) as a
+        # local while calling ``endpoint_store.create(plaintext_credential=...)``.
+        # An exception during create propagates with that local still on the
+        # stack; ``exc_info=True`` would walk back through that frame and
+        # serialise the env credential to any structured log sink (Sentry,
+        # Datadog, JSON formatter). Log class + message only — same guard
+        # pattern as ``provider.py:160-163`` and ``agent_credentials.py:84-86``.
         logging.getLogger(__name__).warning(
-            "lifespan: migration_to_endpoint_catalog failed (non-fatal)",
-            exc_info=True,
+            "lifespan: migration_to_endpoint_catalog failed non-fatal (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
 
     # PR-ν: hydrate per-agent model overrides from llm_assignments
@@ -204,9 +213,18 @@ async def lifespan(app: FastAPI):
         from beever_atlas.llm.provider import get_llm_provider
 
         await get_llm_provider().reload_from_db()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # SECURITY: ``reload_from_db`` reads endpoint documents that carry
+        # ``encrypted_key`` envelopes (ciphertext + IV + tag). Locals at
+        # exception time may include those raw MongoDB docs. While the blobs
+        # are encrypted, they are operational secret material — if
+        # ``CREDENTIAL_MASTER_KEY`` ever leaks separately, anything in the
+        # log aggregator that captured the ciphertext becomes recoverable
+        # plaintext. Defense-in-depth: skip ``exc_info=True``.
         logging.getLogger(__name__).warning(
-            "lifespan: LLMProvider.reload_from_db failed (non-fatal)", exc_info=True
+            "lifespan: LLMProvider.reload_from_db failed non-fatal (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
     # PR-λ.7: hook LiteLLM's success/failure callbacks so the
     # ``/api/settings/debug/recent-llm-calls`` ring buffer captures ALL
@@ -248,10 +266,17 @@ async def lifespan(app: FastAPI):
 
         db_key = await _decrypt_db_key()
         set_runtime_db_api_key(db_key)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # SECURITY: ``db_key`` is the decrypted plaintext embedding API key.
+        # If ``set_runtime_db_api_key`` raises after ``_decrypt_db_key``
+        # succeeds, ``db_key`` is a live local in this frame at exception
+        # time. ``exc_info=True`` would serialise it to any structured log
+        # sink. Log class + message only — same guard as ``F5`` /
+        # ``provider.py:160-163`` / ``agent_credentials.py:84-86``.
         logging.getLogger(__name__).warning(
-            "lifespan: could not hydrate DB-stored embedding key (non-fatal)",
-            exc_info=True,
+            "lifespan: could not hydrate DB-stored embedding key non-fatal (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
 
     # agent-llm-provider-pluggable PR-B: hydrate per-Endpoint credentials
@@ -263,10 +288,19 @@ async def lifespan(app: FastAPI):
         from beever_atlas.llm.agent_credentials import hydrate_runtime_credentials
 
         await hydrate_runtime_credentials(stores)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # SECURITY: defense-in-depth. ``hydrate_runtime_credentials`` itself
+        # catches per-Endpoint decrypt failures and logs class+message only
+        # (see ``agent_credentials.py:84-86``), so credentials shouldn't
+        # propagate out of that scope today. But the function COULD raise
+        # from ``EndpointStore.list()`` after decrypting a few credentials
+        # into the ``_runtime`` cache — and a future refactor might leave
+        # plaintext on the stack. Mirror the established no-exc_info=True
+        # pattern across all credential-adjacent lifespan wrappers.
         logging.getLogger(__name__).warning(
-            "lifespan: could not hydrate per-Endpoint credentials (non-fatal)",
-            exc_info=True,
+            "lifespan: could not hydrate per-Endpoint credentials non-fatal (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
 
     # PR-C: probe the embedding provider once + refuse to boot when the
