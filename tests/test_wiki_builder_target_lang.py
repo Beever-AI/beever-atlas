@@ -235,16 +235,25 @@ async def test_seeds_wiki_pages_for_each_compiled_page() -> None:
     # must call save_page once per page.
     compiled_pages = {
         "overview": DomainWikiPage(
-            id="overview", slug="overview", title="Overview",
-            content="...", page_type="fixed",
+            id="overview",
+            slug="overview",
+            title="Overview",
+            content="...",
+            page_type="fixed",
         ),
         "topic-alpha": DomainWikiPage(
-            id="topic-alpha", slug="alpha", title="Alpha",
-            content="...", page_type="topic",
+            id="topic-alpha",
+            slug="alpha",
+            title="Alpha",
+            content="...",
+            page_type="topic",
         ),
         "topic-beta": DomainWikiPage(
-            id="topic-beta", slug="beta", title="Beta",
-            content="...", page_type="topic",
+            id="topic-beta",
+            slug="beta",
+            title="Beta",
+            content="...",
+            page_type="topic",
         ),
     }
     fake_compiler = _make_fake_compiler()
@@ -293,16 +302,25 @@ async def test_seed_failure_for_one_page_does_not_kill_build() -> None:
 
     compiled_pages = {
         "overview": DomainWikiPage(
-            id="overview", slug="overview", title="Overview",
-            content="...", page_type="fixed",
+            id="overview",
+            slug="overview",
+            title="Overview",
+            content="...",
+            page_type="fixed",
         ),
         "topic-explodes": DomainWikiPage(
-            id="topic-explodes", slug="kaboom", title="Kaboom",
-            content="...", page_type="topic",
+            id="topic-explodes",
+            slug="kaboom",
+            title="Kaboom",
+            content="...",
+            page_type="topic",
         ),
         "topic-ok": DomainWikiPage(
-            id="topic-ok", slug="ok", title="OK",
-            content="...", page_type="topic",
+            id="topic-ok",
+            slug="ok",
+            title="OK",
+            content="...",
+            page_type="topic",
         ),
     }
     fake_compiler = _make_fake_compiler()

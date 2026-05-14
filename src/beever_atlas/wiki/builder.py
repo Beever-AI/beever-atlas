@@ -587,8 +587,7 @@ class WikiBuilder:
                             target_lang=target_lang,
                             page_id=_dp_id,
                             title=getattr(_dp, "title", "") or "",
-                            slug=getattr(_dp, "slug", "")
-                            or _dp_id.replace(":", "-"),
+                            slug=getattr(_dp, "slug", "") or _dp_id.replace(":", "-"),
                             kind=_derive_kind(_dp_id),
                         )
                         await _seed_ps.save_page(_seed)
