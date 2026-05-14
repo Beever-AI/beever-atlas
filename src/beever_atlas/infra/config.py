@@ -116,10 +116,29 @@ class Settings(BaseSettings):
     # every provider — including Gemini — is wrapped in ``LiteLlm(...)`` inside
     # ``resolve_model_object``, so completions flow through ``litellm.acompletion``
     # (and therefore through ``dispatch_completion`` + ``LLMThrottle``) instead of
-    # ADK's native ``google.genai`` client. Flag-off preserves the legacy native
-    # path for emergency rollback. Defaults to True; will be removed after the
-    # cutover soak completes.
-    llm_use_litellm_for_gemini: bool = Field(default=True)
+    # ADK's native ``google.genai`` client.
+    #
+    # DEFAULT IS FALSE (since F12). The post-cutover True default silently broke
+    # the extraction pipeline: ADK's LiteLlm wrapper does NOT translate
+    # ``GenerateContentConfig.response_mime_type="application/json"`` (set by
+    # fact_extractor, entity_extractor, coreference_resolver, …) into LiteLLM's
+    # ``response_format`` parameter. The model returned unstructured text, the
+    # fact-extractor recovery parser found no fact array, and every batch
+    # persisted ``facts=0 entities=0``. LLM calls all reported ``ok: true`` so
+    # the regression was invisible to operators until they checked the wiki.
+    #
+    # With the default False, Gemini agent calls go through ADK's native
+    # ``google.genai`` client which fully honors ``response_mime_type`` and
+    # produces extractable JSON. Non-Gemini providers (OpenAI, Anthropic,
+    # Mistral, DeepSeek, Groq, MiniMax, Ollama) still flow through LiteLlm
+    # — they aren't affected by this flag. The unified ``dispatch_completion``
+    # path (used by the QA pipeline and embedding shim) is also unaffected;
+    # only the per-agent ADK ``LlmAgent`` path returns to native.
+    #
+    # Set to True via env if a future change makes the LiteLlm wrapper honor
+    # response_mime_type / response_format symmetrically — then we can fully
+    # close the cutover. Until that lands, False is the only safe default.
+    llm_use_litellm_for_gemini: bool = Field(default=False)
 
     # SSRF guard for the operator-facing Endpoint Test/Discover routes. When
     # True, ``base_url`` is resolved + validated against ``infra.http_safe``
