@@ -359,7 +359,7 @@ return `{{"facts": [], "skip_reason": "<brief reason>"}}`.
 Do not invent information. Extract only what is explicitly stated or directly implied.
 
 ## Output integrity
-CRITICAL: emit syntactically complete JSON. Close the outer object with `}` and
+CRITICAL: emit syntactically complete JSON. Close the outer object with `}}` and
 the `facts` array with `]`. If you approach the response limit, STOP at a
 complete fact-object boundary — never end mid-object. Prefer fewer complete
 facts over many partial ones; the consumer parses array elements one at a

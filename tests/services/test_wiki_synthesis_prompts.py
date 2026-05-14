@@ -504,15 +504,15 @@ def test_load_kind_prompt_raises_on_unknown_kind() -> None:
 
 
 def test_derive_kind_from_page_id_maps_structural_prefixes() -> None:
-    assert wm_mod._derive_kind_from_page_id("topic:auth") == "topic"
-    assert wm_mod._derive_kind_from_page_id("entity:alice") == "entity"
-    assert wm_mod._derive_kind_from_page_id("decisions") == "decisions"
-    assert wm_mod._derive_kind_from_page_id("faq") == "faq"
-    assert wm_mod._derive_kind_from_page_id("action-items") == "action_items"
+    assert wm_mod.derive_kind_from_page_id("topic:auth") == "topic"
+    assert wm_mod.derive_kind_from_page_id("entity:alice") == "entity"
+    assert wm_mod.derive_kind_from_page_id("decisions") == "decisions"
+    assert wm_mod.derive_kind_from_page_id("faq") == "faq"
+    assert wm_mod.derive_kind_from_page_id("action-items") == "action_items"
     # Unknown structure falls back to topic (the safe default — its
     # synthesis prompt is the broadest).
-    assert wm_mod._derive_kind_from_page_id("custom:foo") == "topic"
-    assert wm_mod._derive_kind_from_page_id("") == "topic"
+    assert wm_mod.derive_kind_from_page_id("custom:foo") == "topic"
+    assert wm_mod.derive_kind_from_page_id("") == "topic"
 
 
 def test_resolve_dispatch_kind_prefers_explicit_kind_over_derivation() -> None:
