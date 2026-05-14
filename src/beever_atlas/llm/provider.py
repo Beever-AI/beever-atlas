@@ -585,26 +585,40 @@ _provider: LLMProvider | None = None
 
 
 def _validate_model_resolution(provider: LLMProvider) -> None:
-    """Fail fast when ANY configured agent model cannot be resolved.
+    """Fail fast when any agent's *seed-default* model cannot be resolved.
 
-    Mirrors the runtime resolution path in :func:`resolve_model_object` so
-    validation and dispatch cannot disagree. For each agent's effective model
-    string:
+    SCOPE — this runs from :func:`init_llm_provider` BEFORE ``reload_from_db``
+    in the lifespan, so ``provider._agent_overrides`` is empty here.
+    :meth:`LLMProvider.get_model_string` therefore returns:
+      * the agent's entry in :data:`DEFAULT_AGENT_MODELS` (e.g.
+        ``gemini-2.5-flash`` for the Gemini-default agents), or
+      * the ``LLM_FAST_MODEL`` env default for agents without a static map
+        entry — the wizard's canonical ``gemini/gemini-2.5-flash``.
 
-      * Run it through ``resolve_model_object()`` — the same function the
-        runtime uses. A bare ``gemini-2.5-flash`` under
-        ``LLM_USE_LITELLM_FOR_GEMINI=True`` (post-cutover default) returns a
-        ``LiteLlm`` wrapper; under the flag-off rollback path it returns the
-        bare string.
-      * When the result is a *string*, confirm ADK's ``LLMRegistry`` can
-        resolve it (native Gemini path).
-      * When the result is a ``LiteLlm`` instance, trust it — LiteLLM
-        validates the provider lazily on the first call. What boot-time can
-        guarantee is "wrapper constructed", not "upstream reachable".
+    DB-stored Assignment overrides are validated LAZILY by ``resolve_model``
+    on first dispatch — moving validation post-reload would turn a typo in
+    an Assignment row into a fatal boot loop, which is worse than the
+    current behaviour where one bad agent surfaces a clear error on its
+    first call while the rest of the system keeps working.
+
+    Mirrors :func:`resolve_model_object` so validator and runtime can't
+    drift on the resolution rules themselves:
+      * String result → confirm ADK's ``LLMRegistry`` can resolve it (native
+        Gemini path under the flag-off rollback).
+      * ``LiteLlm`` instance → trust it; LiteLLM validates the provider
+        lazily on first call. Boot-time can guarantee "wrapper constructed",
+        not "upstream reachable".
 
     The legacy tier-level loop (``provider.fast`` / ``provider.quality``) was
     removed: no runtime code reads those properties — every consumer flows
     through ``get_model_string(agent_name)`` / ``resolve_model(agent_name)``.
+
+    Caveat — Ollama-default agents (``document_digester``, ``image_describer``)
+    are validated against their ``ollama_chat/*`` model string. The runtime
+    fallback to :data:`_OLLAMA_FALLBACK` when Ollama is unreachable
+    (``resolve_model`` lines 128-135) is NOT separately validated here; the
+    fallback ``gemini-2.5-flash-lite`` is implicitly covered by every other
+    Gemini-default agent.
     """
     from google.adk.models.registry import LLMRegistry
 
