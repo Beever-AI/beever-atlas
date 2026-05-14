@@ -230,11 +230,19 @@ class AutoOverviewSubscriber:
                 self._GENERATION_TIMEOUT_SECONDS,
                 channel_id,
             )
-        except Exception:  # noqa: BLE001 — never propagate; manual retry is the recovery path
+        except Exception as exc:  # noqa: BLE001 — never propagate; manual retry is the recovery path
             terminal_failure = True
-            logger.exception(
-                "AutoOverviewSubscriber: generation failed channel=%s",
+            # Include the exception class + message in the log line so the
+            # structured JSON formatter (which strips ``exc_info``) still
+            # surfaces enough signal to triage the failure. ``logger.exception``
+            # alone produces only the bare "generation failed channel=X" line
+            # — the traceback is dropped before it reaches stdout.
+            logger.error(
+                "AutoOverviewSubscriber: generation failed channel=%s (%s: %s)",
                 channel_id,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
             )
         finally:
             async with lock:
