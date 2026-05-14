@@ -5,23 +5,6 @@ Updated from the former echo agent tests after echo.py was replaced by qa_agent.
 
 from __future__ import annotations
 
-import pytest
-
-# Module-level skip: every test in this file constructs a real
-# ``LLMProvider`` via ``init_llm_provider(Settings(...))``, which then runs
-# ``_validate_model_resolution`` and tries to ADK-resolve
-# ``gemini/gemini-2.5-flash``. Under the post-cutover
-# ``LLM_USE_LITELLM_FOR_GEMINI=True`` default this requires a fully-
-# initialised LiteLLM environment that the unit-test boot path doesn't set
-# up. CI hygiene only — TODO either monkeypatch the flag off in each test
-# fixture or delete the validation-side-effect from ``init_llm_provider``
-# for the test path.
-pytestmark = pytest.mark.skip(
-    reason="pre-existing failure: init_llm_provider's _validate_model_resolution "
-    "raises RuntimeError under post-cutover defaults without a fully-initialised "
-    "LiteLLM environment. CI hygiene only — see module docstring."
-)
-
 
 class TestQAAgent:
     def test_agent_name(self):
