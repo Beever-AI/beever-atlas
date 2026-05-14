@@ -163,6 +163,37 @@ async def lifespan(app: FastAPI):
     await stores.startup()
     init_stores(stores)
     init_llm_provider(settings)
+
+    # agent-llm-provider-pluggable PR-G: idempotent migration shim — synth
+    # ``endpoints`` + ``llm_assignments`` from legacy data (env vars +
+    # ``agent_model_config`` + ``embedding_settings``) when the new
+    # collections are empty. Re-running with non-empty endpoints is a no-op.
+    # Best-effort — never blocks boot.
+    #
+    # MUST run BEFORE ``reload_from_db`` so the very first boot of a fresh
+    # install propagates the freshly-synthesised Assignments into the live
+    # LLMProvider within the same lifespan. Without this ordering, the
+    # first ``reload_from_db`` sees an empty ``endpoints`` collection,
+    # the provider stays on env defaults, the migration then creates the
+    # documents, but nothing re-reads them until the operator saves
+    # something in the UI or the server restarts — silently violating the
+    # "DB is the source of truth after first boot" design promise.
+    try:
+        from scripts.migrate_to_endpoint_catalog import migrate_to_endpoint_catalog
+
+        result = await migrate_to_endpoint_catalog(stores)
+        if result.get("skipped") is None:
+            logging.getLogger(__name__).info(
+                "lifespan: hydrated %d endpoints + %d assignments from legacy data",
+                result.get("endpoints_created", 0),
+                result.get("assignments_created", 0),
+            )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "lifespan: migration_to_endpoint_catalog failed (non-fatal)",
+            exc_info=True,
+        )
+
     # PR-ν: hydrate per-agent model overrides from llm_assignments
     # (new) + agent_model_config (legacy). Without this, ``resolve_model``
     # falls back to the static DEFAULT_AGENT_MODELS map until the first
@@ -220,27 +251,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger(__name__).warning(
             "lifespan: could not hydrate DB-stored embedding key (non-fatal)",
-            exc_info=True,
-        )
-
-    # agent-llm-provider-pluggable PR-G: idempotent migration shim — synth
-    # ``endpoints`` + ``llm_assignments`` from legacy data (env vars +
-    # ``agent_model_config`` + ``embedding_settings``) when the new
-    # collections are empty. Re-running with non-empty endpoints is a no-op.
-    # Best-effort — never blocks boot.
-    try:
-        from scripts.migrate_to_endpoint_catalog import migrate_to_endpoint_catalog
-
-        result = await migrate_to_endpoint_catalog(stores)
-        if result.get("skipped") is None:
-            logging.getLogger(__name__).info(
-                "lifespan: hydrated %d endpoints + %d assignments from legacy data",
-                result.get("endpoints_created", 0),
-                result.get("assignments_created", 0),
-            )
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "lifespan: migration_to_endpoint_catalog failed (non-fatal)",
             exc_info=True,
         )
 
