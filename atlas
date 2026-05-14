@@ -356,6 +356,33 @@ pick_menu() {
 
 # External-provider key prompt: user pastes or presses Enter to skip.
 # Falls back to shell env var if the user presses Enter and the env var is set.
+prompt_provider_model() {
+  # Optional model-override prompt. Shows the curated catalog for the chosen
+  # provider and lets the operator either accept the recommended default
+  # (Enter) or type any model name — including one not in the catalog
+  # (e.g. a private fine-tune, a preview model not yet in known_models.py).
+  # Writes ``<prefix>/<chosen>`` to ``$5`` (defaults to LLM_FAST_MODEL).
+  local label="$1"
+  local prefix="$2"
+  local default_model="$3"
+  local available="$4"
+  local env_var="${5:-LLM_FAST_MODEL}"
+
+  ask "${C_BOLD}${label}${C_RESET} default chat model"
+  hint "Available: ${C_DIM}${available}${C_RESET}"
+  hint "Enter to keep ${C_GREEN}${default_model}${C_RESET}, or type a custom model name"
+  printf "    ${C_DIM}${env_var}${C_RESET} ${prefix}/"
+  local user_input=""
+  IFS= read -r user_input || true
+  user_input=$(printf "%s" "$user_input" | tr -d '[:space:]')
+  if [ -n "$user_input" ]; then
+    # Strip an accidental ``${prefix}/`` if the operator typed the full form
+    user_input="${user_input#${prefix}/}"
+    replace_env_value "$env_var" "${prefix}/${user_input}"
+    ok "${env_var}=${prefix}/${user_input}"
+  fi
+}
+
 prompt_external_key() {
   local key="$1"
   local label="$2"
@@ -620,8 +647,10 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       replace_env_value "LLM_QUALITY_MODEL" "gemini/gemini-2.5-pro"
       ok "LLM_FAST_MODEL=gemini/gemini-2.5-flash · LLM_QUALITY_MODEL=gemini/gemini-2.5-pro"
       prompt_external_key "GOOGLE_API_KEY" "Google Gemini" "https://aistudio.google.com/apikey"
+      prompt_provider_model "Google Gemini" "gemini" "gemini-2.5-flash" \
+        "gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.5-pro"
       if grep -qE '^GOOGLE_API_KEY=.+' .env 2>/dev/null; then
-        _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Google Gemini · gemini-2.5-flash / pro · key set")
+        _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Google Gemini · key set")
       else
         _atlas_summary+=("${C_YELLOW}!${C_RESET} Agent LLM   Google Gemini · key NOT set (paste later in .env)")
       fi
@@ -631,42 +660,54 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       replace_env_value "LLM_QUALITY_MODEL" "openai/gpt-4.1"
       ok "LLM_FAST_MODEL=openai/gpt-4o-mini · LLM_QUALITY_MODEL=openai/gpt-4.1"
       prompt_external_key "OPENAI_API_KEY" "OpenAI" "https://platform.openai.com/api-keys"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   OpenAI · gpt-4o-mini / gpt-4.1")
+      prompt_provider_model "OpenAI" "openai" "gpt-4o-mini" \
+        "gpt-4o-mini, gpt-4.1, o4-mini, gpt-4.1-mini"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   OpenAI")
       ;;
     3|anthropic|claude)
       replace_env_value "LLM_FAST_MODEL"    "anthropic/claude-haiku-4-5"
       replace_env_value "LLM_QUALITY_MODEL" "anthropic/claude-sonnet-4-6"
       ok "LLM_FAST_MODEL=anthropic/claude-haiku-4-5 · LLM_QUALITY_MODEL=anthropic/claude-sonnet-4-6"
       prompt_external_key "ANTHROPIC_API_KEY" "Anthropic" "https://console.anthropic.com/settings/keys"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Anthropic · claude-haiku-4-5 / sonnet-4-6")
+      prompt_provider_model "Anthropic" "anthropic" "claude-haiku-4-5" \
+        "claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-7"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Anthropic")
       ;;
     4|mistral)
       replace_env_value "LLM_FAST_MODEL"    "mistral/mistral-small-latest"
       replace_env_value "LLM_QUALITY_MODEL" "mistral/mistral-large-latest"
       ok "LLM_FAST_MODEL=mistral/mistral-small-latest · LLM_QUALITY_MODEL=mistral/mistral-large-latest"
       prompt_external_key "MISTRAL_API_KEY" "Mistral" "https://console.mistral.ai/api-keys"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Mistral · small / large")
+      prompt_provider_model "Mistral" "mistral" "mistral-small-latest" \
+        "mistral-small-latest, mistral-large-latest, codestral-latest"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Mistral")
       ;;
     5|deepseek)
       replace_env_value "LLM_FAST_MODEL"    "deepseek/deepseek-chat"
       replace_env_value "LLM_QUALITY_MODEL" "deepseek/deepseek-chat"
       ok "LLM_FAST_MODEL=deepseek/deepseek-chat · LLM_QUALITY_MODEL=deepseek/deepseek-chat"
       prompt_external_key "DEEPSEEK_API_KEY" "DeepSeek" "https://platform.deepseek.com/api_keys"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   DeepSeek · deepseek-chat")
+      prompt_provider_model "DeepSeek" "deepseek" "deepseek-chat" \
+        "deepseek-chat, deepseek-reasoner"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   DeepSeek")
       ;;
     6|groq)
       replace_env_value "LLM_FAST_MODEL"    "groq/llama-3.3-70b-versatile"
       replace_env_value "LLM_QUALITY_MODEL" "groq/llama-3.3-70b-versatile"
       ok "LLM_FAST_MODEL=groq/llama-3.3-70b-versatile · LLM_QUALITY_MODEL=groq/llama-3.3-70b-versatile"
       prompt_external_key "GROQ_API_KEY" "Groq" "https://console.groq.com/keys"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Groq · llama-3.3-70b")
+      prompt_provider_model "Groq" "groq" "llama-3.3-70b-versatile" \
+        "llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Groq")
       ;;
     7|minimax)
       replace_env_value "LLM_FAST_MODEL"    "minimax/abab6.5s-chat"
       replace_env_value "LLM_QUALITY_MODEL" "minimax/abab6.5s-chat"
       ok "LLM_FAST_MODEL=minimax/abab6.5s-chat · LLM_QUALITY_MODEL=minimax/abab6.5s-chat"
       prompt_external_key "MINIMAX_API_KEY" "MiniMax" "https://platform.minimaxi.com/document/Models"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   MiniMax · abab6.5s-chat")
+      prompt_provider_model "MiniMax" "minimax" "abab6.5s-chat" \
+        "abab6.5s-chat, abab6.5-chat"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   MiniMax")
       ;;
     8|ollama|local)
       replace_env_value "LLM_FAST_MODEL"    "ollama_chat/gemma3:e4b"
@@ -674,8 +715,10 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
       replace_env_value "OLLAMA_ENABLED"    "true"
       replace_env_value "OLLAMA_API_BASE"   "http://localhost:11434"
       ok "LLM_FAST_MODEL=ollama_chat/gemma3:e4b · OLLAMA_ENABLED=true (no key needed)"
-      hint "Make sure Ollama is running locally: 'ollama serve' + 'ollama pull gemma3:e4b qwen2.5:14b'"
-      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Ollama · gemma3:e4b / qwen2.5:14b (local, no key)")
+      prompt_provider_model "Ollama (local)" "ollama_chat" "gemma3:e4b" \
+        "gemma3:e4b, qwen2.5:14b, llama3.3, qwen2.5-coder, phi4 (any model you have pulled locally)"
+      hint "Make sure Ollama is running locally: 'ollama serve' + 'ollama pull <model>'"
+      _atlas_summary+=("${C_GREEN}✓${C_RESET} Agent LLM   Ollama (local, no key)")
       ;;
     *)
       hint "Skipped — set LLM_FAST_MODEL / LLM_QUALITY_MODEL + the provider key in .env,"
