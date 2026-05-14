@@ -104,6 +104,20 @@ class WikiCache:
         # first save_page call, so during the soak window pages can
         # exist in either store. The fallback eliminates a window where
         # the UI would 404 mid-migration.
+        #
+        # First-sync seed compat: ``WikiBuilder.refresh_wiki`` now seeds
+        # ``wiki_pages`` with the persistence shape (no ``content``,
+        # ``modules``, or ``narrative_sections`` fields — those are
+        # render-only and live on the ``wiki_cache`` blob). Returning the
+        # seed alone breaks ``TopicPage``/``OverviewPage`` which do
+        # ``page.content.replace(...)``. So when both stores have an
+        # entry, MERGE them: persistence row provides metadata (kind,
+        # is_dirty, last_facts_seen, …), the legacy cache provides the
+        # render-only fields (content, modules, narrative_sections, …).
+        # Cache-only fields are layered on top, so a maintainer rewrite
+        # that bumps ``version`` in wiki_pages keeps that bump while
+        # still surfacing the rendered content the UI needs.
+        per_page_row: dict | None = None
         if get_settings().per_page_wiki:
             try:
                 from beever_atlas.wiki.page_store import WikiPageStore
@@ -115,8 +129,7 @@ class WikiCache:
                     target_lang=target_lang,
                 )
                 if page is not None:
-                    # Render to the legacy dict shape callers expect.
-                    return page.model_dump(mode="json")
+                    per_page_row = page.model_dump(mode="json")
             except Exception as exc:  # noqa: BLE001 — fall through to legacy on any error
                 logger.warning(
                     "WikiCache.get_page: per-page lookup failed, falling back "
@@ -137,9 +150,40 @@ class WikiCache:
                 {"channel_id": channel_id},
                 {"_id": 0, f"pages.{page_id}": 1},
             )
-        if doc is None:
+        cache_row = doc.get("pages", {}).get(page_id) if doc is not None else None
+
+        if per_page_row is None and cache_row is None:
             return None
-        return doc.get("pages", {}).get(page_id)
+        if per_page_row is None:
+            return cache_row
+        if cache_row is None:
+            return per_page_row
+        # Both stores have an entry — overlay the legacy cache's
+        # render-only fields onto the persistence row. The persistence
+        # row stays authoritative for maintenance metadata (kind,
+        # is_dirty, last_facts_seen, version, curation_mode, …) which
+        # the maintainer mutates on every rewrite. Render-only fields
+        # are listed explicitly so a future code path that happens to
+        # write ``kind`` or ``version`` into the legacy blob cannot
+        # silently clobber the persistence row's value.
+        _RENDER_ONLY_KEYS = (
+            "content",
+            "modules",
+            "narrative_sections",
+            "summary",
+            "memory_count",
+            "citations",
+            "children",
+            "children_fingerprint",
+            "section_number",
+            "last_updated",
+            "page_type",
+        )
+        merged: dict = dict(per_page_row)
+        for k in _RENDER_ONLY_KEYS:
+            if k in cache_row:
+                merged[k] = cache_row[k]
+        return merged
 
     async def get_structure(self, channel_id: str, target_lang: str = "en") -> dict | None:
         await self._ensure_db()

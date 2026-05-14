@@ -549,6 +549,68 @@ class WikiBuilder:
 
             await self._cache.save_wiki(channel_id, wiki_dict, target_lang=target_lang)
 
+            # First-sync gate fix: seed the ``wiki_pages`` collection with
+            # one minimal row per compiled page. The maintainer's
+            # incremental path reads from ``wiki_pages`` and DEFERS every
+            # dirty entry until rows exist there. Before this seed, Builder
+            # only wrote to ``wiki_cache`` so the maintainer's first-sync
+            # gate stayed permanently active — ``_rewrite_page`` (the only
+            # writer to ``wiki_pages``) was never reachable because the
+            # gate blocks it. Result was a chicken-and-egg deadlock where
+            # every memory_settled logged ``Builder hasn't run yet —
+            # first-sync gate`` even after a successful build.
+            #
+            # Note the type translation: ``compiler.compile`` returns
+            # ``models.domain.WikiPage`` (rendered-content shape used by
+            # the UI cache), while ``WikiPageStore`` persists
+            # ``models.persistence.WikiPage`` (incremental-maintenance
+            # shape). The seed copies the identity fields (page_id, slug,
+            # title) plus a derived ``kind``. The maintainer will fill
+            # ``sections`` / ``last_facts_seen`` on its first
+            # ``apply_update`` of each page; the UI doesn't read this
+            # collection so empty sections are safe in the meantime.
+            try:
+                from beever_atlas.wiki.page_store import WikiPageStore
+                from beever_atlas.models.persistence import (
+                    WikiPage as _PersistedWikiPage,
+                )
+                from beever_atlas.services.wiki_maintainer import (
+                    derive_kind_from_page_id as _derive_kind,
+                )
+
+                _seed_ps = WikiPageStore(db=self._cache._db)  # noqa: SLF001
+                _seeded = 0
+                for _dp_id, _dp in pages.items():
+                    try:
+                        _seed = _PersistedWikiPage(
+                            channel_id=channel_id,
+                            target_lang=target_lang,
+                            page_id=_dp_id,
+                            title=getattr(_dp, "title", "") or "",
+                            slug=getattr(_dp, "slug", "")
+                            or _dp_id.replace(":", "-"),
+                            kind=_derive_kind(_dp_id),
+                        )
+                        await _seed_ps.save_page(_seed)
+                        _seeded += 1
+                    except Exception:  # noqa: BLE001 — per-page isolation
+                        logger.exception(
+                            "WikiBuilder: wiki_pages seed failed channel=%s page=%s",
+                            channel_id,
+                            _dp_id,
+                        )
+                logger.info(
+                    "WikiBuilder: seeded wiki_pages channel=%s rows=%d/%d",
+                    channel_id,
+                    _seeded,
+                    len(pages),
+                )
+            except Exception:  # noqa: BLE001 — seeding is best-effort
+                logger.exception(
+                    "WikiBuilder: wiki_pages seed step crashed channel=%s",
+                    channel_id,
+                )
+
             # Mark generation complete
             await self._cache.set_generation_status(
                 channel_id=channel_id,

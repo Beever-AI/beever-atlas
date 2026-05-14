@@ -196,6 +196,22 @@ async def consolidate_only(channel_id: str) -> None:
     (the same strategies the subscriber already checks before calling us).
     """
     logger.info("Orchestrator: consolidate_only (no counter) channel=%s", channel_id)
+    # Race fix: set the summarize-settled gate SYNCHRONOUSLY before spawning
+    # the consolidation task. The previous add inside ``_run_consolidation``
+    # only flipped the gate after the event loop scheduled the task, which
+    # lost the race against ``memory_settled`` subscribers firing in the
+    # same tick — ``summarize_settled_for_channel`` saw an empty gate, took
+    # the silent early-return, and ``channel_summary`` was never written.
+    # AutoOverview then polled 60s for the missing summary and raised
+    # WikiNotReadyError, leaving the wiki permanently 404. No await sits
+    # between this line and the task spawn, so the window is closed.
+    try:
+        from beever_atlas.infra.config import get_settings
+
+        if get_settings().consolidation_summarize_on_settle:
+            _channels_pending_summary.add(channel_id)
+    except Exception:  # noqa: BLE001 — gate is belt-and-braces; the in-task add still runs
+        pass
     _spawn_consolidation(channel_id)
 
 

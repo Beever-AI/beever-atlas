@@ -924,8 +924,25 @@ if grep -qE "^WEAVIATE_API_KEY=$" .env; then
   secrets_changed=true
 fi
 
+# LOADER_TOKEN_SECRET signs the short-lived ?loader_token= URLs the web UI
+# uses for <img> / <a href> file-proxy access. Empty is supported in dev
+# (the server falls back to raw ?access_token= matching), but the fallback
+# path emits 503s on the mint endpoint that the frontend retries against
+# every image load — noisy in logs. Generate a value so the signed-token
+# path activates cleanly. Production REQUIRES it (server fails fast).
+if grep -qE "^LOADER_TOKEN_SECRET=$" .env; then
+  new_loader_secret="$(gen_hex 32)"
+  if [ -z "$new_loader_secret" ]; then
+    error "Cannot generate LOADER_TOKEN_SECRET — neither Python nor /dev/urandom available."
+    exit 1
+  fi
+  replace_env_value "LOADER_TOKEN_SECRET" "$new_loader_secret"
+  ok "Generated a fresh LOADER_TOKEN_SECRET"
+  secrets_changed=true
+fi
+
 if ! $secrets_changed; then
-  ok "Master + Weaviate keys already set — nothing to regenerate"
+  ok "Master + Weaviate + Loader-token secrets already set — nothing to regenerate"
 fi
 
 # ---------------------------------------------------------------------

@@ -73,6 +73,15 @@ class AutoOverviewSubscriber:
     # promote to Settings if operators need per-deployment tuning.
     _GENERATION_TIMEOUT_SECONDS = 600
 
+    # Bounded retry for WikiNotReadyError. The inner data_gatherer already
+    # polls 60s for ``channel_summary`` before raising; on a fresh sync
+    # with a slow consolidation+summarize chain (LLM rate-limited, queue
+    # backlog) that window can be exceeded. Retry the build a small
+    # number of times before declaring terminal failure so the wiki can
+    # land without requiring a manual Generate click.
+    _NOT_READY_MAX_RETRIES = 3
+    _NOT_READY_RETRY_DELAY_SECONDS = 30
+
     def __init__(
         self,
         *,
@@ -213,8 +222,52 @@ class AutoOverviewSubscriber:
                 channel_id,
                 language,
             )
+            # Import here to avoid a top-level cycle (capabilities → wiki →
+            # services → capabilities) and keep the subscriber importable
+            # from non-async test fixtures.
+            from beever_atlas.capabilities.errors import WikiNotReadyError
+
+            async def _attempt_with_retries() -> None:
+                """Inner loop with bounded WikiNotReadyError retries.
+
+                The inner data_gatherer polls 60s for channel_summary
+                before raising. On a fresh sync the consolidation +
+                summarize chain can exceed that — particularly when the
+                LLM is rate-limited. Retry a small number of times
+                before declaring terminal failure so the wiki lands
+                without requiring a manual Generate click.
+
+                The whole loop (attempts + sleeps) runs INSIDE the
+                outer ``wait_for`` so the
+                ``_GENERATION_TIMEOUT_SECONDS`` budget covers every
+                retry, not just the most recent one. Without this an
+                upstream call that hangs near-but-not-quite to 600s
+                per attempt could keep this method alive for tens of
+                minutes — the original retry implementation had this
+                bug (code-reviewer flagged it pre-merge).
+                """
+                attempt = 0
+                while True:
+                    try:
+                        await self._generate_overview(channel_id, language)
+                        return
+                    except WikiNotReadyError as exc:
+                        if attempt >= self._NOT_READY_MAX_RETRIES:
+                            raise
+                        attempt += 1
+                        logger.warning(
+                            "AutoOverviewSubscriber: wiki not ready channel=%s "
+                            "(%s) — retrying %d/%d after %ds",
+                            channel_id,
+                            exc,
+                            attempt,
+                            self._NOT_READY_MAX_RETRIES,
+                            self._NOT_READY_RETRY_DELAY_SECONDS,
+                        )
+                        await asyncio.sleep(self._NOT_READY_RETRY_DELAY_SECONDS)
+
             await asyncio.wait_for(
-                self._generate_overview(channel_id, language),
+                _attempt_with_retries(),
                 timeout=self._GENERATION_TIMEOUT_SECONDS,
             )
             logger.info(

@@ -179,19 +179,62 @@ def fact_extraction_with_recovery(callback_context: CallbackContext) -> None:
         recovered = None
         if isinstance(result, dict) and "facts" in result:
             recovered = result
-        logger.warning(
-            "truncation_report agent=fact_extractor recovered=%d lost_estimate=%d "
-            "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
-            report.recovered_count,
-            report.estimated_lost,
-            report.raw_bytes,
-            report.last_boundary_offset,
-            callback_context.state.get("batch_num", "?"),
-        )
+        # Distinguish actual truncation (parser stopped before EOF) from
+        # complete-but-empty output (LLM returned `{"facts": []}` or
+        # refused outright). The previous single ``truncation_report`` line
+        # always fired when ``extracted_facts`` was a string, even when the
+        # model returned a perfectly valid empty array — which made every
+        # zero-fact batch look like a parser failure. ``raw_bytes ==
+        # last_boundary_offset`` means the parser reached EOF; anything
+        # less means real truncation.
+        is_actually_truncated = report.raw_bytes > report.last_boundary_offset
+        recovered_fact_count = len(recovered["facts"]) if recovered else 0
+        if is_actually_truncated:
+            logger.warning(
+                "truncation_report agent=fact_extractor recovered=%d lost_estimate=%d "
+                "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
+                report.recovered_count,
+                report.estimated_lost,
+                report.raw_bytes,
+                report.last_boundary_offset,
+                callback_context.state.get("batch_num", "?"),
+            )
+        elif recovered_fact_count == 0:
+            # Parser reached EOF AND yielded no facts — LLM returned a
+            # complete-but-empty payload (e.g. ``{"facts": []}`` or a
+            # refusal). Distinct from truncation; signals the model
+            # actively decided the batch had no extractable content.
+            logger.warning(
+                "extractor_empty_output agent=fact_extractor recovered_facts=0 "
+                "raw_bytes=%d batch_idx=%s — LLM returned complete-but-empty "
+                "response (not truncated). Likely a prompt/refusal issue or a "
+                "batch with no extractable content.",
+                report.raw_bytes,
+                callback_context.state.get("batch_num", "?"),
+            )
+        else:
+            # Parser reached EOF AND yielded facts. ADK's strict
+            # validator still failed (so we landed in this recovery
+            # branch) — usually markdown fences, a preamble like
+            # ``Here is the JSON:``, or trailing prose around an
+            # otherwise valid JSON body. Recovery handled it.
+            logger.warning(
+                "extractor_unstructured_complete agent=fact_extractor "
+                "recovered_facts=%d raw_bytes=%d batch_idx=%s — ADK's "
+                "strict parse failed but the raw output was structurally "
+                "complete; recovery salvaged the facts. Usually caused by "
+                "markdown fences or a preamble around the JSON body.",
+                recovered_fact_count,
+                report.raw_bytes,
+                callback_context.state.get("batch_num", "?"),
+            )
         if recovered:
             logger.info(
-                "fact_extraction_with_recovery: recovered %d facts from truncated output",
-                len(recovered["facts"]),
+                "fact_extraction_with_recovery: recovered %d facts from %s output",
+                recovered_fact_count,
+                "truncated"
+                if is_actually_truncated
+                else ("empty" if recovered_fact_count == 0 else "complete"),
             )
             callback_context.state["extracted_facts"] = recovered
             return fact_quality_gate_callback(callback_context)
@@ -218,19 +261,43 @@ def entity_extraction_with_recovery(callback_context: CallbackContext) -> None:
             if isinstance(result, dict) and ("entities" in result or "relationships" in result)
             else None
         )
-        logger.warning(
-            "truncation_report agent=entity_extractor recovered=%d lost_estimate=%d "
-            "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
-            report.recovered_count,
-            report.estimated_lost,
-            report.raw_bytes,
-            report.last_boundary_offset,
-            callback_context.state.get("batch_num", "?"),
-        )
+        is_actually_truncated = report.raw_bytes > report.last_boundary_offset
+        recovered_entity_count = len(recovered.get("entities", [])) if recovered else 0
+        if is_actually_truncated:
+            logger.warning(
+                "truncation_report agent=entity_extractor recovered=%d lost_estimate=%d "
+                "raw_bytes=%d last_boundary_offset=%d batch_idx=%s",
+                report.recovered_count,
+                report.estimated_lost,
+                report.raw_bytes,
+                report.last_boundary_offset,
+                callback_context.state.get("batch_num", "?"),
+            )
+        elif recovered_entity_count == 0:
+            logger.warning(
+                "extractor_empty_output agent=entity_extractor recovered_entities=0 "
+                "raw_bytes=%d batch_idx=%s — LLM returned complete-but-empty response "
+                "(not truncated).",
+                report.raw_bytes,
+                callback_context.state.get("batch_num", "?"),
+            )
+        else:
+            logger.warning(
+                "extractor_unstructured_complete agent=entity_extractor "
+                "recovered_entities=%d raw_bytes=%d batch_idx=%s — ADK's strict "
+                "parse failed but the raw output was structurally complete; "
+                "recovery salvaged the entities.",
+                recovered_entity_count,
+                report.raw_bytes,
+                callback_context.state.get("batch_num", "?"),
+            )
         # Accumulate per-sync truncation counters for sync_summary: metric lines.
+        # Only counted when the report reflects actual truncation, so the
+        # metric stays meaningful for capacity planning instead of being
+        # dominated by complete-but-empty refusals.
         _qg_channel_id = callback_context.state.get("channel_id", "")
         _qg_sync_job_id = callback_context.state.get("sync_job_id", "")
-        if _qg_channel_id and _qg_sync_job_id:
+        if _qg_channel_id and _qg_sync_job_id and is_actually_truncated:
             from beever_atlas.services.batch_processor import increment_sync_metric
 
             increment_sync_metric(_qg_channel_id, _qg_sync_job_id, "entity_truncation_recoveries")
@@ -239,8 +306,11 @@ def entity_extraction_with_recovery(callback_context: CallbackContext) -> None:
             )
         if recovered:
             logger.info(
-                "entity_extraction_with_recovery: recovered %d entities from truncated output",
-                len(recovered.get("entities", [])),
+                "entity_extraction_with_recovery: recovered %d entities from %s output",
+                recovered_entity_count,
+                "truncated"
+                if is_actually_truncated
+                else ("empty" if recovered_entity_count == 0 else "complete"),
             )
             callback_context.state["extracted_entities"] = recovered
             return entity_quality_gate_callback(callback_context)

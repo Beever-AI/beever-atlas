@@ -114,7 +114,7 @@ def _validate_kind_schema(kind: str, payload: Any) -> str | None:
     return None
 
 
-def _derive_kind_from_page_id(page_id: str) -> str:
+def derive_kind_from_page_id(page_id: str) -> str:
     """Map a structural ``page_id`` to its synthesis kind.
 
     Bridges the migration window: legacy pages have ``kind`` defaulted
@@ -159,7 +159,7 @@ def _resolve_dispatch_kind(page: "WikiPage") -> str:
     """
     if page.kind and page.kind != "topic":
         return page.kind
-    return _derive_kind_from_page_id(page.page_id)
+    return derive_kind_from_page_id(page.page_id)
 
 
 def _parse_affected_sections_from_obj(
@@ -1532,7 +1532,7 @@ class WikiMaintainer:
             try:
                 from beever_atlas.wiki.kinds import KIND_REGISTRY
 
-                _candidate_kind = _derive_kind_from_page_id(page_id)
+                _candidate_kind = derive_kind_from_page_id(page_id)
                 _spec = KIND_REGISTRY.get(_candidate_kind)
                 if _spec is not None and not _spec.is_required:
                     logger.info(
@@ -1551,7 +1551,7 @@ class WikiMaintainer:
                 page_id=page_id,
                 title=await self._resolve_first_touch_title(page_id, channel_id),
                 slug=page_id.replace(":", "-"),
-                kind=_derive_kind_from_page_id(page_id),
+                kind=derive_kind_from_page_id(page_id),
                 sections=[
                     WikiPageSection(
                         id="overview",

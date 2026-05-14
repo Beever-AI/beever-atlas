@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 /**
  * PR-λ.2: small hook for the Settings → Agent models tab to show
@@ -8,7 +8,15 @@ import { api } from "@/lib/api";
  * Polls ``GET /api/settings/debug/recent-llm-calls`` every 15s while the
  * Agent Models tab is mounted. The ring buffer is process-local (50
  * entries) so this is a tiny request — no DB roundtrip, no payload bloat.
+ *
+ * Stale-tab guard: a tab opened against a previous build that has no
+ * ``VITE_BEEVER_API_KEY`` baked in will hit ``401`` on every poll and
+ * spam the backend log forever. After ``MAX_AUTH_FAILS`` consecutive
+ * ``401``/``403`` responses the hook stops polling entirely until the
+ * tab reloads. Non-auth failures (network blip, 5xx) keep the normal
+ * cadence so transient issues self-heal.
  */
+const MAX_AUTH_FAILS = 2;
 
 export interface RecentLLMCall {
   ts: string;
@@ -42,9 +50,11 @@ export function useRecentLLMCalls(pollMs: number = 15_000): UseRecentLLMCallsRes
   const [calls, setCalls] = useState<RecentLLMCall[]>([]);
   const cancelledRef = useRef(false);
   const timerRef = useRef<number | undefined>(undefined);
+  const authFailsRef = useRef(0);
 
   useEffect(() => {
     cancelledRef.current = false;
+    authFailsRef.current = 0;
     async function poll() {
       if (cancelledRef.current) return;
       try {
@@ -52,8 +62,20 @@ export function useRecentLLMCalls(pollMs: number = 15_000): UseRecentLLMCallsRes
           "/api/settings/debug/recent-llm-calls",
         );
         if (!cancelledRef.current) setCalls(resp.calls ?? []);
-      } catch {
+        authFailsRef.current = 0;
+      } catch (err) {
         // Endpoint may be temporarily unavailable; keep last-known state.
+        // Persistent 401/403 means the bundle's baked-in key no longer
+        // matches the server's ``BEEVER_API_KEYS`` (typical after an env
+        // rotation + web rebuild — every stale tab spams 401 forever).
+        // Stop polling after a couple of failures so a forgotten tab
+        // doesn't pollute server logs; a hard reload resets the counter.
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          authFailsRef.current += 1;
+          if (authFailsRef.current >= MAX_AUTH_FAILS) {
+            return;
+          }
+        }
       }
       if (!cancelledRef.current) {
         timerRef.current = window.setTimeout(poll, pollMs);

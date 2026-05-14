@@ -449,3 +449,126 @@ async def test_default_language_final_fallback_is_en(monkeypatch) -> None:
     sub = AutoOverviewSubscriber()
 
     assert await sub._resolve_language("C123") == "en"
+
+
+# ---------------------------------------------------------------------------
+# Bounded retry on WikiNotReadyError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retries_wiki_not_ready_then_succeeds(monkeypatch) -> None:
+    """WikiNotReadyError on the first attempt must be retried, not
+    propagated. After the retry succeeds the in-flight slot must
+    release (so a later event can re-fire if needed). ``_attempted``
+    intentionally stays sticky on success — it's cleared elsewhere
+    by ``_safe_overview_state``'s row-existence check, NOT by the
+    finally block (only terminal_failure pops it)."""
+    from beever_atlas.capabilities.errors import WikiNotReadyError
+
+    call_count = 0
+
+    async def flaky_generator(channel_id: str, language: str) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise WikiNotReadyError("Consolidation is still in progress")
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=flaky_generator),
+    )
+    # Zero-sleep so the test does not actually wait 30s between attempts.
+    monkeypatch.setattr(sub, "_NOT_READY_RETRY_DELAY_SECONDS", 0)
+
+    await sub.on_extraction_done("C123", ["f1"])
+
+    assert call_count == 2  # one raise + one success
+    assert "C123" not in sub._inflight
+
+
+@pytest.mark.asyncio
+async def test_retries_exhausted_clears_attempted(monkeypatch) -> None:
+    """If ``WikiNotReadyError`` is raised on every attempt the subscriber
+    must give up after ``_NOT_READY_MAX_RETRIES`` retries and clear
+    ``_attempted`` so the UI Retry button can re-fire."""
+    from beever_atlas.capabilities.errors import WikiNotReadyError
+
+    call_count = 0
+
+    async def always_not_ready(channel_id: str, language: str) -> None:
+        nonlocal call_count
+        call_count += 1
+        raise WikiNotReadyError("never settles")
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=always_not_ready),
+    )
+    monkeypatch.setattr(sub, "_NOT_READY_RETRY_DELAY_SECONDS", 0)
+
+    await sub.on_extraction_done("C123", ["f1"])
+
+    # initial attempt + _NOT_READY_MAX_RETRIES retries
+    assert call_count == sub._NOT_READY_MAX_RETRIES + 1
+    assert "C123" not in sub._attempted
+    assert "C123" not in sub._inflight
+
+
+@pytest.mark.asyncio
+async def test_non_not_ready_exception_is_not_retried() -> None:
+    """Only WikiNotReadyError triggers retries. Other exceptions (LLM
+    quota, network blip) must fail-fast on the first call so we don't
+    rack up cost on a permanent failure."""
+    call_count = 0
+
+    async def quota_failure(channel_id: str, language: str) -> None:
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("LLM quota exhausted")
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=quota_failure),
+    )
+
+    await sub.on_extraction_done("C123", ["f1"])
+
+    assert call_count == 1
+    assert "C123" not in sub._attempted
+
+
+@pytest.mark.asyncio
+async def test_total_retry_budget_bounded_by_generation_timeout(monkeypatch) -> None:
+    """The outer ``wait_for`` budget must cover ALL attempts + sleeps,
+    not reset per attempt. Otherwise a slow upstream can stall the
+    subscriber for tens of minutes (code-reviewer flagged this pre-merge).
+    Force a tiny outer timeout and a generator that holds long enough
+    to confirm the outer wait_for fires across the retry loop."""
+    from beever_atlas.capabilities.errors import WikiNotReadyError
+
+    async def slow_not_ready(channel_id: str, language: str) -> None:
+        # Each attempt takes longer than the outer timeout / max_retries
+        # so cumulative time exceeds the budget within the first retry.
+        await asyncio.sleep(0.1)
+        raise WikiNotReadyError("slow")
+
+    sub, _ = _make_subscriber(
+        counts={"pending": 0, "extracting": 0, "done": 50, "failed": 0},
+        existing_overview=False,
+        generator=AsyncMock(side_effect=slow_not_ready),
+    )
+    monkeypatch.setattr(sub, "_GENERATION_TIMEOUT_SECONDS", 0.15)
+    monkeypatch.setattr(sub, "_NOT_READY_RETRY_DELAY_SECONDS", 0.05)
+
+    start = asyncio.get_event_loop().time()
+    await sub.on_extraction_done("C123", ["f1"])
+    elapsed = asyncio.get_event_loop().time() - start
+
+    # Outer wait_for fires well before the sum of all per-attempt budgets
+    # (which would otherwise be ~ 3 retries * (0.1 + 0.05) + 0.1 = 0.55s).
+    assert elapsed < 0.4, f"retry budget escaped outer wait_for ({elapsed:.2f}s)"
+    assert "C123" not in sub._attempted
