@@ -267,10 +267,12 @@ export function ChatInputBar({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming || uploading}
-              className="inline-flex items-center justify-center size-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40"
+              className="inline-flex items-center gap-1 h-8 px-2 rounded-lg text-[13px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40"
               title="Attach file"
+              aria-label="Attach file"
             >
-              <Paperclip className="w-4 h-4" strokeWidth={2} />
+              <Paperclip className="w-4 h-4 opacity-80" strokeWidth={2} />
+              <span className="hidden sm:inline">Files</span>
             </button>
             <input
               ref={fileInputRef}
