@@ -142,10 +142,19 @@ async def _resolve_legacy_embedding_config(stores: Any) -> _LegacyEmbeddingConfi
                 "migrate_to_endpoint_catalog: master key unavailable; "
                 "cannot decrypt legacy embedding key"
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # SECURITY: NEVER pass ``exc_info=True`` here — ``api_key``,
+            # ``ciphertext``, ``iv``, and ``tag`` are live locals in this
+            # frame (lines 134-137 above). A structured log handler (Sentry,
+            # JSON formatter, Datadog) would serialise the traceback locals
+            # and leak the decrypted plaintext credential. Log the exception
+            # CLASS + message only — same pattern as ``provider.py:160-163``
+            # and ``agent_credentials.py:84-86``.
             logger.warning(
-                "migrate_to_endpoint_catalog: failed to decrypt legacy embedding key",
-                exc_info=True,
+                "migrate_to_endpoint_catalog: failed to decrypt legacy "
+                "embedding key (%s: %s)",
+                type(exc).__name__,
+                exc,
             )
 
     env_signal = any(os.environ.get(v) for v in _EMBEDDING_ENV_VARS)
