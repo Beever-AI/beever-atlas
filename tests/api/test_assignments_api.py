@@ -96,6 +96,20 @@ def _make_stores() -> Any:
 @pytest.fixture
 def app_and_client(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("CREDENTIAL_MASTER_KEY", "ab" * 32)
+    # ``get_settings()`` is ``@lru_cache``-decorated. If any earlier import
+    # already called it (e.g. via the conftest collection traversal), the
+    # cached Settings has ``credential_master_key=""`` from the env state
+    # at import time, and the monkeypatch above never reaches it. Clearing
+    # the cache here forces the next ``get_settings()`` to re-read env
+    # AFTER our setenv. Without this, ``encrypt_endpoint_credential``
+    # 503s with ``credential_encryptor_unavailable`` on CI where no .env
+    # exists.
+    try:
+        from beever_atlas.infra.config import get_settings
+
+        get_settings.cache_clear()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
     _tmp = tempfile.TemporaryDirectory()
     _prev = os.getcwd()
     os.chdir(_tmp.name)

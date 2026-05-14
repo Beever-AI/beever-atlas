@@ -71,6 +71,17 @@ jobs:
         env:
           MONGODB_URI: mongodb://localhost:27017/beever_atlas
           REDIS_URL: redis://localhost:6379
+          # 64 hex chars = 32 bytes = AES-256-GCM key. Tests that exercise
+          # the Endpoint+Assignment credential-encryption path
+          # (``tests/api/test_assignments_api.py``, ``tests/llm/test_endpoint_store.py``)
+          # ``monkeypatch.setenv`` this same value, but ``get_settings()`` is
+          # ``@lru_cache``-decorated and the FIRST call freezes the env state.
+          # Without this CI-level default, the first import that touches
+          # settings caches an empty key, and every subsequent
+          # ``encrypt_endpoint_credential`` 503s with
+          # ``credential_encryptor_unavailable``.
+          # Same value the ``smoke.yml`` workflow uses.
+          CREDENTIAL_MASTER_KEY: ${{ secrets.CI_CREDENTIAL_MASTER_KEY || 'abababababababababababababababababababababababababababababababab' }}
         run: uv run pytest --cov=src/beever_atlas --cov-report=term-missing -q
 
   web:
