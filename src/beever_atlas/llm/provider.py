@@ -585,44 +585,48 @@ _provider: LLMProvider | None = None
 
 
 def _validate_model_resolution(provider: LLMProvider) -> None:
-    """Fail fast when ANY configured ADK model cannot be resolved.
+    """Fail fast when ANY configured agent model cannot be resolved.
 
-    Runs at app startup so a typo in ``LLM_FAST_MODEL`` or a per-agent override
-    pointing at an unresolvable LiteLLM prefix surfaces immediately instead of
-    during a background sync job. Loops over every agent in ``AGENT_NAMES`` —
-    the legacy ``fast``/``quality`` tier check is included (those still feed
-    into agents whose default is the fast tier).
+    Mirrors the runtime resolution path in :func:`resolve_model_object` so
+    validation and dispatch cannot disagree. For each agent's effective model
+    string:
+
+      * Run it through ``resolve_model_object()`` — the same function the
+        runtime uses. A bare ``gemini-2.5-flash`` under
+        ``LLM_USE_LITELLM_FOR_GEMINI=True`` (post-cutover default) returns a
+        ``LiteLlm`` wrapper; under the flag-off rollback path it returns the
+        bare string.
+      * When the result is a *string*, confirm ADK's ``LLMRegistry`` can
+        resolve it (native Gemini path).
+      * When the result is a ``LiteLlm`` instance, trust it — LiteLLM
+        validates the provider lazily on the first call. What boot-time can
+        guarantee is "wrapper constructed", not "upstream reachable".
+
+    The legacy tier-level loop (``provider.fast`` / ``provider.quality``) was
+    removed: no runtime code reads those properties — every consumer flows
+    through ``get_model_string(agent_name)`` / ``resolve_model(agent_name)``.
     """
     from google.adk.models.registry import LLMRegistry
 
-    # Tier-level sanity check kept for callers that read ``provider.fast`` /
-    # ``provider.quality`` directly outside the per-agent path.
-    for tier, model_name in (
-        ("fast", provider.fast),
-        ("quality", provider.quality),
-    ):
-        try:
-            LLMRegistry.resolve(model_name)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                "Invalid LLM config: tier=%s model=%s cannot be resolved by ADK. "
-                "Ensure LiteLLM is installed (litellm>=1.75.5) and model names are valid."
-                % (tier, model_name)
-            ) from exc
-        logger.info("LLMProvider: validated tier=%s model=%s", tier, model_name)
-
-    # Per-agent resolution check — catches misconfigured DB overrides or any
-    # agent whose default points at a model the registry can't resolve.
     for agent_name in AGENT_NAMES:
         model_name = provider.get_model_string(agent_name)
         try:
-            LLMRegistry.resolve(model_name)
+            resolved = resolve_model_object(model_name)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f"Invalid LLM config: agent={agent_name} model={model_name} "
-                f"cannot be resolved by ADK. Ensure LiteLLM is installed "
-                f"(litellm>=1.75.5) and the model prefix is supported."
+                f"failed to construct via resolve_model_object. "
+                f"Ensure LiteLLM is installed (litellm>=1.75.5) and the model "
+                f"prefix is supported."
             ) from exc
+        if isinstance(resolved, str):
+            try:
+                LLMRegistry.resolve(resolved)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"Invalid LLM config: agent={agent_name} model={model_name} "
+                    f"cannot be resolved by ADK's native registry."
+                ) from exc
         logger.debug("LLMProvider: validated agent=%s model=%s", agent_name, model_name)
 
 
