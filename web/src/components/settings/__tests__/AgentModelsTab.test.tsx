@@ -189,13 +189,13 @@ describe("AgentModelsTab", () => {
     fireEvent.click(screen.getByText("Gemini balanced"));
 
     // CI runners are slower than local — the toast lands after the POST
-    // returns + a setState flush. Default 1000ms waitFor times out on CI;
-    // 5000ms gives generous headroom without slowing the happy path locally.
+    // returns + a setState flush. The inner waitFor needs 5000ms headroom,
+    // so the outer test budget must exceed it (default vitest is 5000ms).
     await waitFor(
       () => expect(screen.getByText(/Applied 'Gemini balanced' — 1 updated/)).toBeTruthy(),
       { timeout: 5000 },
     );
-  });
+  }, 15000);
 
   it("a vision-required consumer with a no-vision model shows the red capability badge", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
