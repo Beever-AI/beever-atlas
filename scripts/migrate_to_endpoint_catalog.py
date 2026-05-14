@@ -27,10 +27,49 @@ from beever_atlas.llm.assignments import (
     AssignmentStore,
     DEFAULT_CONSUMERS,
 )
-from beever_atlas.llm.endpoints import AuthType, EndpointStore, preset_to_provider
+from beever_atlas.llm.endpoints import (
+    AuthType,
+    EndpointStore,
+    PersistedModelKind,
+    catalog_models_for_preset,
+    preset_to_provider,
+)
 
 # Single source of truth lives in ``llm/presets.py`` (derived from ENDPOINT_PRESETS).
 from beever_atlas.llm.presets import BASE_URL_BY_PRESET as _BASE_URL_BY_PRESET
+
+
+def _seeded_models_for_preset(
+    preset: str,
+) -> tuple[list[str], dict[str, PersistedModelKind]]:
+    """Return ``(models, model_kinds)`` to pre-populate on a freshly-synthesised
+    Endpoint of ``preset`` so the operator-facing UI has a populated model
+    dropdown out of the box (no "Re-Discover" click required).
+
+    Reads from the curated ``KNOWN_MODELS`` catalog via
+    :func:`catalog_models_for_preset`. Returns ``([], {})`` for presets not in
+    the catalog (Ollama, vLLM, OpenRouter, custom) — those endpoints still
+    require operator discovery because their model lists are operator-deployed,
+    not centrally curated.
+
+    Without this, the migration created Endpoints with ``models=[]`` and the
+    Settings UI showed "no models available" on every chat-endpoint card after
+    a fresh install — a dead-end the operator had no UI signal to escape from.
+    """
+    chat_ids, embedding_ids = catalog_models_for_preset(preset)
+    empty_kinds: dict[str, PersistedModelKind] = {}
+    if not chat_ids and not embedding_ids:
+        return ([], empty_kinds)
+    models = sorted(set(chat_ids + embedding_ids))
+    model_kinds: dict[str, PersistedModelKind] = {}
+    for m in chat_ids:
+        model_kinds[m] = "chat"
+    for m in embedding_ids:
+        # If a model appears in both lists (e.g. ``gemini-embedding-001`` is
+        # embedding-only in our catalog), the embedding label wins — matches
+        # the order callers expect when reading ``endpoint.model_kinds``.
+        model_kinds[m] = "embedding"
+    return (models, model_kinds)
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +267,55 @@ async def _resolve_legacy_embedding_config(stores: Any) -> _LegacyEmbeddingConfi
     )
 
 
+async def _backfill_catalog_models(
+    endpoint_store: EndpointStore,
+    existing_endpoints: list,
+) -> int:
+    """Self-heal: populate ``models[]`` + ``model_kinds`` from the curated
+    catalog for any endpoint that was created with an empty ``models`` list
+    AND whose preset is in the catalog discovery set.
+
+    Targets the pre-F9 install case: operators who already ran a previous
+    boot got endpoints with ``models=[]`` and saw "no models available" in
+    the Settings UI. On the next server start, this backfill runs once and
+    the UI picker lights up — no operator action required.
+
+    Idempotent: skips endpoints that already have a non-empty ``models``
+    list (operator may have curated their own subset; never overwrite).
+    Returns the number of endpoints backfilled.
+    """
+    backfilled = 0
+    for endpoint in existing_endpoints:
+        if endpoint.models:
+            # Operator-curated or previously backfilled — leave alone.
+            continue
+        seeded_models, seeded_kinds = _seeded_models_for_preset(endpoint.preset)
+        if not seeded_models:
+            # Non-catalog preset (Ollama, vLLM, OpenRouter, custom) — discovery
+            # is still operator-driven for these because the model list is
+            # operator-deployed, not centrally curated.
+            continue
+        await endpoint_store.update(
+            endpoint.id,
+            models=seeded_models,
+            model_kinds=seeded_kinds if seeded_kinds else None,
+        )
+        backfilled += 1
+        logger.info(
+            "migrate_to_endpoint_catalog: backfilled %d catalog models for "
+            "Endpoint preset=%s id=%s",
+            len(seeded_models),
+            endpoint.preset,
+            endpoint.id,
+        )
+    if backfilled:
+        logger.info(
+            "migrate_to_endpoint_catalog: backfilled catalog models on %d endpoints",
+            backfilled,
+        )
+    return backfilled
+
+
 async def _repair_embedding_assignment(
     stores: Any,
     endpoint_store: EndpointStore,
@@ -370,7 +458,7 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
     existing_endpoints = await endpoint_store.list()
     if existing_endpoints:
         logger.info(
-            "migrate_to_endpoint_catalog: %d endpoints already present — running embedding repair",
+            "migrate_to_endpoint_catalog: %d endpoints already present — running embedding + catalog repair",
             len(existing_endpoints),
         )
         # Steps 1–2 (env-derived endpoint creation) and Step 4 (agent
@@ -379,6 +467,11 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
         # Step 3 (legacy-embedding repair) always runs: it is idempotent (checks
         # for a ``migrated-embedding-config`` endpoint before creating) and fixes
         # installs that previously had the ``embedding`` Assignment mis-pointed.
+        # Self-heal: also backfill ``models[]`` for any catalog-preset endpoint
+        # that was created with an empty list (pre-F9 installs) — this lets the
+        # Settings UI populate its model dropdown without the operator clicking
+        # "Re-Discover" on every endpoint.
+        models_backfilled = await _backfill_catalog_models(endpoint_store, existing_endpoints)
         endpoints_by_preset = {e.preset: e.id for e in existing_endpoints}
         ep_created, assign_repaired = await _repair_embedding_assignment(
             stores, endpoint_store, assignment_store, endpoints_by_preset
@@ -387,6 +480,7 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
             "skipped": "endpoints_already_populated",
             "embedding_endpoint_created": ep_created,
             "embedding_assignment_repaired": assign_repaired,
+            "models_backfilled": models_backfilled,
         }
 
     endpoints_created: dict[str, str] = {}  # preset → endpoint_id
@@ -399,6 +493,11 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
         env_value = os.environ.get(env_var, "").strip()
         if not env_value:
             continue
+        # Pre-populate models[] + model_kinds from the curated catalog so the
+        # Settings UI's "available models" dropdown isn't empty after a fresh
+        # ./atlas install — the operator should see a working model picker
+        # without having to click "Re-Discover" on every endpoint card.
+        seeded_models, seeded_kinds = _seeded_models_for_preset(preset)
         try:
             endpoint = await endpoint_store.create(
                 name=f"{preset} (from {env_var})",
@@ -406,16 +505,24 @@ async def migrate_to_endpoint_catalog(stores: Any) -> dict[str, Any]:
                 base_url=_BASE_URL_BY_PRESET.get(preset, ""),
                 auth_type=auth_type,
                 plaintext_credential=env_value,
-                models=[],
+                models=seeded_models,
                 rpm=None,
                 tags=["migrated-from-env"],
             )
             endpoints_created[preset] = endpoint.id
+            # Persist model_kinds via the update path (create doesn't accept it)
+            # so the per-model chat/embedding classification is available to the
+            # UI immediately. Skipped when the catalog returned no entries (e.g.
+            # Ollama, vLLM — operator-curated discovery still required).
+            if seeded_kinds:
+                await endpoint_store.update(endpoint.id, model_kinds=seeded_kinds)
             logger.info(
-                "migrate_to_endpoint_catalog: created Endpoint preset=%s id=%s from %s",
+                "migrate_to_endpoint_catalog: created Endpoint preset=%s id=%s "
+                "from %s with %d catalog models",
                 preset,
                 endpoint.id,
                 env_var,
+                len(seeded_models),
             )
         except RuntimeError:
             # CREDENTIAL_MASTER_KEY unconfigured — skip this provider but keep
