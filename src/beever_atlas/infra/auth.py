@@ -237,6 +237,19 @@ def require_user(
     if principal is not None:
         return principal
 
+    # Admin token is a superset of user auth — operators using the
+    # ``BEEVER_ADMIN_TOKEN`` (via the frontend's ``VITE_BEEVER_ADMIN_TOKEN``)
+    # should be able to call any endpoint that accepts a user API key,
+    # without separately configuring an entry in ``BEEVER_API_KEYS``. Returning
+    # a ``user``-kind principal here keeps the downstream channel-ACL and
+    # rate-limit code paths consistent with what the rest of the user-facing
+    # API expects (the dedicated ``require_admin`` dependency still uses the
+    # ``X-Admin-Token`` header for admin-only routes). Constant-time compare
+    # to avoid leaking the token length / prefix via timing.
+    admin_token = (settings.admin_token or "").strip()
+    if admin_token and hmac.compare_digest(token, admin_token):
+        return Principal(_principal_id_for_key(token), "user")
+
     if settings.allow_bridge_as_user:
         bridge_principal = _match_bridge_key(token, bridge_key)
         if bridge_principal is not None:
@@ -272,6 +285,15 @@ def require_user_optional(
     principal = _match_user_key(token, keys)
     if principal is not None:
         return principal
+
+    # Admin token also satisfies optional user auth — same reasoning as the
+    # ``require_user`` branch above (see comment there). Keep the two
+    # dependencies in sync so an endpoint that's a hard ``require_user`` and
+    # one that's ``require_user_optional`` don't disagree about which
+    # bearer tokens are accepted.
+    admin_token = (settings.admin_token or "").strip()
+    if admin_token and hmac.compare_digest(token, admin_token):
+        return Principal(_principal_id_for_key(token), "user")
 
     if settings.allow_bridge_as_user:
         return _match_bridge_key(token, bridge_key)
