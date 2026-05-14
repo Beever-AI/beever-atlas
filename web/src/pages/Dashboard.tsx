@@ -1,13 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Search } from "lucide-react";
-import { useTheme } from "@/hooks/useTheme";
-import { getPlatformBadgeStyle } from "@/lib/platform-badge";
-import { StatCards } from "@/components/dashboard/StatCards";
-import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
-import { useStats, useActivity } from "@/hooks/useStats";
+import { BookOpen, Download, Search } from "lucide-react";
+import { useWikiStates } from "@/hooks/useWikiStates";
+import { useRecentChannels } from "@/hooks/useRecentChannels";
+import { WikiBookCard } from "@/components/shared/WikiBookCard";
+import { cn } from "@/lib/utils";
 import { WelcomeScreen } from "@/components/onboarding/WelcomeScreen";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
 import { FileImportWizard } from "@/components/settings/FileImportWizard";
@@ -35,10 +33,8 @@ export function Dashboard() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardPlatform, setWizardPlatform] = useState<Platform>("slack");
   const [showFileImport, setShowFileImport] = useState(false);
-  const { resolvedTheme } = useTheme();
-  const isDark = resolvedTheme === "dark";
-  const { stats, loading: statsLoading } = useStats();
-  const { events, loading: activityLoading } = useActivity(5);
+  const { wikiStates, getState: getWikiState } = useWikiStates();
+  const { recent: recentChannels } = useRecentChannels();
   const { profile, getGreeting } = useUserProfile();
   const firstName = profile.displayName ? profile.displayName.split(" ")[0] : "there";
   const greeting = getGreeting();
@@ -102,10 +98,75 @@ export function Dashboard() {
     );
   }
 
+  // Build the (up to 3) cards for the home section.
+  //
+  // Find-tier (default): start with recently-visited wikis, then top up
+  // the remaining slots with other wiki-ready channels the user hasn't
+  // visited yet. This way one recent visit doesn't eclipse two other
+  // ready wikis — the 3-up grid stays full whenever possible.
+  //
+  // Sync-tier (fallback): only triggers when nothing in find-tier
+  // applies (no recents AND no ready channels). Surfaces up to 3
+  // empty connected channels with cards that route to the channel
+  // detail page (not /wiki) so the user lands on the sync controls.
+  const SLOT_COUNT = 3;
+
+  const fromRecents = recentChannels
+    .slice(0, SLOT_COUNT)
+    .map((r) => ({
+      channel_id: r.channel_id,
+      name: r.name,
+      platform: r.platform,
+      visited_at: r.visited_at as string | null,
+    }));
+
+  const recentIds = new Set(fromRecents.map((r) => r.channel_id));
+  const remainingSlots = Math.max(0, SLOT_COUNT - fromRecents.length);
+
+  const readyFill = remainingSlots > 0
+    ? channels
+        .filter(
+          (ch) =>
+            ch.is_member &&
+            getWikiState(ch.channel_id) === "ready" &&
+            !recentIds.has(ch.channel_id),
+        )
+        .slice(0, remainingSlots)
+        .map((ch) => ({
+          channel_id: ch.channel_id,
+          name: ch.name,
+          platform: ch.platform,
+          visited_at: null as string | null,
+        }))
+    : [];
+
+  const findCards = [...fromRecents, ...readyFill];
+
+  const syncSeeds =
+    findCards.length === 0
+      ? channels
+          .filter(
+            (ch) =>
+              ch.is_member &&
+              (getWikiState(ch.channel_id) === "empty" ||
+                getWikiState(ch.channel_id) === "errored"),
+          )
+          .slice(0, SLOT_COUNT)
+          .map((ch) => ({
+            channel_id: ch.channel_id,
+            name: ch.name,
+            platform: ch.platform,
+            visited_at: null as string | null,
+          }))
+      : [];
+
+  const wikiCards = findCards.length > 0 ? findCards : syncSeeds;
+  const tier: "find" | "sync" = findCards.length > 0 ? "find" : "sync";
+
   return (
     <div className="h-full overflow-auto">
-      <div className="max-w-[1400px] mx-auto p-6 sm:p-8 lg:p-12">
-        {/* Hero Section */}
+      <div className="max-w-[1200px] mx-auto p-6 sm:p-8 lg:p-12">
+        {/* Hero — greeting, ask bar, suggestion pills. The launchpad. */}
         <section className="flex flex-col items-center gap-5 py-12">
           <h1 className="font-heading text-[32px] tracking-tight text-foreground">
             {greeting}, {firstName}
@@ -114,10 +175,9 @@ export function Dashboard() {
             What would you like to know today?
           </p>
 
-          {/* Ask bar */}
           <Link
             to="/ask?new=1"
-            className="w-full max-w-4xl flex items-center gap-3 px-5 py-4 bg-card rounded-3xl border border-border shadow-sm hover:border-primary/30 transition-colors cursor-pointer"
+            className="w-full max-w-3xl flex items-center gap-3 px-5 py-4 bg-card rounded-3xl border border-border shadow-sm hover:border-primary/30 transition-colors cursor-pointer"
           >
             <Search className="w-5 h-5 text-muted-foreground/60" />
             <span className="text-muted-foreground/60 text-base">
@@ -129,7 +189,6 @@ export function Dashboard() {
             </kbd>
           </Link>
 
-          {/* Suggestion pills */}
           <div className="flex gap-2 flex-wrap justify-center">
             {[
               "What decisions were made this week?",
@@ -147,32 +206,43 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Stats */}
-        <section className="mt-8">
-          <StatCards stats={stats} loading={statsLoading} />
-        </section>
-
-        {/* Activity Feed */}
-        <section className="mt-6">
-          <ActivityFeed events={events} loading={activityLoading} />
-          {events.length > 0 && (
-            <div className="mt-2 text-center">
-              <Link
-                to="/activity"
-                className="text-sm font-medium text-primary hover:text-primary/80"
+        {/* The home page's only content section. Two tiers:
+            - "find": the user has wikis (visited or ready) → surface them.
+            - "sync": connected channels exist but none are ingested →
+              point the user at the empty channels with cards that route
+              straight to the sync controls (channel detail page, not
+              /wiki). Section header swaps icon + title so the intent is
+              obvious before the user reads the cards. */}
+        <section className="mt-10">
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-xl",
+                  tier === "find"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-amber-500/10 text-amber-500 dark:text-amber-400",
+                )}
               >
-                View all activity →
-              </Link>
+                {tier === "find" ? (
+                  <BookOpen size={18} strokeWidth={2} />
+                ) : (
+                  <Download size={18} strokeWidth={2} />
+                )}
+              </span>
+              <div className="flex flex-col">
+                <h2 className="font-heading text-xl tracking-tight text-foreground">
+                  {tier === "find"
+                    ? "Find Your Channels Wiki"
+                    : "Sync your channel now"}
+                </h2>
+                {tier === "sync" && (
+                  <span className="text-xs text-muted-foreground/70">
+                    Pick a channel to ingest it and build its wiki.
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-        </section>
-
-        {/* Connected Channels */}
-        <section className="mt-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-heading text-xl tracking-tight text-foreground">
-              Connected Channels
-            </h2>
             <Link
               to="/channels"
               className="text-sm font-medium text-primary hover:text-primary/80"
@@ -181,86 +251,48 @@ export function Dashboard() {
             </Link>
           </div>
 
-          {(() => {
-            const connected = channels.filter((ch) => ch.is_member);
-            if (loading) {
-              return (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {Array.from({ length: 3 }).map((_, i) => (
-                    <div
-                      key={i}
-                      className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-3"
-                    >
-                      <Skeleton className="h-5 w-32" />
-                      <Skeleton className="h-4 w-16" />
-                      <Skeleton className="h-3 w-full" />
-                      <Skeleton className="h-3 w-3/4" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                  ))}
-                </div>
-              );
-            }
-            if (connected.length === 0) {
-              return (
-                <div className="bg-card rounded-2xl border border-dashed border-border p-10 flex flex-col items-center gap-3 text-center">
-                  <p className="text-sm font-medium text-foreground">No connected channels yet</p>
-                  <p className="text-[15px] text-muted-foreground">
-                    Add @beever to your Slack, Teams, or Discord channels to start building knowledge.
-                  </p>
-                  <Link
-                    to="/channels"
-                    className="mt-2 inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-full border border-border bg-background hover:bg-muted transition-colors"
-                  >
-                    View all channels
-                  </Link>
-                </div>
-              );
-            }
-            return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {connected
-                  .sort((a, b) => (b.member_count ?? 0) - (a.member_count ?? 0))
-                  .slice(0, 3)
-                  .map((ch, idx) => (
-                  <Link
-                    to={`/channels/${ch.channel_id}/wiki`}
-                    key={ch.channel_id}
-                    state={{
-                      channel_name: ch.name,
-                      platform: ch.platform,
-                      is_member: ch.is_member,
-                      member_count: ch.member_count,
-                    }}
-                    className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-3 hover:shadow-sm transition-shadow motion-safe:animate-rise-in"
-                    style={{ animationDelay: `${idx * 55}ms` }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500" />
-                      <span className="text-lg font-semibold text-primary">#</span>
-                      <span className="text-base font-medium text-foreground truncate">
-                        {ch.name}
-                      </span>
-                    </div>
-                    <span
-                      className="inline-flex w-fit px-2.5 py-0.5 rounded-xl text-xs font-medium capitalize"
-                      style={getPlatformBadgeStyle(ch.platform, isDark)}
-                    >
-                      {ch.platform}
-                    </span>
-                    <p className="text-sm text-muted-foreground leading-relaxed line-clamp-2">
-                      {ch.topic || ch.purpose || "No description"}
-                    </p>
-                    {ch.member_count != null && (
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground/70">
-                        <span>{ch.member_count} members</span>
-                      </div>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            );
-          })()}
+          {loading && wikiCards.length === 0 ? (
+            <div className="bg-card rounded-2xl border border-dashed border-border p-8 text-center">
+              <p className="text-sm text-muted-foreground">Loading your channels…</p>
+            </div>
+          ) : wikiCards.length === 0 ? (
+            <div className="bg-card rounded-2xl border border-dashed border-border p-10 flex flex-col items-center gap-3 text-center">
+              <BookOpen className="w-8 h-8 text-muted-foreground/40" strokeWidth={1.5} />
+              <p className="text-sm font-medium text-foreground">No channels yet</p>
+              <p className="text-[15px] text-muted-foreground max-w-md">
+                Connect a channel to start. Once connected, Beever can ingest its messages and build a wiki you can ask about.
+              </p>
+              <Link
+                to="/channels"
+                className="mt-2 inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-full border border-border bg-background hover:bg-muted transition-colors"
+              >
+                View all channels
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {wikiCards.map((card, idx) => {
+                const state = getWikiState(card.channel_id);
+                const entry = wikiStates[card.channel_id];
+                return (
+                  <WikiBookCard
+                    key={card.channel_id}
+                    channelId={card.channel_id}
+                    name={card.name}
+                    platform={card.platform}
+                    state={state}
+                    visitedAt={card.visited_at}
+                    lastSyncTs={entry?.last_sync_ts ?? null}
+                    // Sync tier routes to the channel page (sync controls),
+                    // not the wiki tab — there's no wiki to land on yet.
+                    to={tier === "sync" ? `/channels/${card.channel_id}` : undefined}
+                    size="md"
+                    animationDelayMs={idx * 55}
+                  />
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
     </div>

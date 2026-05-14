@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
+import { useRecentChannels } from "@/hooks/useRecentChannels";
 import { ChannelBreadcrumb } from "@/components/channel/Breadcrumb";
 import { SyncButton } from "@/components/channel/SyncButton";
 import { SyncProgress } from "@/components/channel/SyncProgress";
@@ -146,8 +147,23 @@ export function ChannelWorkspace() {
     }
   }, [monitorCollapsed]);
   const { getWorkspaceName } = useConnectionMap();
+  const { trackVisit } = useRecentChannels();
 
   const activeTab = getCurrentTab(location.pathname);
+
+  // Track this channel as a recent visit so the dashboard's "Pick up
+  // where you left off" section surfaces it next time the user lands
+  // on /home. Single fire per channel resolution — trackVisit dedupes
+  // by channel_id internally, so a tab switch within the workspace
+  // doesn't bump the same entry repeatedly.
+  useEffect(() => {
+    if (!id || !channel?.name) return;
+    trackVisit({
+      channel_id: id,
+      name: channel.name,
+      platform: channel.platform || "unknown",
+    });
+  }, [id, channel?.name, channel?.platform, trackVisit]);
 
   useEffect(() => {
     if (!id) return;

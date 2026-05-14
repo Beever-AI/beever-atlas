@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RefreshCw } from "lucide-react";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
 import { useFavorites } from "@/hooks/useFavorites";
+import { useWikiStates } from "@/hooks/useWikiStates";
 import { SidebarSearch } from "./SidebarSearch";
 import { FavoritesList } from "./FavoritesList";
 import { WorkspaceGroup } from "./WorkspaceGroup";
@@ -53,6 +54,7 @@ export function ChannelList() {
 
   const { connections, getWorkspaceName, refetch: refetchConnections } = useConnectionMap();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { getState: getWikiState } = useWikiStates();
 
   const fetchChannels = useCallback(() => {
     setLoading(true);
@@ -216,6 +218,7 @@ export function ChannelList() {
             isFavorite={isFavorite}
             onToggleFavorite={toggleFavorite}
             showWorkspaceName
+            getWikiState={getWikiState}
           />
         )}
       </div>
@@ -231,6 +234,7 @@ export function ChannelList() {
         channels={favoriteChannels}
         getWorkspaceName={getWorkspaceName}
         onToggleFavorite={toggleFavorite}
+        getWikiState={getWikiState}
       />
 
       {favoriteChannels.length > 0 && workspaceGroups.length > 0 && (
@@ -248,6 +252,7 @@ export function ChannelList() {
           isFavorite={isFavorite}
           onToggleFavorite={toggleFavorite}
           connectionStatus={group.connectionStatus}
+          getWikiState={getWikiState}
         />
       ))}
     </div>

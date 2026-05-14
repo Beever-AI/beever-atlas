@@ -120,6 +120,25 @@ class ChannelResponse(BaseModel):
     connection_status: str | None = None
 
 
+class WikiStateEntry(BaseModel):
+    """Per-channel wiki readiness summary used by the sidebar / picker / home.
+
+    Cheap to compute (one batched ``$in`` query against ``channel_sync_state``)
+    and rendered everywhere a channel name appears, so we keep the payload
+    minimal and the derivation rules in one place.
+    """
+
+    state: str  # "ready" | "empty"
+    last_sync_ts: str | None = None
+    total_synced_messages: int = 0
+
+
+class WikiStatesResponse(BaseModel):
+    """Map keyed by channel_id. Channels absent from the map are "empty"."""
+
+    states: dict[str, WikiStateEntry]
+
+
 class MessageResponse(BaseModel):
     content: str
     author: str
@@ -517,6 +536,59 @@ async def list_channels() -> list[ChannelResponse]:
         states_map = {}
     responses = [_apply_language_state(r, states_map.get(r.channel_id)) for r in responses]
     return list(responses)
+
+
+@router.get("/api/channels/wiki-states", response_model=WikiStatesResponse)
+async def list_channel_wiki_states() -> WikiStatesResponse:
+    """Return per-channel wiki readiness for every channel with sync state.
+
+    The sidebar, ask channel picker, and home page all need to render the
+    same "this channel has a wiki / this one doesn't" signal next to a
+    channel name. Doing that with N per-channel calls would be 50–200
+    extra round trips on every page load; instead we resolve the universe
+    of channels once and batch-fetch their sync state in a single
+    ``$in`` query, mirroring the enrichment ``list_channels`` already
+    performs for language metadata.
+
+    State derivation (kept intentionally narrow — UI handles "building" /
+    "errored" by overlaying live sync poll data from useSync):
+      * ``"ready"``  — channel has a ChannelSyncState with at least one
+        synced message (``total_synced_messages > 0``).
+      * ``"empty"``  — no sync state, or zero synced messages. Channels
+        absent from the map are treated as empty by the client too,
+        which keeps the payload compact for fresh installs.
+    """
+    from beever_atlas.stores import get_stores
+
+    stores = get_stores()
+
+    # Universe of channels = everything in the channel_sync_state collection.
+    # That captures both live-connected channels and CSV-imported / orphan
+    # channels, which is exactly the set the sidebar / picker shows.
+    try:
+        synced_ids = await stores.mongodb.list_synced_channel_ids()
+    except Exception:
+        logger.debug("list_synced_channel_ids failed", exc_info=True)
+        return WikiStatesResponse(states={})
+
+    if not synced_ids:
+        return WikiStatesResponse(states={})
+
+    try:
+        states_map = await stores.mongodb.get_channel_sync_states_batch(synced_ids)
+    except Exception:
+        logger.debug("get_channel_sync_states_batch failed", exc_info=True)
+        return WikiStatesResponse(states={})
+
+    out: dict[str, WikiStateEntry] = {}
+    for cid, state in states_map.items():
+        msgs = getattr(state, "total_synced_messages", 0) or 0
+        out[cid] = WikiStateEntry(
+            state="ready" if msgs > 0 else "empty",
+            last_sync_ts=getattr(state, "last_sync_ts", None),
+            total_synced_messages=msgs,
+        )
+    return WikiStatesResponse(states=out)
 
 
 @router.get("/api/channels/{channel_id}", response_model=ChannelResponse)

@@ -9,14 +9,17 @@ import {
   ChevronDown,
   ChevronRight,
   X,
-  Users,
   ArrowRight,
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
+import { useWikiStates } from "@/hooks/useWikiStates";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
+import { compareChannelsByWikiState, summarizeWikiCoverage } from "@/lib/wikiState";
+import { WikiBookCard } from "@/components/shared/WikiBookCard";
 import { cn } from "@/lib/utils";
 import type { PlatformConnection } from "@/lib/types";
+import type { WikiState } from "@/hooks/useWikiStates";
 
 interface Channel {
   channel_id: string;
@@ -37,7 +40,9 @@ interface WorkspaceChannelGroup {
 function groupByWorkspace(
   channels: Channel[],
   connections: PlatformConnection[],
+  sortFn?: (a: Channel, b: Channel) => number,
 ): WorkspaceChannelGroup[] {
+  const sort = sortFn ?? ((a: Channel, b: Channel) => a.name.localeCompare(b.name));
   const buckets = new Map<string, Channel[]>();
   for (const ch of channels) {
     const key = ch.connection_id ?? "__ungrouped__";
@@ -50,7 +55,7 @@ function groupByWorkspace(
   for (const conn of connections) {
     const chs = buckets.get(conn.id);
     if (chs && chs.length > 0) {
-      groups.push({ connection: conn, channels: chs.sort((a, b) => a.name.localeCompare(b.name)) });
+      groups.push({ connection: conn, channels: chs.sort(sort) });
       seen.add(conn.id);
     }
   }
@@ -70,7 +75,7 @@ function groupByWorkspace(
         workspace_name: "Ungrouped",
         is_active: true,
       } as unknown as PlatformConnection,
-      channels: chs.sort((a, b) => a.name.localeCompare(b.name)),
+      channels: chs.sort(sort),
     });
   }
   return groups;
@@ -87,6 +92,7 @@ export function Channels() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const { connections, getWorkspaceName } = useConnectionMap();
+  const { getState: getWikiState } = useWikiStates();
 
   useEffect(() => {
     api
@@ -117,12 +123,29 @@ export function Channels() {
       conn = conn.filter(matchFn);
       avail = avail.filter(matchFn);
     }
-    return { connectedGroups: groupByWorkspace(conn, connections), availableGroups: groupByWorkspace(avail, connections) };
-  }, [channels, query, workspaceFilter, connections, getWorkspaceName]);
+    // Connected: wiki-ready channels first (then building, then empty), alphabetical within each tier.
+    // Available: stay alphabetical — they don't have wikis yet so the tier sort is moot.
+    return {
+      connectedGroups: groupByWorkspace(conn, connections, (a, b) =>
+        compareChannelsByWikiState(a, b, getWikiState),
+      ),
+      availableGroups: groupByWorkspace(avail, connections),
+    };
+  }, [channels, query, workspaceFilter, connections, getWorkspaceName, getWikiState]);
 
   const totalConnected = connectedGroups.reduce((s, g) => s + g.channels.length, 0);
   const totalAvailable = availableGroups.reduce((s, g) => s + g.channels.length, 0);
   const hasFilter = workspaceFilter !== "all" || query.trim() !== "";
+  // Coverage across all *connected* channels — surfaced next to the
+  // section label so the user sees "X of Y have wikis" at a glance.
+  const connectedFlat = useMemo(
+    () => connectedGroups.flatMap((g) => g.channels),
+    [connectedGroups],
+  );
+  const coverage = useMemo(
+    () => summarizeWikiCoverage(connectedFlat, getWikiState),
+    [connectedFlat, getWikiState],
+  );
 
   return (
     <div className="h-full overflow-auto">
@@ -225,7 +248,16 @@ export function Channels() {
           <>
             {/* ── Connected: Card Grid ── */}
             <section className="mb-10">
-              <SectionLabel label="Connected" count={totalConnected} dotColor="bg-emerald-500" />
+              <SectionLabel
+                label="Connected"
+                count={totalConnected}
+                dotColor="bg-emerald-500"
+                suffix={
+                  totalConnected > 0
+                    ? `${coverage.ready} / ${coverage.total} with wiki`
+                    : undefined
+                }
+              />
 
               {connectedGroups.length === 0 ? (
                 <EmptyBlock message={hasFilter ? "No connected channels match" : "No connected channels yet"} actionTo={!hasFilter ? "/settings" : undefined} actionLabel="Add a connection" />
@@ -235,36 +267,21 @@ export function Channels() {
                     <div key={group.connection.id}>
                       <WorkspaceHeader connection={group.connection} count={group.channels.length} isDark={isDark} />
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {group.channels.map((ch, idx) => (
-                          <Link
-                            key={ch.channel_id}
-                            to={`/channels/${ch.channel_id}/wiki`}
-                            state={{ channel_name: ch.name, platform: ch.platform, is_member: ch.is_member, member_count: ch.member_count, connection_id: ch.connection_id }}
-                            className="bg-card rounded-xl border border-border p-4 flex flex-col justify-between hover:border-primary/30 hover:shadow-[0_0_0_1px_hsl(var(--primary)/0.1)] transition-all group motion-safe:animate-rise-in h-[120px]"
-                            style={{ animationDelay: `${Math.min(idx, 8) * 40}ms` }}
-                          >
-                            <div>
-                              <div className="flex items-center gap-2 mb-1.5">
-                                <Hash size={15} className="text-primary/60 shrink-0" />
-                                <span className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
-                                  {ch.name}
-                                </span>
-                              </div>
-                              <p className="text-xs text-muted-foreground/60 leading-relaxed line-clamp-2 pl-[23px]">
-                                {ch.topic || ch.purpose || "No description"}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between pt-2 pl-[23px]">
-                              {ch.member_count != null ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/40 tabular-nums">
-                                  <Users size={10} />
-                                  {ch.member_count} members
-                                </span>
-                              ) : <span />}
-                              <ArrowRight size={14} className="text-muted-foreground/0 group-hover:text-primary/50 transition-colors" />
-                            </div>
-                          </Link>
-                        ))}
+                        {group.channels.map((ch, idx) => {
+                          const state: WikiState = getWikiState(ch.channel_id);
+                          return (
+                            <WikiBookCard
+                              key={ch.channel_id}
+                              channelId={ch.channel_id}
+                              name={ch.name}
+                              platform={ch.platform}
+                              state={state}
+                              preface={ch.topic || ch.purpose || undefined}
+                              size="sm"
+                              animationDelayMs={Math.min(idx, 8) * 40}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -330,12 +347,32 @@ export function Channels() {
 
 /* ── Sub-components ── */
 
-function SectionLabel({ label, count, dotColor, inline }: { label: string; count: number; dotColor: string; inline?: boolean }) {
+function SectionLabel({
+  label,
+  count,
+  dotColor,
+  inline,
+  suffix,
+}: {
+  label: string;
+  count: number;
+  dotColor: string;
+  inline?: boolean;
+  suffix?: string;
+}) {
   return (
     <div className={cn("flex items-center gap-2", !inline && "mb-5")}>
       <span className={cn("w-2 h-2 rounded-full shrink-0", dotColor)} />
       <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{label}</h2>
       <span className="text-xs text-muted-foreground/50 tabular-nums">{count}</span>
+      {suffix && (
+        <>
+          <span className="text-muted-foreground/30 text-xs">·</span>
+          <span className="text-xs text-muted-foreground/70 tabular-nums normal-case tracking-normal">
+            {suffix}
+          </span>
+        </>
+      )}
     </div>
   );
 }

@@ -8,7 +8,8 @@ import {
   Filter,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSyncHistory } from "@/hooks/useStats";
+import { useStats, useSyncHistory } from "@/hooks/useStats";
+import { StatCards } from "@/components/dashboard/StatCards";
 import type { SyncHistoryEvent, BatchBreakdown } from "@/hooks/useStats";
 
 function formatExactTime(timestamp: string): string {
@@ -285,6 +286,7 @@ const rangeMs: Record<TimeRange, number | null> = {
 
 export function ActivityPage() {
   const { entries, loading } = useSyncHistory(50);
+  const { stats, loading: statsLoading } = useStats();
   const [filter, setFilter] = useState<"all" | "completed" | "failed">("all");
   const [range, setRange] = useState<TimeRange>("all");
 
@@ -348,6 +350,13 @@ export function ActivityPage() {
             </p>
           </div>
         </div>
+
+        {/* At-a-glance stats — moved here from the home page so the home
+            page can stay focused on "what next?" and this tab becomes the
+            canonical "what's happened?" surface. */}
+        <section className="mt-6">
+          <StatCards stats={stats} loading={statsLoading} />
+        </section>
 
         {/* Human summary */}
         {!loading && entries.length > 0 && (
