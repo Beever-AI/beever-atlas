@@ -140,7 +140,36 @@ def resolve_model_object(
         return LiteLlm(model=model_string, **extra)
 
     if not settings.llm_use_litellm_for_gemini:
-        # Legacy native path — bare Gemini strings consumed by ADK directly.
+        # The flag name is Gemini-specific. When False:
+        #   * Gemini bypasses LiteLlm → returned as a BARE string for ADK's
+        #     native ``Gemini`` model class.
+        #   * Every OTHER provider (openai/anthropic/mistral/deepseek/groq/
+        #     minimax/together_ai/xai/cohere/…) still needs LiteLlm wrapping
+        #     — ADK has no native client for those.
+        #
+        # Strip the ``gemini/`` prefix so the agent path works even when
+        # callers upstream (``LLMProvider.resolve_model`` via
+        # ``route_for_endpoint``, ``reload_from_db`` re-prefixing
+        # ``Assignment.model``) hand us the prefixed shape. Without this
+        # strip, ADK raises:
+        #   ValueError: Model gemini/gemini-2.5-flash not found.
+        #   Provider-style models require the litellm package.
+        # — and the entire extraction pipeline fails with ``errors=N`` on
+        # every batch.
+        if model_string.startswith("gemini/"):
+            return model_string[len("gemini/") :]
+        if model_string.startswith("gemini-"):
+            return model_string  # already bare Gemini
+        if "/" in model_string:
+            # Any non-Gemini provider prefix → LiteLlm wrap. The flag only
+            # disables LiteLlm for Gemini; OpenAI/Anthropic/Mistral/etc.
+            # have no native ADK client and must go through LiteLLM.
+            from google.adk.models.lite_llm import LiteLlm
+
+            return LiteLlm(model=model_string, **extra)
+        # Bare non-Gemini string (no prefix, no provider) — return as-is and
+        # let ADK figure it out. ``validate_model_string`` upstream should
+        # have rejected this shape already.
         return model_string
 
     # Cutover-on: wrap every provider in LiteLLM so dispatch funnels through

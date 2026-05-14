@@ -116,7 +116,16 @@ def test_validate_rejects_unsupported_prefix():
         assert prefix in err
 
 
-def test_settings_default_has_flag_on():
-    """The default config ships with the cutover ON; rollback is an opt-out."""
+def test_settings_default_has_flag_off():
+    """Post-F12 the default is OFF — the cutover True default silently broke
+    extraction because ADK's LiteLlm wrapper does not translate
+    ``GenerateContentConfig.response_mime_type`` into LiteLLM's
+    ``response_format``. Native ADK Gemini honors response_mime_type and
+    produces extractable JSON; flag-on remains available as an opt-in for
+    operators willing to accept the regression (or once the wrapper learns
+    the translation). See
+    ``src/beever_atlas/infra/config.py:llm_use_litellm_for_gemini``
+    docstring for the full reasoning.
+    """
     s = Settings()
-    assert s.llm_use_litellm_for_gemini is True
+    assert s.llm_use_litellm_for_gemini is False
