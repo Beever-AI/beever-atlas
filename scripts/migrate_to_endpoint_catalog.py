@@ -286,6 +286,27 @@ async def _backfill_catalog_models(
     """
     backfilled = 0
     for endpoint in existing_endpoints:
+        # Self-heal: pre-F11 google_ai endpoints were created with a base_url
+        # pointing at the OpenAI-compat shim
+        # (``https://generativelanguage.googleapis.com/v1beta/openai/``).
+        # That URL forces ``route_for_endpoint`` to pick LiteLLM's ``openai``
+        # provider, which does NOT honor Gemini's
+        # ``response_mime_type="application/json"`` — extraction agents
+        # silently return 0 facts. Clear the OpenAI-compat URL so dispatch
+        # uses the native ``gemini`` provider path (the May-10 working
+        # baseline). Never touch a manually-edited custom base_url.
+        if (
+            endpoint.preset == "google_ai"
+            and endpoint.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+        ):
+            await endpoint_store.update(endpoint.id, base_url="")
+            logger.info(
+                "migrate_to_endpoint_catalog: cleared OpenAI-compat base_url on "
+                "google_ai Endpoint id=%s (F11 self-heal)",
+                endpoint.id,
+            )
+            endpoint.base_url = ""  # update local copy for subsequent passes
+
         if endpoint.models:
             # Operator-curated or previously backfilled — leave alone.
             continue

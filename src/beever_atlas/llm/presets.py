@@ -38,8 +38,22 @@ class EndpointPreset(TypedDict, total=False):
 ENDPOINT_PRESETS: list[EndpointPreset] = [
     {
         "key": "google_ai",
+        # IMPORTANT — leave ``base_url`` empty for google_ai. The
+        # OpenAI-compat shim at ``…/v1beta/openai/`` does NOT honor
+        # Gemini's ``response_mime_type="application/json"`` directive,
+        # which the extraction agents (fact_extractor, entity_extractor,
+        # coreference_resolver, …) depend on for strict JSON output.
+        # With an empty base_url, ``route_for_endpoint`` returns the
+        # native ``gemini`` LiteLLM provider, which DOES translate
+        # ADK's ``GenerateContentConfig`` to Google's native API so
+        # structured-output extraction works. The May-10 working
+        # baseline had google_ai endpoints without this base_url; the
+        # later /openai/ default regressed extraction silently because
+        # all LLM calls still returned 200 OK — they just returned
+        # unstructured text that the fact-extractor parser couldn't
+        # turn into facts. See F11 commit for the full trace.
         "label": "Google AI (Gemini)",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "base_url": "",
         "auth_type": "api_key",
         "default_models": ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"],
         "docs_url": "https://aistudio.google.com/apikey",
