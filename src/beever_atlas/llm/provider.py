@@ -506,8 +506,7 @@ class LLMProvider:
                 # pattern consistent across this whole function so future
                 # refactors don't accidentally widen the leak surface.
                 logger.debug(
-                    "LLMProvider.reload_from_db: legacy agent_model_config read "
-                    "failed (%s: %s)",
+                    "LLMProvider.reload_from_db: legacy agent_model_config read failed (%s: %s)",
                     type(exc).__name__,
                     exc,
                 )
