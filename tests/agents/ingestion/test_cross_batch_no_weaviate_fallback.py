@@ -20,11 +20,16 @@ from beever_atlas.agents.ingestion.preprocessor import _resolve_cross_batch_pare
 
 
 def _stores_with(mongodb_record: dict | None) -> MagicMock:
-    """Build a fake `stores` whose `mongodb.db['raw_messages'].find_one`
-    returns the supplied record (or None for a miss)."""
+    """Build a fake `stores` whose `mongodb.db['channel_messages'].find_one`
+    returns the supplied record (or None for a miss).
+
+    PR-A.4 repointed the cross-batch parent lookup from the phantom
+    `raw_messages` collection to the durable `channel_messages` collection
+    populated by the sync runner.
+    """
     stores = MagicMock()
-    stores.mongodb.db = {"raw_messages": MagicMock()}
-    stores.mongodb.db["raw_messages"].find_one = AsyncMock(return_value=mongodb_record)
+    stores.mongodb.db = {"channel_messages": MagicMock()}
+    stores.mongodb.db["channel_messages"].find_one = AsyncMock(return_value=mongodb_record)
     # Issue #44 verification: weaviate must NOT be touched. Wire up a
     # MagicMock and assert no calls were made on it after the function
     # returns.
@@ -111,7 +116,7 @@ async def test_disabled_flag_returns_none(monkeypatch) -> None:
     )
 
     assert result is None
-    stores.mongodb.db["raw_messages"].find_one.assert_not_called()
+    stores.mongodb.db["channel_messages"].find_one.assert_not_called()
 
 
 async def test_in_batch_resolution_returns_none(monkeypatch) -> None:
@@ -131,4 +136,4 @@ async def test_in_batch_resolution_returns_none(monkeypatch) -> None:
     )
 
     assert result is None
-    stores.mongodb.db["raw_messages"].find_one.assert_not_called()
+    stores.mongodb.db["channel_messages"].find_one.assert_not_called()

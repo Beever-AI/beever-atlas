@@ -138,6 +138,11 @@ class WeaviateStore:
         ("status", DataType.TEXT),
         ("fact_type_counts_json", DataType.TEXT),
         ("worst_staleness", DataType.NUMBER),
+        # ``summary_dirty`` — freshness flag for ``ConsolidationService.
+        # _select_clusters_needing_summary``. True ↔ cluster has unseen
+        # facts since its last LLM summary. Auto-migrated to existing
+        # collections via ``_apply_schema_migration``.
+        ("summary_dirty", DataType.BOOL),
         # EntityKnowledgeCard fields
         ("entity_id", DataType.TEXT),
         ("entity_name", DataType.TEXT),
@@ -545,6 +550,41 @@ class WeaviateStore:
 
         return await asyncio.to_thread(_list)
 
+    async def sample_fact_vector_dim(self) -> int | None:
+        """Return the dimension of one stored ``MemoryFact`` vector, or None.
+
+        Authoritative source of truth for "what's actually in the index" —
+        independent of ``embedding_meta`` which can drift if a migration
+        fails mid-flight or a boot probe writes its configured intent
+        without actually re-embedding data. Used by ``/state`` to detect
+        a stale ``embedding_meta`` and force ``migration_required=True``
+        when the configured dim doesn't match the on-disk vectors.
+
+        Returns ``None`` when the collection has no objects (fresh install)
+        or when Weaviate is unreachable — the caller should fall back to
+        ``embedding_meta`` in either case.
+        """
+
+        def _sample() -> int | None:
+            collection = self._collection()
+            res = collection.query.fetch_objects(limit=1, include_vector=True)
+            if not res.objects:
+                return None
+            v = res.objects[0].vector
+            # Weaviate v4 returns ``vector`` as a dict when the collection has
+            # named vector configs, else a flat list. Handle both.
+            if isinstance(v, dict):
+                for _name, vec in v.items():
+                    if vec:
+                        return len(vec)
+                return None
+            return len(v) if v else None
+
+        try:
+            return await asyncio.to_thread(_sample)
+        except Exception:  # noqa: BLE001 — never crash callers on a probe miss
+            return None
+
     async def count_facts(self, channel_id: str | None = None) -> int:
         """Return total count of facts, optionally scoped to a channel."""
 
@@ -563,6 +603,167 @@ class WeaviateStore:
             return result.total_count or 0
 
         return await asyncio.to_thread(_count)
+
+    async def iter_atomic_fact_ids_and_text(self) -> "list[tuple[str, str]]":
+        """Return ``[(weaviate_uuid, memory_text), ...]`` for every atomic
+        fact, materialised eagerly into memory.
+
+        Reserved for the re-embed migration job (PR-C). Walks the whole
+        collection via Weaviate v4's ``collection.iterator()`` and filters
+        ``tier == "atomic"`` client-side because ``iterator()`` does not
+        accept a ``filters=`` kwarg in weaviate-client v4. ``memory_text``
+        is the only field we need at re-embed time — the existing tags /
+        metadata stay attached to the row when we update only the vector.
+
+        Materialising fits Atlas's documented design constraint: re-embed is
+        operator-triggered against installations of typically ~5k–50k facts.
+        For larger installs, swap in a chunked iterator + restart the run.
+
+        Tier handling: rows whose ``tier`` property is missing, ``None``, or
+        anything other than the literal string ``"atomic"`` are SKIPPED.
+        We do NOT default missing-tier rows into ``"atomic"`` — that would
+        silently re-embed cluster / summary tier vectors with a
+        text-matching atomic embedding the next time we ran a migration,
+        corrupting their semantics.
+        """
+
+        def _walk() -> list[tuple[str, str]]:
+            collection = self._collection()
+            out: list[tuple[str, str]] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=False,
+            ):
+                props = getattr(obj, "properties", {}) or {}
+                # Strict allow-list: only re-embed rows explicitly marked
+                # as atomic. Missing / falsy tier ⇒ skip (see docstring).
+                if props.get("tier") != "atomic":
+                    continue
+                memory_text = props.get("memory_text") or ""
+                if not memory_text:
+                    continue
+                out.append((str(obj.uuid), memory_text))
+            return out
+
+        return await asyncio.to_thread(_walk)
+
+    async def snapshot_all_facts_for_reembed(self) -> "list[dict[str, Any]]":
+        """Snapshot every row in MemoryFact for an upcoming dim-change rebuild.
+
+        Returns a list of ``{"uuid": str, "memory_text": str, "properties":
+        dict}`` records for every row that has a non-empty ``memory_text``.
+        Used by the re-embed migration when the new model has a different
+        vector dimension than the existing collection — Weaviate's HNSW
+        index dim is locked at collection creation, so an in-place
+        ``data.update(vector=...)`` returns HTTP 500 (``new node has a
+        vector with length X. Existing nodes have vectors with length Y``).
+        The fix is to snapshot rows, drop the collection, recreate it,
+        and bulk-insert each row with a new vector under the same UUID.
+
+        Includes every tier (atomic / cluster / summary) so the rebuild is
+        complete. Rows without ``memory_text`` are skipped — they have
+        nothing to re-embed and are typically schema placeholders.
+        """
+
+        def _walk() -> list[dict[str, Any]]:
+            collection = self._collection()
+            out: list[dict[str, Any]] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=False,
+            ):
+                props = dict(getattr(obj, "properties", {}) or {})
+                memory_text = props.get("memory_text") or ""
+                if not memory_text:
+                    continue
+                out.append(
+                    {
+                        "uuid": str(obj.uuid),
+                        "memory_text": memory_text,
+                        "properties": props,
+                    }
+                )
+            return out
+
+        return await asyncio.to_thread(_walk)
+
+    async def drop_and_recreate_memoryfact(self) -> None:
+        """Drop the MemoryFact collection and recreate it with the current
+        schema. Used by the re-embed migration to clear a locked-in HNSW
+        dim before reinserting rows at a new dim.
+
+        Idempotent on the recreate side — ``ensure_schema`` handles both
+        the missing-collection and existing-collection cases.
+        """
+
+        def _drop() -> None:
+            assert self._client is not None, "WeaviateStore not started"
+            if self._client.collections.exists(COLLECTION_NAME):
+                self._client.collections.delete(COLLECTION_NAME)
+            # Recreate via the same path ``ensure_schema`` uses to keep
+            # the property list / vector index config single-sourced.
+            self._ensure_schema_sync()
+
+        await asyncio.to_thread(_drop)
+
+    async def bulk_reinsert_with_vectors(
+        self,
+        records: "list[dict[str, Any]]",
+    ) -> int:
+        """Bulk-insert records into MemoryFact with explicit per-row vectors.
+
+        Each record is ``{"uuid": str, "vector": list[float], "properties":
+        dict}``. Uses Weaviate v4 ``collection.batch.dynamic()`` for
+        throughput.
+
+        Companion to :meth:`drop_and_recreate_memoryfact` — call after the
+        collection has been recreated so the first insert sets the HNSW
+        dim from the new vector length.
+
+        Returns the count of records submitted (provider may still
+        partial-fail; partial failures surface via ``batch.number_errors``).
+        """
+
+        def _insert() -> int:
+            collection = self._collection()
+            count = 0
+            with collection.batch.dynamic() as batch:
+                for rec in records:
+                    batch.add_object(
+                        properties=rec.get("properties") or {},
+                        uuid=rec["uuid"],
+                        vector=rec["vector"],
+                    )
+                    count += 1
+            # Inspect batch-level errors so partial failures don't go silent.
+            failed = collection.batch.failed_objects
+            if failed:
+                # Re-raise the first failure with a clear message. The
+                # migration's outer error handler logs and bails.
+                err_msg = getattr(failed[0], "message", str(failed[0]))
+                raise RuntimeError(
+                    f"WeaviateStore.bulk_reinsert_with_vectors: {len(failed)} "
+                    f"of {count} inserts failed. First error: {err_msg}"
+                )
+            return count
+
+        return await asyncio.to_thread(_insert)
+
+    async def update_fact_vector(self, weaviate_uuid: str, vector: list[float]) -> None:
+        """Replace the vector on an existing AtomicFact row in place.
+
+        Used by the re-embed migration to swap vectors under a new model
+        without regenerating UUIDs (which would invalidate Neo4j-side
+        ``EpisodicLink.weaviate_fact_id`` foreign keys).
+        """
+        from uuid import UUID
+
+        def _update() -> None:
+            collection = self._collection()
+            collection.data.update(
+                uuid=UUID(weaviate_uuid),
+                vector=vector,
+            )
+
+        await asyncio.to_thread(_update)
 
     async def delete_by_channel(self, channel_id: str) -> int:
         """Delete all objects for a channel (facts, clusters, summaries).
@@ -1078,6 +1279,7 @@ class WeaviateStore:
                 "staleness_score": cluster.staleness_score,
                 "status": cluster.status,
                 "fact_type_counts_json": json.dumps(cluster.fact_type_counts),
+                "summary_dirty": bool(cluster.summary_dirty),
                 # Wiki-ready enrichment fields
                 "title": cluster.title,
                 "current_state": cluster.current_state,
@@ -1153,6 +1355,10 @@ class WeaviateStore:
                         staleness_score=float(props.get("staleness_score", 0.0)),
                         status=props.get("status", "active"),
                         fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                        # Default True for legacy rows missing the property so
+                        # first-time loads still summarize. New writes always set
+                        # the field explicitly.
+                        summary_dirty=bool(props.get("summary_dirty", True)),
                         key_facts=json.loads(props.get("key_facts_json") or "[]"),
                         decisions=json.loads(props.get("decisions_json") or "[]"),
                         people=json.loads(props.get("people_json") or "[]"),
@@ -1208,6 +1414,7 @@ class WeaviateStore:
                 staleness_score=float(props.get("staleness_score", 0.0)),
                 status=props.get("status", "active"),
                 fact_type_counts=json.loads(props.get("fact_type_counts_json") or "{}"),
+                summary_dirty=bool(props.get("summary_dirty", True)),
                 key_facts=json.loads(props.get("key_facts_json") or "[]"),
                 decisions=json.loads(props.get("decisions_json") or "[]"),
                 people=json.loads(props.get("people_json") or "[]"),

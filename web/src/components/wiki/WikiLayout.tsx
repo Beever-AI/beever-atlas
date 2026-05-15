@@ -1,14 +1,62 @@
-import { type ReactNode, useState, useCallback, useRef, useEffect } from "react";
-import { Download, Search, X, ChevronUp, ChevronDown, History, Menu } from "lucide-react";
+import { type ReactNode, useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { Search, X, ChevronUp, ChevronDown, Menu } from "lucide-react";
 import { WikiSidebar } from "./WikiSidebar";
 import { WikiBreadcrumb } from "./WikiBreadcrumb";
 import { FreshnessBadge } from "./FreshnessBadge";
 import { WikiTableOfContents } from "./WikiTableOfContents";
+import { NarrativeTOC } from "./NarrativeTOC";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { WikiRegenerateButton } from "@/components/channel/WikiRegenerateButton";
 import type { WikiStructure, WikiPage, WikiVersionSummary } from "@/lib/types";
 import { wikiT } from "@/lib/wikiI18n";
-import { authFetch, API_BASE } from "@/lib/api";
+
+/** Extract narrative-article TOC sections from a wiki page.
+ *
+ *  The narrative payload lives in TWO places after the
+ *  wiki-narrative-articles change: the page-level ``narrative_sections``
+ *  field (the canonical source — mirrored from persistence) AND the
+ *  ``narrative_article`` module's ``data.sections`` slice (built by
+ *  ``build_narrative_article_data`` for the React dispatcher). We
+ *  prefer the module-data path because it's been through the section
+ *  cleanup that drops anchorless / paragraph-less entries; we fall
+ *  back to the page-level field when the module entry is missing
+ *  (older docs that persisted ``narrative_sections`` but predate the
+ *  ``narrative_article`` planner pick).
+ */
+function extractNarrativeTocSections(
+  page: WikiPage,
+): Array<{ anchor: string; heading: string }> {
+  const sections: Array<{ anchor: string; heading: string }> = [];
+  const seen = new Set<string>();
+  const push = (anchor: unknown, heading: unknown) => {
+    if (typeof anchor !== "string" || !anchor) return;
+    if (typeof heading !== "string" || !heading) return;
+    if (seen.has(anchor)) return;
+    seen.add(anchor);
+    sections.push({ anchor, heading });
+  };
+  const narrativeModule = (page.modules ?? []).find(
+    (m) => m.id === "narrative_article",
+  );
+  if (narrativeModule?.data) {
+    const moduleSections = (narrativeModule.data as { sections?: unknown })
+      .sections;
+    if (Array.isArray(moduleSections)) {
+      for (const s of moduleSections) {
+        if (s && typeof s === "object") {
+          const r = s as Record<string, unknown>;
+          push(r.anchor, r.heading);
+        }
+      }
+    }
+  }
+  if (sections.length === 0 && Array.isArray(page.narrative_sections)) {
+    for (const s of page.narrative_sections) {
+      push(s?.anchor, s?.heading);
+    }
+  }
+  return sections;
+}
 
 interface WikiLayoutProps {
   channelId: string;
@@ -25,6 +73,16 @@ interface WikiLayoutProps {
   onSelectVersion?: (versionNumber: number) => void;
   onBackToCurrent?: () => void;
   headerExtra?: ReactNode;
+  /** Optional primary view toggle (e.g. Pages | Graph). Rendered as a
+   *  full-width segmented control on its own row at the top of the
+   *  sidebar header so it doesn't compete with utility actions for
+   *  horizontal space. */
+  viewToggle?: ReactNode;
+  /** Optional small accessory rendered next to the WIKI label in the
+   *  meta row — typically a "?" info button explaining the toggle
+   *  options. Kept separate from `viewToggle` so it doesn't compete
+   *  for horizontal space inside the segmented control. */
+  headerExplainer?: ReactNode;
   /** BCP-47 tag of the language currently displayed. Shown as a chip in the
    *  sidebar header so users can see at a glance which rendering they're viewing. */
   currentLang?: string;
@@ -32,11 +90,20 @@ interface WikiLayoutProps {
   supportedLanguages?: string[];
   /** Called when the user picks a different language from the regenerate menu. */
   onRegenerateInLang?: (lang: string) => void;
+  /**
+   * Controlled open state for the version history panel.
+   * When provided, the layout uses this value instead of its own internal state.
+   */
+  versionHistoryOpen?: boolean;
+  /** Called when the user requests to toggle the version history panel. */
+  onVersionHistoryToggle?: () => void;
 }
 
-const MIN_WIDTH = 180;
-const MAX_WIDTH = 400;
-const DEFAULT_WIDTH = 240;
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 460;
+// Bumped to 320 so multi-level folder trees + 2-line wrapped titles
+// have enough horizontal room before the resize handle has to be used.
+const DEFAULT_WIDTH = 320;
 const SEARCH_MARK_ATTR = "data-wiki-search-mark";
 
 function clearSearchHighlights(root: HTMLElement | null) {
@@ -233,30 +300,54 @@ function WikiContentSearch({ contentRef, lang }: WikiContentSearchProps) {
 }
 
 export function WikiLayout({
-  channelId,
+  // ``channelId`` and ``versionCount`` remain in ``WikiLayoutProps`` for
+  // callers (the parent passes them and we want a stable prop API), but
+  // the layout no longer uses them directly — Download / History moved
+  // out of the sidebar footer into the Tools dropdown owned by
+  // ``WikiHealthToolbar`` (commit that simplified the wiki UX).
   structure,
   activePage,
   onNavigate,
   onRefresh,
   isRefreshing,
   children,
-  versionCount = 0,
   versions = [],
   isVersionsLoading = false,
   viewingVersionNumber = null,
   onSelectVersion,
   onBackToCurrent,
   headerExtra,
+  viewToggle,
+  headerExplainer,
   currentLang,
   supportedLanguages,
   onRegenerateInLang,
+  versionHistoryOpen,
+  onVersionHistoryToggle,
 }: WikiLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
-  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [internalVersionHistoryOpen, setInternalVersionHistoryOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // Support both controlled (versionHistoryOpen prop) and uncontrolled mode
+  const showVersionHistory = versionHistoryOpen !== undefined ? versionHistoryOpen : internalVersionHistoryOpen;
+  const handleVersionHistoryToggle = onVersionHistoryToggle ?? (() => setInternalVersionHistoryOpen((v) => !v));
   const isDragging = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const searchableContentRef = useRef<HTMLDivElement>(null);
+
+  // Narrative TOC sections come from the active page's narrative
+  // payload (page-level field or ``narrative_article`` module data).
+  // When ≥3 sections exist the sticky TOC mounts in the right rail
+  // and ``WikiTableOfContents`` is suppressed (the article body has
+  // ``data-toc-skip`` so the existing TOC wouldn't list narrative
+  // headings anyway, but suppressing the legacy fallback keeps the
+  // rail focused on the article structure).
+  const narrativeTocSections = useMemo(
+    () => extractNarrativeTocSections(activePage),
+    [activePage],
+  );
+  const hasNarrativeToc = narrativeTocSections.length >= 3;
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -301,33 +392,51 @@ export function WikiLayout({
         }`}
         style={{ ["--wiki-sidebar-w" as string]: `${sidebarWidth}px` }}
       >
-        <div className="p-4 pb-2 shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <h3 className="text-sm font-semibold text-foreground truncate">{wikiT(currentLang, "wiki")}</h3>
-              {currentLang && (
-                <span
-                  className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
-                  title={`Displaying wiki in ${currentLang.toUpperCase()}`}
-                >
-                  {currentLang.toUpperCase()}
-                </span>
-              )}
+        <div className="px-3 pt-3 pb-2 shrink-0 space-y-2">
+          {/* Row 1 — primary view toggle (Pages | Graph) goes full-width
+              at the top so it reads as the main sub-navigation. */}
+          {viewToggle && (
+            <div className="[&>div]:!w-full [&_button]:!flex-1 [&_button]:!justify-center">
+              {viewToggle}
             </div>
-            {headerExtra}
+          )}
+
+          {/* Row 2 — meta only: small WIKI label + lang chip + freshness
+              pill. No action buttons on this row — they were overflowing
+              the 270px sidebar when packed alongside the meta. */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/65 shrink-0">
+              {wikiT(currentLang, "wiki")}
+            </h3>
+            {headerExplainer}
+            {currentLang && (
+              <span
+                className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                title={`Displaying wiki in ${currentLang.toUpperCase()}`}
+              >
+                {currentLang.toUpperCase()}
+              </span>
+            )}
+            <FreshnessBadge
+              isStale={structure.is_stale}
+              generatedAt={structure.generated_at}
+              onRefresh={onRefresh}
+              isRefreshing={isRefreshing}
+              showRefreshButton={false}
+              className="!text-[10px] !px-1.5 !py-0.5 ml-auto"
+              lang={currentLang}
+            />
           </div>
-          <FreshnessBadge
-            isStale={structure.is_stale}
-            generatedAt={structure.generated_at}
-            onRefresh={onRefresh}
-            isRefreshing={isRefreshing}
-            showRefreshButton={false}
-            className="mt-2"
+
+          {/* Row 3 — page search. The action toolbar (Tools dropdown)
+              moved to the sidebar footer so the header is now purely
+              nav + meta + search; actions live alongside Regenerate at
+              the bottom where the eye expects primary CTAs. */}
+          <WikiContentSearch
+            key={activePage.id}
+            contentRef={searchableContentRef}
             lang={currentLang}
           />
-          <div className="mt-2">
-            <WikiContentSearch key={activePage.id} contentRef={searchableContentRef} lang={currentLang} />
-          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <WikiSidebar
@@ -340,67 +449,32 @@ export function WikiLayout({
             lang={currentLang}
           />
         </div>
-        <div className="shrink-0 border-t border-border/70 p-3 space-y-2">
-          {/* Primary action: Regenerate (with language picker). */}
-          {currentLang && supportedLanguages && onRegenerateInLang && (
-            <WikiRegenerateButton
-              currentLang={currentLang}
-              supportedLanguages={supportedLanguages}
-              isRefreshing={isRefreshing}
-              onRegenerate={onRefresh}
-              onRegenerateInLang={onRegenerateInLang}
-              size="md"
-              fullWidth
-              lang={currentLang}
-            />
-          )}
-          {/* Secondary actions: Download + Version History. */}
-          <div className="flex gap-1.5">
-            <button
-              onClick={async () => {
-                try {
-                  const res = await authFetch(`${API_BASE}/api/channels/${channelId}/wiki/download`);
-                  if (!res.ok) {
-                    console.error("[wiki] download failed", res.status);
-                    alert(`Download failed (${res.status})`);
-                    return;
-                  }
-                  const blob = await res.blob();
-                  const disposition = res.headers.get("Content-Disposition") || "";
-                  const nameMatch = disposition.match(/filename[^;=\n]*=["']?([^"';\n]+)/);
-                  const filename = nameMatch ? nameMatch[1].trim() : `${channelId}-wiki.md`;
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = filename;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch (err) {
-                  console.error("[wiki] download error", err);
-                  alert("Download failed. Please try again.");
-                }
-              }}
-              className="flex items-center justify-center gap-1.5 flex-1 rounded-md px-3 py-1.5 text-xs font-medium border border-border/50 bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title="Download as Markdown"
-            >
-              <Download className="h-3.5 w-3.5" />
-              {wikiT(currentLang, "download")}
-            </button>
-            <button
-              onClick={() => setShowVersionHistory(!showVersionHistory)}
-              disabled={versionCount === 0}
-              className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium border transition-colors ${
-                showVersionHistory
-                  ? "border-primary/30 bg-primary/10 text-primary"
-                  : "border-border/50 bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"
-              } disabled:opacity-40 disabled:cursor-not-allowed`}
-              title={versionCount === 0 ? "No previous versions" : `${versionCount} previous version${versionCount !== 1 ? "s" : ""}`}
-            >
-              <History className="h-3.5 w-3.5" />
-              {versionCount > 0 && (
-                <span className="tabular-nums">{versionCount}</span>
-              )}
-            </button>
+        <div className="shrink-0 border-t border-border/70 p-3">
+          {/* Footer action zone:
+              - Regenerate (primary, flexes to fill)
+              - Tools (secondary, square icon button via headerExtra)
+              Tooltips inside the toolbar are clamped so they don't
+              bleed into the main content area to the right. */}
+          <div className="flex items-stretch gap-2 [&_[role=tooltip]]:!max-w-[200px]">
+            {currentLang && supportedLanguages && onRegenerateInLang && (
+              <div className="flex-1 min-w-0">
+                <WikiRegenerateButton
+                  currentLang={currentLang}
+                  supportedLanguages={supportedLanguages}
+                  isRefreshing={isRefreshing}
+                  onRegenerate={onRefresh}
+                  onRegenerateInLang={onRegenerateInLang}
+                  size="md"
+                  fullWidth
+                  lang={currentLang}
+                />
+              </div>
+            )}
+            {headerExtra && (
+              <div className="shrink-0 flex items-center">
+                {headerExtra}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -418,7 +492,7 @@ export function WikiLayout({
             onBackToCurrent={() => {
               onBackToCurrent?.();
             }}
-            onClose={() => setShowVersionHistory(false)}
+            onClose={handleVersionHistoryToggle}
             lang={currentLang}
           />
         </div>
@@ -449,10 +523,22 @@ export function WikiLayout({
         </div>
       </div>
 
-      {/* Right TOC Sidebar */}
+      {/* Right TOC Sidebar — when the active page has a multi-section
+          narrative article (≥3 sections), mount ``NarrativeTOC`` so
+          readers get a sticky table of contents tied to the article's
+          own anchors. The narrative article body is wrapped in
+          ``data-toc-skip`` so ``WikiTableOfContents`` already ignores
+          its headings; we still swap the rail entirely for narrative
+          pages because the heading-extraction TOC would be empty
+          anyway, and the narrative TOC carries semantically richer
+          labels (the planner's section headings, not raw H2 text). */}
       <div className="hidden xl:block w-48 shrink-0 overflow-y-auto">
         <div className="sticky top-0 px-4 py-8">
-          <WikiTableOfContents contentRef={contentRef} />
+          {hasNarrativeToc ? (
+            <NarrativeTOC sections={narrativeTocSections} />
+          ) : (
+            <WikiTableOfContents contentRef={contentRef} />
+          )}
         </div>
       </div>
     </div>

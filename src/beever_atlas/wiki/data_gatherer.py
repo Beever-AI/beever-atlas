@@ -5,7 +5,27 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from beever_atlas.capabilities.errors import WikiNotReadyError
+
 logger = logging.getLogger(__name__)
+
+# How long to wait for consolidation to catch up before giving up.
+# Wait up to this many seconds for ``channel_summary`` to appear before
+# raising WikiNotReadyError. The Tier-0 channel summary is produced by the
+# summarize_settled flow which fires AFTER consolidation completes — it
+# involves 4+ TopicSummaryResult LLM calls (~3-5s each) plus a final
+# ChannelSummaryResult call. On a fresh channel with 4 topics that's
+# typically 20-25s of LLM time. The previous 15s timeout fired BEFORE the
+# summarize chain finished, surfacing
+# ``WikiNotReadyError: Consolidation is still in progress`` to the
+# AutoOverviewSubscriber on every fresh sync. 60s comfortably covers the
+# 4-topic case and leaves headroom for slower LLMs / rate-limited paths.
+# The outer ``AutoOverviewSubscriber._GENERATION_TIMEOUT_SECONDS`` (600s)
+# still bounds the total wait, so a genuinely stuck consolidation still
+# fails the wiki build, just with more useful slack on the happy path.
+_CONSOLIDATION_WAIT_SECONDS = 60
+_CONSOLIDATION_POLL_INTERVAL = 0.5
+_CONSOLIDATION_POLL_STEPS = int(_CONSOLIDATION_WAIT_SECONDS / _CONSOLIDATION_POLL_INTERVAL)  # 30
 
 
 class WikiDataGatherer:
@@ -42,7 +62,27 @@ class WikiDataGatherer:
         )
 
         if channel_summary is None:
-            raise ValueError("Channel has no consolidated data")
+            # channel_summary is the Tier-0 consolidated row. If it is absent,
+            # consolidation may still be running (e.g. recovering from a 503).
+            # Wait up to 15 s for it to appear before raising.
+            for _ in range(_CONSOLIDATION_POLL_STEPS):
+                await asyncio.sleep(_CONSOLIDATION_POLL_INTERVAL)
+                # Re-check clusters and channel summary together so we can also
+                # detect "never consolidated" (zero clusters) quickly.
+                _clusters_check = await self._weaviate.list_clusters(channel_id)
+                if not _clusters_check:
+                    # No clusters at all — channel has never been consolidated.
+                    raise WikiNotReadyError(
+                        "Channel has not been consolidated yet. Run a sync first."
+                    )
+                channel_summary = await self._weaviate.get_channel_summary(channel_id)
+                if channel_summary is not None:
+                    clusters = _clusters_check
+                    break
+            else:
+                raise WikiNotReadyError(
+                    "Consolidation is still in progress. Retry in a few seconds."
+                )
 
         # Fetch cluster members in parallel
         cluster_facts: dict = {}

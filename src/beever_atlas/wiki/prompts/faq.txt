@@ -1,0 +1,43 @@
+SYSTEM — FAQ page synthesis.
+
+You are rewriting the FAQ page — Q/A pairs only. The reader's question
+is "someone asked this; what's the canonical answer for next time?".
+
+Your job:
+  1. Each NEW FACT classified as a question becomes one Q/A entry. If
+     the answer is not yet known, leave `answer="(open)"` rather than
+     fabricating one.
+  2. When a duplicate question already exists, update its existing
+     answer in place — do not append a near-duplicate Q/A pair.
+  3. Match `voice_seed` for the prose intro; the Q/A list itself is
+     terse.
+  4. Use `[[Page Title]]` in answers to point to canonical docs.
+  5. Keep section ids stable. The page's primary section "faq" carries
+     a short prose intro; the actual Q/A list lives in
+     `kind_schema.qas`.
+
+Output format — ONE JSON object, no prose:
+
+  {
+    "affected_sections": [
+      { "id": "faq",
+        "title": "FAQ",
+        "content_md": "<short prose intro — 1-2 sentences>" }
+    ],
+    "kind_schema": {
+      "qas": [
+        {
+          "question":     "<verbatim question>",
+          "answer":       "<canonical answer, or '(open)' when unknown>",
+          "asked_at":     "<ISO-8601 date or 'not stated'>",
+          "source_pages": ["<related page title>", …]
+        },
+        …
+      ]
+    },
+    "reason": "<one sentence — what this rewrite changed and why>"
+  }
+
+Order `kind_schema.qas` by `asked_at` newest-first when known; preserve
+insertion order otherwise. NEVER drop an existing Q/A pair — only update
+or append.

@@ -31,6 +31,36 @@ ALLOWED_HOSTS = {
 
 SLACK_HOSTS = {"files.slack.com", "slack-files.com"}
 
+# Runtime-registered hosts derived from active ``PlatformConnection``
+# records. Mirrors ``infra.http_safe._runtime_hosts`` for the
+# ``/api/media/proxy`` route. Mutated through ``register_runtime_media_hosts``
+# so a UI-configured Mattermost server is automatically allow-listed
+# without requiring an env var.
+_RUNTIME_HOSTS: frozenset[str] = frozenset()
+
+
+def register_runtime_media_hosts(hosts: "set[str] | frozenset[str]") -> None:
+    """Replace the runtime media-proxy host set. Called from server
+    lifespan / connection CRUD paths after deriving the hostnames from
+    the configured connections."""
+    global _RUNTIME_HOSTS
+    _RUNTIME_HOSTS = frozenset(h.strip().lower() for h in hosts if h and h.strip())
+
+
+def clear_runtime_media_hosts() -> None:
+    """Reset runtime media hosts. Used by tests for isolation."""
+    global _RUNTIME_HOSTS
+    _RUNTIME_HOSTS = frozenset()
+
+
+def effective_allowed_hosts() -> frozenset[str]:
+    """Static cloud-host allowlist plus runtime-registered hosts. The
+    ``/api/media/proxy`` handler MUST go through this rather than the
+    raw ``ALLOWED_HOSTS`` set so self-hosted platform connections work
+    end-to-end."""
+    return frozenset(ALLOWED_HOSTS) | _RUNTIME_HOSTS
+
+
 # httpx client lifetime: one per process. Connection pooling + HTTP/2.
 _client: httpx.AsyncClient | None = None
 

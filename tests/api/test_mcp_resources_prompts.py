@@ -132,7 +132,12 @@ def test_prompts_list_returns_three_names():
 
 
 def test_tool_count_still_thirteen_after_resources_and_prompts():
-    """Adding resources + prompts must not change the tool count (stays at 13)."""
+    """Adding resources + prompts must not change the registered-tool set.
+
+    (Function name kept for git-blame continuity; the actual count grew
+    to 19 in the production-wiring change when search_memory + lint_wiki
+    + get_extraction_status were added.)
+    """
     from tests.api.test_mcp_tools_registry import _tool_names, EXPECTED_TOOLS
 
     mcp = build_mcp()
@@ -168,6 +173,78 @@ async def test_wiki_index_resource_returns_structured_error_on_access_denied():
 
     assert result.get("error") == "channel_access_denied"
     assert result.get("channel_id") == "ch-denied"
+
+
+@pytest.mark.asyncio
+async def test_wiki_index_resource_returns_real_per_page_index_when_flag_on():
+    """Production-wiring §16.8: PER_PAGE_WIKI=ON with pages returns a real
+    per-page index (NOT the legacy stub). Each page contributes the keys
+    documented in the spec: ``page_id, title, version, is_dirty,
+    tensions_count, updated_at``."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    fake_pages = [
+        SimpleNamespace(
+            page_id="topic:auth",
+            title="Authentication",
+            version=3,
+            is_dirty=False,
+            tensions=[{"fact_id": "f1", "contradicts_fact_id": "f2", "summary": "x"}],
+            updated_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        ),
+        SimpleNamespace(
+            page_id="topic:billing",
+            title="Billing",
+            version=1,
+            is_dirty=True,
+            tensions=[],
+            updated_at=datetime(2026, 5, 1, 12, 5, tzinfo=UTC),
+        ),
+    ]
+
+    fake_settings = MagicMock()
+    fake_settings.per_page_wiki = True
+
+    fake_stores = MagicMock()
+    fake_stores.mongodb.db = MagicMock()
+
+    fake_page_store = MagicMock()
+    fake_page_store.list_pages = AsyncMock(return_value=fake_pages)
+
+    mcp = build_mcp()
+    fn = _get_resource_fn(mcp, "atlas://channel/{channel_id}/wiki")
+
+    with (
+        _patch_principal("mcp:testhash"),
+        patch(
+            "beever_atlas.infra.config.get_settings",
+            return_value=fake_settings,
+        ),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=fake_stores),
+        patch(
+            "beever_atlas.wiki.page_store.WikiPageStore",
+            return_value=fake_page_store,
+        ),
+    ):
+        result = await fn(channel_id="ch-a")
+
+    assert result["channel_id"] == "ch-a"
+    assert result["page_count"] == 2
+    assert result["stub"] is False
+    assert {p["page_id"] for p in result["pages"]} == {"topic:auth", "topic:billing"}
+    auth_page = next(p for p in result["pages"] if p["page_id"] == "topic:auth")
+    assert auth_page["title"] == "Authentication"
+    assert auth_page["version"] == 3
+    assert auth_page["is_dirty"] is False
+    assert auth_page["tensions_count"] == 1
+    assert auth_page["updated_at"].startswith("2026-05-01T12:00")
+    # The newest updated_at across the pages becomes maintainer_last_run_ts
+    assert result["maintainer_last_run_ts"].startswith("2026-05-01T12:05")
 
 
 @pytest.mark.asyncio

@@ -555,34 +555,57 @@ async def commit_import(
             selected_channels=list(file_conn.selected_channels) + [channel_id],
         )
 
-    # Persist raw messages so the Messages tab can render them. Platform
-    # channels re-fetch from the bridge, but file channels have no upstream —
-    # we keep a copy in the imported_messages collection keyed by channel_id.
-    docs = [
-        {
-            "channel_id": channel_id,
-            "message_id": m.message_id,
-            "content": m.content,
-            "author": m.author,
-            "author_name": m.author_name,
-            "author_image": m.author_image,
-            "platform": "file",
-            "channel_name": channel_name,
-            "timestamp": m.timestamp,
-            "timestamp_iso": m.timestamp.isoformat(),
-            "thread_id": m.thread_id,
-            "attachments": m.attachments,
-            "reactions": m.reactions,
-            "reply_count": m.reply_count,
-        }
-        for m in messages
-    ]
-    await stores.mongodb.db["imported_messages"].delete_many({"channel_id": channel_id})
-    if docs:
-        await stores.mongodb.db["imported_messages"].insert_many(docs)
-    await stores.mongodb.db["imported_messages"].create_index(
-        [("channel_id", 1), ("timestamp", -1)]
-    )
+    # File-imports cutover. New uploads write unconditionally to
+    # ``channel_messages`` with ``source_id="file"`` (the durable home;
+    # the migration script seeds historical rows). The legacy
+    # ``imported_messages`` collection is also written when
+    # ``WRITE_DUAL_FILE_IMPORTS=True`` (default during the rollout soak) so
+    # rolling the read flag back is harmless. Once the read flag has been ON
+    # in production for one week with zero fallback logs, flip the dual-write
+    # OFF; once the soak is fully clean drop the legacy collection per the
+    # runbook.
+    from beever_atlas.services.sync_runner import _normalized_to_channel_messages
+
+    cm_rows = _normalized_to_channel_messages(messages)
+    if cm_rows:
+        try:
+            await stores.mongodb.upsert_channel_messages(cm_rows)
+        except Exception as exc:  # noqa: BLE001 — logged but non-fatal
+            # Best-effort write — file imports remain usable via the legacy
+            # collection during the migration window. A future close-out
+            # step tightens this to a hard error once dual-write goes off.
+            logger.warning(
+                "imports: channel_messages upsert failed for channel=%s err=%s",
+                channel_id,
+                exc,
+            )
+
+    if settings.write_dual_file_imports:
+        docs = [
+            {
+                "channel_id": channel_id,
+                "message_id": m.message_id,
+                "content": m.content,
+                "author": m.author,
+                "author_name": m.author_name,
+                "author_image": m.author_image,
+                "platform": "file",
+                "channel_name": channel_name,
+                "timestamp": m.timestamp,
+                "timestamp_iso": m.timestamp.isoformat(),
+                "thread_id": m.thread_id,
+                "attachments": m.attachments,
+                "reactions": m.reactions,
+                "reply_count": m.reply_count,
+            }
+            for m in messages
+        ]
+        await stores.mongodb.db["imported_messages"].delete_many({"channel_id": channel_id})
+        if docs:
+            await stores.mongodb.db["imported_messages"].insert_many(docs)
+        await stores.mongodb.db["imported_messages"].create_index(
+            [("channel_id", 1), ("timestamp", -1)]
+        )
 
     # Log the channel's display name up front so get_channel_display_name
     # resolves correctly even before ingestion finishes.

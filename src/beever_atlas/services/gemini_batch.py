@@ -4,6 +4,16 @@ Wraps the ``google.genai`` SDK's batch API to submit, poll, and parse
 large-scale inference jobs without blocking the event loop.
 
 Supports both inline requests (<20 MB) and file-based uploads (>=20 MB).
+
+DOCUMENTED EXCEPTION — agent-llm-provider-pluggable design D8 / D10.
+This module is the **only** completion call site in Beever Atlas that does NOT
+flow through ``services.llm_dispatch.dispatch_completion`` + LiteLLM. It uses
+``google.genai.Client.batches.create`` directly because LiteLLM has no
+equivalent primitive for the Vertex / Gemini batch API, which is the path that
+yields the 50% cost discount + 24h SLA. Every other completion call site is
+mandated to go through ``dispatch_completion``. If you are adding a new direct
+``genai.Client`` / ``litellm.acompletion`` / native-provider-SDK call site,
+STOP — it almost certainly belongs in ``dispatch_completion`` instead.
 """
 
 from __future__ import annotations

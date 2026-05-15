@@ -2,15 +2,37 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AtomicFact(BaseModel):
     """A single extracted fact stored in Weaviate (Tier 2)."""
+
+    # Coerce ``None`` to empty string for plain-``str`` fields below.
+    # The LLM occasionally emits ``null`` for ``thread_context_summary``
+    # and a few other narrative fields; without this validator Pydantic
+    # raises ``Input should be a valid string`` which the BatchProcessor
+    # retry classifier treated as transient — wasting up to 11 minutes
+    # per occurrence in the 5/30/90/180/360s backoff schedule (observed
+    # in production logs 2026-05-11). Validation errors against
+    # deterministic LLM output should fail fast OR coerce; we coerce.
+    @field_validator(
+        "thread_context_summary",
+        "derived_from",
+        "source_media_url",
+        "source_media_type",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_null_to_empty(cls, v: Any) -> Any:
+        if v is None:
+            return ""
+        return v
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     memory_text: str
@@ -49,13 +71,82 @@ class AtomicFact(BaseModel):
         ""  # Provenance marker, e.g. "heuristic_word_overlap" for low-confidence attribution
     )
 
+    # Phase 3 extraction enrichment — additive, all optional with safe
+    # defaults so pre-Phase-3 documents deserialize cleanly without
+    # migration. The fact extractor prompt populates these fields when
+    # applicable; consumers (decision_banner, stat_strip, acronym_legend)
+    # fall back to legacy behavior when fields are empty/null.
+    rationale: str | None = None
+    """For ``fact_type == "decision"``: the 'because' justification —
+    a single sentence explaining WHY the decision was made. Null when
+    the source message did not include explicit justification."""
+
+    alternatives_considered: list[str] = Field(default_factory=list)
+    """For ``fact_type == "decision"``: alternative options that were
+    weighed and rejected. Each item is a 1-line description.
+    Empty list when no alternatives were discussed in the source."""
+
+    consequences_open: list[str] = Field(default_factory=list)
+    """For ``fact_type == "decision"``: open questions raised about
+    downstream effects of this decision. Each item is a 1-line
+    question. Empty list when no consequences surfaced."""
+
+    numeric_values: list[dict] = Field(default_factory=list)
+    """Structured numeric extractions: each item is a dict with
+    keys: ``label`` (str), ``value`` (str — display form, e.g. "2,396"),
+    ``raw_value`` (int|float — for sorting/trends), ``unit`` (str|None).
+    Surfaced via ``stat_strip``; falls back to regex when empty."""
+
+    sentiment: str | None = None
+    """For ``fact_type in {"opinion", "recommendation"}``: one of
+    ``"neutral" | "concerning" | "positive" | "recommendation"``.
+    Null for non-opinion facts. Surfaced via ``quote_highlights`` color."""
+
+    glossary_terms: list[str] = Field(default_factory=list)
+    """Acronyms (≥3 uppercase letters) or known domain terms that
+    appear in this fact's body. Used by ``acronym_legend`` to filter
+    the channel glossary to terms actually used. Empty list when no
+    terms detected."""
+
+    # Phase 4 tension detection — additive, optional, default-safe.
+    # Populated at wiki compile time (not extraction time); existing
+    # facts deserialize cleanly without these fields.
+    tension_id: str | None = None
+    """Stable identifier shared by 2+ facts that contradict each other.
+    Format: ``"t_" + 8-char hash``. None when the fact is not part of
+    a detected tension. Surfaced via ``tension_callout`` module."""
+
+    contradicts_fact_id: str | None = None
+    """When this fact is paired with a tension partner, points to the
+    specific other fact's id. Surfaced as a cross-link in the tension
+    callout's positions list."""
+
     @staticmethod
-    def deterministic_id(
-        platform: str, channel_id: str, message_ts: str, fact_index: int = 0
-    ) -> str:
-        """Generate a deterministic UUID for idempotent upserts."""
+    def deterministic_id(memory_text: str, entity_names: list[str]) -> str:
+        """Generate a content-derived deterministic UUID for idempotent upserts.
+
+        Switched from a position-based key
+        (``platform:channel_id:message_ts:fact_index``) to a content-derived
+        hash. The position-based key shifted whenever the LLM produced facts
+        in a different order or count on retry, causing phantom Weaviate
+        duplicates. The content hash is stable across reorderings and partial
+        failures.
+
+        The same fact text + same entity set yields the same UUID; subtly
+        different text or a different entity set yields a different UUID.
+        Empty ``entity_names`` is permitted (some fact_types like
+        ``"observation"`` may extract zero entities).
+
+        Separator: ``\\x00`` (null byte). Pipe characters can legitimately
+        appear in LLM-extracted memory_text (\"option A | option B\"), which
+        would alias with the entity join separator and create deterministic
+        collisions across unrelated facts. Null bytes cannot appear in
+        natural-language text, so they are an unambiguous separator.
+        """
         namespace = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-        return str(uuid.uuid5(namespace, f"{platform}:{channel_id}:{message_ts}:{fact_index}"))
+        normalized_entities = "\x00".join(sorted(str(n) for n in entity_names))
+        digest = hashlib.sha256(f"{memory_text}\x00{normalized_entities}".encode()).hexdigest()[:16]
+        return str(uuid.uuid5(namespace, digest))
 
 
 class GraphEntity(BaseModel):
@@ -136,6 +227,12 @@ class TopicCluster(BaseModel):
     staleness_score: float = 0.0  # 0.0=fresh, 1.0=very stale
     status: str = "active"  # "active", "completed", "stale"
     fact_type_counts: dict[str, int] = Field(default_factory=dict)  # {"decision": N, ...}
+    # Summary freshness signal — flips True whenever ``_incremental_cluster``
+    # adds new members (membership delta), flips False after a successful
+    # ``_summarize_one`` run. ``_select_clusters_needing_summary`` filters
+    # on this so re-firing ``memory_settled`` with no intervening membership
+    # changes is a cheap no-op (idempotency contract).
+    summary_dirty: bool = True
     # Wiki-ready enrichment fields
     key_facts: list[dict[str, Any]] = Field(default_factory=list)
     # [{"fact_id", "memory_text", "author_name", "message_ts", "fact_type", "importance", "quality_score", "source_message_id"}]
@@ -197,6 +294,9 @@ class WikiCitation(BaseModel):
     """A source citation for a wiki page fact."""
 
     id: str  # "[1]", "[2]", etc.
+    fact_id: str = ""  # The underlying AtomicFact.id (e.g., "f_abc123") so
+    # narrative inline-citation chips can resolve hover-popover content by
+    # the fact_id markers the v3 prompt embeds in paragraph text.
     author: str = ""
     channel: str = ""
     timestamp: str = ""
@@ -217,20 +317,62 @@ class WikiPageRef(BaseModel):
 
 
 class WikiPage(BaseModel):
-    """A single wiki page with enhanced Markdown content."""
+    """A single wiki page with enhanced Markdown content.
 
-    id: str  # "overview", "people", "topic-authentication", "topic-auth--jwt-migration"
+    ``page_type`` accepts ``"fixed"`` | ``"topic"`` | ``"sub-topic"`` |
+    ``"folder"``. Folder pages are first-class wiki pages produced by
+    the structure planner (``llm-wiki-folder-structure`` change) — they
+    have their own synthesized index content AND a ``children`` list
+    of immediate descendants. ``children_fingerprint`` lets the
+    compiler/maintainer skip redundant folder-index re-synthesis when
+    the child set is unchanged.
+    """
+
+    id: str  # "overview", "people", "topic-authentication", "topic-auth--jwt-migration", "folder-security"
     slug: str
     title: str
-    page_type: str = "fixed"  # "fixed" | "topic" | "sub-topic"
+    page_type: str = "fixed"  # "fixed" | "topic" | "sub-topic" | "folder"
     parent_id: str | None = None
-    section_number: str = ""  # "1", "2.1", "2.1.1"
+    section_number: str = ""  # "1", "2.1", "2.1.1", "2.1.1.1" (arbitrary-depth path)
     content: str = ""  # Enhanced Markdown (mermaid/chart/callout/media blocks)
     summary: str = ""  # 1-2 sentence summary for cards/tooltips
     memory_count: int = 0
     last_updated: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     citations: list[WikiCitation] = Field(default_factory=list)
     children: list[WikiPageRef] = Field(default_factory=list)
+
+    # Folder-only metadata. Both default-None on non-folder pages so the
+    # JSON shape stays compact for leaves (Pydantic's default
+    # ``model_dump`` includes None fields, but the persistence layer
+    # filters those out before write — see WikiPageStore.save_page).
+    children_fingerprint: str | None = None
+    is_synthetic: bool = False
+
+    # Adaptive page module plan (``adaptive-wiki-page-content`` change).
+    # Each entry is at minimum ``{"id": str, "anchor": str}`` with an
+    # optional ``"data": dict`` payload the maintainer reads for
+    # surgical patching. Empty list = legacy page; renderer falls back
+    # to the single-template flow over ``content``.
+    modules: list[dict[str, Any]] = Field(default_factory=list)
+
+    # ``wiki-narrative-articles`` — multi-section narrative article
+    # body produced by the v3 ``MODULE_COMPILE_PROMPT_V3``. Each entry
+    # is ``{anchor, heading, paragraphs: [{text, citations[],
+    # is_inference}], citations[], visual: dict | None,
+    # citation_coverage: float}``. Mirrors ``persistence.WikiPage.
+    # narrative_sections`` so the domain → ``model_dump`` →
+    # ``wiki_cache`` round-trip carries the field through to the per-
+    # page store. Empty list means the page predates narrative
+    # generation OR the validator rejected the LLM output and the
+    # page falls back to module-only rendering.
+    narrative_sections: list[dict[str, Any]] = Field(default_factory=list)
+
+    @property
+    def is_folder(self) -> bool:
+        """True when this page is a structure-planner folder (or
+        hand-curated folder, future). Convenience for compile/render
+        dispatch — keeps callers from string-comparing ``page_type``."""
+        return self.page_type == "folder"
 
 
 class WikiPageNode(BaseModel):
@@ -240,9 +382,15 @@ class WikiPageNode(BaseModel):
     title: str
     slug: str
     section_number: str
-    page_type: str = "fixed"  # "fixed" | "topic" | "sub-topic"
+    page_type: str = "fixed"  # "fixed" | "topic" | "sub-topic" | "folder"
     memory_count: int = 0
     children: list["WikiPageNode"] = Field(default_factory=list)
+    is_synthetic: bool = False
+    # Optional one-line summary (1-2 sentences) used by the Overview's
+    # topic-card grid so each card can show a brief description without
+    # the user having to click through. Populated by the structure
+    # serialiser from the corresponding WikiPage.summary field.
+    summary: str = ""
 
 
 class WikiStructure(BaseModel):

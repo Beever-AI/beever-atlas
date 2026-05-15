@@ -57,9 +57,12 @@ export function GraphFilters({ entityTypes, selected, onChange }: GraphFiltersPr
   }
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-background">
-      <span className="text-xs font-medium text-muted-foreground shrink-0">
-        Filter:
+    // No outer border or background — the parent header strip in
+    // ``MemoryGraphView`` owns the chrome. Filters sit as a quiet
+    // secondary row beneath the primary view-toggle.
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 shrink-0">
+        Show
       </span>
       <div className="flex flex-wrap gap-1.5">
         {entityTypes.map((type) => {
@@ -70,15 +73,15 @@ export function GraphFilters({ entityTypes, selected, onChange }: GraphFiltersPr
               key={type}
               onClick={() => toggle(type)}
               className={cn(
-                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors",
-                active ? colors.pillActive : colors.pill,
+                "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors",
+                active
+                  ? "border-border/70 text-foreground bg-muted"
+                  : "border-border/40 text-muted-foreground/70 bg-transparent hover:border-border hover:text-foreground",
               )}
             >
               <span
-                className={cn(
-                  "w-1.5 h-1.5 rounded-full",
-                  active ? "bg-white/80" : undefined,
-                )}
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: active ? colors.node : undefined }}
               />
               {type}
             </button>
@@ -88,7 +91,7 @@ export function GraphFilters({ entityTypes, selected, onChange }: GraphFiltersPr
       {selected.length < entityTypes.length && (
         <button
           onClick={() => onChange([...entityTypes])}
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
+          className="text-[11px] text-muted-foreground/70 hover:text-foreground transition-colors ml-1"
         >
           Show all
         </button>

@@ -102,8 +102,21 @@ class GraphStore(Protocol):
         """Insert or update a relationship.  Returns an opaque backend ID."""
         ...
 
-    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
-        """Upsert multiple relationships.  Returns opaque backend IDs."""
+    async def batch_upsert_relationships(
+        self,
+        rels: list[GraphRelationship],
+        *,
+        channel_id: str = "",
+        sync_job_id: str = "",
+        batch_idx: int | None = None,
+    ) -> list[str]:
+        """Upsert multiple relationships.  Returns opaque backend IDs.
+
+        ``channel_id``, ``sync_job_id``, and ``batch_idx`` are optional
+        per-batch context used by the Neo4j backend to attribute
+        stub-explosion metrics (PR-2). Backends that do not need them
+        may ignore.
+        """
         ...
 
     async def list_relationships(

@@ -66,6 +66,23 @@ class ServiceUnavailable(CapabilityError):
         self.service = service
 
 
+class WikiNotReadyError(CapabilityError):
+    """Wiki generation cannot proceed because consolidation has not completed yet.
+
+    Raised when:
+    - The channel has zero clusters (never consolidated) — callers should
+      prompt the user to run a sync first.
+    - The channel has clusters but fewer than 50% have summaries after the
+      consolidation wait window expires — callers should retry in a moment.
+
+    Maps to HTTP 503 at the API boundary so the frontend can surface a
+    user-friendly "retry in a moment" message rather than a generic failure.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 __all__ = [
     "CapabilityError",
     "ChannelAccessDenied",
@@ -73,4 +90,5 @@ __all__ = [
     "CooldownActive",
     "JobNotFound",
     "ServiceUnavailable",
+    "WikiNotReadyError",
 ]

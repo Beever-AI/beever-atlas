@@ -72,64 +72,25 @@ class EntityRegistry:
     # ------------------------------------------------------------------
 
     async def compute_name_embeddings_batch(self, names: list[str]) -> dict[str, list[float]]:
-        """Compute Jina embeddings for multiple entity names in a single API call.
+        """Compute embeddings for multiple entity names in one shim call.
 
-        Returns a dict mapping name -> embedding vector.
+        Returns a dict mapping ``name -> embedding vector``. Uses the
+        provider-agnostic shim so the configured ``EMBEDDING_PROVIDER`` /
+        ``EMBEDDING_MODEL`` flow through transparently.
         """
         if not names:
             return {}
-        from beever_atlas.infra.config import get_settings
-        from beever_atlas.infra.http_safe import safe_post
+        from beever_atlas.llm.embeddings import embed_texts
 
-        settings = get_settings()
-        resp = await safe_post(
-            settings.jina_api_url,
-            timeout=30.0,
-            headers={
-                "Authorization": f"Bearer {settings.jina_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.jina_model,
-                "input": names,
-                "dimensions": settings.jina_dimensions,
-                "task": "text-matching",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        result: dict[str, list[float]] = {}
-        for i, item in enumerate(data["data"]):
-            if i < len(names):
-                result[names[i]] = item["embedding"]
-        return result
+        vectors = await embed_texts(names)
+        return {name: vec for name, vec in zip(names, vectors, strict=True)}
 
     async def compute_name_embedding(self, name: str) -> list[float]:
-        """Compute a Jina embedding for an entity name.
+        """Compute an embedding for a single entity name."""
+        from beever_atlas.llm.embeddings import embed_texts
 
-        Returns the embedding vector.
-        """
-        from beever_atlas.infra.config import get_settings
-        from beever_atlas.infra.http_safe import safe_post
-
-        settings = get_settings()
-        resp = await safe_post(
-            settings.jina_api_url,
-            timeout=15.0,
-            headers={
-                "Authorization": f"Bearer {settings.jina_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.jina_model,
-                "input": [name],
-                "dimensions": settings.jina_dimensions,
-                "task": "text-matching",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["data"][0]["embedding"]
+        vectors = await embed_texts([name])
+        return vectors[0]
 
     async def find_similar_by_embedding(
         self,
@@ -167,6 +128,13 @@ class EntityRegistry:
     async def store_name_vector(self, entity_name: str, vector: list[float]) -> None:
         """Cache a name embedding vector on a graph Entity node."""
         await self._graph.store_name_vector(entity_name, vector)
+
+    async def batch_store_name_vectors(self, items: list[tuple[str, list[float]]]) -> int:
+        """Write name-embedding vectors for multiple entities in one Cypher call.
+
+        Delegates to the underlying graph store. Returns the number of items submitted.
+        """
+        return await self._graph.batch_store_name_vectors(items)
 
     def is_merge_rejected(self, name_a: str, name_b: str) -> bool:
         """Check if a merge pair was previously rejected."""

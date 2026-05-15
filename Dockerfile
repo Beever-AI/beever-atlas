@@ -8,6 +8,22 @@ WORKDIR /app
 # Copy dependency files first for layer caching
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
+# Runtime imports from ``scripts/`` — keep this list minimal to limit the
+# in-image attack surface (only the modules the running server imports
+# should ship). Two paths import from ``scripts.*`` today:
+#   1. ``server/app.py`` -> ``scripts.migrate_to_endpoint_catalog`` —
+#      idempotent Endpoint+Assignment seeding shim (the bridge between
+#      ``.env`` and the DB-as-source-of-truth model). Without this, the
+#      first-boot migration silently fails with ModuleNotFoundError and
+#      the operator's UI surfaces an empty Endpoint catalog.
+#   2. ``services/embedding_migration_job.py`` -> ``scripts.reembed_facts``
+#      — the re-embed worker used when an operator switches the embedding
+#      Endpoint to a new dimension.
+# When adding any other ``scripts.*`` runtime import, EXTEND THIS COPY
+# rather than reverting to ``COPY scripts/ scripts/`` — the latter ships
+# 600+ KB of dev-only tooling (dry runs, benchmarks, smoke tests) that
+# expand attack surface for no runtime benefit.
+COPY scripts/__init__.py scripts/migrate_to_endpoint_catalog.py scripts/reembed_facts.py scripts/
 
 # Install dependencies into a virtual env using the lockfile
 RUN uv sync --frozen --no-dev
@@ -28,6 +44,10 @@ RUN addgroup --system --gid 10001 app && \
 # Copy the built venv and source from builder, owned by `app`.
 COPY --chown=app:app --from=builder /app/.venv /app/.venv
 COPY --chown=app:app --from=builder /app/src /app/src
+# Mirrors the selective builder-stage COPY above — only modules the
+# running server imports from ``scripts.*``. See builder COPY comment
+# for the canonical list and why minimising matters.
+COPY --chown=app:app --from=builder /app/scripts /app/scripts
 COPY --chown=app:app --from=builder /app/pyproject.toml /app/pyproject.toml
 
 # Ensure the venv is on PATH

@@ -73,13 +73,6 @@ async def _call_llm_mapper(
 ) -> LLMColumnMapping | None:
     """Invoke Gemini (via google.genai) in JSON mode. Returns None on any error."""
     try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        logger.warning("csv_mapper: google-genai not available, skipping LLM step")
-        return None
-
-    try:
         from beever_atlas.llm import get_llm_provider
 
         model_name = model or get_llm_provider().get_model_string("csv_mapper")
@@ -88,19 +81,23 @@ async def _call_llm_mapper(
 
     user_prompt = build_user_prompt(filename, headers, samples)
     try:
-        client = genai.Client()
-        response = await client.aio.models.generate_content(
-            model=model_name,
-            contents=[
-                {"role": "user", "parts": [{"text": CSV_MAPPER_INSTRUCTION}]},
-                {"role": "user", "parts": [{"text": user_prompt}]},
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.0,
-            ),
+        from beever_atlas.services.llm_dispatch import (
+            dispatch_completion,
+            normalize_litellm_model,
+            sniff_provider,
         )
-        raw = (response.text or "").strip()
+
+        response = await dispatch_completion(
+            provider=sniff_provider(model_name),
+            model=normalize_litellm_model(model_name),
+            messages=[
+                {"role": "system", "content": CSV_MAPPER_INSTRUCTION},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        raw = (response.choices[0].message.content or "").strip()  # type: ignore[index, union-attr]
     except Exception as exc:
         logger.warning("csv_mapper: LLM call failed: %s", exc)
         return None

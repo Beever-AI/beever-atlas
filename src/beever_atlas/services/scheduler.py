@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from apscheduler import AsyncScheduler
-from apscheduler.datastores.mongodb import MongoDBDataStore
+from apscheduler.datastores.memory import MemoryDataStore
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -34,8 +34,23 @@ class SyncScheduler:
     """Manages scheduled sync and consolidation jobs via APScheduler 4.x."""
 
     def __init__(self, mongodb_uri: str) -> None:
+        # ``mongodb_uri`` is preserved on the constructor signature for
+        # backward compat with the lifespan call site, but the apscheduler
+        # data store is now in-memory. Why: the previous MongoDB-backed
+        # store tried to pickle bound-method callables (e.g.
+        # ``self._extraction_tick``) which carry references to live
+        # ``asyncio.Task`` objects — pickle can't serialize those, so EVERY
+        # ``add_schedule`` raised SerializationError, the lifespan caught it
+        # as "non-fatal", and the scheduler silently never registered any
+        # jobs (extraction worker never ticked, decoupled-extraction path
+        # was completely broken on every fresh boot).
+        # MemoryDataStore is the apscheduler default and is appropriate
+        # for OSS solo deploys: schedules are just periodic timers that
+        # re-register on every boot from ``startup()``; no replica
+        # coordination is needed. The actual queue state lives in
+        # ``channel_messages`` (Mongo), not in the scheduler.
         self._mongodb_uri = mongodb_uri
-        self._data_store = MongoDBDataStore(mongodb_uri, database="beever_atlas")
+        self._data_store = MemoryDataStore()
         self._scheduler = AsyncScheduler(data_store=self._data_store)
         self._global_semaphore: asyncio.Semaphore | None = None
         self._started = False
@@ -55,6 +70,18 @@ class SyncScheduler:
         defaults = await stores.mongodb.get_global_defaults()
         self._global_semaphore = asyncio.Semaphore(defaults.max_concurrent_syncs)
 
+        # Newer apscheduler requires the scheduler's async context to be
+        # entered BEFORE ``add_schedule`` is called — otherwise the calls
+        # raise "The scheduler has not been initialized yet". Order is:
+        #   1. enter ``__aenter__()`` so the data store + locks are live
+        #   2. register all schedules (sync, consolidation, extraction
+        #      worker tick/sweep)
+        # Earlier code did this in the opposite order and the entire
+        # scheduler startup silently failed via the non-fatal try/except
+        # in ``server/app.py`` lifespan, leaving the ExtractionWorker
+        # un-ticked and the redesign decoupled-extraction path broken.
+        await self._scheduler.__aenter__()
+
         # Load all channel policies and register jobs
         policies = await stores.mongodb.list_channel_policies()
         for policy in policies:
@@ -63,7 +90,20 @@ class SyncScheduler:
             await self._register_sync_job(policy.channel_id, policy)
             await self._register_consolidation_job(policy.channel_id, policy)
 
-        await self._scheduler.__aenter__()
+        # Register the background ExtractionWorker. Two periodic jobs:
+        # ``tick`` drains the pending queue, ``sweep_stale`` recovers rows
+        # stuck in "extracting" past the stale window. The worker singleton
+        # is registered so the WikiMaintainer (and admin endpoints) can
+        # subscribe to ``on_extraction_done`` without a constructor weave.
+        await self._register_extraction_worker_jobs()
+
+        # apscheduler 4 — ``__aenter__`` initialises the data store + locks,
+        # but does NOT start the job-runner loop. Without this call, schedules
+        # are stored but never fire. The previous codebase didn't call it
+        # because the older MongoDBDataStore variant did so internally; the
+        # MemoryDataStore swap exposed the gap.
+        await self._scheduler.start_in_background()
+
         self._started = True
         logger.info(
             "SyncScheduler: started with %d channel policies, max_concurrent_syncs=%d",
@@ -133,7 +173,6 @@ class SyncScheduler:
                 trigger,
                 id=f"sync:{channel_id}",
                 args=[channel_id],
-                max_running_jobs=1,
                 conflict_policy="do_nothing",
             )
             logger.info(
@@ -156,7 +195,6 @@ class SyncScheduler:
                     trigger,
                     id=f"sync:{channel_id}",
                     args=[channel_id],
-                    max_running_jobs=1,
                     conflict_policy="do_nothing",
                 )
                 logger.info(
@@ -192,7 +230,6 @@ class SyncScheduler:
                     trigger,
                     id=f"consolidate:{channel_id}",
                     args=[channel_id],
-                    max_running_jobs=1,
                     conflict_policy="do_nothing",
                 )
                 logger.info(
@@ -208,6 +245,88 @@ class SyncScheduler:
                 await self._scheduler.remove_schedule(job_id)
             except Exception:
                 pass  # Job may not exist
+
+    async def _register_extraction_worker_jobs(self) -> None:
+        """Register the global ExtractionWorker tick + sweep jobs.
+
+        The worker is process-wide (one instance, not per-channel) — its
+        atomic ``find_one_and_update`` claim is the safety primitive
+        that lets multiple worker replicas (future) drain the same
+        queue without double-processing. ``tick`` runs every
+        ``_TICK_SECONDS`` (30s), ``sweep_stale`` every half the
+        ``_STALE_SECONDS`` window. Both jobs short-circuit when there's
+        no work, so the Mongo cost when the queue is idle is one cheap
+        index probe per tick.
+
+        Tuning constants (`_TICK_SECONDS`, `_STALE_SECONDS`) live in
+        ``services/extraction_worker.py``, not in env vars — capacity
+        planning decisions should be tracked as code changes, not via
+        operator `.env` overrides.
+        """
+        from beever_atlas.services.extraction_worker import (
+            _STALE_SECONDS,
+            _TICK_SECONDS,
+            ExtractionWorker,
+            init_extraction_worker,
+        )
+
+        worker = ExtractionWorker(stale_seconds=_STALE_SECONDS)
+        init_extraction_worker(worker)
+
+        await self._scheduler.add_schedule(
+            self._extraction_tick,
+            IntervalTrigger(seconds=_TICK_SECONDS),
+            id="extraction:tick",
+            conflict_policy="do_nothing",
+        )
+        # Sweep interval is derived from the stale window so they stay
+        # in proportion. Floor at 60s so we don't hammer Mongo on a
+        # mis-configured tiny stale window.
+        sweep_interval = max(60, _STALE_SECONDS // 2)
+        await self._scheduler.add_schedule(
+            self._extraction_sweep,
+            IntervalTrigger(seconds=sweep_interval),
+            id="extraction:sweep",
+            conflict_policy="do_nothing",
+        )
+        logger.info(
+            "SyncScheduler: ExtractionWorker registered tick=%ds sweep=%ds stale=%ds",
+            _TICK_SECONDS,
+            sweep_interval,
+            _STALE_SECONDS,
+        )
+
+    async def _extraction_tick(self) -> None:
+        """Scheduler entry point — fans through to the worker singleton."""
+        from beever_atlas.services.extraction_worker import get_extraction_worker
+
+        worker = get_extraction_worker()
+        if worker is None:
+            return
+        try:
+            await worker.tick()
+        except Exception as exc:
+            logger.error(
+                "SyncScheduler: extraction tick failed: %s",
+                exc,
+                exc_info=True,
+            )
+
+    async def _extraction_sweep(self) -> None:
+        """Periodic stale-extracting recovery sweep."""
+        from beever_atlas.services.extraction_worker import get_extraction_worker
+
+        worker = get_extraction_worker()
+        if worker is None:
+            return
+        try:
+            await worker.sweep_stale()
+        except Exception as exc:
+            logger.error(
+                "SyncScheduler: extraction sweep failed: %s",
+                exc,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Job execution

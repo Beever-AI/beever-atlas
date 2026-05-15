@@ -1,19 +1,24 @@
-FROM node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS build
+FROM node:24-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f AS build
 
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 
-# VITE_API_URL must be set at build time (Vite bakes env vars into the bundle)
+# Vite inlines env vars at build time, so EVERY ``VITE_*`` we want in the
+# bundle must be threaded through ARG → ENV here AND added to
+# ``docker-compose.yml`` web.build.args. Single source of truth = root
+# ``.env`` for the whole stack; no need for a ``web/.env.local`` file.
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=${VITE_API_URL}
 ARG VITE_BEEVER_API_KEY=
 ENV VITE_BEEVER_API_KEY=${VITE_BEEVER_API_KEY}
+ARG VITE_BEEVER_ADMIN_TOKEN=
+ENV VITE_BEEVER_ADMIN_TOKEN=${VITE_BEEVER_ADMIN_TOKEN}
 
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:alpine@sha256:f35982400455b4f359083ba9d1ef573fbbe4221a6a8a194dc7a14beb4e2cd3dc
+FROM nginxinc/nginx-unprivileged:alpine@sha256:53ffe9cc959fc72aeed04a85d517099a42bfcc5f5f0b07a2b1048e08abf2f1eb
 # Issue #39 — drop root. The `nginxinc/nginx-unprivileged` image is the official
 # upstream nginx variant configured to run as the `nginx` user (UID 101) and
 # listen on port 8080 by default. Avoids fragile manual chown of /var/cache/nginx,

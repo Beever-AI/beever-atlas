@@ -26,9 +26,9 @@ from fastapi.responses import Response, StreamingResponse
 
 from beever_atlas.adapters import get_adapter
 from beever_atlas.api.media import (
-    ALLOWED_HOSTS,
     SLACK_HOSTS,
     build_response,
+    effective_allowed_hosts,
     get_proxy_client,
     slack_bot_tokens,
 )
@@ -94,7 +94,8 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
         raise HTTPException(status_code=400, detail="Only http(s) URLs allowed")
 
     host = (parsed.hostname or "").lower()
-    if host not in ALLOWED_HOSTS:
+    allowed = effective_allowed_hosts()
+    if host not in allowed:
         raise HTTPException(status_code=400, detail=f"Host not allowed: {host}")
 
     # SSRF defense (CodeQL alerts #37, #38): re-validate via DNS resolution +
@@ -102,13 +103,13 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
     # making any outbound request. Without this, an allowlisted host whose
     # DNS resolves to a private IP (DNS poisoning, misconfiguration, IMDS
     # at 169.254.169.254) would let the proxy reach internal targets — the
-    # static `host in ALLOWED_HOSTS` check above does not catch that.
+    # static `effective_allowed_hosts()` check above does not catch that.
     # The pinned URL is intentionally discarded; we use the original URL
     # for the fetch so TLS hostname verification (SNI vs. cert SANs) works
     # normally. The shared client has `follow_redirects=False` so the
     # validated host cannot 302-pivot the request post-validation.
     try:
-        resolve_and_validate(url, ALLOWED_HOSTS)
+        resolve_and_validate(url, allowed)
     except (PermissionError, ValueError) as exc:
         # Generic message — don't echo attacker-controlled URL or expose
         # whether the failure was DNS-rebinding vs. allowlist-miss vs.

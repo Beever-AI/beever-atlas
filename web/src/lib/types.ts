@@ -35,6 +35,10 @@ export interface AskResponse {
 
 export interface WikiCitation {
   id: string;
+  /** Underlying AtomicFact.id (e.g., "f_abc123"). Narrative inline
+   *  citation chips look up popover content by this field, since the
+   *  v3 prompt emits `[f_xxx]` markers in paragraph text. */
+  fact_id?: string;
   author: string;
   channel: string;
   timestamp: string;
@@ -56,7 +60,7 @@ export interface WikiPage {
   id: string;
   slug: string;
   title: string;
-  page_type: "fixed" | "topic" | "sub-topic";
+  page_type: "fixed" | "topic" | "sub-topic" | "folder";
   parent_id: string | null;
   section_number: string;
   content: string;
@@ -65,6 +69,48 @@ export interface WikiPage {
   last_updated: string;
   citations: WikiCitation[];
   children: WikiPageRef[];
+  /** SHA-256 of sorted child slugs (folder pages only). Used by the
+   *  maintainer to skip re-synthesis when membership is unchanged. */
+  children_fingerprint?: string | null;
+  /** True for planner-produced folders (vs. hand-curated, future). */
+  is_synthetic?: boolean;
+  /** Adaptive page module plan (``adaptive-wiki-page-content`` change).
+   *  Each entry is at minimum ``{id, anchor}`` with optional per-module
+   *  data payload. Empty array = legacy page; renderer falls back to
+   *  the single-template flow over ``content``. */
+  modules?: WikiPageModule[];
+  /** Multi-section narrative article body produced by the v3
+   *  ``MODULE_COMPILE_PROMPT_V3``. Mirrors the persistence-layer
+   *  field. The layout reads this to mount the sticky TOC; the
+   *  ``NarrativeArticleModule`` reads the same payload via its
+   *  ``module.data.sections`` slice. Empty array means the page
+   *  predates narrative generation OR the validator rejected the
+   *  LLM output (graceful fallback to module-only rendering). */
+  narrative_sections?: Array<{
+    anchor: string;
+    heading: string;
+    paragraphs?: Array<{ text: string; citations?: string[]; is_inference?: boolean }>;
+    citations?: string[];
+    visual?: { kind: string; content: unknown } | null;
+    citation_coverage?: number;
+  }>;
+  /** wiki-redesign-gap-fill / Group 4 — operator-controlled rewrite
+   *  cadence. ``auto`` (default) = maintainer rewrites on every burst.
+   *  ``manual`` = pages mark dirty but only flush on operator click.
+   *  ``frozen`` = maintainer + Builder both skip. */
+  curation_mode?: "auto" | "manual" | "frozen";
+  /** True when the maintainer has marked the page dirty pending a
+   *  rewrite. Used to compute the "Apply Pending Updates (N)" badge. */
+  is_dirty?: boolean;
+}
+
+/** One entry in the adaptive page module plan. The ``data`` payload
+ *  shape varies per module type — frontend module renderers cast it
+ *  to their expected shape. */
+export interface WikiPageModule {
+  id: string;
+  anchor: string;
+  data?: Record<string, unknown>;
 }
 
 export interface WikiPageNode {
@@ -72,9 +118,14 @@ export interface WikiPageNode {
   title: string;
   slug: string;
   section_number: string;
-  page_type: "fixed" | "topic" | "sub-topic";
+  page_type: "fixed" | "topic" | "sub-topic" | "folder";
   memory_count: number;
   children: WikiPageNode[];
+  /** True for planner-produced folders (vs. hand-curated, future). */
+  is_synthetic?: boolean;
+  /** Optional 1-2 sentence summary surfaced on the Overview's topic
+   *  card grid so each card shows context without a click-through. */
+  summary?: string;
 }
 
 export interface WikiStructure {
@@ -169,6 +220,69 @@ export interface ActivityEntry {
   batch_idx?: number;
 }
 
+/** One of the four pipeline phases surfaced by ``/sync/status`` (PR-3 —
+ *  sync-pipeline-feedback-and-auto-wiki). The frontend renders one row
+ *  per phase in the phased progress card. */
+export type PhaseName =
+  | "fetched"
+  | "extracting"
+  | "wiki_maintenance"
+  | "overview_wiki";
+
+/** Per-phase lifecycle state. ``skipped`` covers the feature-flag-off
+ *  path (e.g. AUTO_OVERVIEW_WIKI=false) and the empty-channel path. */
+export type PhaseState =
+  | "pending"
+  | "in_flight"
+  | "done"
+  | "skipped"
+  | "failed";
+
+export interface Phase {
+  name: PhaseName;
+  state: PhaseState;
+  /** Number of items completed for this phase (e.g. messages fetched,
+   *  facts extracted, pages refreshed). Optional — phases like
+   *  ``overview_wiki`` are boolean-shaped and omit it. */
+  done?: number;
+  /** Total items expected for this phase. Optional — same caveat as
+   *  ``done``. */
+  total?: number;
+  duration_ms?: number;
+  /** Last human-readable label emitted while this phase was active.
+   *  Used by the activity feed when ``recent_events`` is not yet
+   *  populated. */
+  last_event_label?: string;
+  /** ISO-8601 UTC timestamp of when this phase's current attempt
+   *  started. Currently emitted for ``overview_wiki`` in the
+   *  ``in_flight`` state so the WikiTab can render an elapsed-time
+   *  stamp and a Retry button if the build hangs. */
+  started_at?: string;
+}
+
+export interface RecentEvent {
+  /** ISO timestamp (UTC) when the event was emitted by the worker. */
+  ts: string;
+  /** Pipeline stage tag — one of ``fetch``, ``preprocess``,
+   *  ``extract_facts``, ``extract_entities``, ``embed``, ``validate``,
+   *  ``persist``, ``wiki_maintenance``, ``overview_wiki``, ... */
+  stage: string;
+  label: string;
+  /** unified-llm-wiki-graph-redesign — structured event taxonomy slot.
+   *  ``message_processing`` / ``agent_state`` / ``wiki_update`` /
+   *  ``cost_summary`` / ``parse_failure`` / ``legacy``. */
+  event_type?: string;
+  /** Event-type-specific structured data the SyncMonitor consumes.
+   *  Always optional; legacy emitters omit it. */
+  payload?: Record<string, unknown> | null;
+}
+
+export interface ParseFailureState {
+  count_last_10_min: number;
+  threshold: number;
+  should_show_banner: boolean;
+}
+
 export interface SyncStatusResponse {
   state: "idle" | "syncing" | "error";
   job_id?: string;
@@ -192,6 +306,24 @@ export interface SyncStatusResponse {
   errors?: string[];
   started_at?: string | null;
   completed_at?: string | null;
+  /** PR-3 — phased progress feedback. When present, the new
+   *  ``PhasedProgressCard`` replaces the legacy decoupled-mode widget.
+   *  Absent on responses from older backends — the legacy
+   *  ``ExtractionWorkerPanel`` is the fallback. */
+  phases?: Phase[];
+  /** Last ~10 pipeline events from the worker's in-memory ring buffer. */
+  recent_events?: RecentEvent[];
+  /** EWMA-smoothed seconds-remaining estimate. ``null`` until enough
+   *  samples (>=3) accumulate; ``undefined`` on legacy backends. */
+  smoothed_eta_seconds?: number | null;
+  /** Failed rows still inside their backoff window — will be retried. */
+  retrying?: number;
+  /** Failed rows past ``max_retries`` — will NOT be retried. */
+  abandoned?: number;
+  /** unified-llm-wiki-graph-redesign — wiki-side parse-failure state
+   *  feeding the WikiTab banner + SyncMonitor footer. ``undefined``
+   *  on legacy backends. */
+  parse_failure_state?: ParseFailureState;
 }
 
 export interface BatchResultEntry {
@@ -199,6 +331,16 @@ export interface BatchResultEntry {
   facts_count: number;
   entities_count: number;
   relationships_count: number;
+  /** Embeddings produced in this batch (jina/etc). Optional — present
+   *  when derived from activity_log; absent on legacy backends. */
+  embedded_count?: number;
+  /** Media items enriched by the preprocessor (images, PDFs, audio). */
+  media_count?: number;
+  /** Lifecycle state — populated when caller has BatchSummary context.
+   *  ``running`` means stage_start was seen but no persister stage_output
+   *  yet; ``done`` means persister wrote successfully; ``pending`` is
+   *  pre-claim; ``failed`` is explicit error. */
+  state?: "pending" | "running" | "done" | "failed";
   sample_facts: string[];
   sample_entities: { name: string; type: string }[];
   sample_relationships: { source: string; target: string; type: string }[];
@@ -534,6 +676,8 @@ export interface ConsolidationConfig {
 
 export type WikiGenerationStrategy = "after_every_sync" | "after_consolidation" | "scheduled" | "manual";
 
+export type WikiMaintenanceMode = "auto" | "manual" | "inherit";
+
 export interface WikiConfig {
   enabled: boolean | null;
   generation_strategy: WikiGenerationStrategy | null;
@@ -541,6 +685,7 @@ export interface WikiConfig {
   auto_regenerate_on_stale: boolean | null;
   min_facts_for_generation: number | null;
   topic_subpage_threshold: number | null;
+  maintenance_mode?: WikiMaintenanceMode | null;
 }
 
 export interface ChannelPolicyResponse {
@@ -620,4 +765,99 @@ export interface SyncHistoryEntry {
   errors: string[];
   started_at: string | null;
   completed_at: string | null;
+}
+
+// --- Embedding settings (PR-E / PR-F) ---
+
+export type EmbeddingProvider =
+  | "jina_ai"
+  | "openai"
+  | "cohere"
+  | "voyage"
+  | "gemini"
+  | "mistral"
+  | "ollama"
+  | "bedrock"
+  | "vertex_ai";
+
+export interface EmbeddingSettings {
+  provider: EmbeddingProvider;
+  model: string;
+  dimensions: number;
+  rpm: number;
+  api_base: string;
+  task: string;
+  has_api_key: boolean;
+  api_key_masked: string;
+  source: "db" | "env" | "default";
+  dim_guard_enabled: boolean;
+  last_probe_at: string | null;
+  last_probe_ok: boolean | null;
+  last_probe_error: string | null;
+  // Surface the persisted (Weaviate-current) embedding meta so the UI
+  // can show a "Re-embed required" banner when configured config !=
+  // what's actually in storage.
+  persisted_provider: string | null;
+  persisted_model: string | null;
+  persisted_dimensions: number | null;
+  fact_count: number | null;
+  migration_required: boolean;
+}
+
+export interface EmbeddingUpdateRequest {
+  provider?: string;
+  model?: string;
+  dimensions?: number;
+  rpm?: number;
+  api_base?: string;
+  task?: string;
+  api_key?: string;
+  confirm_migration?: boolean;
+}
+
+export interface EmbeddingProbeResult {
+  ok: boolean;
+  dimensions: number | null;
+  latency_ms: number | null;
+  provider: string;
+  model: string;
+  error: string | null;
+}
+
+export interface EmbeddingMigrationStatus {
+  running: boolean;
+  job_id: string | null;
+  stage: string | null;
+  processed: number | null;
+  total: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}
+
+/**
+ * ``GET /api/settings/embedding-migration/state`` (PR6) — dim-mismatch
+ * detection driven by the ``embedding`` Assignment (desired) vs the
+ * ``embedding_meta`` checkpoint (persisted, i.e. what's actually in storage).
+ * ``reembed_supported`` is false when the Assignment's endpoint resolves to a
+ * provider the legacy re-embed job can't drive (e.g. an Anthropic endpoint);
+ * ``reason`` explains why so the UI can disable "Start re-embed" helpfully.
+ */
+export interface EmbeddingReembedState {
+  migration_required: boolean;
+  desired_provider: string | null;
+  desired_model: string | null;
+  desired_dimensions: number | null;
+  persisted_provider: string | null;
+  persisted_model: string | null;
+  persisted_dimensions: number | null;
+  fact_count: number | null;
+  reembed_supported: boolean;
+  reason: string | null;
+}
+
+/** ``POST /api/settings/embedding-migration/spawn`` (PR6) response. */
+export interface EmbeddingReembedSpawnResponse {
+  job_id: string;
+  status: string; // "running" | "running_existing"
 }

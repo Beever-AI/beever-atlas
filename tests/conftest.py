@@ -158,6 +158,12 @@ def mock_stores():
     import beever_atlas.stores as stores_mod
 
     saved = stores_mod._stores
+    # PR-A.6.1 (review issue 17): the readiness event is module-level state
+    # that previously leaked into other tests in the same pytest invocation.
+    # Snapshot its prior set/cleared state and restore on teardown so test
+    # ordering does not change behaviour for downstream tests that don't
+    # depend on this fixture (e.g. the PR-A.3 sync_runner integration tests).
+    saved_ready = stores_mod._stores_ready.is_set()
 
     fake = MagicMock(name="MockStoreClients")
     fake.platform = MagicMock()
@@ -166,6 +172,8 @@ def mock_stores():
     fake.mongodb.list_synced_channel_ids = AsyncMock(return_value=[])
     fake.mongodb.get_channel_display_name = AsyncMock(return_value=None)
     fake.mongodb.get_channel_sync_state = AsyncMock(return_value=None)
+    fake.mongodb.get_channel_messages = AsyncMock(return_value=[])
+    fake.mongodb.get_sync_status = AsyncMock(return_value=None)
 
     stores_mod._stores = fake
     # Issue #36 — set the readiness event so barrier-aware code under test
@@ -175,6 +183,14 @@ def mock_stores():
         yield fake
     finally:
         stores_mod._stores = saved
+        # PR-A.6.1 (review issue 17): restore the readiness flag to its prior
+        # state. Without this, a downstream test that never depended on
+        # mock_stores would see the event leaked-set and skip the lifespan
+        # init path (or vice versa).
+        if saved_ready:
+            stores_mod._stores_ready.set()
+        else:
+            stores_mod._stores_ready.clear()
         if saved is None:
             stores_mod._reset_stores_for_tests()
 

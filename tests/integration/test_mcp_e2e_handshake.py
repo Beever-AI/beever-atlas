@@ -36,7 +36,14 @@ import pytest
 # Expected catalog counts (must match Phase 3–5b registrations)
 # ---------------------------------------------------------------------------
 
-_EXPECTED_TOOL_COUNT = 16
+# Increased from 16 → 19 in commit 35a1832 (search_memory, lint_wiki,
+# get_extraction_status redesign tools). Bumped 19 → 22 by the
+# wiki-llm-native-redesign §7.6 ship (read_wiki_page, list_wiki_pages,
+# get_wiki_graph). Bumped 22 → 28 by additional wiki/retrieval tools
+# (read_wiki_module, find_decisions, get_tensions, find_facts,
+# read_wiki_section, read_provenance). Bump alongside any new tool
+# registration so the catalog count stays a load-bearing assertion.
+_EXPECTED_TOOL_COUNT = 28
 _EXPECTED_RESOURCE_COUNT = 5
 _EXPECTED_PROMPT_COUNT = 3
 

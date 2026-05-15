@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WikiEntityKindSchema",
+  "description": "Structured profile of one person, system, or thing.",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Canonical entity name."
+    },
+    "role": {
+      "type": "string",
+      "description": "One-phrase role: 'engineer', 'service', 'team', etc.",
+      "default": ""
+    },
+    "owns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "decides": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "contributes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "associated_pages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    }
+  }
+}

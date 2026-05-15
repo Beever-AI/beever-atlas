@@ -45,23 +45,42 @@ async def fetch_channel_history(
         from beever_atlas.stores import get_stores
 
         stores = get_stores()
+        # Read from ``channel_messages`` instead of the legacy
+        # ``raw_messages`` collection. ``message_id`` replaces the legacy
+        # ``message_ts`` field; ``content`` replaces ``text``. Sort uses
+        # the ``timestamp`` datetime field, which the
+        # ``(channel_id, timestamp)`` secondary index serves directly.
         records = (
-            await stores.mongodb.db["raw_messages"]
+            await stores.mongodb.db["channel_messages"]
             .find(
                 {"channel_id": channel_id},
-                sort=[("message_ts", -1)],
+                sort=[("timestamp", -1)],
                 limit=limit,
             )
             .to_list(length=limit)
         )
-        return [
-            {
-                "author": r.get("author_name") or r.get("author") or "unknown",
-                "text": r.get("text") or r.get("content") or "",
-                "ts": r.get("message_ts") or r.get("ts") or "",
-            }
-            for r in reversed(records)
-        ]
+        # The legacy ``raw_messages`` schema stored a Slack-shaped string in
+        # ``message_ts``; ``channel_messages`` stores a real ``timestamp``
+        # datetime. Map back to an ISO string for the response so cross-
+        # platform consumers (Discord snowflake, Mattermost ID, etc.) keep
+        # timestamp-comparable semantics on the ``ts`` key.
+        out: list[dict[str, Any]] = []
+        for r in reversed(records):
+            ts_val = r.get("timestamp")
+            if hasattr(ts_val, "isoformat"):
+                ts_str = ts_val.isoformat()
+            elif ts_val is None:
+                ts_str = r.get("message_ts") or r.get("ts") or ""
+            else:
+                ts_str = str(ts_val)
+            out.append(
+                {
+                    "author": r.get("author_name") or r.get("author") or "unknown",
+                    "text": r.get("content") or r.get("text") or "",
+                    "ts": ts_str,
+                }
+            )
+        return out
     except Exception:
         logger.warning(
             "CoreferenceResolver: channel history unavailable for %s",

@@ -18,10 +18,76 @@ from typing import Any, Awaitable, Callable
 from beever_atlas.adapters import get_adapter
 from beever_atlas.adapters.bridge import ChatBridgeAdapter
 from beever_atlas.infra.config import get_settings
+from beever_atlas.models.persistence import ChannelMessage
 from beever_atlas.services.batch_processor import BatchProcessor
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
+
+
+def _normalized_to_channel_messages(messages: list[Any]) -> list[ChannelMessage]:
+    """Convert ``NormalizedMessage``-shaped objects to ``ChannelMessage`` rows
+    for upsert into the durable Message Store.
+
+    ``source_id`` is derived from the message's ``platform`` field — for chat
+    adapters that's "slack" | "discord" | "teams"; file imports use "file";
+    push sources set their own registered ``source_id`` directly on the
+    payload before reaching this helper.
+
+    Tolerates duck-typed dicts (used by the file importer) in addition to
+    dataclass-shaped messages so callers do not have to unify their types.
+    """
+    rows: list[ChannelMessage] = []
+    now = datetime.now(tz=UTC)
+
+    def _read(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    for m in messages:
+        platform = str(_read(m, "platform") or "unknown")
+        source_id = str(_read(m, "source_id") or platform)
+        message_id = str(_read(m, "message_id") or "")
+        if not message_id:
+            # No identity to dedup on — skip (defensive; should never happen
+            # for well-formed adapter output).
+            continue
+        timestamp = _read(m, "timestamp")
+        if timestamp is None:
+            timestamp = now
+        try:
+            rows.append(
+                ChannelMessage(
+                    source_id=source_id,
+                    channel_id=str(_read(m, "channel_id") or ""),
+                    message_id=message_id,
+                    channel_name=str(_read(m, "channel_name") or ""),
+                    timestamp=timestamp,
+                    author=str(_read(m, "author") or ""),
+                    author_name=str(_read(m, "author_name") or ""),
+                    author_image=str(_read(m, "author_image") or ""),
+                    content=str(_read(m, "content") or ""),
+                    thread_id=_read(m, "thread_id"),
+                    attachments=list(_read(m, "attachments") or []),
+                    reactions=list(_read(m, "reactions") or []),
+                    reply_count=int(_read(m, "reply_count") or 0),
+                    raw_metadata=dict(_read(m, "raw_metadata") or {}),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort conversion
+            # Preserve channel_id + source_id + exc class in the log so an
+            # operator can grep the WARN line and pinpoint a stuck channel.
+            logger.warning(
+                "_normalized_to_channel_messages: skipped source_id=%s "
+                "channel_id=%s message_id=%s exc=%s: %.200s",
+                source_id,
+                str(_read(m, "channel_id") or ""),
+                message_id,
+                type(exc).__name__,
+                str(exc),
+            )
+    return rows
 
 
 def _coerce_since_timestamp(value: Any | None) -> datetime | None:
@@ -191,69 +257,209 @@ class SyncRunner:
                     owner_principal_id=owner_principal_id,
                 )
 
-        adapter = (
-            ChatBridgeAdapter(connection_id=resolved_connection_id)
-            if resolved_connection_id
-            else get_adapter()
-        )
-        try:
-            logger.info(
-                "SyncRunner: fetch start channel=%s connection_id=%s resolved_type=%s since=%s max_messages=%s",
-                channel_id,
-                resolved_connection_id,
-                resolved_type,
-                since,
-                _max_messages,
-            )
-            messages = await self._fetch_all_messages(
-                channel_id, adapter=adapter, since=since, max_messages=_max_messages
-            )
-
-            # If incremental sync found nothing, auto-fallback to full sync
-            if not messages and resolved_type == "incremental":
-                logger.info(
-                    "SyncRunner: incremental sync found no new messages for channel %s, falling back to full sync.",
-                    channel_id,
-                )
-                resolved_type = "full"
-                since = None
-                messages = await self._fetch_all_messages(
-                    channel_id, adapter=adapter, since=None, max_messages=_max_messages
-                )
-
-            if not messages:
-                logger.info(
-                    "SyncRunner: no messages for channel %s (%s sync).",
-                    channel_id,
-                    resolved_type,
-                )
-
-            # 4. Fetch thread replies for messages with reply_count > 0.
-            parent_count = len(messages)
-            messages = await self._fetch_thread_replies(channel_id, messages, adapter=adapter)
-
-            # 5. Get channel info for the human-readable name.
-            channel_info = await adapter.get_channel_info(channel_id)
-            channel_name = channel_info.name
-        finally:
-            if isinstance(adapter, ChatBridgeAdapter):
-                await adapter.close()
-
-        # 6. Create sync job in MongoDB.
+        # 3b. Create a placeholder sync job row IMMEDIATELY so the API
+        # caller can return ``job_id`` without waiting on the bridge.
+        # The bridge fetch (history pages + thread replies + channel
+        # info) typically takes 5-30s for non-trivial channels —
+        # the frontend's HTTP timeout is shorter than that and would
+        # otherwise surface a misleading "Sync failed: Request timed
+        # out" banner while the sync was, in fact, healthy.
+        #
+        # ``total_messages`` and ``parent_messages`` start at 0 and are
+        # patched by ``_fetch_then_run`` once the fetch returns the real
+        # counts. The frontend already polls /sync/status, so it sees
+        # the totals appear within a few seconds.
         job = await stores.mongodb.create_sync_job(
             channel_id=channel_id,
             sync_type=resolved_type,
-            total_messages=len(messages),
-            parent_messages=parent_count,
+            total_messages=0,
+            parent_messages=0,
             batch_size=settings.sync_batch_size,
             owner_principal_id=owner_principal_id,
             kind="sync",
         )
         job_id: str = job.id
 
-        # 7. Launch background task and track it.
+        logger.info(
+            "SyncRunner: queued %s sync for channel %s — job_id=%s; bridge fetch runs in background.",
+            resolved_type,
+            channel_id,
+            job_id,
+        )
+
+        # 4. Launch the fetch+run pipeline as a background task and
+        #    track it so concurrent ``start_sync`` calls for the same
+        #    channel can be rejected.
         task = asyncio.create_task(
-            self._run_sync(
+            self._fetch_then_run(
+                job_id=job_id,
+                channel_id=channel_id,
+                resolved_connection_id=resolved_connection_id,
+                resolved_type=resolved_type,
+                since=since,
+                max_messages=_max_messages,
+                use_batch_api=use_batch_api,
+            )
+        )
+        self._active_tasks[channel_id] = task
+
+        return job_id
+
+    async def _fetch_then_run(
+        self,
+        *,
+        job_id: str,
+        channel_id: str,
+        resolved_connection_id: str | None,
+        resolved_type: str,
+        since: datetime | str | None,
+        max_messages: int | None,
+        use_batch_api: bool,
+    ) -> None:
+        """Fetch bridge messages then run the pipeline (background task).
+
+        Split out from ``start_sync`` so the API endpoint returns the
+        ``job_id`` without blocking on the bridge — see the comment in
+        ``start_sync`` for the full rationale.
+
+        Errors here mark the job as ``failed`` so the UI surfaces a real
+        failure instead of an indefinite "running" state. The exception
+        is swallowed because this runs as an asyncio Task; re-raising
+        would land in the loop's default exception handler with a stack
+        trace but no UI signal.
+        """
+        stores = get_stores()
+        try:
+            adapter = (
+                ChatBridgeAdapter(connection_id=resolved_connection_id)
+                if resolved_connection_id
+                else get_adapter()
+            )
+            try:
+                logger.info(
+                    "SyncRunner: fetch start channel=%s connection_id=%s resolved_type=%s since=%s max_messages=%s",
+                    channel_id,
+                    resolved_connection_id,
+                    resolved_type,
+                    since,
+                    max_messages,
+                )
+                messages = await self._fetch_all_messages(
+                    channel_id, adapter=adapter, since=since, max_messages=max_messages
+                )
+
+                # If incremental sync found nothing, auto-fallback to full sync
+                if not messages and resolved_type == "incremental":
+                    logger.info(
+                        "SyncRunner: incremental sync found no new messages for channel %s, falling back to full sync.",
+                        channel_id,
+                    )
+                    resolved_type = "full"
+                    messages = await self._fetch_all_messages(
+                        channel_id, adapter=adapter, since=None, max_messages=max_messages
+                    )
+
+                if not messages:
+                    logger.info(
+                        "SyncRunner: no messages for channel %s (%s sync).",
+                        channel_id,
+                        resolved_type,
+                    )
+
+                # Fetch thread replies for messages with reply_count > 0.
+                parent_count = len(messages)
+                messages = await self._fetch_thread_replies(channel_id, messages, adapter=adapter)
+
+                # Resolve human-readable channel name.
+                channel_info = await adapter.get_channel_info(channel_id)
+                channel_name = channel_info.name
+            finally:
+                if isinstance(adapter, ChatBridgeAdapter):
+                    await adapter.close()
+
+            # Patch the placeholder job row with the actual totals + the
+            # final sync_type (which may have been promoted from
+            # ``incremental`` to ``full`` above).
+            # Global ``total_batches`` is locked in here so the user-facing
+            # sync_jobs row exposes a stable denominator (29 for 711 msgs at
+            # batch_size=25) instead of the per-tick worker totals (which
+            # swing 5/7/4 as ticks claim varying counts of pending rows).
+            #
+            # Use ``batch_max_messages`` (the AdaptiveBatcher hard-cap,
+            # default 30) — NOT ``sync_batch_size`` (default 50) — because
+            # AdaptiveBatcher closes batches at the token-aware boundary,
+            # which in practice hits the 30-msg cap before the input-token
+            # budget. Estimating with the 50-msg ``sync_batch_size`` gave
+            # the UI "15 batches" when reality was 24+, so total_batches
+            # kept growing tick-by-tick (15 → 17 → 19 → 21 → 22 → 24)
+            # as ``increment_batches_completed_for_channel`` used $max to
+            # raise the denominator. Now the initial estimate is close to
+            # actual, and the only remaining growth comes from edge cases
+            # where the LLM trigger AdaptiveBatcher to use smaller batches.
+            _settings = get_settings()
+            # Pre-run the AdaptiveBatcher on the FULL message list to get
+            # the EXACT batch count up-front. Previously we used a fixed
+            # ``ceil(total / batch_max_messages)`` estimate which under-
+            # counts when thread groups force token-aware splits — the
+            # UI denominator then crept upward (24 → 25) via the $max
+            # update path. Running the batcher once here pre-computes
+            # the same partition the worker would, modulo a small
+            # ~5-10% drift from across-tick thread fragmentation. We
+            # add a 10% buffer for that drift so total_batches stays
+            # at or above the actual final count.
+            try:
+                if _settings.batch_max_prompt_tokens > 0:
+                    from beever_atlas.services.adaptive_batcher import token_aware_batches
+
+                    _projected = token_aware_batches(
+                        [m if isinstance(m, dict) else vars(m) for m in messages],
+                        max_tokens=_settings.batch_max_prompt_tokens,
+                        time_window_seconds=_settings.batch_time_window_seconds,
+                        max_output_tokens=(
+                            _settings.batch_max_output_tokens
+                            if _settings.batch_max_output_tokens > 0
+                            else None
+                        ),
+                        max_facts_per_message=_settings.max_facts_per_message,
+                        max_messages=_settings.batch_max_messages,
+                    )
+                    _projected_count = max(1, len(_projected))
+                    # 10% drift buffer for thread fragmentation across ticks.
+                    _global_total_batches = max(
+                        _projected_count,
+                        int(_projected_count * 1.10) + 1,
+                    )
+                else:
+                    _bsize = max(1, _settings.batch_max_messages)
+                    _global_total_batches = (len(messages) + _bsize - 1) // _bsize
+            except Exception:
+                # If the pre-run fails for any reason (malformed messages,
+                # import path drift), fall back to the simple ceiling
+                # estimate. Better a slightly-off denominator than a sync
+                # that won't start.
+                logger.warning(
+                    "SyncRunner: AdaptiveBatcher pre-run failed — falling back to fixed estimate",
+                    exc_info=True,
+                )
+                _bsize = max(1, _settings.batch_max_messages)
+                _global_total_batches = (len(messages) + _bsize - 1) // _bsize
+            await stores.mongodb.set_sync_job_totals(
+                job_id=job_id,
+                total_messages=len(messages),
+                parent_messages=parent_count,
+                sync_type=resolved_type,
+                total_batches=_global_total_batches,
+            )
+
+            logger.info(
+                "SyncRunner: started %s sync for channel %s — job_id=%s, %d messages to process.",
+                resolved_type,
+                channel_id,
+                job_id,
+                len(messages),
+            )
+
+            await self._run_sync(
                 job_id=job_id,
                 channel_id=channel_id,
                 channel_name=channel_name,
@@ -262,18 +468,21 @@ class SyncRunner:
                 sync_type=resolved_type,
                 use_batch_api=use_batch_api,
             )
-        )
-        self._active_tasks[channel_id] = task
-
-        logger.info(
-            "SyncRunner: started %s sync for channel %s — job_id=%s, %d messages to process.",
-            resolved_type,
-            channel_id,
-            job_id,
-            len(messages),
-        )
-
-        return job_id
+        except Exception as exc:  # noqa: BLE001 — background task: catch-all is the contract
+            logger.exception(
+                "SyncRunner._fetch_then_run failed job_id=%s channel=%s",
+                job_id,
+                channel_id,
+            )
+            try:
+                await stores.mongodb.complete_sync_job(
+                    job_id=job_id,
+                    status="failed",
+                    errors=[f"fetch_or_run_failed: {exc!s}"],
+                    failed_stage="fetch",
+                )
+            except Exception:
+                logger.exception("SyncRunner: also failed to mark job %s as failed", job_id)
 
     async def _fetch_all_messages(
         self,
@@ -609,14 +818,97 @@ class SyncRunner:
 
             effective_policy = await resolve_effective_policy(channel_id)
 
-            result = await self._batch_processor.process_messages(
-                messages=messages,
-                channel_id=channel_id,
-                channel_name=channel_name,
-                sync_job_id=job_id,
-                ingestion_config=effective_policy.ingestion,
-                use_batch_api=use_batch_api,
-            )
+            # Persist messages into the durable channel_messages collection
+            # BEFORE LLM extraction. The store is the source of truth from the
+            # moment a message is fetched — extraction failures (e.g. Gemini
+            # 503) no longer make the message disappear, and the background
+            # ExtractionWorker consumes pending rows from here.
+            #
+            # Best-effort: a Mongo-side failure logs a WARN and the sync
+            # continues with inline extraction (existing behaviour). The
+            # READ_FROM_MESSAGE_STORE flag is what makes UI reads depend on the
+            # upsert succeeding; nothing here blocks on it yet.
+            #
+            # Capture ``inserted_count`` so the cursor-advance branch
+            # increments ``total_synced_messages`` by NEW rows only, avoiding
+            # inflation on a manual re-sync that re-fetches already-stored
+            # messages.
+            inserted_count: int | None = None
+            if messages:
+                try:
+                    cm_rows = _normalized_to_channel_messages(messages)
+                    if cm_rows:
+                        upsert_result = await stores.mongodb.upsert_channel_messages(cm_rows)
+                        inserted_count = int(upsert_result.get("inserted", 0))
+                        logger.info(
+                            "SyncRunner: channel_messages upsert job_id=%s channel=%s "
+                            "inserted=%d matched=%d modified=%d",
+                            job_id,
+                            channel_id,
+                            inserted_count,
+                            upsert_result.get("matched", 0),
+                            upsert_result.get("modified", 0),
+                        )
+                        # memory-then-wiki-pipeline-realignment — kick the
+                        # extraction worker so the first claim fires now
+                        # instead of waiting for the next 10s tick boundary.
+                        # No-op when DECOUPLE_EXTRACTION=false (inline path)
+                        # or when the worker is not yet registered.
+                        if inserted_count > 0:
+                            try:
+                                from beever_atlas.services.extraction_worker import (
+                                    get_extraction_worker,
+                                )
+
+                                _worker = get_extraction_worker()
+                                if _worker is not None:
+                                    _worker.kick()
+                            except Exception:  # noqa: BLE001 — best-effort
+                                logger.debug(
+                                    "SyncRunner: extraction worker kick failed",
+                                    exc_info=True,
+                                )
+                except Exception as exc:  # noqa: BLE001 — additive store
+                    logger.warning(
+                        "SyncRunner: channel_messages upsert failed job_id=%s "
+                        "channel=%s err=%s — sync continues without store; "
+                        "dual-read fallback will keep UI working",
+                        job_id,
+                        channel_id,
+                        exc,
+                    )
+
+            # With DECOUPLE_EXTRACTION ON, sync skips inline extraction
+            # entirely — messages already landed in ``channel_messages`` with
+            # ``extraction_status="pending"`` via ``$setOnInsert``, so the
+            # background ExtractionWorker picks them up in the next tick
+            # (default 30 s). Sync returns in seconds; a Gemini 503 can no
+            # longer kill the job. Rolls back trivially: flag OFF returns to
+            # inline extraction.
+            decouple_extraction = get_settings().decouple_extraction
+            if decouple_extraction:
+                logger.info(
+                    "SyncRunner: DECOUPLE_EXTRACTION=true — skipping inline "
+                    "extraction job_id=%s channel=%s message_count=%d "
+                    "(worker will claim from channel_messages)",
+                    job_id,
+                    channel_id,
+                    len(messages),
+                )
+                # Synthesize an empty BatchResult so downstream cursor + status
+                # logic is unchanged. The worker will populate per-row state.
+                from beever_atlas.services.batch_processor import BatchResult
+
+                result = BatchResult()
+            else:
+                result = await self._batch_processor.process_messages(
+                    messages=messages,
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    sync_job_id=job_id,
+                    ingestion_config=effective_policy.ingestion,
+                    use_batch_api=use_batch_api,
+                )
 
             # Determine last_sync_ts from the latest TOP-LEVEL message only.
             # Thread replies may have older timestamps that would cause cursor drift.
@@ -641,35 +933,94 @@ class SyncRunner:
                         )
 
             # Mark job complete.
-            sync_status = "failed" if result.errors else "completed"
+            # Three terminal states replace the prior all-or-nothing model.
+            # ``completed_with_errors`` lets the cursor advance even when some
+            # batches fail, so successful batches are not discarded by a Gemini 503.
+            sync_status = "completed" if not result.errors else "completed_with_errors"
             sync_errors = None
             failed_stage = None
+            failed_batches: list[dict[str, Any]] = []
             if result.errors:
                 sync_errors = [
                     f"batch={err.get('batch_num')} error={err.get('error')}"
                     for err in result.errors
                 ]
-                # Record the last failed batch as the failed stage for the UI.
+                # Record the last failed batch as the failed stage for the UI
+                # (preserved for backward compat — UI may still surface this).
                 last_err = result.errors[-1]
                 failed_stage = f"Failed at batch {last_err.get('batch_num')}: {last_err.get('error', 'unknown error')}"
+
+                # Build structured per-batch diagnostics and emit a WARN log
+                # per failed batch so operators can trace and re-sync if needed.
+                # Cross-reference batch_breakdowns for duration / counts where present.
+                breakdown_by_idx = {bb.batch_num: bb for bb in result.batch_breakdowns}
+                for err in result.errors:
+                    batch_idx = err.get("batch_num")
+                    err_str = str(err.get("error", "unknown"))
+                    err_class = (
+                        err.get("error_class") or type(err.get("error_obj", Exception())).__name__
+                    )
+                    bb = breakdown_by_idx.get(batch_idx) if batch_idx is not None else None
+                    entry = {
+                        "batch_index": batch_idx,
+                        "message_count": err.get("message_count"),
+                        "error_class": err_class,
+                        "error_summary": err_str[:500],
+                        "timestamp_range_start": err.get("timestamp_range_start"),
+                        "timestamp_range_end": err.get("timestamp_range_end"),
+                        "duration_seconds": (bb.duration_seconds if bb else None),
+                    }
+                    failed_batches.append(entry)
+                    logger.warning(
+                        "SyncRunner: failed_batch job_id=%s channel=%s batch=%s msgs=%s err_class=%s err=%.200s",
+                        job_id,
+                        channel_id,
+                        batch_idx,
+                        entry["message_count"],
+                        err_class,
+                        err_str,
+                        extra={
+                            "event": "failed_batch",
+                            "sync_job_id": job_id,
+                            "channel_id": channel_id,
+                            "batch_index": batch_idx,
+                            "message_count": entry["message_count"],
+                            "error_class": err_class,
+                            "error_summary": entry["error_summary"],
+                            "timestamp_range_start": entry["timestamp_range_start"],
+                            "timestamp_range_end": entry["timestamp_range_end"],
+                        },
+                    )
             await stores.mongodb.complete_sync_job(
                 job_id=job_id,
                 status=sync_status,
                 errors=sync_errors,
                 failed_stage=failed_stage,
+                failed_batches=failed_batches if failed_batches else None,
             )
 
-            # Update channel sync state — only advance cursor if ALL batches succeeded.
-            # If any batches failed, keep the old cursor so retry re-fetches the
-            # unprocessed messages instead of skipping them forever.
-            if last_ts is not None and not result.errors:
+            # Cursor advances on successful fetch regardless of extraction
+            # outcome. Successful batches are no longer discarded when sibling
+            # batches fail — the per-batch ``failed_batches`` diagnostic above is
+            # the trace for any messages that need manual recovery.
+            if last_ts is not None:
+                # For incremental syncs, increment ``total_synced_messages``
+                # by the upsert's NEW-rows count — not by ``parent_count``,
+                # which double-counts on a re-sync that re-fetches messages
+                # already in the store. Falls back to ``parent_count`` only
+                # when the upsert was skipped (no messages) or failed
+                # (best-effort path).
                 if sync_type == "incremental":
+                    increment = inserted_count if inserted_count is not None else parent_count
                     await stores.mongodb.update_channel_sync_state(
                         channel_id=channel_id,
                         last_sync_ts=last_ts,
-                        increment=parent_count,
+                        increment=increment,
                     )
                 else:
+                    # Full syncs SET the total (replacing the old count) so
+                    # `parent_count` remains the right value here regardless
+                    # of upsert deltas.
                     await stores.mongodb.update_channel_sync_state(
                         channel_id=channel_id,
                         last_sync_ts=last_ts,
@@ -697,8 +1048,14 @@ class SyncRunner:
                 },
             )
 
-            # Trigger consolidation via pipeline orchestrator (policy-aware)
-            if not result.errors:
+            # Trigger consolidation via pipeline orchestrator (policy-aware).
+            # When DECOUPLE_EXTRACTION=true, facts=0 at sync-return time (the
+            # background ExtractionWorker hasn't run yet). Firing consolidation
+            # here would see an empty Weaviate and produce 0 clusters. Instead,
+            # the ExtractionWorker's on_extraction_done subscriber (wired in
+            # server/app.py) fires consolidation after each successful batch so
+            # it sees the real facts.
+            if not result.errors and not decouple_extraction:
                 from beever_atlas.services.pipeline_orchestrator import on_ingestion_complete
 
                 await on_ingestion_complete(channel_id, result.total_facts)

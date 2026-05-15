@@ -18,6 +18,8 @@ permissions:
 jobs:
   smoke:
     name: Docker Compose smoke test
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -30,16 +32,31 @@ jobs:
       BEEVER_ADMIN_TOKEN: ci_admin_token_test
       CREDENTIAL_MASTER_KEY: ci_credential_master_key_32bytes!!
       BEEVER_ENV: development
+      # Smoke verifies that the container boots + health endpoint responds.
+      # The boot-time embedding-provider probe (added with the LiteLLM
+      # embedding feature) requires a real ``JINA_API_KEY`` (or a key for
+      # whichever ``EMBEDDING_PROVIDER`` is configured), which CI does NOT
+      # have. Disable the dim guard so the smoke test continues to test
+      # what it's supposed to: container plumbing. Production installs MUST
+      # leave this on — it's the safety net against silently corrupting
+      # hybrid search by mixing dimensions.
+      EMBEDDING_DIM_GUARD: "false"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Create .env from example
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          # CI has no provider API key, so the boot-time embedding probe
+          # fails with AUTH_MISSING_API_KEY and the dim guard refuses to
+          # start. Override in .env (Docker Compose reads .env, not the
+          # workflow-level env block).
+          sed -i 's/^EMBEDDING_DIM_GUARD=.*/EMBEDDING_DIM_GUARD=false/' .env
 
       - name: Start services
         run: docker compose up -d --build

@@ -4,8 +4,10 @@ Kept in its own module so limiter instances can be imported by both
 `server/app.py` and route modules (e.g. `api/ask.py`) without causing a
 circular import.
 
-Also exports ``GEMINI_LIMITER`` and ``JINA_LIMITER`` — lazy AsyncLimiter
-singletons used by the ingestion pipeline to respect provider RPM caps.
+Exports the lazy AsyncLimiter singletons used by the ingestion pipeline:
+  * ``GEMINI_LIMITER``    — chat / extraction calls.
+  * ``EMBEDDING_LIMITER`` — provider-agnostic embedding calls (built on
+    LiteLLM via ``llm.embeddings.embed_texts``).
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ limiter = Limiter(key_func=get_remote_address, storage_uri=_storage_uri)
 # ---------------------------------------------------------------------------
 
 _gemini_limiter = None
-_jina_limiter = None
+_embedding_limiter = None
 
 
 def _get_gemini_limiter():
@@ -37,13 +39,19 @@ def _get_gemini_limiter():
     return _gemini_limiter
 
 
-def _get_jina_limiter():
-    global _jina_limiter
-    if _jina_limiter is None:
+def _get_embedding_limiter():
+    global _embedding_limiter
+    if _embedding_limiter is None:
         from aiolimiter import AsyncLimiter
 
-        _jina_limiter = AsyncLimiter(max_rate=get_settings().jina_rpm, time_period=60)
-    return _jina_limiter
+        # ``embedding_rpm`` defaults to the legacy jina_rpm via the
+        # config-level alias bridge, so existing installs keep their
+        # configured rate without an .env change.
+        _embedding_limiter = AsyncLimiter(
+            max_rate=get_settings().embedding_rpm,
+            time_period=60,
+        )
+    return _embedding_limiter
 
 
 class _LazyLimiter:
@@ -60,4 +68,4 @@ class _LazyLimiter:
 
 
 GEMINI_LIMITER: _LazyLimiter = _LazyLimiter(_get_gemini_limiter)
-JINA_LIMITER: _LazyLimiter = _LazyLimiter(_get_jina_limiter)
+EMBEDDING_LIMITER: _LazyLimiter = _LazyLimiter(_get_embedding_limiter)

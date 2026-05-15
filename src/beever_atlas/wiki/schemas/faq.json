@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WikiFaqKindSchema",
+  "description": "Q/A pairs for the channel FAQ page.",
+  "type": "object",
+  "required": ["qas"],
+  "additionalProperties": false,
+  "properties": {
+    "qas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question", "answer"],
+        "additionalProperties": false,
+        "properties": {
+          "question":     { "type": "string" },
+          "answer":       { "type": "string" },
+          "asked_at":     { "type": "string", "default": "not stated" },
+          "source_pages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          }
+        }
+      }
+    }
+  }
+}

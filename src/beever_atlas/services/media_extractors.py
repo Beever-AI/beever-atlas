@@ -8,6 +8,7 @@ MIME types and returns extracted text content.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import logging
 import re
@@ -94,6 +95,50 @@ async def _poll_file_active(
     raise TimeoutError(f"File {file_name} did not reach ACTIVE state within {max_wait}s")
 
 
+def _compute_media_hash(data: bytes) -> str:
+    """Return SHA-256 hex of ``data`` mixed with the configured cache version.
+
+    Mixing the version string means bumping MEDIA_CACHE_VERSION invalidates
+    all existing entries without a manual collection drop.
+    """
+    settings = get_settings()
+    version_bytes = str(settings.media_cache_version).encode()
+    return hashlib.sha256(data + version_bytes).hexdigest()
+
+
+async def _check_media_cache(content_hash: str, mime_type: str) -> MediaContent | None:
+    """Return a cached ``MediaContent`` on hit, or ``None`` on miss."""
+    from beever_atlas.stores import get_stores
+
+    try:
+        stores = get_stores()
+        cached = await stores.mongodb.media_cache.get_cached(content_hash, mime_type)
+        if cached is not None:
+            logger.info("MediaCache: HIT hash=%s mime=%s", content_hash[:12], mime_type)
+            return MediaContent(text=cached.description, media_type="")
+    except Exception:
+        logger.warning("MediaCache: get_cached failed — treating as miss", exc_info=True)
+    return None
+
+
+async def _write_media_cache(
+    content_hash: str, mime_type: str, content: MediaContent, model_version: str
+) -> None:
+    """Write ``content`` to the cache.  Failures are logged but not re-raised."""
+    from beever_atlas.stores import get_stores
+
+    try:
+        stores = get_stores()
+        await stores.mongodb.media_cache.set_cached(
+            content_hash, mime_type, content.text, model_version
+        )
+        logger.debug("MediaCache: WRITE hash=%s mime=%s", content_hash[:12], mime_type)
+    except Exception:
+        logger.warning(
+            "MediaCache: set_cached failed — result returned but not cached", exc_info=True
+        )
+
+
 @dataclass
 class MediaContent:
     """Result of media extraction."""
@@ -125,31 +170,30 @@ class MediaExtractor(ABC):
         """Extract content from file bytes."""
 
     async def _digest_document(self, text: str) -> str:
-        """Digest a document into a concise summary using direct Gemini API."""
+        """Digest a document into a concise summary via the LiteLLM funnel."""
         settings = get_settings()
         if not settings.google_api_key:
             return text[:4000] + ("\n[...truncated]" if len(text) > 4000 else "")
         try:
-            from google.genai import types as genai_types
-
-            client = await _get_gemini_client()
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             prompt = DOCUMENT_DIGEST_PROMPT.format(document_text=text[:8000])
+            model_name = settings.media_vision_model
 
             async with GEMINI_LIMITER:
                 response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
-                        model=settings.media_vision_model,
-                        contents=[
-                            genai_types.Content(
-                                role="user",
-                                parts=[genai_types.Part.from_text(text=prompt)],
-                            )
-                        ],
+                    dispatch_completion(
+                        provider=sniff_provider(model_name),
+                        model=normalize_litellm_model(model_name),
+                        messages=[{"role": "user", "content": prompt}],
                     ),
                     timeout=60,
                 )
-            return response.text or text[:4000]
+            return response.choices[0].message.content or text[:4000]  # type: ignore[index, union-attr]
         except Exception:
             logger.warning("Document digestion failed", exc_info=True)
             return text[:4000] + ("\n[...truncated]" if len(text) > 4000 else "")
@@ -305,11 +349,28 @@ class ImageExtractor(MediaExtractor):
         message_text = (metadata or {}).get("message_text", "")
         size_kb = len(data) // 1024
 
+        # Vision gate FIRST — skip hash computation for images that won't be
+        # described (architect requirement: no SHA-256 on skipped images).
         if not self._should_use_vision(message_text, filename):
             return MediaContent(
                 text=f"[Attachment: {filename} (image)]",
                 media_type="image",
             )
+
+        settings = get_settings()
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+        mime_type = self._IMAGE_MIME_MAP.get(ext, "image/png")
+
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
 
         description = await self._describe_image(data, message_text, filename)
         if description:
@@ -319,7 +380,12 @@ class ImageExtractor(MediaExtractor):
             )
         else:
             desc = f"[Attachment: {filename} (image, {size_kb} kB)]"
-        return MediaContent(text=desc, media_type="image")
+        result = MediaContent(text=desc, media_type="image")
+
+        if settings.media_cache_enabled and content_hash is not None:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     def _should_use_vision(self, message_text: str, filename: str) -> bool:
         text = (message_text or "").strip()
@@ -340,7 +406,7 @@ class ImageExtractor(MediaExtractor):
     }
 
     async def _describe_image(self, data: bytes, message_context: str, filename: str = "") -> str:
-        """Describe an image using direct Gemini API with multimodal parts."""
+        """Describe an image via the LiteLLM funnel using OpenAI multimodal shape."""
         settings = get_settings()
         if not settings.google_api_key:
             return ""
@@ -349,13 +415,20 @@ class ImageExtractor(MediaExtractor):
         mime_type = self._IMAGE_MIME_MAP.get(ext, "image/png")
 
         try:
-            from google.genai import types as genai_types
+            import base64
 
-            client = await _get_gemini_client()
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             prompt = IMAGE_DESCRIPTION_PROMPT
             if message_context:
                 prompt += f"\n\nMessage context: {message_context[:200]}"
+
+            model_name = settings.media_vision_model
+            data_url = f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"
 
             logger.info(
                 "ImageExtractor: calling generate_content for %s (%s, %d bytes)",
@@ -366,24 +439,22 @@ class ImageExtractor(MediaExtractor):
             async with _get_image_semaphore():
                 async with GEMINI_LIMITER:
                     response = await asyncio.wait_for(
-                        client.aio.models.generate_content(
-                            model=settings.media_vision_model,
-                            contents=[
-                                genai_types.Content(
-                                    role="user",
-                                    parts=[
-                                        genai_types.Part.from_bytes(
-                                            data=data,
-                                            mime_type=mime_type,
-                                        ),
-                                        genai_types.Part.from_text(text=prompt),
+                        dispatch_completion(
+                            provider=sniff_provider(model_name),
+                            model=normalize_litellm_model(model_name),
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "image_url", "image_url": {"url": data_url}},
+                                        {"type": "text", "text": prompt},
                                     ],
-                                )
+                                }
                             ],
                         ),
                         timeout=60,
                     )
-            result = response.text or ""
+            result = response.choices[0].message.content or ""  # type: ignore[index, union-attr]
             logger.info(
                 "ImageExtractor: result for %s — %d chars",
                 filename,
@@ -534,7 +605,17 @@ class OfficeExtractor(MediaExtractor):
 
 
 class VideoExtractor(MediaExtractor):
-    """Extract content from video files via combined audio + visual analysis."""
+    """Extract content from video files via combined audio + visual analysis.
+
+    DOCUMENTED EXCEPTION — agent-llm-provider-pluggable design D8 / D10.
+    This extractor uses the native ``google.genai`` Files API
+    (``client.aio.files.upload`` → ``Part.from_uri``) because LiteLLM has no
+    equivalent primitive for large-file upload-and-reference under Gemini.
+    The image-only extractor migrated to ``dispatch_completion`` with inline
+    data URLs (under 20 MB); video files routinely exceed that ceiling and
+    must use the upload-and-poll Files API path. Migration becomes viable
+    once LiteLLM exposes a unified file-upload abstraction across providers.
+    """
 
     @property
     def supported_mime_types(self) -> list[str]:
@@ -557,6 +638,26 @@ class VideoExtractor(MediaExtractor):
                 media_type="video",
             )
 
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp4"
+        mime_map = {
+            "mp4": "video/mp4",
+            "mov": "video/quicktime",
+            "webm": "video/webm",
+            "avi": "video/x-msvideo",
+        }
+        mime_type = mime_map.get(ext, "video/mp4")
+
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
+
         parts: list[str] = [f"[Attachment: {filename} (video, {size_mb:.1f} MB)]"]
 
         # Single Gemini call for combined transcript + visual analysis
@@ -564,7 +665,12 @@ class VideoExtractor(MediaExtractor):
         if analysis:
             parts.append(f"[Video summary]: {analysis}")
 
-        return MediaContent(text="\n".join(parts), media_type="video")
+        result = MediaContent(text="\n".join(parts), media_type="video")
+
+        if settings.media_cache_enabled and content_hash is not None:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     async def _analyze_video(self, data: bytes, filename: str) -> str:
         """Analyze video using Gemini Files API + content generation."""
@@ -693,7 +799,14 @@ class VideoExtractor(MediaExtractor):
 
 
 class AudioExtractor(MediaExtractor):
-    """Transcribe audio files using Gemini multimodal API."""
+    """Transcribe audio files using Gemini multimodal API.
+
+    DOCUMENTED EXCEPTION — agent-llm-provider-pluggable design D8 / D10.
+    Same justification as :class:`VideoExtractor` above: audio uploads exceed
+    inline-data size limits and require Gemini's Files API (upload → URI ref
+    → generate_content), for which LiteLLM has no normalised abstraction.
+    Migration unblocks when LiteLLM exposes a unified file-upload primitive.
+    """
 
     @property
     def supported_mime_types(self) -> list[str]:
@@ -725,25 +838,39 @@ class AudioExtractor(MediaExtractor):
                 media_type="audio",
             )
 
-        parts: list[str] = [f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]"]
-
         if not settings.google_api_key:
-            return MediaContent(text="\n".join(parts), media_type="audio")
+            return MediaContent(
+                text=f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]",
+                media_type="audio",
+            )
+
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
+        mime_map = {
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "m4a": "audio/mp4",
+            "ogg": "audio/ogg",
+            "flac": "audio/flac",
+        }
+        mime_type = mime_map.get(ext, "audio/mpeg")
+
+        # Initialize unconditionally so the later write-block reference
+        # is safe even if a future refactor restructures the guard.
+        # Code-reviewer (Phase 4 autopilot) flagged the prior scoped-only
+        # binding as MEDIUM-severity hygiene risk.
+        content_hash: str | None = None
+        if settings.media_cache_enabled:
+            content_hash = _compute_media_hash(data)
+            cached = await _check_media_cache(content_hash, mime_type)
+            if cached is not None:
+                return cached
+
+        parts: list[str] = [f"[Attachment: {filename} (audio, {size_mb:.1f} MB)]"]
 
         uploaded = None
         client = await _get_gemini_client()
         try:
             from google.genai import types as genai_types
-
-            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
-            mime_map = {
-                "mp3": "audio/mpeg",
-                "wav": "audio/wav",
-                "m4a": "audio/mp4",
-                "ogg": "audio/ogg",
-                "flac": "audio/flac",
-            }
-            mime_type = mime_map.get(ext, "audio/mpeg")
 
             # Upload via Files API
             logger.info("AudioExtractor: uploading %s (%s, %.1f MB)", filename, mime_type, size_mb)
@@ -801,7 +928,12 @@ class AudioExtractor(MediaExtractor):
                 except Exception:
                     logger.debug("AudioExtractor: cleanup failed for %s", filename)
 
-        return MediaContent(text="\n".join(parts), media_type="audio")
+        result = MediaContent(text="\n".join(parts), media_type="audio")
+
+        if settings.media_cache_enabled and content_hash is not None:
+            await _write_media_cache(content_hash, mime_type, result, settings.media_vision_model)
+
+        return result
 
     @staticmethod
     def _parse_transcript(text: str) -> tuple[str, str]:

@@ -971,7 +971,14 @@ class NebulaStore:
         # Return a composite edge ID
         return f"{src_vid}->{rel.type}->{tgt_vid}"
 
-    async def batch_upsert_relationships(self, rels: list[GraphRelationship]) -> list[str]:
+    async def batch_upsert_relationships(
+        self,
+        rels: list[GraphRelationship],
+        *,
+        channel_id: str = "",
+        sync_job_id: str = "",
+        batch_idx: int | None = None,
+    ) -> list[str]:
         if not rels:
             return []
 

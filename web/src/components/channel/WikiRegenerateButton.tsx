@@ -332,7 +332,7 @@ function LanguageMenu({
   return (
     <div
       role="menu"
-      className={`absolute right-0 ${placementClass} z-50 w-60 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-xl`}
+      className={`absolute left-0 ${placementClass} z-50 w-60 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-xl`}
     >
       <div className="flex items-center gap-1.5 px-2.5 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <Languages className="h-3 w-3" />

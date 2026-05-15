@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RefreshCw } from "lucide-react";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
 import { useFavorites } from "@/hooks/useFavorites";
+import { useWikiStates } from "@/hooks/useWikiStates";
 import { SidebarSearch } from "./SidebarSearch";
 import { FavoritesList } from "./FavoritesList";
 import { WorkspaceGroup } from "./WorkspaceGroup";
@@ -16,6 +17,12 @@ interface Channel {
   is_member: boolean;
   member_count: number | null;
   connection_id: string | null;
+  /** Status of the parent PlatformConnection at fetch time
+   *  ("connected" / "disconnected" / "error" / "pending"). null for
+   *  orphan channels with no parent connection (CSV-imported, etc.).
+   *  Lets the sidebar render a "needs reconnection" badge instead of
+   *  silently hiding the workspace when status drifts. */
+  connection_status?: string | null;
 }
 
 const COLLAPSED_KEY = "beever-sidebar-groups";
@@ -47,6 +54,7 @@ export function ChannelList() {
 
   const { connections, getWorkspaceName, refetch: refetchConnections } = useConnectionMap();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { getState: getWikiState } = useWikiStates();
 
   const fetchChannels = useCallback(() => {
     setLoading(true);
@@ -98,12 +106,24 @@ export function ChannelList() {
     }
 
     // Build ordered list: known connections first, ungrouped last
-    const ordered: { key: string; label: string; platform: string; channels: Channel[] }[] = [];
+    const ordered: {
+      key: string;
+      label: string;
+      platform: string;
+      channels: Channel[];
+      connectionStatus?: string | null;
+    }[] = [];
 
     for (const conn of connections) {
       const chs = groups.get(conn.id);
       if (chs && chs.length > 0) {
-        ordered.push({ key: conn.id, label: conn.display_name, platform: conn.platform, channels: chs });
+        ordered.push({
+          key: conn.id,
+          label: conn.display_name,
+          platform: conn.platform,
+          channels: chs,
+          connectionStatus: conn.status,
+        });
         groups.delete(conn.id);
       }
     }
@@ -198,6 +218,7 @@ export function ChannelList() {
             isFavorite={isFavorite}
             onToggleFavorite={toggleFavorite}
             showWorkspaceName
+            getWikiState={getWikiState}
           />
         )}
       </div>
@@ -213,6 +234,7 @@ export function ChannelList() {
         channels={favoriteChannels}
         getWorkspaceName={getWorkspaceName}
         onToggleFavorite={toggleFavorite}
+        getWikiState={getWikiState}
       />
 
       {favoriteChannels.length > 0 && workspaceGroups.length > 0 && (
@@ -229,6 +251,8 @@ export function ChannelList() {
           onToggleCollapse={() => handleToggleCollapse(group.key)}
           isFavorite={isFavorite}
           onToggleFavorite={toggleFavorite}
+          connectionStatus={group.connectionStatus}
+          getWikiState={getWikiState}
         />
       ))}
     </div>

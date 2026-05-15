@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAsk } from "@/hooks/useAsk";
 import { useAskSession } from "@/hooks/useAskSession";
 import { useAskSessions } from "@/contexts/AskSessionsContext";
@@ -6,8 +7,9 @@ import { useFeedback } from "@/hooks/useFeedback";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInputBar } from "./ChatInputBar";
-import { ChannelPicker } from "@/components/ask/ChannelPicker";
+import { ChannelPicker, ALL_WIKIS_VALUE } from "@/components/ask/ChannelPicker";
 import { Share2, Check } from "lucide-react";
+import { useWikiStates } from "@/hooks/useWikiStates";
 import type { AnswerMode, Message } from "@/types/askTypes";
 import type { ChannelOption } from "@/components/ask/ChannelPicker";
 
@@ -255,6 +257,8 @@ function AskCorePicker({
 
   const [mode, setMode] = useState<AnswerMode>("deep");
   const [activeChannelId, setActiveChannelId] = useState<string>(initialChannelId);
+  const { getState: getWikiState } = useWikiStates();
+  const navigate = useNavigate();
   const [shareCopied, setShareCopied] = useState(false);
   const handleShare = useCallback(async () => {
     try {
@@ -366,6 +370,17 @@ function AskCorePicker({
   const handleSubmit = useCallback(
     (question: string, options?: { mode?: AnswerMode }) => {
       if (!activeChannelId) return;
+      // Guard against the "All wiki channels" sentinel reaching the API.
+      // The ChannelPicker row is gated behind `enableAllWikis` (default
+      // false) today, but a future opt-in must not silently POST
+      // `channel_id: "__all_wikis__"` to the backend — fail loud here and
+      // route through whatever multi-channel ask path lands later.
+      if (activeChannelId === ALL_WIKIS_VALUE) {
+        console.warn(
+          "AskCore: 'All wiki channels' selection has no backend support yet — pick a single channel.",
+        );
+        return;
+      }
       ask(question, {
         channelId: activeChannelId,
         mode: options?.mode ?? mode,
@@ -411,8 +426,18 @@ function AskCorePicker({
       value={activeChannelId}
       onChange={setActiveChannelId}
       disabled={isStreaming}
+      getWikiState={getWikiState}
     />
   );
+
+  const activeChannelWikiState = activeChannelId ? getWikiState(activeChannelId) : undefined;
+  const handleIngestActive = useCallback(() => {
+    if (!activeChannelId) return;
+    // Route the user to the channel page where the existing sync controls
+    // live — duplicating the trigger here would mean recreating the sync
+    // progress UI, which the channel page already does well.
+    navigate(`/channels/${activeChannelId}`);
+  }, [activeChannelId, navigate]);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -457,6 +482,8 @@ function AskCorePicker({
         sessionId={sessionId ?? undefined}
         channelNames={channelNames}
         activeChannelId={activeChannelId}
+        activeChannelWikiState={activeChannelWikiState}
+        onIngestChannel={activeChannelId ? handleIngestActive : undefined}
       />
 
       <ChatInputBar

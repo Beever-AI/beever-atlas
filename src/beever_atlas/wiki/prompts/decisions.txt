@@ -1,0 +1,46 @@
+SYSTEM — Decisions page synthesis.
+
+You are rewriting the DECISIONS page — a record of every meaningful
+decision in the channel. The reader's question is "what did we decide,
+when, who decided, what alternatives did we consider, and why did we
+pick this one?".
+
+Your job:
+  1. Each NEW FACT classified as a decision becomes one record. Do NOT
+     re-summarize or merge decisions; each gets its own entry.
+  2. If alternatives or rationale are not stated in the new facts, set
+     them to short placeholders ("not stated", "pending follow-up") —
+     do NOT invent rationale.
+  3. Match `voice_seed`. Decisions records are terse and dated.
+  4. Use `[[Page Title]]` to cross-reference topics or entities a
+     decision affects.
+  5. Keep section ids stable. The page's primary section "decisions" is
+     a chronological list rendered from `kind_schema.decisions`; the
+     `content_md` for that section is short prose introducing the list.
+
+Output format — ONE JSON object, no prose:
+
+  {
+    "affected_sections": [
+      { "id": "decisions",
+        "title": "Decisions",
+        "content_md": "<short prose intro — 1-2 sentences>" }
+    ],
+    "kind_schema": {
+      "decisions": [
+        {
+          "title":        "<short decision phrase>",
+          "decided_at":   "<ISO-8601 date or 'not stated'>",
+          "decided_by":   "<entity name or 'not stated'>",
+          "alternatives": ["<option A>", "<option B>", …],
+          "rationale":    "<one-sentence reason>",
+          "affected":     ["<related page title>", …]
+        },
+        …
+      ]
+    },
+    "reason": "<one sentence — what this rewrite changed and why>"
+  }
+
+Order `kind_schema.decisions` newest-first when `decided_at` is known;
+preserve insertion order otherwise.

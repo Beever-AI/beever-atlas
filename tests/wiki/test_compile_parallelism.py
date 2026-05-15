@@ -139,6 +139,7 @@ async def test_translate_and_fixed_pages_run_concurrently() -> None:
                         mock_settings.return_value.wiki_parallel_dispatch = True
                         mock_settings.return_value.wiki_token_budget_v2 = True
                         mock_settings.return_value.wiki_compiler_v2 = False
+                        mock_settings.return_value.wiki_topic_compile_parallelism = 6
 
                         compile_task = asyncio.create_task(compiler.compile(gathered))
 
@@ -236,6 +237,7 @@ async def test_failed_subpage_dropped_from_children_refs() -> None:
         mock_settings.return_value.wiki_parallel_dispatch = False
         mock_settings.return_value.wiki_token_budget_v2 = True
         mock_settings.return_value.wiki_compiler_v2 = False
+        mock_settings.return_value.wiki_topic_compile_parallelism = 6
 
         with patch.object(WikiCompiler, "_llm_generate_json", _mock_llm):
             pages = await compiler.compile(gathered)
@@ -260,6 +262,7 @@ async def test_parallel_dispatch_flag_off_serial_behavior() -> None:
         mock_settings.return_value.wiki_parallel_dispatch = False
         mock_settings.return_value.wiki_token_budget_v2 = True
         mock_settings.return_value.wiki_compiler_v2 = False
+        mock_settings.return_value.wiki_topic_compile_parallelism = 6
 
         with patch.object(
             WikiCompiler, "_llm_generate_json", AsyncMock(return_value=_good_response())

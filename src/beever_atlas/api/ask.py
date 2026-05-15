@@ -75,16 +75,128 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
+class _HeartbeatSentinel:
+    """Yielded by ``_stream_with_heartbeats`` whenever the underlying
+    agent stream has been silent for the heartbeat interval. The QA
+    SSE loop translates this into a synthetic ``thinking`` event so
+    slow non-Gemini models (Ollama gemma/llama, GLM, …) don't leave
+    the UI blank between request-acceptance and first-token-arrival.
+    """
+
+    __slots__ = ("elapsed_ms",)
+
+    def __init__(self, elapsed_ms: int) -> None:
+        self.elapsed_ms = elapsed_ms
+
+
+async def _stream_with_heartbeats(stream, interval_seconds: float = 4.0):
+    """Async-iterate ``stream`` and yield a :class:`_HeartbeatSentinel`
+    every ``interval_seconds`` of silence.
+
+    Why this exists
+    ---------------
+    Gemini-via-ADK emits ``thought`` parts during reasoning so the UI can
+    show "Thought for X.Xs ›" while the model is working. LiteLLM-routed
+    models (Ollama, GLM, OpenAI compat shims, …) have no thought channel —
+    the SSE connection is dead silent until the first token. On slow local
+    inference (gemma4:e4b, llama3.2 on CPU) that gap can be 30-60 seconds,
+    during which the user sees nothing and assumes the system has hung.
+
+    The heartbeat fires only until the first real event arrives — once
+    the model starts producing tool calls or text deltas, the natural
+    event stream takes over. After that, ADK / Gemini's own thinking
+    pipeline handles progress reporting unchanged.
+
+    Cancellation: the wrapper's task cancellation is propagated to the
+    underlying iterator via ``aclose()`` so an SSE-client disconnect
+    cleanly stops both the agent run and the heartbeat ticking.
+    """
+    aiter = stream.__aiter__()
+    started_at = time.monotonic()
+    # PEP 479: catching ``StopAsyncIteration`` inside an async generator and
+    # ``return``ing converts the implicit StopIteration into a RuntimeError.
+    # Use ``anext(default=…)`` so iterator exhaustion surfaces as a sentinel
+    # value, no exception involved.
+    _STREAM_END = object()
+    # ``asyncio.wait_for`` cancels its inner coroutine on timeout, which
+    # would corrupt the async iterator (we'd be cancelling the underlying
+    # __anext__ mid-flight every heartbeat interval). Instead, launch one
+    # long-lived task per pending fetch and ``shield`` it so timeouts only
+    # interrupt the WAIT, not the fetch itself.
+    pending: asyncio.Task | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(anext(aiter, _STREAM_END))
+            try:
+                event = await asyncio.wait_for(asyncio.shield(pending), timeout=interval_seconds)
+            except asyncio.TimeoutError:
+                # ``pending`` keeps running — reused on the next iteration.
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                yield _HeartbeatSentinel(elapsed_ms)
+                continue
+            pending = None  # consumed; fresh task next iteration
+            if event is _STREAM_END:
+                return
+            yield event
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+        aclose = getattr(aiter, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _extract_citations_from_text(text: str) -> list[dict]:
     """Extract citation-format lines from agent response text.
 
-    Looks for lines like: [1] Author: @handle | Channel: #name | Time: ts
-    Returns list of citation dicts for the SSE citations event.
+    Recognises two citation shapes:
+
+    1. ``channel_fact``: ``[N] Author: @handle | Channel: #name | Time: ts``
+       — the historical chat-message citation.
+    2. ``wiki_page``: ``[N] Wiki Page: <slug> | Section: <id>`` — the new
+       per-page wiki citation introduced by the production-wiring
+       redesign so wiki-content answers can carry a navigable reference.
+
+    Mixed citations within one answer are supported; the returned list
+    preserves textual order. Channel-fact citations that include the
+    literal substring ``"Wiki Page:"`` would otherwise misclassify, so we
+    match wiki-page citations FIRST and mask their spans before scanning
+    for channel-fact citations.
     """
-    citations = []
+    citations: list[dict] = []
+    consumed: list[tuple[int, int]] = []
+    for match in re.finditer(
+        r"\[(\d+)\]\s+Wiki Page:\s*([^|]+)\|?\s*(?:Section:\s*([^\[\n]+))?",
+        text,
+    ):
+        citations.append(
+            {
+                "type": "wiki_page",
+                "text": match.group(0).strip(),
+                "number": match.group(1),
+                "page_id": match.group(2).strip() if match.group(2) else "",
+                "section_id": match.group(3).strip() if match.group(3) else "",
+            }
+        )
+        consumed.append(match.span())
+
+    # Mask out wiki-page matches so the channel-fact regex can't double-match.
+    if consumed:
+        chars = list(text)
+        for start, end in consumed:
+            for i in range(start, end):
+                chars[i] = " "
+        scrubbed = "".join(chars)
+    else:
+        scrubbed = text
+
     for match in re.finditer(
         r"\[(\d+)\]\s+Author:\s*([^|]+)\|?\s*(?:Channel:\s*([^|]+)\|?)?\s*(?:Time:\s*([^\[]+))?",
-        text,
+        scrubbed,
     ):
         citations.append(
             {
@@ -213,6 +325,24 @@ async def _run_agent_stream(
         agent = get_agent_for_mode(mode)
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
+
+    # Log the resolved model + endpoint at QA invocation so operators can
+    # confirm — without polling debug endpoints — which pluggable provider
+    # is about to serve this Ask. The per-call ``llm call ok/FAIL`` log
+    # from ``llm_call_log`` follows once LiteLLM completes. Together they
+    # form the operator-visible trace: "what will run" → "what actually ran".
+    try:
+        from beever_atlas.llm.provider import get_llm_provider
+
+        _qa_model = get_llm_provider().get_model_string("qa_agent")
+        logger.info(
+            "qa_ask start: session=%s mode=%s consumer=qa_agent resolved_model=%s",
+            session_id,
+            mode,
+            _qa_model,
+        )
+    except Exception:  # noqa: BLE001 — never block an Ask on logging
+        pass
 
     # ----- Settings flags ---------------------------------------------
     from beever_atlas.infra.config import get_settings
@@ -364,10 +494,41 @@ async def _run_agent_stream(
                 session_id=session.id,
                 new_message=new_message,
             )
-        async for event in _stream:
+        _heartbeat_synthetic_thinking_open = False
+        _seen_real_event = False
+        async for event in _stream_with_heartbeats(_stream, interval_seconds=4.0):
             if await request.is_disconnected():
                 logger.info("Client disconnected, stopping agent stream")
                 break
+
+            # Heartbeat tick — synthetic ``thinking`` event so the UI shows
+            # "Thought for X.Xs ›" with a live-ticking timer while the
+            # model is silent. Only meaningful BEFORE the first real event
+            # arrives; once tool calls or text deltas start, the natural
+            # stream handles progress.
+            if isinstance(event, _HeartbeatSentinel):
+                if not _seen_real_event:
+                    _heartbeat_synthetic_thinking_open = True
+                    yield _sse_event(
+                        "thinking",
+                        {
+                            "text": "",
+                            "elapsed_ms": event.elapsed_ms,
+                            "synthetic": True,
+                        },
+                    )
+                continue
+
+            # First real event after one or more heartbeats — close the
+            # synthetic thinking indicator before processing the event so
+            # the UI cleanly transitions from "Working…" to actual output.
+            if _heartbeat_synthetic_thinking_open and not _seen_real_event:
+                yield _sse_event(
+                    "thinking_done",
+                    {"duration_ms": None, "synthetic": True},
+                )
+                _heartbeat_synthetic_thinking_open = False
+            _seen_real_event = True
 
             if event.error_code or event.error_message:
                 yield _sse_event(
@@ -914,13 +1075,18 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
             return f"[Could not extract text from {filename}]"
 
     if mime_type.startswith("image/"):
-        # Use Gemini vision for image description. The project uses the
-        # `google.genai` SDK (not the older `google.generativeai`); see
-        # media_extractors.py for the canonical call pattern.
+        # Use Gemini vision for image description via the LiteLLM funnel —
+        # images pass through ``dispatch_completion`` using OpenAI's
+        # multimodal messages shape (data-URL image_url + text).
         try:
-            from google import genai
-            from google.genai import types as genai_types
+            import base64
+
             from beever_atlas.infra.config import get_settings
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             settings = get_settings()
             api_key = getattr(settings, "google_api_key", "") or ""
@@ -932,30 +1098,34 @@ async def _extract_text(content: bytes, mime_type: str, filename: str) -> str:
                 )
                 return f"[Image: {filename}]"
 
-            client = genai.Client(api_key=api_key)
+            model_name = settings.media_vision_model
+            data_url = f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_bytes(data=content, mime_type=mime_type),
-                                genai_types.Part.from_text(
-                                    text=(
+                dispatch_completion(
+                    provider=sniff_provider(model_name),
+                    model=normalize_litellm_model(model_name),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                                {
+                                    "type": "text",
+                                    "text": (
                                         "Describe this image in detail for a "
                                         "knowledge base assistant. Include any "
                                         "visible text, people, objects, charts, "
                                         "diagrams, and overall context."
-                                    )
-                                ),
+                                    ),
+                                },
                             ],
-                        )
+                        }
                     ],
                 ),
                 timeout=60,
             )
-            text = (getattr(response, "text", None) or "").strip()
+            text = (response.choices[0].message.content or "").strip()  # type: ignore[index, union-attr]
             if text:
                 return text
             logger.warning(

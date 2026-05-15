@@ -1,17 +1,37 @@
 import { useState } from "react";
-import { Plus, MonitorSmartphone, Settings2, FileText, Plug, Cpu } from "lucide-react";
+import { NavLink, Outlet, useLocation, useOutletContext } from "react-router-dom";
+import {
+  Plus,
+  MonitorSmartphone,
+  Settings2,
+  FileText,
+  Plug,
+  Cpu,
+  Layers,
+  KeyRound,
+} from "lucide-react";
 import { useConnections, useDeleteConnection } from "@/hooks/useConnections";
 import { PlatformCard } from "@/components/settings/PlatformCard";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
 import { FileImportWizard } from "@/components/settings/FileImportWizard";
 import { ManageChannelsDialog } from "@/components/settings/ManageChannelsDialog";
-import { SyncDefaultsSection } from "@/components/settings/SyncDefaultsSection";
-import { AgentModelSettings } from "@/components/settings/AgentModelSettings";
 import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 type PickerOption = Platform | "file";
-type SettingsTab = "integrations" | "channels" | "models";
+
+/** Tab slug as it appears in the URL: ``/settings/<slug>``. */
+export type SettingsTab = "integrations" | "channels" | "endpoints" | "embedding" | "agents";
+
+/** Shape passed down to tab route elements via ``<Outlet context>``. */
+export type SettingsOutletContext = {
+  loading: boolean;
+  error: string | null;
+  connections: PlatformConnection[];
+  onAdd: () => void;
+  onDisconnect: (c: PlatformConnection) => void;
+  onManage: (c: PlatformConnection) => void;
+};
 
 function SlackIcon({ className }: { className?: string }) {
   return (
@@ -48,14 +68,38 @@ const PLATFORM_OPTIONS: { value: PickerOption; label: string; description: strin
 const TABS: { value: SettingsTab; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { value: "integrations", label: "Integrations", description: "Connected platforms and data sources", Icon: Plug },
   { value: "channels", label: "Channels", description: "Default sync behavior for new channels", Icon: Settings2 },
-  { value: "models", label: "AI Models", description: "Per-agent model assignments and presets", Icon: Cpu },
+  {
+    value: "endpoints",
+    label: "Endpoints",
+    description: "Model providers you've connected — API endpoints, local Ollama, credentials",
+    Icon: KeyRound,
+  },
+  {
+    value: "embedding",
+    label: "Embedding",
+    description: "Vector model for semantic search — changing it re-embeds everything",
+    Icon: Layers,
+  },
+  {
+    value: "agents",
+    label: "Agent models",
+    description: "Which model each ingestion / wiki / Ask agent uses",
+    Icon: Cpu,
+  },
 ];
+
+const DEFAULT_TAB: SettingsTab = "integrations";
+
+function activeTabFromPath(pathname: string): SettingsTab {
+  const slug = pathname.split("/")[2] as SettingsTab | undefined;
+  return TABS.some((t) => t.value === slug) ? (slug as SettingsTab) : DEFAULT_TAB;
+}
 
 export function SettingsPage() {
   const { connections, loading, error, refetch } = useConnections();
   const { remove } = useDeleteConnection();
+  const location = useLocation();
 
-  const [tab, setTab] = useState<SettingsTab>("integrations");
   const [wizardPlatform, setWizardPlatform] = useState<Platform | null>(null);
   const [showFileImport, setShowFileImport] = useState(false);
   const [managingConnection, setManagingConnection] = useState<PlatformConnection | null>(null);
@@ -85,7 +129,18 @@ export function SettingsPage() {
   }
 
   const connectedCount = connections.filter((c) => c.status === "connected").length;
-  const activeTab = TABS.find((t) => t.value === tab)!;
+  const activeTab = activeTabFromPath(location.pathname);
+  const activeMeta = TABS.find((t) => t.value === activeTab)!;
+  const onIntegrations = activeTab === "integrations";
+
+  const outletContext: SettingsOutletContext = {
+    loading,
+    error,
+    connections,
+    onAdd: () => setShowPicker(true),
+    onDisconnect: handleDisconnect,
+    onManage: setManagingConnection,
+  };
 
   return (
     <div className="h-full overflow-auto">
@@ -94,9 +149,9 @@ export function SettingsPage() {
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-foreground tracking-tight">Settings</h1>
-            <p className="text-sm text-muted-foreground mt-1">{activeTab.description}</p>
+            <p className="text-sm text-muted-foreground mt-1">{activeMeta.description}</p>
           </div>
-          {tab === "integrations" && !loading && connections.length > 0 && (
+          {onIntegrations && !loading && connections.length > 0 && (
             <button
               type="button"
               onClick={() => setShowPicker(true)}
@@ -112,22 +167,23 @@ export function SettingsPage() {
         <div className="mb-6 flex items-center justify-between border-b border-border">
           <nav className="flex gap-1 -mb-px">
             {TABS.map(({ value, label, Icon }) => (
-              <button
+              <NavLink
                 key={value}
-                type="button"
-                onClick={() => setTab(value)}
-                className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 transition-colors ${
-                  tab === value
-                    ? "border-primary text-foreground font-medium"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
+                to={`/settings/${value}`}
+                className={({ isActive }) =>
+                  `inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 transition-colors ${
+                    isActive
+                      ? "border-primary text-foreground font-medium"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`
+                }
               >
                 <Icon className="w-4 h-4" />
                 {label}
-              </button>
+              </NavLink>
             ))}
           </nav>
-          {tab === "integrations" && !loading && connectedCount > 0 && (
+          {onIntegrations && !loading && connectedCount > 0 && (
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-2">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -137,24 +193,7 @@ export function SettingsPage() {
           )}
         </div>
 
-        {tab === "integrations" && (
-            <IntegrationsTab
-              loading={loading}
-              error={error}
-              connections={connections}
-              onAdd={() => setShowPicker(true)}
-              onDisconnect={handleDisconnect}
-              onManage={setManagingConnection}
-            />
-          )}
-
-          {tab === "channels" && <SyncDefaultsSection />}
-
-        {tab === "models" && (
-          <div className="rounded-2xl border border-border bg-card p-5">
-            <AgentModelSettings />
-          </div>
-        )}
+        <Outlet context={outletContext} />
       </div>
 
       {/* Platform picker dialog */}
@@ -224,21 +263,11 @@ export function SettingsPage() {
   );
 }
 
-function IntegrationsTab({
-  loading,
-  error,
-  connections,
-  onAdd,
-  onDisconnect,
-  onManage,
-}: {
-  loading: boolean;
-  error: string | null;
-  connections: PlatformConnection[];
-  onAdd: () => void;
-  onDisconnect: (c: PlatformConnection) => void;
-  onManage: (c: PlatformConnection) => void;
-}) {
+/** The Integrations tab content — a route element under ``/settings/integrations``.
+ *  Pulls connection state + handlers from the parent ``SettingsPage`` via outlet context. */
+export function IntegrationsTab() {
+  const { loading, error, connections, onAdd, onDisconnect, onManage } =
+    useOutletContext<SettingsOutletContext>();
   return (
     <>
       {error && (

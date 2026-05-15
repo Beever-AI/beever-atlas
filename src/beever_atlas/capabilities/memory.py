@@ -33,33 +33,17 @@ logger = logging.getLogger(__name__)
 
 
 async def _embed_query(text: str) -> list[float]:
-    """Compute a Jina embedding for a query string.
+    """Compute an embedding for a query string via the shared shim.
 
-    Reuses the same API path as EntityRegistry.compute_name_embedding so we
-    have a single embedding code path for agent tools.  Raises on HTTP error —
-    callers should catch and fall back if needed.
+    Raises :class:`EmbeddingMigrationInProgress` while a re-embed is
+    running — callers wrap this in ``try/except Exception`` and fall back
+    to BM25-only search (the existing fallback path catches both
+    migration-in-progress and any other provider error uniformly).
     """
-    import httpx
+    from beever_atlas.llm.embeddings import embed_texts
 
-    from beever_atlas.infra.config import get_settings
-
-    settings = get_settings()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            settings.jina_api_url,
-            headers={
-                "Authorization": f"Bearer {settings.jina_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.jina_model,
-                "input": [text],
-                "dimensions": settings.jina_dimensions,
-                "task": "text-matching",
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()["data"][0]["embedding"]
+    vectors = await embed_texts([text])
+    return vectors[0]
 
 
 def _format_timestamp(ts: str | None) -> str:

@@ -92,37 +92,51 @@ async def _decompose_complex(question: str) -> QueryPlan:
         from beever_atlas.llm.provider import get_llm_provider
 
         provider = get_llm_provider()
-        model_name = provider.resolve_model("qa_router")
-
-        # Ollama models return a LiteLlm object — fall back to single query
-        if not isinstance(model_name, str):
-            logger.warning(
-                "QueryDecomposer: Ollama/non-string model %r, skipping LLM decomposition (degraded)",
-                type(model_name).__name__,
-            )
-            return QueryPlan(
-                original=question,
-                is_simple=False,
-                internal_queries=[SubQuery(query=question, focus="main")],
-            )
-
-        from google import genai  # type: ignore[import-untyped]
-        from beever_atlas.infra.config import get_settings
-
         prompt = DECOMPOSITION_PROMPT.format(question=question)
-        client = genai.Client(api_key=get_settings().google_api_key)
 
-        # Use the async client so asyncio.wait_for cancellation actually
-        # propagates to the underlying HTTP request (threads cannot be
-        # cancelled in Python — a thread-based path would leak on timeout).
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            ),
-            timeout=10.0,
-        )
-        text = (response.text or "").strip()
+        # Prefer the Endpoint+Assignment path — pulls the qa_router's
+        # api_key + api_base + per-call params from the Assignment row, so
+        # a custom provider (Z.AI / GLM, OpenRouter, Anthropic, …) gets the
+        # credentials it needs. Without this the previous
+        # ``dispatch_completion(provider=…, model=…)`` path called LiteLLM
+        # with the model id but no credentials, then LiteLLM fell back to
+        # the provider-default env var (``OPENAI_API_KEY`` for ``openai/*``
+        # ids — but Z.AI's GLM endpoint uses a *different* API key, so the
+        # call 401s in ~20ms).
+        resolved = await provider.resolve_for_call("qa_router")
+
+        if resolved is not None:
+            from beever_atlas.services.llm_dispatch import dispatch_assignment
+
+            response = await asyncio.wait_for(
+                dispatch_assignment(
+                    assignment=resolved,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=10.0,
+            )
+        else:
+            # No Assignment row — fall back to legacy ``resolve_model`` +
+            # ``dispatch_completion`` (used by ingestion agents that haven't
+            # been migrated, or in tests with a bare LLMProvider). LiteLLM
+            # picks up the provider-default env var here, matching the
+            # historical behaviour.
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
+
+            model_name = provider.get_model_string("qa_router")
+            response = await asyncio.wait_for(
+                dispatch_completion(
+                    provider=sniff_provider(model_name),
+                    model=normalize_litellm_model(model_name),
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                timeout=10.0,
+            )
+        text = (response.choices[0].message.content or "").strip()  # type: ignore[index, union-attr]
 
         # Strip markdown fences if present
         text = re.sub(r"^```[a-z]*\n?", "", text)

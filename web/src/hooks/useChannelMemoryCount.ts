@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
 interface MemoriesCountResponse {
@@ -9,6 +9,8 @@ export function useChannelMemoryCount(channelId: string | undefined) {
   const [memoryCount, setMemoryCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [fetchKey, setFetchKey] = useState(0);
+  const refetch = useCallback(() => setFetchKey((k) => k + 1), []);
 
   useEffect(() => {
     if (!channelId) {
@@ -30,12 +32,13 @@ export function useChannelMemoryCount(channelId: string | undefined) {
         setError(err instanceof Error ? err : new Error(String(err)));
       })
       .finally(() => setIsLoading(false));
-  }, [channelId]);
+  }, [channelId, fetchKey]);
 
   return {
     memoryCount,
     hasMemories: memoryCount > 0,
     isLoading,
     error,
+    refetch,
   };
 }

@@ -60,6 +60,42 @@ PLATFORM_HOST_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+# Runtime-registered hosts. The lifespan derives these from active
+# ``PlatformConnection`` records (e.g. self-hosted Mattermost servers
+# the operator entered in the connection wizard) so a UI-provisioned
+# integration on ``team.example.com`` automatically gains file-proxy
+# coverage without a separate env var.
+#
+# The set is mutated through ``register_runtime_hosts`` /
+# ``clear_runtime_hosts`` so callers can refresh it whenever a
+# connection is added, updated, or deleted.
+_runtime_hosts: frozenset[str] = frozenset()
+
+
+def register_runtime_hosts(hosts: Iterable[str]) -> None:
+    """Replace the runtime-registered host set with ``hosts``.
+
+    Called from server lifespan / connection CRUD paths to mirror the
+    set of self-hosted platform endpoints into the proxy allowlist.
+    Always replaces (not unions) so a deleted connection's host falls
+    out of the allowlist on the next refresh.
+    """
+    global _runtime_hosts
+    cleaned = {h.strip().lower() for h in hosts if h and h.strip()}
+    _runtime_hosts = frozenset(cleaned)
+
+
+def clear_runtime_hosts() -> None:
+    """Reset runtime-registered hosts. Used by tests for isolation."""
+    global _runtime_hosts
+    _runtime_hosts = frozenset()
+
+
+def get_runtime_hosts() -> frozenset[str]:
+    """Read-only view of the currently registered runtime hosts. Test hook."""
+    return _runtime_hosts
+
+
 def _parse_env_allowlist(raw: str) -> frozenset[str]:
     return frozenset(p.strip() for p in raw.split(",") if p.strip())
 
@@ -77,12 +113,37 @@ def _host_matches(host: str, entry: str) -> bool:
 def _active_allowlist(
     override: Iterable[str] | None,
 ) -> frozenset[str]:
+    """Resolve the host allowlist for file-proxy validation.
+
+    Resolution order:
+      1. Explicit ``override`` argument (test injection).
+      2. ``FILE_PROXY_HOST_ALLOWLIST`` env var — FULL REPLACEMENT of
+         the defaults. Use only when you know exactly which hosts you
+         want to permit. Runtime hosts (registered via
+         ``register_runtime_hosts``) are still merged in so a UI-
+         configured connection's server does not get locked out.
+      3. ``FILE_PROXY_HOST_ALLOWLIST_EXTRA`` env var — ADDITIVE on top
+         of the platform defaults. Comma-separated list of hostnames
+         or ``suffix:.example.com`` entries. Most operators do NOT
+         need this; rule (4) covers UI-provisioned connections.
+      4. Runtime hosts derived from ``PlatformConnection`` records —
+         e.g. when an operator connects a self-hosted Mattermost via
+         the connection wizard, the server hostname is harvested into
+         the allowlist automatically. This is the preferred path —
+         the source of truth is the existing connection config, not
+         a duplicated env var.
+      5. Hardcoded ``PLATFORM_HOST_ALLOWLIST`` (cloud platform defaults).
+    """
     if override is not None:
         return frozenset(override)
-    env_value = os.environ.get("FILE_PROXY_HOST_ALLOWLIST", "").strip()
-    if env_value:
-        return _parse_env_allowlist(env_value)
-    return PLATFORM_HOST_ALLOWLIST
+    runtime = _runtime_hosts
+    full_override = os.environ.get("FILE_PROXY_HOST_ALLOWLIST", "").strip()
+    if full_override:
+        return _parse_env_allowlist(full_override) | runtime
+    extra_value = os.environ.get("FILE_PROXY_HOST_ALLOWLIST_EXTRA", "").strip()
+    if extra_value:
+        return PLATFORM_HOST_ALLOWLIST | _parse_env_allowlist(extra_value) | runtime
+    return PLATFORM_HOST_ALLOWLIST | runtime
 
 
 def _is_private(ip: str) -> bool:

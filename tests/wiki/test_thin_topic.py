@@ -72,18 +72,49 @@ def _gathered(facts: list) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_thin_topic_routes_to_compile_thin_topic() -> None:
+async def test_thin_topic_falls_back_to_compile_thin_topic_when_modular_fails() -> None:
+    """Post v1/v2 unification: modular is tried FIRST for every topic
+    page. The thin-topic legacy path remains a fallback ONLY when the
+    modular orchestrator returns None (catastrophic LLM/parse failure)
+    AND the cluster is below the thin threshold AND v2 is on."""
     compiler = _make_compiler()
     cluster = _cluster(3)
     facts = [_mk_fact(i) for i in range(3)]
 
     with patch("beever_atlas.infra.config.get_settings") as mock_settings:
         mock_settings.return_value.wiki_compiler_v2 = True
-        with patch.object(compiler, "_compile_thin_topic", new=AsyncMock()) as thin_mock:
-            thin_mock.return_value = "sentinel"
-            res = await compiler._compile_topic_page(cluster, _gathered(facts))
-            assert res == "sentinel"
-            thin_mock.assert_awaited_once()
+        # Force modular to "fail" (return None) so the thin fallback fires.
+        with patch.object(
+            compiler, "_try_compile_topic_modular", new=AsyncMock(return_value=None)
+        ) as modular_mock:
+            with patch.object(compiler, "_compile_thin_topic", new=AsyncMock()) as thin_mock:
+                thin_mock.return_value = "sentinel"
+                res = await compiler._compile_topic_page(cluster, _gathered(facts))
+                assert res == "sentinel"
+                modular_mock.assert_awaited_once()
+                thin_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_thin_topic_uses_modular_path_first() -> None:
+    """A 3-fact cluster MUST go through the modular path before any
+    legacy fallback — every topic page emits frontend-renderer modules
+    in v2."""
+    compiler = _make_compiler()
+    cluster = _cluster(3)
+    facts = [_mk_fact(i) for i in range(3)]
+
+    sentinel_page = MagicMock(name="modular_page")
+    with patch("beever_atlas.infra.config.get_settings") as mock_settings:
+        mock_settings.return_value.wiki_compiler_v2 = True
+        with patch.object(
+            compiler, "_try_compile_topic_modular", new=AsyncMock(return_value=sentinel_page)
+        ) as modular_mock:
+            with patch.object(compiler, "_compile_thin_topic", new=AsyncMock()) as thin_mock:
+                res = await compiler._compile_topic_page(cluster, _gathered(facts))
+                assert res is sentinel_page
+                modular_mock.assert_awaited_once()
+                thin_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ class StructuredFormatter(logging.Formatter):
     Categories:
     - sync: SyncRunner, BatchProcessor lifecycle
     - llm: LLM agent calls (extraction, classification, validation)
-    - embed: Jina embedding calls
+    - embed: Embedding-provider calls (LiteLLM-routed)
     - store: Weaviate, Neo4j, MongoDB operations
     - api: FastAPI request/response
     - pipeline: Pipeline stage transitions with timing
@@ -58,5 +58,5 @@ def store_log(logger: logging.Logger, msg: str, level: str = "info", **data: Any
 
 
 def embed_log(logger: logging.Logger, msg: str, level: str = "info", **data: Any) -> None:
-    """Log a Jina embedding operation."""
+    """Log an embedding-provider operation (LiteLLM-routed)."""
     getattr(logger, level)(msg, extra={"cat": "embed", "data": data})

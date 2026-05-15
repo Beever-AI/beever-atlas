@@ -1,0 +1,123 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ActivityFeed — snapshot > matches the 5-event snapshot 1`] = `
+<div
+  data-testid="activity-feed"
+>
+  <ol
+    class="space-y-1.5 text-xs"
+    data-testid="activity-feed-list"
+  >
+    <li
+      class="flex items-start gap-2 leading-snug"
+      data-testid="activity-feed-row"
+    >
+      <span
+        class="font-mono text-[10px] text-muted-foreground shrink-0 mt-0.5 tabular-nums"
+      >
+        just now
+      </span>
+      <span
+        aria-hidden="true"
+        class="shrink-0 mt-0.5 select-none"
+        title="extract_facts"
+      >
+        💎
+      </span>
+      <span
+        class="text-foreground/80 truncate flex-1"
+      >
+        Event 1
+      </span>
+    </li>
+    <li
+      class="flex items-start gap-2 leading-snug"
+      data-testid="activity-feed-row"
+    >
+      <span
+        class="font-mono text-[10px] text-muted-foreground shrink-0 mt-0.5 tabular-nums"
+      >
+        30s ago
+      </span>
+      <span
+        aria-hidden="true"
+        class="shrink-0 mt-0.5 select-none"
+        title="embed"
+      >
+        ⚡
+      </span>
+      <span
+        class="text-foreground/80 truncate flex-1"
+      >
+        Event 2
+      </span>
+    </li>
+    <li
+      class="flex items-start gap-2 leading-snug"
+      data-testid="activity-feed-row"
+    >
+      <span
+        class="font-mono text-[10px] text-muted-foreground shrink-0 mt-0.5 tabular-nums"
+      >
+        1m ago
+      </span>
+      <span
+        aria-hidden="true"
+        class="shrink-0 mt-0.5 select-none"
+        title="wiki_maintenance"
+      >
+        📝
+      </span>
+      <span
+        class="text-foreground/80 truncate flex-1"
+      >
+        Event 3
+      </span>
+    </li>
+    <li
+      class="flex items-start gap-2 leading-snug"
+      data-testid="activity-feed-row"
+    >
+      <span
+        class="font-mono text-[10px] text-muted-foreground shrink-0 mt-0.5 tabular-nums"
+      >
+        2m ago
+      </span>
+      <span
+        aria-hidden="true"
+        class="shrink-0 mt-0.5 select-none"
+        title="persist"
+      >
+        💾
+      </span>
+      <span
+        class="text-foreground/80 truncate flex-1"
+      >
+        Event 4
+      </span>
+    </li>
+    <li
+      class="flex items-start gap-2 leading-snug"
+      data-testid="activity-feed-row"
+    >
+      <span
+        class="font-mono text-[10px] text-muted-foreground shrink-0 mt-0.5 tabular-nums"
+      >
+        2m ago
+      </span>
+      <span
+        aria-hidden="true"
+        class="shrink-0 mt-0.5 select-none"
+        title="extract_facts"
+      >
+        💎
+      </span>
+      <span
+        class="text-foreground/80 truncate flex-1"
+      >
+        Event 5
+      </span>
+    </li>
+  </ol>
+</div>
+`;

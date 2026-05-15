@@ -106,12 +106,62 @@ def register_resources(mcp: FastMCP) -> None:
         try:
             from beever_atlas.capabilities import wiki as wiki_cap
             from beever_atlas.capabilities.errors import ChannelAccessDenied
+            from beever_atlas.infra.channel_access import assert_channel_access
+            from beever_atlas.infra.config import get_settings
+            from beever_atlas.stores import get_stores
+            from beever_atlas.wiki.page_store import WikiPageStore
+
+            # Per-page resource path (PR-E + production-wiring §16):
+            # when ``PER_PAGE_WIKI=ON`` AND the new ``wiki_pages`` collection
+            # has rows for this channel, return a real per-page index. The
+            # legacy ``get_topic_overview`` fallback covers the other cases.
+            settings = get_settings()
+            if settings.per_page_wiki:
+                try:
+                    await assert_channel_access(principal_id, channel_id)
+                    stores = get_stores()
+                    page_store = WikiPageStore(db=stores.mongodb.db)
+                    pages = await page_store.list_pages(channel_id)
+                except ChannelAccessDenied:
+                    return {"error": "channel_access_denied", "channel_id": channel_id}
+                except Exception:  # noqa: BLE001 — fall through to legacy path
+                    logger.warning(
+                        "event=mcp_resource_wiki_pages_lookup_failed channel_id=%s",
+                        channel_id,
+                    )
+                    pages = []
+                if pages:
+                    last_run_ts = max(
+                        (p.updated_at for p in pages if p.updated_at is not None),
+                        default=None,
+                    )
+                    return {
+                        "channel_id": channel_id,
+                        "page_count": len(pages),
+                        "pages": [
+                            {
+                                "page_id": p.page_id,
+                                "title": p.title,
+                                "version": p.version,
+                                "is_dirty": p.is_dirty,
+                                "tensions_count": len(p.tensions or []),
+                                "updated_at": (
+                                    p.updated_at.isoformat() if p.updated_at is not None else None
+                                ),
+                            }
+                            for p in pages
+                        ],
+                        "maintainer_last_run_ts": (
+                            last_run_ts.isoformat() if last_run_ts is not None else None
+                        ),
+                        "stub": False,
+                    }
 
             overview = await wiki_cap.get_topic_overview(principal_id, channel_id)
             if overview is None:
                 logger.warning(
                     "event=mcp_resource_wiki_stub channel_id=%s "
-                    "detail='wiki structure index awaits Phase 6 wiki-cache integration'",
+                    "detail='wiki structure index empty across both legacy and per-page stores'",
                     channel_id,
                 )
                 return {

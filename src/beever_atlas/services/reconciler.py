@@ -61,11 +61,11 @@ class WriteReconciler:
         wi: WriteIntent = intent  # type: ignore[assignment]
 
         facts: list[AtomicFact] = []
-        for idx, fd in enumerate(wi.facts):
-            platform = fd.get("platform", "slack")
-            channel_id = fd.get("channel_id", "")
-            message_ts = fd.get("message_ts", "")
-            fact_id = AtomicFact.deterministic_id(platform, channel_id, message_ts, idx)
+        for fd in wi.facts:
+            # Content-derived deterministic ID — same memory_text +
+            # same sorted entity_tags yields the same UUID across retries.
+            entity_names = fd.get("entity_tags") or []
+            fact_id = AtomicFact.deterministic_id(fd.get("memory_text", ""), entity_names)
             fact = AtomicFact(id=fact_id, **{k: v for k, v in fd.items() if k != "id"})
             facts.append(fact)
 

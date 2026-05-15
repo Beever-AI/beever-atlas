@@ -214,3 +214,147 @@ async def test_zh_hk_doc_untouched_after_en_generation() -> None:
 
     # en slot was written
     assert "C1:en" in fake_cache._store
+
+
+@pytest.mark.asyncio
+async def test_seeds_wiki_pages_for_each_compiled_page() -> None:
+    """After ``save_wiki``, Builder must seed ``wiki_pages`` with one
+    ``persistence.WikiPage`` per compiled domain page. Closes the
+    first-sync chicken-and-egg deadlock where the maintainer's
+    incremental flush would forever defer because nothing wrote to
+    ``wiki_pages``."""
+    from beever_atlas.models.domain import WikiPage as DomainWikiPage
+    from beever_atlas.wiki.builder import WikiBuilder
+
+    fake_cache = _make_fake_cache()
+    # Attach a ``_db`` handle since the seed path constructs a
+    # ``WikiPageStore(db=self._cache._db)``.
+    fake_cache._db = MagicMock()
+
+    # Compiler returns three pages — overview + two topics. The seed
+    # must call save_page once per page.
+    compiled_pages = {
+        "overview": DomainWikiPage(
+            id="overview",
+            slug="overview",
+            title="Overview",
+            content="...",
+            page_type="fixed",
+        ),
+        "topic-alpha": DomainWikiPage(
+            id="topic-alpha",
+            slug="alpha",
+            title="Alpha",
+            content="...",
+            page_type="topic",
+        ),
+        "topic-beta": DomainWikiPage(
+            id="topic-beta",
+            slug="beta",
+            title="Beta",
+            content="...",
+            page_type="topic",
+        ),
+    }
+    fake_compiler = _make_fake_compiler()
+    fake_compiler.compile = AsyncMock(return_value=compiled_pages)
+
+    saved_page_ids: list[str] = []
+
+    class _FakePageStore:
+        def __init__(self, db: object) -> None:  # noqa: ARG002 — matches real ctor
+            pass
+
+        async def save_page(self, page: object) -> None:
+            saved_page_ids.append(getattr(page, "page_id", "?"))
+
+    builder = WikiBuilder(
+        weaviate_store=MagicMock(),
+        graph_store=MagicMock(),
+        wiki_cache=fake_cache,
+    )
+    builder._gatherer.gather = AsyncMock(return_value=_make_fake_gatherer_data())
+    builder._make_compiler = MagicMock(return_value=fake_compiler)
+
+    with (
+        patch("beever_atlas.wiki.builder.get_llm_provider") as mock_llm,
+        patch("beever_atlas.wiki.page_store.WikiPageStore", _FakePageStore),
+    ):
+        mock_llm.return_value.get_model_string.return_value = "test-model"
+        await builder.generate_wiki(channel_id="C1", target_lang="en", source_lang="en")
+
+    assert set(saved_page_ids) == {"overview", "topic-alpha", "topic-beta"}, (
+        f"Expected seed for every compiled page; got {saved_page_ids}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_seed_failure_for_one_page_does_not_kill_build() -> None:
+    """The per-page try/except inside the seed loop must isolate
+    failures so a single misbehaving row never wedges the whole build.
+    The legacy ``save_wiki`` write still has to land (UI keeps working)
+    and the other pages still seed."""
+    from beever_atlas.models.domain import WikiPage as DomainWikiPage
+    from beever_atlas.wiki.builder import WikiBuilder
+
+    fake_cache = _make_fake_cache()
+    fake_cache._db = MagicMock()
+
+    compiled_pages = {
+        "overview": DomainWikiPage(
+            id="overview",
+            slug="overview",
+            title="Overview",
+            content="...",
+            page_type="fixed",
+        ),
+        "topic-explodes": DomainWikiPage(
+            id="topic-explodes",
+            slug="kaboom",
+            title="Kaboom",
+            content="...",
+            page_type="topic",
+        ),
+        "topic-ok": DomainWikiPage(
+            id="topic-ok",
+            slug="ok",
+            title="OK",
+            content="...",
+            page_type="topic",
+        ),
+    }
+    fake_compiler = _make_fake_compiler()
+    fake_compiler.compile = AsyncMock(return_value=compiled_pages)
+
+    saved_page_ids: list[str] = []
+
+    class _FlakyPageStore:
+        def __init__(self, db: object) -> None:  # noqa: ARG002
+            pass
+
+        async def save_page(self, page: object) -> None:
+            pid = getattr(page, "page_id", "?")
+            if pid == "topic-explodes":
+                raise RuntimeError("simulated mongo write hiccup")
+            saved_page_ids.append(pid)
+
+    builder = WikiBuilder(
+        weaviate_store=MagicMock(),
+        graph_store=MagicMock(),
+        wiki_cache=fake_cache,
+    )
+    builder._gatherer.gather = AsyncMock(return_value=_make_fake_gatherer_data())
+    builder._make_compiler = MagicMock(return_value=fake_compiler)
+
+    with (
+        patch("beever_atlas.wiki.builder.get_llm_provider") as mock_llm,
+        patch("beever_atlas.wiki.page_store.WikiPageStore", _FlakyPageStore),
+    ):
+        mock_llm.return_value.get_model_string.return_value = "test-model"
+        # MUST NOT raise — per-page error is isolated.
+        await builder.generate_wiki(channel_id="C1", target_lang="en", source_lang="en")
+
+    # Other pages still seeded
+    assert set(saved_page_ids) == {"overview", "topic-ok"}
+    # And the build's primary surface (wiki_cache) was written
+    assert "C1:en" in fake_cache._store

@@ -1,6 +1,7 @@
 import { X, ExternalLink, FileText, Image as ImageIcon, Film, Link2 } from "lucide-react";
 import { buildLoaderUrl } from "@/lib/api";
 import { ProxiedImage } from "@/components/common/ProxiedImage";
+import { filesProxyPathFor } from "@/lib/mediaUrl";
 
 interface MediaModalProps {
   name: string;
@@ -16,19 +17,14 @@ export function MediaModal({ name, url, mediaType, onClose }: MediaModalProps) {
   // await an async mint without click-time resolution; that migration
   // is tracked as a follow-up.
   //
-  // CodeQL alert #19: parse the URL and compare the hostname rather
-  // than `url.includes("files.slack.com")` — substring matching against
-  // the full URL would treat an attacker URL like
-  // `evil.com/files.slack.com` as a Slack file.
-  const isSlackFile = (() => {
-    try {
-      return new URL(url).hostname.toLowerCase() === "files.slack.com";
-    } catch {
-      return false;
-    }
-  })();
-  const proxyPath = `/api/files/proxy?url=${encodeURIComponent(url)}`;
-  const anchorHref = isSlackFile ? buildLoaderUrl(proxyPath) : url;
+  // Detection lives in `lib/mediaUrl.ts` so wiki / entity-graph /
+  // modal share one allowlist (Slack, Mattermost cloud + self-hosted,
+  // Discord CDN). Hostname comparison is parsed-URL based, never
+  // substring — substring matching would treat an attacker URL like
+  // `evil.com/files.slack.com` as a Slack file. CodeQL alert #19.
+  const proxyPath = filesProxyPathFor(url);
+  const needsProxy = proxyPath !== undefined;
+  const anchorHref = needsProxy ? buildLoaderUrl(proxyPath!) : url;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -61,10 +57,10 @@ export function MediaModal({ name, url, mediaType, onClose }: MediaModalProps) {
         <div className="p-5">
           {mediaType === "image" && (
             <div className="flex flex-col items-center gap-4">
-              {isSlackFile ? (
+              {needsProxy ? (
                 <ProxiedImage
                   unproxiedUrl={url}
-                  mediaPath={proxyPath}
+                  mediaPath={proxyPath!}
                   alt={name}
                   className="max-h-96 w-full object-contain rounded-lg border border-border bg-muted/20"
                   onError={(e) => {

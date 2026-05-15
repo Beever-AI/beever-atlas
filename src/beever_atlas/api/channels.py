@@ -15,6 +15,7 @@ from beever_atlas.adapters import ChannelInfo, get_adapter
 from beever_atlas.adapters.bridge import BridgeError, ChatBridgeAdapter
 from beever_atlas.infra.auth import Principal, require_user
 from beever_atlas.infra.channel_access import assert_channel_access
+from beever_atlas.infra.config import get_settings
 from beever_atlas.services.channel_discovery import (
     fetch_connection_channels,
     make_bridge_adapter,
@@ -110,6 +111,32 @@ class ChannelResponse(BaseModel):
     connection_id: str | None = None
     primary_language: str | None = None
     primary_language_confidence: float | None = None
+    # Status of the parent PlatformConnection at the time this response
+    # was built — ``"connected"`` / ``"disconnected"`` / ``"error"`` /
+    # ``"pending"`` / ``None`` for orphan channels with no parent
+    # connection. Lets the sidebar render a "disconnected — reconnect"
+    # affordance instead of silently hiding the workspace when a
+    # connection's status drifts away from ``"connected"``.
+    connection_status: str | None = None
+
+
+class WikiStateEntry(BaseModel):
+    """Per-channel wiki readiness summary used by the sidebar / picker / home.
+
+    Cheap to compute (one batched ``$in`` query against ``channel_sync_state``)
+    and rendered everywhere a channel name appears, so we keep the payload
+    minimal and the derivation rules in one place.
+    """
+
+    state: str  # "ready" | "empty"
+    last_sync_ts: str | None = None
+    total_synced_messages: int = 0
+
+
+class WikiStatesResponse(BaseModel):
+    """Map keyed by channel_id. Channels absent from the map are "empty"."""
+
+    states: dict[str, WikiStateEntry]
 
 
 class MessageResponse(BaseModel):
@@ -135,7 +162,10 @@ class MessagesListResponse(BaseModel):
     total_count: int | None = None
 
 
-def _channel_to_response(info: ChannelInfo) -> ChannelResponse:
+def _channel_to_response(
+    info: ChannelInfo,
+    connection_status: str | None = None,
+) -> ChannelResponse:
     return ChannelResponse(
         channel_id=info.channel_id,
         name=info.name,
@@ -145,7 +175,44 @@ def _channel_to_response(info: ChannelInfo) -> ChannelResponse:
         topic=info.topic,
         purpose=info.purpose,
         connection_id=info.connection_id,
+        connection_status=connection_status,
     )
+
+
+async def _synthesize_channels_from_selected(conn) -> list[ChannelInfo]:
+    """Build ``ChannelInfo`` rows from a connection's ``selected_channels``
+    pick-list when the live bridge fetch isn't usable (status != connected,
+    bridge unreachable, token expired). Names are pulled from MongoDB's
+    ``get_channel_display_name`` (last-known name from prior syncs); when
+    that's also empty the channel id is used as the label so the sidebar
+    still has something to render.
+
+    The point: even when a workspace's connection is broken, the user
+    should still see the channels they previously selected, grouped under
+    the workspace label, so they know what they need to reconnect to
+    recover. Silently hiding them sets the user up for the surprise the
+    "Ungrouped tech-studio" report is about.
+    """
+    if not getattr(conn, "selected_channels", None):
+        return []
+    stores = get_stores()
+    name_results = await asyncio.gather(
+        *[stores.mongodb.get_channel_display_name(cid) for cid in conn.selected_channels],
+        return_exceptions=True,
+    )
+    out: list[ChannelInfo] = []
+    for cid, name in zip(conn.selected_channels, name_results):
+        resolved_name = name if isinstance(name, str) and name else cid
+        out.append(
+            ChannelInfo(
+                channel_id=cid,
+                name=resolved_name,
+                platform=conn.platform,
+                is_member=True,  # user explicitly selected → treat as member
+                connection_id=conn.id,
+            )
+        )
+    return out
 
 
 async def _enrich_with_language(resp: ChannelResponse) -> ChannelResponse:
@@ -185,21 +252,130 @@ def _apply_language_state(resp: ChannelResponse, state: Any | None) -> ChannelRe
     )
 
 
+def _channel_message_row_to_response(row: dict[str, Any], channel_id: str) -> "MessageResponse":
+    """Map a ``channel_messages`` row dict back to the API ``MessageResponse``.
+
+    Used by the dual-read path when ``READ_FROM_MESSAGE_STORE`` is ON.
+    Mirrors the field mapping the legacy adapter path applies:
+    ``raw_metadata.is_bot`` and ``raw_metadata.links`` are surfaced as
+    top-level fields, ``timestamp`` is rendered as ISO 8601, and the API
+    derives ``platform`` from the row's ``source_id`` (for chat adapters
+    this maps 1:1 to the platform name).
+
+    ``channel_name`` is persisted on the row by the sync writer, so the
+    response carries the platform's display name instead of falling back
+    to the opaque ``channel_id``. The ``channel_id`` fallback remains for
+    rows written before this field was added (back-compat).
+    """
+    raw_metadata = row.get("raw_metadata") or {}
+    ts = row.get("timestamp")
+    if isinstance(ts, datetime):
+        ts_iso = ts.isoformat()
+    else:
+        ts_iso = str(ts) if ts else ""
+    platform = row.get("source_id") or row.get("platform") or ""
+    return MessageResponse(
+        content=row.get("content", ""),
+        author=row.get("author", ""),
+        author_name=row.get("author_name", ""),
+        author_image=row.get("author_image") or None,
+        platform=str(platform),
+        channel_id=row.get("channel_id", channel_id),
+        channel_name=row.get("channel_name", channel_id),
+        message_id=row.get("message_id", ""),
+        timestamp=ts_iso,
+        thread_id=row.get("thread_id"),
+        attachments=row.get("attachments", []),
+        reactions=row.get("reactions", []),
+        reply_count=row.get("reply_count", 0),
+        is_bot=bool(row.get("is_bot", raw_metadata.get("is_bot", False))),
+        links=raw_metadata.get("links", []) or row.get("links", []),
+    )
+
+
+async def _compute_total_count(channel_id: str, adapter: Any | None) -> int | None:
+    """Compute ``total_count`` identically across the store and adapter paths.
+
+    Reads ``ChannelSyncState.total_synced_messages`` first; falls back to
+    ``adapter.fetch_message_count`` when no sync state is available AND an
+    adapter was supplied (the store-read path has no adapter to query). Keeps
+    the response shape identical between dual-read branches.
+    """
+    total_count: int | None = None
+    try:
+        stores = get_stores()
+        sync_state = await stores.mongodb.get_channel_sync_state(channel_id)
+        if sync_state is not None and sync_state.total_synced_messages:
+            total_count = sync_state.total_synced_messages
+    except RuntimeError:
+        pass
+    if total_count is None and adapter is not None and hasattr(adapter, "fetch_message_count"):
+        total_count = await adapter.fetch_message_count(channel_id)  # type: ignore[attr-defined]
+    return total_count
+
+
 async def _fetch_file_messages(
     channel_id: str,
     limit: int,
     since: str | None = None,
     order: str = "desc",
 ) -> "MessagesListResponse":
-    """Read persisted messages for a file-imported channel."""
+    """Read persisted messages for a file-imported channel.
+
+    When ``READ_FILE_IMPORTS_FROM_CHANNEL_MESSAGES`` is ON AND
+    ``channel_messages`` carries rows for this channel with
+    ``source_id="file"``, the request is served from the unified Message
+    Store. Otherwise falls back to the legacy ``imported_messages``
+    collection. Mirrors the dual-read pattern for platform channels.
+    """
     stores = get_stores()
-    query: dict[str, Any] = {"channel_id": channel_id}
+    settings = get_settings()
+
+    since_dt: datetime | None = None
     if since:
         try:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            query["timestamp"] = {"$gte": since_dt}
         except ValueError:
-            pass
+            since_dt = None
+
+    if settings.read_file_imports_from_channel_messages:
+        store_rows = await stores.mongodb.get_channel_messages(
+            channel_id,
+            limit=limit,
+            since=since_dt,
+            order=order,
+            source_id="file",
+        )
+        if store_rows:
+            logger.info(
+                "file_imports_read",
+                extra={
+                    "event": "file_imports_read",
+                    "channel_id": channel_id,
+                    "row_count": len(store_rows),
+                    "source": "channel_messages",
+                },
+            )
+            response_messages = [
+                _channel_message_row_to_response(row, channel_id) for row in store_rows
+            ]
+            total_count = await _compute_total_count(channel_id, adapter=None)
+            return MessagesListResponse(
+                messages=response_messages,
+                total_count=total_count,
+            )
+        logger.info(
+            "file_imports_fallback",
+            extra={
+                "event": "file_imports_fallback",
+                "reason": "empty_store",
+                "channel_id": channel_id,
+            },
+        )
+
+    query: dict[str, Any] = {"channel_id": channel_id}
+    if since_dt is not None:
+        query["timestamp"] = {"$gte": since_dt}
     sort_dir = -1 if order == "desc" else 1
     cursor = (
         stores.mongodb.db["imported_messages"].find(query).sort("timestamp", sort_dir).limit(limit)
@@ -230,28 +406,59 @@ async def _fetch_file_messages(
             )
         )
     total = await stores.mongodb.db["imported_messages"].count_documents({"channel_id": channel_id})
+    logger.info(
+        "file_imports_read",
+        extra={
+            "event": "file_imports_read",
+            "channel_id": channel_id,
+            "row_count": len(messages),
+            "source": "imported_messages",
+        },
+    )
     return MessagesListResponse(messages=messages, total_count=total)
 
 
 @router.get("/api/channels", response_model=list[ChannelResponse])
 async def list_channels() -> list[ChannelResponse]:
-    """List channels from all connected platform connections.
+    """List channels from every platform connection — connected or not.
 
-    Iterates every PlatformConnection with status='connected', fetches
-    channels per-connection in parallel, and filters by each connection's
-    selected_channels list.  One failing connection does not block the others.
+    Behaviour change (2026-05-06): previously this filtered by
+    ``status == "connected"``, which silently hid all channels whose
+    parent connection had drifted to ``disconnected`` / ``error`` /
+    ``expired``. Channels that had been synced once survived via the
+    orphan fallback below with ``connection_id=None`` and got grouped
+    under "Ungrouped" in the sidebar; channels that hadn't been synced
+    yet vanished entirely. The fix:
 
-    Also includes channels that were imported via CSV (have sync state in
-    MongoDB but no platform connection), so they appear in the sidebar.
+      * For ``status == "connected"``: live-fetch via the bridge as
+        before so freshly-added channels in the platform are picked up
+        on next refresh.
+      * For non-connected statuses: synthesise ``ChannelInfo`` rows
+        from ``conn.selected_channels`` directly (using last-known
+        names from MongoDB) so the workspace label and pick-list
+        survive a connection blip. ``connection_status`` on each row
+        carries the truth so the sidebar can render a "disconnected —
+        reconnect to sync" affordance next to the workspace label.
+      * CSV-imported channels with sync state but no parent connection
+        still surface via the orphan path with ``connection_id=None``
+        and ``connection_status=None``.
     """
     from beever_atlas.stores import get_stores
 
     stores = get_stores()
     connections = await stores.platform.list_connections()
-    connected = [c for c in connections if c.status == "connected"]
 
+    # Map channel_id → connection_status so we can stamp each response
+    # with its parent connection's state. ``None`` is reserved for
+    # orphan channels (synced once, parent connection deleted).
+    status_by_channel: dict[str, str] = {}
     all_channels: list[ChannelInfo] = []
 
+    connected = [c for c in connections if c.status == "connected"]
+    other = [c for c in connections if c.status != "connected"]
+
+    # Live-fetch for connected workspaces (gives current channel
+    # membership / topics / member counts).
     if connected:
         tasks = [
             fetch_connection_channels(conn.id, conn.selected_channels, conn.platform)
@@ -266,8 +473,34 @@ async def list_channels() -> list[ChannelResponse]:
                     conn.display_name,
                     result,
                 )
+                # Fall back to the persisted pick-list so the workspace
+                # still appears even when its bridge is briefly down.
+                #
+                # Mark these channels as ``"error"`` regardless of the
+                # row's stored ``conn.status`` — the live fetch just
+                # failed, which is empirically more authoritative than
+                # whatever the platform_store has cached. This is what
+                # makes the sidebar's ⚠ badge show up for cases like
+                # Slack ``account_inactive`` (token's underlying account
+                # is dead but the connection row was never updated). The
+                # persisted ``conn.status`` is a slow signal; bridge
+                # fetch failure is a fast signal — prefer the fast one.
+                synthesised = await _synthesize_channels_from_selected(conn)
+                all_channels.extend(synthesised)
+                for ch in synthesised:
+                    status_by_channel[ch.channel_id] = "error"
                 continue
             all_channels.extend(result)
+            for ch in result:
+                status_by_channel[ch.channel_id] = "connected"
+
+    # Non-connected workspaces — synthesise from the pick-list so the
+    # workspace label persists in the sidebar with a disconnected badge.
+    for conn in other:
+        synthesised = await _synthesize_channels_from_selected(conn)
+        all_channels.extend(synthesised)
+        for ch in synthesised:
+            status_by_channel[ch.channel_id] = conn.status
 
     # Include CSV-imported channels (sync state exists but no connection)
     connected_channel_ids = {ch.channel_id for ch in all_channels}
@@ -289,7 +522,10 @@ async def list_channels() -> list[ChannelResponse]:
                 )
             )
 
-    responses = [_channel_to_response(ch) for ch in all_channels]
+    responses = [
+        _channel_to_response(ch, connection_status=status_by_channel.get(ch.channel_id))
+        for ch in all_channels
+    ]
     # Batch enrich: single $in query instead of N per-channel reads.
     try:
         states_map = await stores.mongodb.get_channel_sync_states_batch(
@@ -300,6 +536,59 @@ async def list_channels() -> list[ChannelResponse]:
         states_map = {}
     responses = [_apply_language_state(r, states_map.get(r.channel_id)) for r in responses]
     return list(responses)
+
+
+@router.get("/api/channels/wiki-states", response_model=WikiStatesResponse)
+async def list_channel_wiki_states() -> WikiStatesResponse:
+    """Return per-channel wiki readiness for every channel with sync state.
+
+    The sidebar, ask channel picker, and home page all need to render the
+    same "this channel has a wiki / this one doesn't" signal next to a
+    channel name. Doing that with N per-channel calls would be 50–200
+    extra round trips on every page load; instead we resolve the universe
+    of channels once and batch-fetch their sync state in a single
+    ``$in`` query, mirroring the enrichment ``list_channels`` already
+    performs for language metadata.
+
+    State derivation (kept intentionally narrow — UI handles "building" /
+    "errored" by overlaying live sync poll data from useSync):
+      * ``"ready"``  — channel has a ChannelSyncState with at least one
+        synced message (``total_synced_messages > 0``).
+      * ``"empty"``  — no sync state, or zero synced messages. Channels
+        absent from the map are treated as empty by the client too,
+        which keeps the payload compact for fresh installs.
+    """
+    from beever_atlas.stores import get_stores
+
+    stores = get_stores()
+
+    # Universe of channels = everything in the channel_sync_state collection.
+    # That captures both live-connected channels and CSV-imported / orphan
+    # channels, which is exactly the set the sidebar / picker shows.
+    try:
+        synced_ids = await stores.mongodb.list_synced_channel_ids()
+    except Exception:
+        logger.debug("list_synced_channel_ids failed", exc_info=True)
+        return WikiStatesResponse(states={})
+
+    if not synced_ids:
+        return WikiStatesResponse(states={})
+
+    try:
+        states_map = await stores.mongodb.get_channel_sync_states_batch(synced_ids)
+    except Exception:
+        logger.debug("get_channel_sync_states_batch failed", exc_info=True)
+        return WikiStatesResponse(states={})
+
+    out: dict[str, WikiStateEntry] = {}
+    for cid, state in states_map.items():
+        msgs = getattr(state, "total_synced_messages", 0) or 0
+        out[cid] = WikiStateEntry(
+            state="ready" if msgs > 0 else "empty",
+            last_sync_ts=getattr(state, "last_sync_ts", None),
+            total_synced_messages=msgs,
+        )
+    return WikiStatesResponse(states=out)
 
 
 @router.get("/api/channels/{channel_id}", response_model=ChannelResponse)
@@ -430,11 +719,66 @@ async def get_channel_messages(
             total = sync_state.total_synced_messages if sync_state else None
             return MessagesListResponse(messages=[], total_count=total)
 
-    adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
-
     since_dt = None
     if since:
         since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+
+    # Dual-read fallback during migration. When the READ_FROM_MESSAGE_STORE
+    # flag is ON, prefer the durable ``channel_messages`` collection populated
+    # by the sync runner and fall back to ``adapter.fetch_history`` when
+    # (a) the store has zero rows for this channel, or (b) a sync is currently
+    # writing into it (status="running") — in either case the user might
+    # otherwise see partial data. See
+    # ``openspec/changes/oss-pipeline-and-wiki-redesign/specs/message-store/``
+    # → "Dual-read fallback during migration".
+    if get_settings().read_from_message_store:
+        store_rows = await stores.mongodb.get_channel_messages(
+            channel_id,
+            limit=limit,
+            since=since_dt,
+            before=before,
+            order=order,
+        )
+        sync_job = None
+        try:
+            sync_job = await stores.mongodb.get_sync_status(channel_id)
+        except Exception:
+            logger.debug(
+                "Failed to fetch sync status for channel %s during dual-read",
+                channel_id,
+                exc_info=True,
+            )
+        sync_running = sync_job is not None and sync_job.status == "running"
+
+        if store_rows and not sync_running:
+            logger.info(
+                "channel_messages_read",
+                extra={
+                    "event": "channel_messages_read",
+                    "channel_id": channel_id,
+                    "row_count": len(store_rows),
+                },
+            )
+            response_messages = [
+                _channel_message_row_to_response(row, channel_id) for row in store_rows
+            ]
+            total_count = await _compute_total_count(channel_id, adapter=None)
+            return MessagesListResponse(
+                messages=response_messages,
+                total_count=total_count,
+            )
+
+        fallback_reason = "sync_in_progress" if sync_running else "empty_store"
+        logger.info(
+            "channel_messages_fallback",
+            extra={
+                "event": "channel_messages_fallback",
+                "reason": fallback_reason,
+                "channel_id": channel_id,
+            },
+        )
+
+    adapter = await _resolve_adapter_for_channel(channel_id, connection_id)
 
     try:
         messages = await adapter.fetch_history(
@@ -465,17 +809,7 @@ async def get_channel_messages(
         )
         for m in messages
     ]
-    total_count = None
-    try:
-        stores = get_stores()
-        sync_state = await stores.mongodb.get_channel_sync_state(channel_id)
-        if sync_state is not None and sync_state.total_synced_messages:
-            total_count = sync_state.total_synced_messages
-    except RuntimeError:
-        pass
-    # Fall back to live count from bridge if no sync data
-    if total_count is None and hasattr(adapter, "fetch_message_count"):
-        total_count = await adapter.fetch_message_count(channel_id)  # type: ignore[attr-defined]
+    total_count = await _compute_total_count(channel_id, adapter=adapter)
     return MessagesListResponse(
         messages=response_messages,
         total_count=total_count,
@@ -522,6 +856,103 @@ async def get_thread_messages(
         )
         for m in messages
     ]
+
+
+_FAILURE_LAST_ERROR_TRUNCATE = 500
+
+
+def _strip_traceback(raw: str | None) -> str:
+    """Drop Python traceback bodies from a stored exception message.
+
+    The worker stores ``str(exc)`` (often just the exception class +
+    message), but if a layer above it stored ``traceback.format_exc()``
+    instead, we MUST not echo the raw stack to operators — too easy to
+    leak file paths or library internals into a UI.
+    """
+    if not raw:
+        return ""
+    text = raw
+    # Common Python traceback marker — keep only the final ``ExcClass: msg`` line.
+    if "Traceback (most recent call last):" in text:
+        # Take everything after the last newline (last frame is usually
+        # ``ExcClass: msg``); fall back to the whole string if no newline.
+        text = text.rstrip().split("\n")[-1].strip()
+    return text[:_FAILURE_LAST_ERROR_TRUNCATE]
+
+
+@router.get("/api/channels/{channel_id}/extraction-failures")
+async def get_channel_extraction_failures(
+    channel_id: str,
+    cursor: str | None = None,
+    limit: int = 50,
+    principal: Principal = Depends(require_user),
+) -> dict[str, Any]:
+    """Paginated list of ``channel_messages`` rows stuck in ``extraction_status="failed"``.
+
+    Backs the wiki UI's ``FailedBatchPanel`` drill-down. Each row carries
+    ``message_id``, ``next_attempt_at``, ``attempt_count``, and a
+    server-truncated ``last_error`` (max 500 chars, stack traces stripped).
+    Cursor-paginated; ``next_cursor`` is non-null when more rows remain.
+    Default page size 50, capped at 200.
+    """
+    from beever_atlas.stores import get_stores
+
+    await assert_channel_access(principal, channel_id)
+    safe_limit = max(1, min(int(limit), 200))
+    stores = get_stores()
+    rows, next_cursor = await stores.mongodb.list_failed_channel_messages(
+        channel_id, cursor=cursor, limit=safe_limit
+    )
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        next_attempt = row.get("next_attempt_at")
+        if hasattr(next_attempt, "isoformat"):
+            next_attempt = next_attempt.isoformat()
+        items.append(
+            {
+                "message_id": row.get("message_id"),
+                "next_attempt_at": next_attempt,
+                "attempt_count": int(row.get("attempt_count", 0) or 0),
+                "last_error": _strip_traceback(row.get("last_error")),
+            }
+        )
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@router.get("/api/channels/{channel_id}/extraction-status")
+async def get_channel_extraction_status(
+    channel_id: str,
+    principal: Principal = Depends(require_user),
+) -> dict[str, Any]:
+    """Return per-status extraction counts for a channel.
+
+    Backs the frontend's "Enriching: X of Y messages complete" progress
+    row shown when ``DECOUPLE_EXTRACTION`` is ON. Counts are aggregated
+    via a single MongoDB pipeline that hits the partial-filter index
+    on ``(extraction_status, next_attempt_at)``.
+
+    Response shape::
+
+        {
+            "channel_id": "...",
+            "counts": {"pending": N, "extracting": N, "done": N, "failed": N},
+            "total": N
+        }
+
+    Always zero-fills missing statuses so consumers can render a stable
+    progress bar without status-keyed conditionals.
+    """
+    from beever_atlas.stores import get_stores
+
+    await assert_channel_access(principal, channel_id)
+    stores = get_stores()
+    counts = await stores.mongodb.count_channel_messages_by_status(channel_id)
+    total = sum(counts.values())
+    return {
+        "channel_id": channel_id,
+        "counts": counts,
+        "total": total,
+    }
 
 
 @router.delete("/api/channels/{channel_id}/data")

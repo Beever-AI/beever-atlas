@@ -68,15 +68,19 @@ async def test_batch_upsert_relationships_bounded_concurrency(monkeypatch) -> No
     inflight = 0
     peak = 0
 
-    async def fake_upsert(rel: GraphRelationship) -> str:
+    # PR-2: ``batch_upsert_relationships`` now calls the internal
+    # ``_upsert_relationship_with_stub_flag`` which returns ``(eid,
+    # stubs_created)``. Tests must monkeypatch that helper instead of
+    # the public ``upsert_relationship``.
+    async def fake_upsert(rel: GraphRelationship) -> tuple[str, int]:
         nonlocal inflight, peak
         inflight += 1
         peak = max(peak, inflight)
         await asyncio.sleep(0.01)
         inflight -= 1
-        return f"rel-{rel.source}-{rel.target}"
+        return f"rel-{rel.source}-{rel.target}", 0
 
-    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+    monkeypatch.setattr(store, "_upsert_relationship_with_stub_flag", fake_upsert)
 
     rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(40)]
     ids = await store.batch_upsert_relationships(rels)
@@ -109,12 +113,12 @@ async def test_batch_upsert_entities_partial_failure(monkeypatch) -> None:
 async def test_batch_upsert_relationships_partial_failure(monkeypatch) -> None:
     store = Neo4jStore.__new__(Neo4jStore)
 
-    async def fake_upsert(rel: GraphRelationship) -> str:
+    async def fake_upsert(rel: GraphRelationship) -> tuple[str, int]:
         if rel.source == "a1":
             raise RuntimeError("boom")
-        return f"rel-{rel.source}"
+        return f"rel-{rel.source}", 0
 
-    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+    monkeypatch.setattr(store, "_upsert_relationship_with_stub_flag", fake_upsert)
 
     rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(3)]
     ids = await store.batch_upsert_relationships(rels)
@@ -241,10 +245,10 @@ async def test_batch_upsert_relationships_all_fail_raises(monkeypatch) -> None:
     """Same circuit-breaker for relationships — when all fail, raise."""
     store = Neo4jStore.__new__(Neo4jStore)
 
-    async def fake_upsert(_rel: GraphRelationship) -> str:
+    async def fake_upsert(_rel: GraphRelationship) -> tuple[str, int]:
         raise RuntimeError("neo4j unreachable")
 
-    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+    monkeypatch.setattr(store, "_upsert_relationship_with_stub_flag", fake_upsert)
 
     rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(3)]
     with pytest.raises(RuntimeError, match=r"all 3 relationship upserts failed"):
@@ -254,12 +258,12 @@ async def test_batch_upsert_relationships_all_fail_raises(monkeypatch) -> None:
 async def test_batch_upsert_relationships_partial_failure_does_not_raise(monkeypatch) -> None:
     store = Neo4jStore.__new__(Neo4jStore)
 
-    async def fake_upsert(rel: GraphRelationship) -> str:
+    async def fake_upsert(rel: GraphRelationship) -> tuple[str, int]:
         if rel.source == "a1":
             raise RuntimeError("transient")
-        return f"rel-{rel.source}"
+        return f"rel-{rel.source}", 0
 
-    monkeypatch.setattr(store, "upsert_relationship", fake_upsert)
+    monkeypatch.setattr(store, "_upsert_relationship_with_stub_flag", fake_upsert)
 
     rels = [_make_relationship(f"a{i}", f"b{i}") for i in range(3)]
     ids = await store.batch_upsert_relationships(rels)

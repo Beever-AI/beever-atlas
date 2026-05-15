@@ -23,6 +23,13 @@ export function extractHeadings(container: HTMLElement): TocItem[] {
   const items: TocItem[] = [];
 
   headings.forEach((el) => {
+    // Skip headings inside any ancestor marked ``data-toc-skip``. Used
+    // by sections like the Overview Folders + Topics card grids: every
+    // card has a heading, but those cards already live in the left
+    // sidebar tree — duplicating them in the right TOC was the
+    // single biggest noise source on the Overview page.
+    if (el.closest("[data-toc-skip]")) return;
+
     const text = el.textContent?.trim() || "";
     if (!text) return;
 

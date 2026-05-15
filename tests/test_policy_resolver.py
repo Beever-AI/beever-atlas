@@ -8,6 +8,7 @@ from beever_atlas.models.sync_policy import (
     IngestionConfig,
     SyncConfig,
     SyncTriggerMode,
+    WikiConfig,
 )
 from beever_atlas.services.policy_resolver import resolve_policy
 
@@ -105,3 +106,62 @@ def test_mixed_null_and_nonnull_fields():
     assert resolved.consolidation.similarity_threshold == 0.6
     assert resolved.consolidation.merge_threshold == 0.85
     assert resolved.consolidation.min_facts_for_clustering == 3
+
+
+# ---------------------------------------------------------------------------
+# WikiConfig.maintenance_mode resolution (per-channel override)
+# ---------------------------------------------------------------------------
+
+
+def test_per_channel_auto_overrides_global_manual():
+    """Channel ``wiki.maintenance_mode="auto"`` wins over a global ``"manual"``
+    default. The lifespan closure consults this resolved value at fire time
+    so an operator's UI toggle takes effect on the next extraction batch.
+    """
+    defaults = GlobalPolicyDefaults()
+    # Force the global wiki default to manual (the env-level fallback comes
+    # from app settings, not the policy doc; here we simulate the global
+    # default carrying ``manual`` for completeness).
+    defaults.wiki = WikiConfig(maintenance_mode="manual")
+
+    channel = ChannelPolicy(
+        channel_id="C1",
+        wiki=WikiConfig(maintenance_mode="auto"),
+    )
+    resolved = resolve_policy(channel, defaults)
+    assert resolved.wiki.maintenance_mode == "auto"
+
+
+def test_per_channel_inherit_falls_through_to_global_default():
+    """Per-channel ``maintenance_mode=None`` (the wire-level "inherit" value)
+    yields the global default — letting the lifespan check the env var when
+    the global is also None.
+    """
+    defaults = GlobalPolicyDefaults()
+    defaults.wiki = WikiConfig(maintenance_mode="auto")
+
+    channel = ChannelPolicy(
+        channel_id="C1",
+        wiki=WikiConfig(maintenance_mode=None),
+    )
+    resolved = resolve_policy(channel, defaults)
+    assert resolved.wiki.maintenance_mode == "auto"
+
+
+def test_no_channel_policy_inherits_global_maintenance_mode():
+    """No channel policy at all → resolver returns global defaults verbatim."""
+    defaults = GlobalPolicyDefaults()
+    defaults.wiki = WikiConfig(maintenance_mode="auto")
+    resolved = resolve_policy(None, defaults)
+    assert resolved.wiki.maintenance_mode == "auto"
+
+
+def test_both_none_means_no_per_policy_value():
+    """When channel + default both leave ``maintenance_mode=None``, the
+    resolved value is None — the lifespan then consults the env var.
+    """
+    defaults = GlobalPolicyDefaults()
+    # ``WikiConfig`` field default is None
+    channel = ChannelPolicy(channel_id="C1", wiki=WikiConfig())
+    resolved = resolve_policy(channel, defaults)
+    assert resolved.wiki.maintenance_mode is None

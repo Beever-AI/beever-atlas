@@ -1,9 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { useParams, Outlet, useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ArrowLeft, ShieldAlert, RefreshCw, MessageCircleQuestion } from "lucide-react";
+import {
+  ArrowLeft,
+  ShieldAlert,
+  RefreshCw,
+  MessageCircleQuestion,
+  BookOpen,
+  Brain,
+  FileText,
+  History,
+  Settings,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
+import { useRecentChannels } from "@/hooks/useRecentChannels";
 import { ChannelBreadcrumb } from "@/components/channel/Breadcrumb";
 import { SyncButton } from "@/components/channel/SyncButton";
 import { SyncProgress } from "@/components/channel/SyncProgress";
@@ -30,16 +41,61 @@ interface ChannelRouteState {
   connection_id?: string | null;
 }
 
-const TAB_PATHS = ["wiki", "messages", "memories", "graph", "sync-history", "settings"] as const;
+// Tab order is intentional — Channel Wiki first so the breadcrumb
+// fallback in ``getCurrentTab`` lands on a useful surface, then Agent
+// Memory (which now hosts both the TierBrowser and the entity graph
+// via ``?view=graph``), Messages, Sync History, Settings. Path
+// segments stay stable so existing deep-links still resolve; only the
+// labels were updated to match the new IA.
+const TAB_PATHS = ["wiki", "memories", "messages", "sync-history", "settings"] as const;
 type TabPath = (typeof TAB_PATHS)[number];
 
 const TAB_LABELS: Record<TabPath, string> = {
-  wiki: "Wiki",
-  messages: "Messages",
-  memories: "Memories",
-  graph: "Graph",
+  wiki: "Channel Wiki",
+  memories: "Agent Memory",
+  messages: "Source",
   "sync-history": "Sync History",
-  settings: "Settings",
+  // Renamed from "Settings" to disambiguate from the workspace-level
+  // Settings entry in the left rail — operators were clicking the
+  // wrong one and getting confused by the scope mismatch.
+  settings: "Channel Settings",
+};
+
+// Lucide icon per tab. Rendered small (h-3.5) and inherits the row's
+// text color so it acts as a visual anchor without competing with
+// the label. Picked for specificity (Brain for memory, FileText for
+// raw source) — generic glyphs (Settings cog, History clock) are
+// kept because the rename "Channel Settings" + grouping already
+// disambiguates them at the strip level.
+const TAB_ICONS: Record<TabPath, ComponentType<{ className?: string }>> = {
+  wiki: BookOpen,
+  memories: Brain,
+  messages: FileText,
+  "sync-history": History,
+  settings: Settings,
+};
+
+// Visual grouping for the desktop tab strip:
+//   AI surfaces · raw data · operations
+// A thin vertical divider sits between groups so the eye can tell
+// "things I read" from "the source" from "things I configure" at a
+// glance — without needing labels to call out the buckets.
+const TAB_GROUPS: TabPath[][] = [
+  ["wiki", "memories"],
+  ["messages"],
+  ["sync-history", "settings"],
+];
+
+// Platform → swatch color for the scope chip. Swatches keep the chip
+// readable at small sizes without pulling in brand SVGs (cuts bundle
+// weight). New platforms fall back to a neutral slate dot.
+const PLATFORM_DOT: Record<string, string> = {
+  slack: "bg-fuchsia-500",
+  mattermost: "bg-violet-500",
+  discord: "bg-indigo-500",
+  teams: "bg-sky-500",
+  telegram: "bg-cyan-500",
+  file: "bg-slate-500",
 };
 
 function getCurrentTab(pathname: string): TabPath {
@@ -65,9 +121,49 @@ export function ChannelWorkspace() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [loadingChannel, setLoadingChannel] = useState(!routeState?.channel_name);
+  // Monitor collapse state lives here so the workspace layout can react
+  // to it — when collapsed, the monitor renders as a compact strip
+  // and the wiki content below stays visible; when expanded on the
+  // wiki tab, the monitor fills the page fullscreen and the body is
+  // hidden. Hydrated from the same localStorage key SyncProgressV2
+  // wrote to in earlier uncontrolled mode.
+  const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = window.localStorage.getItem("beever.monitor.collapsed");
+      return raw === "true";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "beever.monitor.collapsed",
+        JSON.stringify(monitorCollapsed),
+      );
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [monitorCollapsed]);
   const { getWorkspaceName } = useConnectionMap();
+  const { trackVisit } = useRecentChannels();
 
   const activeTab = getCurrentTab(location.pathname);
+
+  // Track this channel as a recent visit so the dashboard's "Pick up
+  // where you left off" section surfaces it next time the user lands
+  // on /home. Single fire per channel resolution — trackVisit dedupes
+  // by channel_id internally, so a tab switch within the workspace
+  // doesn't bump the same entry repeatedly.
+  useEffect(() => {
+    if (!id || !channel?.name) return;
+    trackVisit({
+      channel_id: id,
+      name: channel.name,
+      platform: channel.platform || "unknown",
+    });
+  }, [id, channel?.name, channel?.platform, trackVisit]);
 
   useEffect(() => {
     if (!id) return;
@@ -109,8 +205,20 @@ export function ChannelWorkspace() {
 
   const isMember = channel?.is_member === true;
   const { syncState, triggerSync, isSyncing, error: syncError } = useSync(id ?? "", channel?.connection_id ?? null);
-  const syncFailureMessage =
-    syncError || (syncState.state === "error" ? syncState.errors?.filter(Boolean).join("; ") : null);
+  // PR-B: when the failure banner copy is built from sync state errors,
+  // prefer the deduped form (single line per unique message + count)
+  // so a Gemini 503 storm shows "AI provider temporarily unavailable
+  // (×12 batches)" instead of twelve repeated lines.
+  const syncFailureMessage = (() => {
+    if (syncError) return syncError;
+    if (syncState.state !== "error") return null;
+    if (syncState.dedupedErrors && syncState.dedupedErrors.length > 0) {
+      return syncState.dedupedErrors
+        .map((e) => (e.count > 1 ? `${e.message} (×${e.count} batches)` : e.message))
+        .join("; ");
+    }
+    return syncState.errors?.filter(Boolean).join("; ") ?? null;
+  })();
 
   // Parse "Try again in Ns." out of cooldown errors so we can show a live
   // countdown instead of a stale number. Matched once when the message arrives;
@@ -187,6 +295,26 @@ export function ChannelWorkspace() {
 
   const instructions = platformInstructions[channel?.platform ?? "slack"] ?? platformInstructions.slack;
 
+  // A sync is considered active when state is syncing/error OR while
+  // the EXTRACTING phase is still pending/in_flight. Once extraction
+  // completes (extracting=done), the wiki is browsable in the
+  // background and the monitor auto-hides — the user no longer needs
+  // to see the progress bar even if wiki_maintenance/overview_wiki
+  // are still finalizing in the background. This drops the "monitor
+  // bar still here when wiki is generated" complaint from UI testing.
+  const _phaseByName = Object.fromEntries(
+    (syncState.phases ?? []).map((p) => [p.name, p]),
+  );
+  const _extracting = _phaseByName["extracting"]?.state;
+  const _fetched = _phaseByName["fetched"]?.state;
+  const pipelineActive =
+    syncState.state === "syncing" ||
+    syncState.state === "error" ||
+    _fetched === "in_flight" ||
+    _fetched === "pending" ||
+    _extracting === "in_flight" ||
+    _extracting === "pending";
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Compact channel bar: title + tabs in one layer */}
@@ -260,20 +388,52 @@ export function ChannelWorkspace() {
                 </select>
               </div>
               <div className="hidden sm:block overflow-x-auto no-scrollbar">
-                <div className="flex gap-1 min-w-max">
-                  {TAB_PATHS.map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => handleTabChange(tab)}
-                      className={cn(
-                        "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                        activeTab === tab
-                          ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                <div className="flex items-center gap-2 min-w-max">
+                  {/* Scope chip — anchors the tab strip to "this channel"
+                      so operators don't have to read the breadcrumb to
+                      remember what scope they're in. Hidden when the
+                      channel hasn't loaded yet to avoid layout jump. */}
+                  {channel && (
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/30 pl-1.5 pr-2.5 py-1 text-xs font-medium text-foreground">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "h-2 w-2 rounded-full shrink-0",
+                          PLATFORM_DOT[channel.platform] ?? "bg-slate-500",
+                        )}
+                        title={channel.platform}
+                      />
+                      <span className="truncate max-w-[180px]">
+                        #{channelDisplayName}
+                      </span>
+                    </div>
+                  )}
+                  <span aria-hidden className="h-5 w-px bg-border/60 mx-0.5" />
+                  {/* Tabs grouped by purpose — AI · raw · ops. */}
+                  {TAB_GROUPS.map((group, groupIdx) => (
+                    <div key={groupIdx} className="flex items-center gap-1">
+                      {group.map((tab) => {
+                        const Icon = TAB_ICONS[tab];
+                        return (
+                          <button
+                            key={tab}
+                            onClick={() => handleTabChange(tab)}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                              activeTab === tab
+                                ? "bg-primary/10 text-primary"
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                            )}
+                          >
+                            <Icon className="h-3.5 w-3.5 shrink-0" />
+                            {TAB_LABELS[tab]}
+                          </button>
+                        );
+                      })}
+                      {groupIdx < TAB_GROUPS.length - 1 && (
+                        <span aria-hidden className="h-4 w-px bg-border/50 mx-1" />
                       )}
-                    >
-                      {TAB_LABELS[tab]}
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -282,10 +442,52 @@ export function ChannelWorkspace() {
         </div>
       </div>
 
-      {/* Sync progress bar — always visible when syncing */}
-      <div className="shrink-0">{id && <SyncProgress syncState={syncState} isSyncing={isSyncing} />}</div>
+      {/* Sync progress monitor placement:
+       *  - Wiki tab + EXPANDED + active sync → fullscreen monitor;
+       *    body content hidden so the monitor fills the page.
+       *  - Wiki tab + COLLAPSED → compact strip; Outlet visible below.
+       *  - Non-wiki tabs → always compact; Outlet visible.
+       *  No active sync → no monitor; Outlet has full content area.
+       *
+       *  Note: ``pipelineActive`` also serves as a connectivity proof —
+       *  an in-flight sync implies the bot IS in the channel, so we
+       *  must NOT render "Channel Not Connected" while pipeline runs
+       *  even if ``isMember`` is still false (stale or unsynced). */}
+      {(() => {
+        if (!id || !pipelineActive) return null;
+        const fullscreen = activeTab === "wiki" && !monitorCollapsed;
+        if (fullscreen) {
+          return (
+            <div className="flex-1 min-h-0 flex flex-col px-4 sm:px-6 pt-3 pb-3">
+              <SyncProgress
+                syncState={syncState}
+                isSyncing={isSyncing}
+                channelId={id}
+                collapsed={monitorCollapsed}
+                onCollapsedChange={setMonitorCollapsed}
+              />
+            </div>
+          );
+        }
+        return (
+          <div className="shrink-0">
+            <SyncProgress
+              syncState={syncState}
+              isSyncing={isSyncing}
+              channelId={id}
+              collapsed={monitorCollapsed}
+              onCollapsedChange={setMonitorCollapsed}
+            />
+          </div>
+        );
+      })()}
 
-      {/* Content */}
+      {/* Content area decision tree:
+       *  1) Channel still loading → loading spinner
+       *  2) Fullscreen monitor active → render nothing (monitor fills)
+       *  3) Member OR pipeline active → Outlet (a running sync proves
+       *     the channel is connected, so don't show the empty state)
+       *  4) Otherwise → "Channel Not Connected" hero */}
       {loadingChannel ? (
         <div className="flex items-center justify-center flex-1 min-h-0 p-6">
           <div className="flex flex-col items-center gap-3 text-muted-foreground/50">
@@ -293,9 +495,17 @@ export function ChannelWorkspace() {
             <span className="text-sm">Loading channel...</span>
           </div>
         </div>
-      ) : isMember ? (
+      ) : (activeTab === "wiki" && !monitorCollapsed && pipelineActive) ? null : (isMember || pipelineActive) ? (
         <div className="flex-1 min-h-0 relative bg-muted/10 overflow-hidden" key={activeTab}>
-          <Outlet context={{ syncState, isSyncing, connectionId: channel?.connection_id ?? null }} />
+          <Outlet
+            context={{
+              syncState,
+              isSyncing,
+              triggerSync,
+              syncError,
+              connectionId: channel?.connection_id ?? null,
+            }}
+          />
           {/* Floating Ask button — icon FAB that expands on hover */}
           <button
             onClick={() => navigate(`/ask?context=${id}`)}

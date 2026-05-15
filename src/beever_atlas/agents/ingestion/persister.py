@@ -25,6 +25,7 @@ from google.adk.events import Event, EventActions
 
 from beever_atlas.stores import get_stores
 from beever_atlas.models import AtomicFact, GraphEntity, GraphRelationship
+from beever_atlas.infra.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class PersisterAgent(BaseAgent):
         if not isinstance(raw_validated, dict):
             if raw_validated:
                 logger.warning(
-                    "PersisterAgent: validated_entities is %s, not dict; treating as empty batch=%s",
+                    "PersisterAgent: validated_entities is %s, not dict; falling back to extracted_entities batch=%s",
                     type(raw_validated).__name__,
                     batch_num,
                 )
@@ -133,6 +134,35 @@ class PersisterAgent(BaseAgent):
         relationship_dicts: list[dict[str, Any]] = [
             r for r in (validated_payload.get("relationships") or []) if isinstance(r, dict)
         ]
+        # If the cross_batch_validator's output was lost (truncated JSON
+        # that could not be recovered by adk_recovery), fall back to the
+        # entity_extractor's raw output rather than persisting an empty
+        # set. The upstream extractor data has already been schema-
+        # validated; the only thing we lose by skipping the validator is
+        # the cross-batch dedup pass — preferable to silently dropping
+        # ~100 entities + relationships per affected batch. Observed in
+        # production logs (batch 21, 23) where validated_entities became
+        # a "failed_recoverable=True" sentinel string and persister wrote
+        # facts=N entities=0 relationships=0.
+        if not entity_dicts and not relationship_dicts:
+            raw_extracted = ctx.session.state.get("extracted_entities")
+            if isinstance(raw_extracted, dict):
+                fallback_ents = [
+                    e for e in (raw_extracted.get("entities") or []) if isinstance(e, dict)
+                ]
+                fallback_rels = [
+                    r for r in (raw_extracted.get("relationships") or []) if isinstance(r, dict)
+                ]
+                if fallback_ents or fallback_rels:
+                    logger.warning(
+                        "PersisterAgent: using extracted_entities fallback for batch=%s "
+                        "(recovered %d entities + %d relationships)",
+                        batch_num,
+                        len(fallback_ents),
+                        len(fallback_rels),
+                    )
+                    entity_dicts = fallback_ents
+                    relationship_dicts = fallback_rels
 
         stores = get_stores()
 
@@ -175,11 +205,14 @@ class PersisterAgent(BaseAgent):
         # --- 3. Convert dicts to Pydantic models ---
         facts: list[AtomicFact] = []
         for idx, fd in enumerate(embedded_facts):
-            platform = fd.get("platform", "slack")
             # Use session channel_id — the LLM output doesn't include it.
             fact_channel_id = fd.get("channel_id") or channel_id
-            message_ts = fd.get("message_ts", "")
-            fact_id = AtomicFact.deterministic_id(platform, fact_channel_id, message_ts, idx)
+            # Content-derived deterministic ID. The previous
+            # ``(platform, channel_id, message_ts, idx)`` key shifted whenever
+            # the LLM produced facts in a different order on retry, creating
+            # phantom Weaviate duplicates. ``idx`` is intentionally unused now.
+            entity_names = fd.get("entity_tags") or []
+            fact_id = AtomicFact.deterministic_id(fd.get("memory_text", ""), entity_names)
             fact_data = {k: v for k, v in fd.items() if k != "id"}
             fact_data["channel_id"] = fact_channel_id
 
@@ -319,7 +352,13 @@ class PersisterAgent(BaseAgent):
                         len(entities),
                     )
                 if relationships:
-                    await stores.graph.batch_upsert_relationships(relationships)
+                    _rel_eids = await stores.graph.batch_upsert_relationships(
+                        relationships,
+                        channel_id=channel_id,
+                        sync_job_id=sync_job_id,
+                        batch_idx=batch_num,
+                    )
+                    _dropped = sum(1 for eid in _rel_eids if not eid)
                     logger.info(
                         "PersisterAgent: neo4j relationship upsert job_id=%s channel=%s batch=%s relationships=%d",
                         sync_job_id,
@@ -327,19 +366,53 @@ class PersisterAgent(BaseAgent):
                         batch_num,
                         len(relationships),
                     )
+                    if _dropped and channel_id and sync_job_id:
+                        from beever_atlas.services.batch_processor import increment_sync_metric
+
+                        increment_sync_metric(
+                            channel_id, sync_job_id, "relationships_dropped_total", _dropped
+                        )
                 # Store name_vectors on Neo4j entity nodes
-                for entity in entities:
-                    if entity.name_vector:
-                        try:
-                            await stores.entity_registry.store_name_vector(
-                                entity.name, entity.name_vector
-                            )
-                        except Exception:  # noqa: BLE001
-                            logger.warning(
-                                "PersisterAgent: store_name_vector failed for %s",
-                                entity.name,
-                                exc_info=True,
-                            )
+                settings = get_settings()
+                if settings.neo4j_batch_name_vector:
+                    try:
+                        items = [
+                            (e.name, e.name_vector) for e in entities if e.name_vector is not None
+                        ]
+                        await stores.entity_registry.batch_store_name_vectors(items)
+                        logger.info(
+                            "PersisterAgent: batch_store_name_vectors items=%d batch=%s",
+                            len(items),
+                            batch_num,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "PersisterAgent: batch_store_name_vectors failed, falling back to per-entity batch=%s",
+                            batch_num,
+                            exc_info=True,
+                        )
+                        for entity in entities:
+                            if not entity.name_vector:
+                                continue
+                            try:
+                                await stores.entity_registry.store_name_vector(
+                                    entity.name, entity.name_vector
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.exception("store_name_vector failed entity=%s", entity.name)
+                else:
+                    for entity in entities:
+                        if entity.name_vector:
+                            try:
+                                await stores.entity_registry.store_name_vector(
+                                    entity.name, entity.name_vector
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.warning(
+                                    "PersisterAgent: store_name_vector failed for %s",
+                                    entity.name,
+                                    exc_info=True,
+                                )
             await stores.mongodb.mark_intent_neo4j_done(intent_id)
 
         weaviate_ids: list[str] = []
@@ -397,13 +470,18 @@ class PersisterAgent(BaseAgent):
                     logger.warning(
                         "PersisterAgent: batch_find_entities_by_name failed", exc_info=True
                     )
-                # Create stub entities for truly missing names
+                # Create stub entities for truly missing names.
+                # ``type='Topic'`` aligns with the in-Cypher MERGE default
+                # in upsert_relationship + batch_create_episodic_links
+                # (PR-2). ``Topic`` is generic; ``Project`` is
+                # domain-specific and the persister cannot infer the
+                # actual domain from a bare relationship endpoint.
                 stubs: list[GraphEntity] = []
                 for name in missing_names:
                     stubs.append(
                         GraphEntity(
                             name=name,
-                            type="Project",
+                            type="Topic",
                             scope="global",
                             properties={"stub": True},
                             source_message_id=facts[0].source_message_id if facts else "",

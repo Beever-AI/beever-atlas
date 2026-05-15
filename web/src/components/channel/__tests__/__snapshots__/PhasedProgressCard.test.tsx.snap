@@ -1,0 +1,1127 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`PhasedProgressCard — visual states > matches the all-done snapshot 1`] = `
+<div
+  class="rounded-xl border border-white/10 bg-card/70 backdrop-blur px-4 py-3 space-y-3"
+  data-testid="phased-progress-card"
+>
+  <div
+    class="flex items-start justify-between gap-3"
+  >
+    <div
+      class="flex items-start gap-2 min-w-0 flex-1"
+    >
+      <svg
+        aria-label="done"
+        class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+        fill="none"
+        height="24"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="24"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+        />
+        <path
+          d="m9 12 2 2 4-4"
+        />
+      </svg>
+      <div
+        class="min-w-0 flex-1"
+      >
+        <div
+          class="text-sm font-medium text-foreground truncate"
+        >
+          Generating overview wiki
+        </div>
+        <div
+          class="text-[11px] text-emerald-600 dark:text-emerald-400"
+        >
+          Pipeline complete
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="space-y-1"
+  >
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-fetched"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Fetched messages
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            700 / 700
+          </span>
+        </div>
+        <div
+          aria-valuemax="700"
+          aria-valuemin="0"
+          aria-valuenow="700"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-extracting"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Extracting facts
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            700 / 700
+          </span>
+        </div>
+        <div
+          aria-valuemax="700"
+          aria-valuemin="0"
+          aria-valuenow="700"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-wiki_maintenance"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Updating wiki pages
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            12 / 12
+          </span>
+        </div>
+        <div
+          aria-valuemax="12"
+          aria-valuemin="0"
+          aria-valuenow="12"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors bg-primary/5 border border-primary/15"
+      data-testid="phase-row-overview_wiki"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Generating overview wiki
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground"
+          >
+            28.0 s
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`PhasedProgressCard — visual states > matches the mid-extraction snapshot 1`] = `
+<div
+  class="rounded-xl border border-white/10 bg-card/70 backdrop-blur px-4 py-3 space-y-3"
+  data-testid="phased-progress-card"
+>
+  <div
+    class="flex items-start justify-between gap-3"
+  >
+    <div
+      class="flex items-start gap-2 min-w-0 flex-1"
+    >
+      <svg
+        aria-label="in flight"
+        class="lucide lucide-loader-circle h-4 w-4 text-primary animate-spin shrink-0"
+        fill="none"
+        height="24"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="24"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M21 12a9 9 0 1 1-6.219-8.56"
+        />
+      </svg>
+      <div
+        class="min-w-0 flex-1"
+      >
+        <div
+          class="text-sm font-medium text-foreground truncate"
+        >
+          Extracting facts
+        </div>
+        <div
+          class="text-[11px] text-muted-foreground"
+        >
+          ~2 min remaining
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="space-y-1"
+  >
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-fetched"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Fetched messages
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            700 / 700
+          </span>
+        </div>
+        <div
+          aria-valuemax="700"
+          aria-valuemin="0"
+          aria-valuenow="700"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors bg-primary/5 border border-primary/15"
+      data-testid="phase-row-extracting"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="in flight"
+          class="lucide lucide-loader-circle h-4 w-4 text-primary animate-spin shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M21 12a9 9 0 1 1-6.219-8.56"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-foreground"
+          >
+            Extracting facts
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            230 / 700
+          </span>
+          <span
+            class="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-clock h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
+              <path
+                d="M12 6v6l4 2"
+              />
+            </svg>
+            ~2 min remaining
+          </span>
+        </div>
+        <div
+          aria-valuemax="700"
+          aria-valuemin="0"
+          aria-valuenow="230"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-primary"
+            style="width: 32.857142857142854%;"
+          />
+        </div>
+        <p
+          class="text-[10px] text-muted-foreground/80 truncate"
+        >
+          Extracting facts from 25 rows
+        </p>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-wiki_maintenance"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="pending"
+          class="lucide lucide-circle h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground"
+          >
+            Updating wiki pages
+          </span>
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-overview_wiki"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="pending"
+          class="lucide lucide-circle h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground"
+          >
+            Generating overview wiki
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`PhasedProgressCard — visual states > matches the mixed-retrying snapshot with chips visible 1`] = `
+<div
+  class="rounded-xl border border-white/10 bg-card/70 backdrop-blur px-4 py-3 space-y-3"
+  data-testid="phased-progress-card"
+>
+  <div
+    class="flex items-start justify-between gap-3"
+  >
+    <div
+      class="flex items-start gap-2 min-w-0 flex-1"
+    >
+      <svg
+        aria-label="in flight"
+        class="lucide lucide-loader-circle h-4 w-4 text-primary animate-spin shrink-0"
+        fill="none"
+        height="24"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="24"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M21 12a9 9 0 1 1-6.219-8.56"
+        />
+      </svg>
+      <div
+        class="min-w-0 flex-1"
+      >
+        <div
+          class="text-sm font-medium text-foreground truncate"
+        >
+          Extracting facts
+        </div>
+        <div
+          class="text-[11px] text-muted-foreground"
+        >
+          45 s remaining
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="space-y-1"
+  >
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-fetched"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Fetched messages
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            200 / 200
+          </span>
+        </div>
+        <div
+          aria-valuemax="200"
+          aria-valuemin="0"
+          aria-valuenow="200"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors bg-primary/5 border border-primary/15"
+      data-testid="phase-row-extracting"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="in flight"
+          class="lucide lucide-loader-circle h-4 w-4 text-primary animate-spin shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M21 12a9 9 0 1 1-6.219-8.56"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-foreground"
+          >
+            Extracting facts
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            150 / 200
+          </span>
+          <span
+            class="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+          >
+            <svg
+              aria-hidden="true"
+              class="lucide lucide-clock h-3 w-3"
+              fill="none"
+              height="24"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              viewBox="0 0 24 24"
+              width="24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
+              <path
+                d="M12 6v6l4 2"
+              />
+            </svg>
+            45 s remaining
+          </span>
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+            data-testid="retrying-chip"
+          >
+            Retrying — 
+            3
+             
+            rows
+          </span>
+          <button
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20 hover:underline cursor-pointer"
+            data-testid="abandoned-chip"
+            type="button"
+          >
+            Abandoned — 
+            2
+             
+            rows
+          </button>
+        </div>
+        <div
+          aria-valuemax="200"
+          aria-valuemin="0"
+          aria-valuenow="150"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-primary"
+            style="width: 75%;"
+          />
+        </div>
+        <p
+          class="text-[10px] text-muted-foreground/80 truncate"
+        >
+          Retrying after 429
+        </p>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-wiki_maintenance"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="pending"
+          class="lucide lucide-circle h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground"
+          >
+            Updating wiki pages
+          </span>
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-overview_wiki"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="pending"
+          class="lucide lucide-circle h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground"
+          >
+            Generating overview wiki
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+exports[`PhasedProgressCard — visual states > matches the skipped snapshot 1`] = `
+<div
+  class="rounded-xl border border-white/10 bg-card/70 backdrop-blur px-4 py-3 space-y-3"
+  data-testid="phased-progress-card"
+>
+  <div
+    class="flex items-start justify-between gap-3"
+  >
+    <div
+      class="flex items-start gap-2 min-w-0 flex-1"
+    >
+      <svg
+        aria-label="skipped"
+        class="lucide lucide-skip-forward h-4 w-4 text-muted-foreground shrink-0"
+        fill="none"
+        height="24"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        viewBox="0 0 24 24"
+        width="24"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M21 4v16"
+        />
+        <path
+          d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z"
+        />
+      </svg>
+      <div
+        class="min-w-0 flex-1"
+      >
+        <div
+          class="text-sm font-medium text-foreground truncate"
+        >
+          Generating overview wiki
+        </div>
+      </div>
+    </div>
+  </div>
+  <div
+    class="space-y-1"
+  >
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-fetched"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Fetched messages
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            5 / 5
+          </span>
+        </div>
+        <div
+          aria-valuemax="5"
+          aria-valuemin="0"
+          aria-valuenow="5"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-extracting"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="done"
+          class="lucide lucide-circle-check h-4 w-4 text-emerald-500 shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <path
+            d="m9 12 2 2 4-4"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-emerald-700 dark:text-emerald-400"
+          >
+            Extracting facts
+          </span>
+          <span
+            class="font-mono text-[10px] text-muted-foreground tabular-nums"
+          >
+            5 / 5
+          </span>
+        </div>
+        <div
+          aria-valuemax="5"
+          aria-valuemin="0"
+          aria-valuenow="5"
+          class="h-1.5 w-full rounded-full bg-muted overflow-hidden"
+          role="progressbar"
+        >
+          <div
+            class="h-full rounded-full transition-all duration-700 ease-out bg-emerald-500"
+            style="width: 100%;"
+          />
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors border border-transparent"
+      data-testid="phase-row-wiki_maintenance"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="skipped"
+          class="lucide lucide-skip-forward h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M21 4v16"
+          />
+          <path
+            d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground line-through"
+          >
+            Updating wiki pages
+          </span>
+        </div>
+      </div>
+    </div>
+    <div
+      class="flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors bg-primary/5 border border-primary/15"
+      data-testid="phase-row-overview_wiki"
+    >
+      <div
+        class="mt-0.5"
+      >
+        <svg
+          aria-label="skipped"
+          class="lucide lucide-skip-forward h-4 w-4 text-muted-foreground shrink-0"
+          fill="none"
+          height="24"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="24"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M21 4v16"
+          />
+          <path
+            d="M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z"
+          />
+        </svg>
+      </div>
+      <div
+        class="min-w-0 flex-1 space-y-1"
+      >
+        <div
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span
+            class="text-xs font-medium text-muted-foreground line-through"
+          >
+            Generating overview wiki
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;

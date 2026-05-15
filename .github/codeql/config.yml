@@ -1,0 +1,18 @@
+name: "Beever Atlas CodeQL config"
+
+# Exclude test-only files from analysis. Test fixtures intentionally
+# exercise the SAME substring / regex patterns the production code
+# uses, so flagging them re-reports the same finding under each test
+# case. We dismiss them at the config layer instead of inline so a
+# new test in the same module doesn't re-trigger the analysis.
+#
+# Production code under ``src/`` and ``web/src/`` (excluding ``__tests__``)
+# is still analyzed.
+paths-ignore:
+  - "tests/**"
+  - "web/src/**/__tests__/**"
+  - "web/test-*.mjs"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/*.spec.tsx"

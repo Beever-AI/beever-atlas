@@ -506,3 +506,285 @@ async def test_start_new_session_returns_session_id():
     # The short uuid part should be 8 chars
     parts = session_id.rsplit(":", 1)
     assert len(parts[-1]) == 8
+
+
+# ---------------------------------------------------------------------------
+# search_memory (production-wiring §14)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_memory_explicit_channel_scope_returns_hits():
+    """``scope='channel:<id>'`` invokes the per-channel hybrid search and
+    returns the documented hits shape."""
+    from beever_atlas.api.mcp_server import build_mcp
+
+    fake_facts = [
+        {
+            "fact_id": "f1",
+            "text": "Billing is owned by Alice",
+            "score": 0.92,
+            "cluster_id": "billing",
+            "entity_tags": ["alice"],
+        }
+    ]
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(return_value=fake_facts),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "search_memory")
+        result = await fn(query="billing", scope="channel:ch-a", ctx=_ctx())
+
+    assert result["query"] == "billing"
+    assert len(result["hits"]) == 1
+    hit = result["hits"][0]
+    assert hit["fact_id"] == "f1"
+    assert hit["channel_id"] == "ch-a"
+    assert hit["score"] == 0.92
+
+
+@pytest.mark.asyncio
+async def test_search_memory_channel_scope_access_denied():
+    """Explicit ``scope='channel:<id>'`` returns the structured access-denied
+    error when the principal cannot reach that channel."""
+    from beever_atlas.api.mcp_server import build_mcp
+    from beever_atlas.capabilities.errors import ChannelAccessDenied
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(side_effect=ChannelAccessDenied("ch-x")),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "search_memory")
+        result = await fn(query="x", scope="channel:ch-x", ctx=_ctx())
+
+    assert result["error"] == "channel_access_denied"
+    assert result["channel_id"] == "ch-x"
+
+
+@pytest.mark.asyncio
+async def test_search_memory_invalid_scope_returns_invalid_parameter():
+    from beever_atlas.api.mcp_server import build_mcp
+
+    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "search_memory")
+        result = await fn(query="x", scope="garbage", ctx=_ctx())
+
+    assert result["error"] == "invalid_parameter"
+    assert result["parameter"] == "scope"
+
+
+@pytest.mark.asyncio
+async def test_search_memory_zero_match_returns_empty_hits():
+    from beever_atlas.api.mcp_server import build_mcp
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "search_memory")
+        result = await fn(query="needle-not-in-haystack", scope="channel:ch-a", ctx=_ctx())
+
+    assert result == {"hits": [], "query": "needle-not-in-haystack"}
+
+
+@pytest.mark.asyncio
+async def test_search_memory_all_scope_merges_across_channels():
+    """``scope='all'`` fans out across the principal's accessible channels
+    and merges + ranks hits by score."""
+    from beever_atlas.api.mcp_server import build_mcp
+
+    fake_visible_conns = [
+        {"connection_id": "conn-1"},
+        {"connection_id": "conn-2"},
+    ]
+
+    class _FakeConn:
+        def __init__(self, conn_id, channels):
+            self.id = conn_id
+            self.selected_channels = channels
+
+    fake_connections = [
+        _FakeConn("conn-1", ["ch-a"]),
+        _FakeConn("conn-2", ["ch-b"]),
+    ]
+
+    fake_stores = MagicMock()
+    fake_stores.platform.list_connections = AsyncMock(return_value=fake_connections)
+
+    async def _fake_search(_principal, channel_id, _query, **_kwargs):
+        if channel_id == "ch-a":
+            return [{"fact_id": "fa", "text": "ChA hit", "score": 0.5}]
+        return [{"fact_id": "fb", "text": "ChB hit", "score": 0.9}]
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.stores.get_stores",
+            return_value=fake_stores,
+        ),
+        patch(
+            "beever_atlas.capabilities.connections.list_connections",
+            new=AsyncMock(return_value=fake_visible_conns),
+        ),
+        patch(
+            "beever_atlas.capabilities.memory.search_channel_facts",
+            new=AsyncMock(side_effect=_fake_search),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "search_memory")
+        result = await fn(query="hit", scope="all", ctx=_ctx())
+
+    # Both channels' facts merge; sorted by score desc.
+    assert len(result["hits"]) == 2
+    assert result["hits"][0]["fact_id"] == "fb"  # 0.9 > 0.5
+    assert result["hits"][1]["fact_id"] == "fa"
+
+
+# ---------------------------------------------------------------------------
+# lint_wiki (production-wiring §15)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lint_wiki_returns_findings_shape():
+    """The MCP tool returns the same JSON contract as the HTTP lint endpoint."""
+    from beever_atlas.api.mcp_server import build_mcp
+
+    fake_report = MagicMock()
+    fake_report.model_dump = MagicMock(
+        return_value={
+            "channel_id": "ch-a",
+            "target_lang": "en",
+            "pages_scanned": 7,
+            "findings": [
+                {
+                    "severity": "info",
+                    "category": "stale",
+                    "page_id": "topic:auth",
+                    "section_id": "overview",
+                    "message": "Page has not been updated in 30 days.",
+                    "suggested_action": "review",
+                }
+            ],
+        }
+    )
+    fake_stores = MagicMock()
+    fake_stores.mongodb.db = MagicMock()
+    fake_stores.weaviate.list_clusters = AsyncMock(return_value=[])
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=fake_stores),
+        patch(
+            "beever_atlas.services.wiki_lint.lint_channel_wiki",
+            new=AsyncMock(return_value=fake_report),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "lint_wiki")
+        result = await fn(channel_id="ch-a", ctx=_ctx())
+
+    assert result["pages_scanned"] == 7
+    assert result["findings"][0]["category"] == "stale"
+
+
+@pytest.mark.asyncio
+async def test_lint_wiki_access_denied():
+    from beever_atlas.api.mcp_server import build_mcp
+    from fastapi import HTTPException
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403, detail="denied")),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "lint_wiki")
+        result = await fn(channel_id="ch-x", ctx=_ctx())
+
+    assert result["error"] == "channel_access_denied"
+    assert result["channel_id"] == "ch-x"
+
+
+@pytest.mark.asyncio
+async def test_lint_wiki_invalid_channel_id():
+    from beever_atlas.api.mcp_server import build_mcp
+
+    with patch("fastmcp.server.dependencies.get_http_request", return_value=_req()):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "lint_wiki")
+        result = await fn(channel_id="   ", ctx=_ctx())
+
+    assert result["error"] == "invalid_parameter"
+    assert result["parameter"] == "channel_id"
+
+
+# ---------------------------------------------------------------------------
+# get_extraction_status (production-wiring §15)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_extraction_status_returns_counts():
+    from beever_atlas.api.mcp_server import build_mcp
+
+    fake_stores = MagicMock()
+    fake_stores.mongodb.count_channel_messages_by_status = AsyncMock(
+        return_value={"pending": 50, "extracting": 5, "done": 145, "failed": 0}
+    )
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("beever_atlas.stores.get_stores", return_value=fake_stores),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "get_extraction_status")
+        result = await fn(channel_id="ch-a", ctx=_ctx())
+
+    assert result["channel_id"] == "ch-a"
+    assert result["counts"] == {"pending": 50, "extracting": 5, "done": 145, "failed": 0}
+    assert result["total"] == 200
+
+
+@pytest.mark.asyncio
+async def test_get_extraction_status_access_denied():
+    from beever_atlas.api.mcp_server import build_mcp
+    from fastapi import HTTPException
+
+    with (
+        patch("fastmcp.server.dependencies.get_http_request", return_value=_req()),
+        patch(
+            "beever_atlas.infra.channel_access.assert_channel_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403, detail="denied")),
+        ),
+    ):
+        mcp = build_mcp()
+        fn = _get_tool_fn(mcp, "get_extraction_status")
+        result = await fn(channel_id="ch-x", ctx=_ctx())
+
+    assert result["error"] == "channel_access_denied"
+    assert result["channel_id"] == "ch-x"

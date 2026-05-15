@@ -354,12 +354,15 @@ class MediaProcessor:
             return ""
 
     async def _describe_image(self, data: bytes, message_context: str) -> str:
-        """Describe an image using Gemini vision API."""
+        """Describe an image via the LiteLLM funnel (OpenAI multimodal shape)."""
         try:
-            from google.genai import types as genai_types
-            from beever_atlas.services.media_extractors import _get_gemini_client
+            import base64
 
-            client = await _get_gemini_client()
+            from beever_atlas.services.llm_dispatch import (
+                dispatch_completion,
+                normalize_litellm_model,
+                sniff_provider,
+            )
 
             prompt = (
                 "Describe this image concisely for a knowledge extraction system. "
@@ -370,26 +373,27 @@ class MediaProcessor:
             if message_context:
                 prompt += f"\n\nMessage context: {message_context[:200]}"
 
+            model_name = self._settings.media_vision_model
+            data_url = f"data:image/png;base64,{base64.b64encode(data).decode('ascii')}"
+
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=self._settings.media_vision_model,
-                    contents=[
-                        genai_types.Content(
-                            role="user",
-                            parts=[
-                                genai_types.Part.from_bytes(
-                                    data=data,
-                                    mime_type="image/png",
-                                ),
-                                genai_types.Part.from_text(text=prompt),
+                dispatch_completion(
+                    provider=sniff_provider(model_name),
+                    model=normalize_litellm_model(model_name),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                                {"type": "text", "text": prompt},
                             ],
-                        )
+                        }
                     ],
                 ),
                 timeout=60,
             )
 
-            return response.text or ""
+            return response.choices[0].message.content or ""  # type: ignore[index, union-attr]
         except Exception:
             logger.warning("MediaProcessor: vision description failed", exc_info=True)
             return ""

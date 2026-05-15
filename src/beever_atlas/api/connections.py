@@ -347,7 +347,20 @@ async def create_connection(
     )
 
     logger.info("Created platform connection id=%s platform=%s", conn.id, conn.platform)
+    await _refresh_proxy_hosts(stores)
     return _to_response(conn)
+
+
+async def _refresh_proxy_hosts(stores) -> None:
+    """Re-derive the file/media-proxy host allowlist after a connection
+    write. Failures are logged and swallowed so a transient store error
+    cannot block the user-visible CRUD response."""
+    try:
+        from beever_atlas.infra.platform_hosts import refresh_runtime_proxy_hosts
+
+        await refresh_runtime_proxy_hosts(stores)
+    except Exception:
+        logger.exception("connections: failed to refresh proxy host allowlist (non-fatal)")
 
 
 @router.delete("/api/connections/{connection_id}", status_code=204)
@@ -366,6 +379,7 @@ async def delete_connection(connection_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
 
     logger.info("Deleted platform connection id=%s platform=%s", connection_id, conn.platform)
+    await _refresh_proxy_hosts(stores)
 
 
 @router.post("/api/connections/{connection_id}/validate", response_model=ConnectionResponse)
@@ -399,6 +413,7 @@ async def validate_connection(connection_id: str) -> ConnectionResponse:
 
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
+    await _refresh_proxy_hosts(stores)
     return _to_response(updated)
 
 

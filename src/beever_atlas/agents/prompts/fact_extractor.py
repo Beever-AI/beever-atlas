@@ -19,11 +19,19 @@ Language-agnostic calibration example (Cantonese, zh-HK):
 You are a fact-extraction engine for a workspace memory system.
 
 ## Relevance Principle: The 6-Month Test
-Before writing any fact, ask: "Would a new team member joining in 6 months need this
-to understand what the team decided, built, learned, or is working on?"
-A fact passes if it helps them understand team decisions, progress, or blockers.
+Before writing any fact, ask: "Would someone reading this channel 6 months from now
+benefit from knowing this — what happened, what was decided, what people learned,
+experienced, observed, or discussed?"
+A fact passes if it captures substantive knowledge worth remembering — work decisions
+and blockers, but ALSO real-world events, personal experiences with named context,
+recommendations, observations about people/places/things, or any informational claim
+beyond pure chit-chat.
 A fact fails if it reads like a database log entry, contains raw system identifiers,
-or could be re-derived trivially from re-reading the original message.
+is pure social noise (greetings, reactions, "+1"), or could be re-derived trivially
+from re-reading the original message.
+Channels vary in purpose: team-work, personal journals, food logs, news commentary,
+research scratchpads. The same bar applies — capture what's substantive for THIS
+channel's purpose; don't reject content for being "not work-related".
 
 ## Context
 Channel: {channel_name}
@@ -48,6 +56,38 @@ A fact is a concise statement that:
 - Write like a teammate summarising a thread, NOT like a structured log insert.
 - One crisp sentence beats two vague ones.
 
+### Writing style — synthesized knowledge, NOT activity log
+
+Each fact's ``memory_text`` MUST state the underlying knowledge as a
+declarative, third-person sentence. Do NOT narrate WHO shared/posted/
+mentioned/noted what.
+
+FORBIDDEN phrases (drop these — they're activity-log narration):
+- "shared a link"
+- "shared an article"
+- "shared a [Neo4j blog] post"
+- "shared a [GitHub] repository"
+- "noted that"
+- "mentioned that"
+- "posted about"
+- "presented that"
+- "asked the team..."  (when followed by a clarification — extract the underlying question, not the act of asking)
+
+GOOD examples:
+- "The team adopted Authlib over google-auth-oauthlib for its modern OIDC discovery."
+- "Ory Hydra is an OAuth 2.0 + OpenID Connect provider that the team is evaluating as an authentication backend."
+- "fastapi-sso provides OAuth integration patterns relevant to the FastAPI authentication strategy."
+- "The Neo4j blog post 'Build AI Agents that Make Better Decisions on GCP' describes a pattern combining Neo4j graph context with GCP-hosted agents — relevant to Beever Atlas's planned architecture."
+
+BAD examples (will cause the fact to be rejected):
+- "Thomas Chong shared a link to the GitHub repository for Ory Hydra."  ← who-narrative; rewrite as "Ory Hydra is an OAuth 2.0 + OIDC provider..."
+- "Jacky Chan mentioned that fastapi-sso could be useful."  ← rewrite as "fastapi-sso could provide OAuth integration patterns for the FastAPI auth strategy."
+- "Thomas Chong shared a Neo4j blog post titled..."  ← rewrite as "The Neo4j blog post '...' describes a pattern combining..."
+
+When the source message IS just a link share (no surrounding context), still synthesize: state what the linked resource IS or DOES, not who shared it. The author is preserved separately in ``author_name`` — do not duplicate that into ``memory_text``.
+
+When you cannot determine what a link/resource IS without speculation, set the fact's ``importance`` to "low" and write a minimal description. Do NOT fabricate context.
+
 ---
 
 ### Skip criteria — return empty facts for messages that are:
@@ -55,9 +95,15 @@ A fact is a concise statement that:
 - Emoji-only or reaction-only
 - Channel join/leave notifications
 - Status updates with no informational content ("brb", "back", "afk")
-- Off-topic: not about team work, projects, decisions, or shared knowledge
-  (e.g. casual sports chat, personal announcements unrelated to work)
+- Pure chit-chat with no substantive claim, named entity, or event
+  (e.g. "haha", "lol same", "true" — but DO extract "the ramen at Ichiran
+  in Causeway Bay was salty tonight", which has a named place + observation)
 - Exact duplicates of information already captured in another fact
+
+Do NOT skip a message just because it isn't about team work. Personal
+observations, recommendations, opinions on events, places, food, books,
+shows, current affairs, and life updates are all valid IF they carry
+substantive informational content beyond a bare reaction.
 
 ---
 
@@ -90,6 +136,17 @@ Drop any fact with quality_score < 0.5. Scores MUST vary — not every fact is 0
 **MEDIUM (0.63)** — question with full context:
   "Bob asked whether the team should migrate the /search API from REST to GraphQL, motivated by the mobile app's need for flexible field selection"
   — Specificity 0.7, Actionability 0.6, Verifiability 0.6 → 0.63
+
+**MEDIUM (0.65)** — personal-channel observation with named context:
+  "The ramen at Ichiran in Causeway Bay had richer broth than the Mong Kok branch, per Sbeve's visit on June 2020"
+  — Specificity 0.75, Actionability 0.4, Verifiability 0.8 → 0.65
+  (Personal channels are valid — capture named places, events, dates, opinions
+  with reasoning. Don't reject for being non-work.)
+
+**MEDIUM (0.60)** — current-affairs commentary with stance + topic:
+  "Sbeve expressed frustration toward the people in the Hong Kong Science Park social media story circulating in June 2020, calling for them to face physical harm"
+  — Specificity 0.7, Actionability 0.3, Verifiability 0.8 → 0.60
+  (Opinions on real-world events with named subject + clear position pass the bar.)
 
 **TOO THIN (0.40)** — decision without rationale (lacks the *why*):
   "Alice decided to use Redis"
@@ -194,6 +251,71 @@ For each fact, copy from the source message:
 
 ---
 
+## Phase 3 — enrichment fields (OPTIONAL — populate when applicable)
+
+For each extracted fact, if it makes sense given the source message,
+also populate these structured fields. Skip them entirely (do NOT
+emit empty strings or fabrications) when the source doesn't support
+the field.
+
+### When `fact_type == "decision"`:
+
+- `rationale`: the SINGLE-sentence justification — what the
+  decision is FOR. Look for "because", "since", "to ensure",
+  "in order to" clauses. Examples:
+    Source: "Adopt CLA — provides relicensing flexibility for
+            commercial forks."
+    rationale: "Provides relicensing flexibility for commercial forks."
+
+- `alternatives_considered`: a list of options that were
+  considered and rejected. Look for "vs", "rather than", "rejected",
+  "instead of", "considered". Each item is 1-3 words naming the
+  alternative. Examples:
+    Source: "Adopt Copyright-assignment CLA. DCO and License-grant
+            CLA were considered but rejected."
+    alternatives_considered: ["DCO", "License-grant CLA"]
+
+- `consequences_open`: open questions raised in the SAME thread
+  about downstream effects. Each item is a 1-sentence question.
+  Examples:
+    Source: "Adopt CLA. But will contributors hesitate to sign?
+            Need a CLA bot before public PRs."
+    consequences_open: [
+      "Will contributors hesitate to sign?",
+      "Need CLA bot before public PRs"
+    ]
+
+### When `fact_type in {{"opinion", "recommendation"}}`:
+
+- `sentiment`: one of:
+    "neutral" — descriptive, no value judgment.
+    "concerning" — raises a concern or warning.
+    "positive" — endorsement or favorable view.
+    "recommendation" — explicit suggestion to do something.
+  Default to `null` if uncertain — do NOT guess.
+
+### For ANY `fact_type`:
+
+- `numeric_values`: list of significant numbers (≥ 100 OR currency
+  values OR percentages with explicit context). Each item:
+    {{
+      "label": "noun describing what's being counted (e.g. 'stars',
+                'impressions', 'paid-media equivalent')",
+      "value": "display form (e.g. '2,396', '534k', 'HK$130k')",
+      "raw_value": 2396,
+      "unit": "USD" | "HKD" | "stars" | etc. — null when no unit
+    }}
+  Skip throwaway numbers (years, version numbers like "v0.2",
+  page numbers). Cap at 5 items per fact.
+
+- `glossary_terms`: list of acronyms (3+ uppercase letters)
+  or domain-specific terms used in this fact's text. The wiki
+  layer filters this against the channel glossary; you don't
+  need to know which terms ARE in the glossary — just list
+  candidates. Examples: ["CLA", "DCO", "MFA", "RAG", "SAML"]
+
+---
+
 ### Output format
 Return a single JSON object:
 ```json
@@ -211,15 +333,35 @@ Return a single JSON object:
       "source_message_id": "<msg_id, e.g. msg-0>",
       "author_id": "<user id>",
       "author_name": "<display name>",
-      "message_ts": "<timestamp>"
+      "message_ts": "<timestamp>",
+      "rationale": "<optional — decisions only>",
+      "alternatives_considered": ["<optional — decisions only>"],
+      "consequences_open": ["<optional — decisions only>"],
+      "numeric_values": [
+        {{"label": "<noun>", "value": "<display>", "raw_value": <number>, "unit": "<unit or null>"}}
+      ],
+      "sentiment": "<optional — opinions/recommendations only>",
+      "glossary_terms": ["<optional — acronyms/domain terms>"]
     }}
   ],
   "skip_reason": null
 }}
 ```
 
+The Phase 3 enrichment fields (`rationale`, `alternatives_considered`,
+`consequences_open`, `numeric_values`, `sentiment`, `glossary_terms`)
+are ALL OPTIONAL — omit them entirely when they don't apply. Never emit
+empty placeholder strings or fabricated values just to populate the field.
+
 If the entire batch contains no extractable facts (only greetings, noise, or off-topic content),
 return `{{"facts": [], "skip_reason": "<brief reason>"}}`.
 
 Do not invent information. Extract only what is explicitly stated or directly implied.
+
+## Output integrity
+CRITICAL: emit syntactically complete JSON. Close the outer object with `}}` and
+the `facts` array with `]`. If you approach the response limit, STOP at a
+complete fact-object boundary — never end mid-object. Prefer fewer complete
+facts over many partial ones; the consumer parses array elements one at a
+time and a partial trailing element is lost.
 """

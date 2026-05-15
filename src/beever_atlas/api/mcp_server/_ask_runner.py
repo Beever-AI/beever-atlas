@@ -50,6 +50,11 @@ _CITATION_PATTERN = re.compile(
     r"(?:Time:\s*([^\[\n]+))?"
 )
 
+_WIKI_PAGE_CITATION_PATTERN = re.compile(
+    r"\[(\d+)\]\s+Wiki Page:\s*([^|]+)\|?\s*"
+    r"(?:Section:\s*([^\[\n]+))?"
+)
+
 
 @dataclass
 class _AskResult:
@@ -60,13 +65,38 @@ class _AskResult:
 
 
 def _extract_citations_from_text(text: str) -> list[dict]:
-    """Parse the standard citation shape emitted by the QA agent.
+    """Parse the citation shapes emitted by the QA agent.
 
-    Mirrors the dashboard helper ``api/ask._extract_citations_from_text`` so
-    MCP callers see the same citation shape the dashboard does.
+    Recognises both ``channel_fact`` (the historical chat-message shape)
+    and ``wiki_page`` (introduced by the production-wiring redesign so
+    wiki-content answers can carry a navigable per-page reference).
+    Mirrors ``api/ask._extract_citations_from_text`` so MCP callers see
+    the same citation shape the dashboard does.
     """
     citations: list[dict] = []
-    for match in _CITATION_PATTERN.finditer(text or ""):
+    consumed: list[tuple[int, int]] = []
+    for match in _WIKI_PAGE_CITATION_PATTERN.finditer(text or ""):
+        citations.append(
+            {
+                "type": "wiki_page",
+                "text": match.group(0).strip(),
+                "number": match.group(1),
+                "page_id": match.group(2).strip() if match.group(2) else "",
+                "section_id": match.group(3).strip() if match.group(3) else "",
+            }
+        )
+        consumed.append(match.span())
+
+    if consumed:
+        chars = list(text or "")
+        for start, end in consumed:
+            for i in range(start, end):
+                chars[i] = " "
+        scrubbed = "".join(chars)
+    else:
+        scrubbed = text or ""
+
+    for match in _CITATION_PATTERN.finditer(scrubbed):
         citations.append(
             {
                 "type": "channel_fact",
