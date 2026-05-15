@@ -13,7 +13,8 @@ bash "$HERE/provision.sh"
 
 PUBLIC_IP="$(cat "$STATE/public_ip")"
 HOSTNAME="$(cat "$STATE/hostname")"
-KEY_FILE="$STATE/beever-atlas-key.pem"
+NAME="${NAME:-beever-atlas}"
+KEY_FILE="$STATE/${NAME}-key.pem"
 SSH_OPTS=(-i "$KEY_FILE" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
 
 log "2/5  waiting for SSH on $PUBLIC_IP"

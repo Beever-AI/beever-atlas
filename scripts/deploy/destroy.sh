@@ -5,10 +5,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE="$HERE/.state"
 REGION="${AWS_REGION:-us-east-2}"
+NAME="${NAME:-beever-atlas}"
 
 log() { echo "[destroy] $*"; }
 
-read -r -p "Destroy Beever Atlas AWS resources? [y/N] " ans
+read -r -p "Destroy AWS resources for NAME=$NAME? [y/N] " ans
 [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "aborted"; exit 0; }
 
 if [[ -f "$STATE/instance_id" ]]; then
@@ -34,7 +35,7 @@ if [[ -f "$STATE/sg_id" ]]; then
 fi
 
 log "deleting keypair"
-aws ec2 delete-key-pair --region "$REGION" --key-name beever-atlas-key || true
+aws ec2 delete-key-pair --region "$REGION" --key-name "${NAME}-key" || true
 
 rm -f "$STATE/public_ip" "$STATE/.env.generated"
 log "done. (Kept SSH key + secrets in $STATE for reuse; delete manually if you want)"

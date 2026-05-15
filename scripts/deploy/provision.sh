@@ -8,7 +8,9 @@ STATE="$HERE/.state"
 mkdir -p "$STATE"
 
 REGION="${AWS_REGION:-us-east-2}"
-NAME="beever-atlas"
+# Set NAME to scope AWS resources (keypair, security group, EIP tag).
+# Defaults to `beever-atlas`; use NAME=beever-atlas-ee for the EE side-by-side deploy.
+NAME="${NAME:-beever-atlas}"
 KEY_NAME="${NAME}-key"
 SG_NAME="${NAME}-sg"
 INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.large}"

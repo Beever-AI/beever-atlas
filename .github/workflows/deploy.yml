@@ -1,8 +1,9 @@
 name: deploy
 
 on:
-  push:
-    branches: [main]
+  # Auto-deploy on push is disabled until the EC2_SSH_KEY + EC2_HOST repo
+  # secrets are configured for the new EE EC2 instance. Re-enable by
+  # restoring `push: branches: [main]` once those secrets are set.
   workflow_dispatch:
 
 concurrency:
