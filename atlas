@@ -11,7 +11,7 @@
 #   Step 1/5  Embedding model        (pick provider, then its key)
 #   Step 2/5  Agent LLM provider     (pick provider; assign per-agent later in AI Setup)
 #   Step 3/5  Graph backend          (neo4j or none)
-#   Step 4/5  Optional integrations  (Tavily, MCP server)
+#   Step 4/5  Optional integrations  (Tavily/Olostep, MCP server)
 #   Step 5/5  Auth tokens            (keep dev defaults or rotate)
 #
 # For CI/Docker: pass BEEVER_LLM_API_KEY (single-provider shortcut) or
@@ -790,16 +790,23 @@ fi
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" != "true" ]; then
   step "4/5" "Optional integrations"
-  hint "External web search (Tavily) and MCP for Claude Code / Cursor."
+  hint "External web search (Tavily or Olostep) and MCP for Claude Code / Cursor."
 
   opt_parts=()
   if confirm "N" "Configure optional integrations now?"; then
     # Tavily
     prompt_external_key "TAVILY_API_KEY" "Tavily (external web search in QA)" "https://tavily.com/"
+    # Olostep
+    prompt_external_key "OLOSTEP_API_KEY" "Olostep (external web search in QA)" "https://www.olostep.com/dashboard"
     if grep -qE '^TAVILY_API_KEY=.+' .env 2>/dev/null; then
       opt_parts+=("Tavily ✓")
     else
       opt_parts+=("Tavily skipped")
+    fi
+    if grep -qE '^OLOSTEP_API_KEY=.+' .env 2>/dev/null; then
+      opt_parts+=("Olostep ✓")
+    else
+      opt_parts+=("Olostep skipped")
     fi
 
     # Ollama is now a first-class agent-provider choice in Step 2 — no
@@ -827,7 +834,7 @@ if [ "$NON_INTERACTIVE" != "true" ]; then
     _atlas_summary+=("${C_GREEN}✓${C_RESET} Optional    ${opt_parts[*]}")
   else
     ok "skipped optional integrations"
-    _atlas_summary+=("${C_DIM}—${C_RESET} Optional    skipped (Tavily / MCP)")
+    _atlas_summary+=("${C_DIM}—${C_RESET} Optional    skipped (Tavily / Olostep / MCP)")
   fi
 fi
 
@@ -874,7 +881,7 @@ fi
 # "Finalizing secrets" so auto-gen logic sees the correct filled state.
 # ---------------------------------------------------------------------
 if [ "$NON_INTERACTIVE" = "true" ]; then
-  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY \
+  for _preseed_key in GOOGLE_API_KEY JINA_API_KEY TAVILY_API_KEY OLOSTEP_API_KEY WEB_SEARCH_PROVIDER \
                        EMBEDDING_PROVIDER EMBEDDING_MODEL EMBEDDING_DIMENSIONS \
                        EMBEDDING_API_KEY OPENAI_API_KEY COHERE_API_KEY \
                        VOYAGE_API_KEY MISTRAL_API_KEY \
