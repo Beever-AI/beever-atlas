@@ -1,0 +1,38 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync code
+        run: |
+          rsync -az --delete \
+            --exclude='.git' --exclude='node_modules' --exclude='web/node_modules' \
+            --exclude='web/dist' --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='scripts/deploy/.state' --exclude='.omc' --exclude='memory' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no" \
+            ./ ubuntu@${{ secrets.EC2_HOST }}:/opt/beever-atlas-v2/
+
+      - name: Restart stack
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} \
+            'cd /opt/beever-atlas-v2 && sudo docker compose up -d --build && sudo docker compose ps'

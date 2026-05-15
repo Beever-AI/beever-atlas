@@ -36,7 +36,12 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
-          # Issue #48 — Code Scanning is now enabled on this repo, so the
-          # SARIF upload (default) succeeds and findings surface in the
-          # GitHub Security tab. The previous `upload: never` workaround
-          # is removed; analysis crashes still fail the job (unchanged).
+          # votee/beever-atlas-ee is a private repo without GitHub Advanced
+          # Security, so the SARIF upload fails with "Code Security must be
+          # enabled for this repository" and blocks CI. Skip the upload
+          # until GHAS is enabled. The CodeQL queries still run — any crash
+          # during analysis will still fail the job — but findings don't
+          # surface as Code Scanning alerts on this repo. The upstream OSS
+          # repo (Beever-AI/beever-atlas) is public, has Code Scanning
+          # enabled for free, and uploads normally.
+          upload: never
