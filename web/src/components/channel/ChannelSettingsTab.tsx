@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
-import { Loader2, Clock, Zap, Calendar, Hand, ChevronDown, ChevronRight, Settings2, Info, Sparkles, FolderTree, BookOpen } from "lucide-react";
+import { useParams, useNavigate } from "react-router-dom";
+import { Loader2, Clock, Zap, Calendar, Hand, ChevronDown, ChevronRight, Settings2, Info, Sparkles, FolderTree, BookOpen, AlertTriangle, RefreshCw, X as XIcon } from "lucide-react";
 import { useChannelPolicy } from "@/hooks/useChannelPolicy";
+import { useChannelSummary } from "@/hooks/useChannelSummary";
+import { useToast } from "@/hooks/useToast";
+import { ToastViewport } from "@/components/settings/ToastViewport";
+import { API_BASE, ApiError, adminHeaders, authFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { SyncConfig, IngestionConfig, ConsolidationConfig, ConsolidationStrategy, WikiConfig, WikiGenerationStrategy, WikiMaintenanceMode } from "@/lib/types";
 
@@ -114,7 +118,10 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 export function ChannelSettingsTab() {
   const { id } = useParams<{ id: string }>();
   const channelId = id ?? "";
+  const navigate = useNavigate();
   const { policy, isLoading, savePolicy, deletePolicy } = useChannelPolicy(channelId);
+  const { summary } = useChannelSummary(channelId);
+  const toast = useToast();
 
   const [sync, setSync] = useState<SyncConfig>(DEFAULT_SYNC);
   const [ingestion, setIngestion] = useState<IngestionConfig>(DEFAULT_INGESTION);
@@ -124,6 +131,125 @@ export function ChannelSettingsTab() {
   const [resetting, setResetting] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [showMore, setShowMore] = useState(false);
+
+  // Danger Zone — Reset & Re-sync dialog state.
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [dangerSubmitting, setDangerSubmitting] = useState(false);
+  // Use the summary's display name when available, otherwise fall back
+  // to the channel id so the user can still confirm even before the
+  // summary endpoint resolves.
+  const channelDisplayName = summary?.channel_name || channelId;
+  const dangerMatch = confirmText.trim() === channelDisplayName.trim() && confirmText.trim().length > 0;
+
+  async function handleDangerConfirm() {
+    if (!dangerMatch || dangerSubmitting) return;
+    setDangerSubmitting(true);
+    try {
+      // Three-step sequence so each subsystem owns its own reset path
+      // without one endpoint reimplementing another:
+      //   1. /admin/.../reset    — wipes derived knowledge (entities,
+      //                            facts, sync state, message status).
+      //                            Wiki is intentionally untouched.
+      //   2. /wiki/refresh       — archives current wiki to version
+      //      ?mode=rebuild        history (rollback preserved) then
+      //                            wipes + schedules regeneration.
+      //   3. /sync               — kicks the full re-extraction; the
+      //      ?sync_type=full      wiki maintainer rebuilds pages
+      //                            incrementally as memories land.
+      const resetParams = new URLSearchParams({
+        i_understand_data_loss: "yes",
+        trigger_resync: "false",
+      });
+      const resetResp = await authFetch(
+        `${API_BASE}/api/admin/channels/${encodeURIComponent(channelId)}/reset?${resetParams.toString()}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...adminHeaders(),
+          },
+        },
+      );
+      if (resetResp.status === 409) {
+        toast.show("A sync is already running. Cancel or wait, then try again.", "error");
+        setDangerSubmitting(false);
+        return;
+      }
+      if (!resetResp.ok) {
+        let msg = `Reset failed (${resetResp.status})`;
+        try {
+          const body = await resetResp.json();
+          if (typeof body?.detail === "string") msg = body.detail;
+        } catch {
+          // ignore JSON parse errors
+        }
+        toast.show(msg, "error");
+        setDangerSubmitting(false);
+        return;
+      }
+
+      // Step 2: archive current wiki → wipe → schedule regeneration.
+      // Non-fatal: a failure here leaves the reset committed but the
+      // wiki untouched (user can manually trigger a rebuild later).
+      try {
+        const wikiResp = await authFetch(
+          `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/wiki/refresh?mode=rebuild`,
+          { method: "POST" },
+        );
+        if (!wikiResp.ok) {
+          toast.show(
+            `Reset succeeded, but wiki rebuild trigger returned ${wikiResp.status}.`,
+            "error",
+          );
+        }
+      } catch {
+        toast.show("Reset succeeded, but wiki rebuild trigger failed.", "error");
+      }
+
+      // Step 3: kick the full sync so messages are re-extracted.
+      try {
+        const syncResp = await authFetch(
+          `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/sync?sync_type=full`,
+          { method: "POST" },
+        );
+        if (!syncResp.ok) {
+          toast.show(`Sync trigger returned ${syncResp.status}.`, "error");
+        }
+      } catch {
+        toast.show("Reset succeeded, but sync trigger failed — click Sync Channel.", "error");
+      }
+
+      toast.show("Channel reset complete. Wiki rebuild + full re-sync started.", "info");
+      setDangerOpen(false);
+      setConfirmText("");
+      setDangerSubmitting(false);
+      // Navigate to the sync-history tab so the user sees the freshly
+      // triggered job progress (route from ``App.tsx`` is
+      // ``/channels/:id/sync-history``).
+      navigate(`/channels/${encodeURIComponent(channelId)}/sync-history`);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Reset request failed";
+      toast.show(msg, "error");
+      setDangerSubmitting(false);
+    }
+  }
+
+  function openDangerDialog() {
+    setConfirmText("");
+    setDangerOpen(true);
+  }
+
+  function closeDangerDialog() {
+    if (dangerSubmitting) return;
+    setDangerOpen(false);
+    setConfirmText("");
+  }
 
   const selectedFreq = detectFrequency(sync);
   const deepAnalysis = !(ingestion.skip_entity_extraction ?? false);
@@ -568,7 +694,106 @@ export function ChannelSettingsTab() {
           {resetting ? "Resetting..." : "Reset to defaults"}
         </button>
       </div>
+
+      {/* ── Danger Zone ──────────────────────────────────── */}
+      <div className="mt-8 rounded-2xl border border-destructive/40 bg-destructive/5 px-5 py-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+          <h4 className="text-sm font-semibold text-destructive">Danger Zone</h4>
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          Drops this channel&apos;s extracted memory, wiki, and graph. Messages stay intact;
+          the next sync will re-extract everything with the current pipeline. Use this
+          after pipeline changes.
+        </p>
+        <div>
+          <button
+            type="button"
+            onClick={openDangerDialog}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/15 text-destructive border border-destructive/30 text-sm font-medium hover:bg-destructive/25 transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Reset &amp; Re-sync
+          </button>
+        </div>
       </div>
+      </div>
+
+      {/* ── Confirm dialog ───────────────────────────────── */}
+      {dangerOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="danger-zone-title"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+          onClick={closeDangerDialog}
+        >
+          <div
+            className="w-full max-w-md mx-4 rounded-2xl border border-border bg-card shadow-xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-destructive" />
+                <h3 id="danger-zone-title" className="text-sm font-semibold text-foreground">
+                  Reset &amp; Re-sync this channel?
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeDangerDialog}
+                disabled={dangerSubmitting}
+                aria-label="Close"
+                className="opacity-70 hover:opacity-100 disabled:opacity-30"
+              >
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-[12px] leading-relaxed text-muted-foreground">
+              This drops <strong>{channelDisplayName}</strong>&apos;s extracted memory,
+              wiki pages, and graph. Messages stay intact. A full re-sync starts
+              immediately and rebuilds everything with the current pipeline.
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-muted-foreground" htmlFor="danger-confirm-input">
+                Type the channel name to confirm:{" "}
+                <span className="font-mono text-foreground">{channelDisplayName}</span>
+              </label>
+              <input
+                id="danger-confirm-input"
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                disabled={dangerSubmitting}
+                placeholder={channelDisplayName}
+                autoFocus
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-destructive/40"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeDangerDialog}
+                disabled={dangerSubmitting}
+                className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDangerConfirm}
+                disabled={!dangerMatch || dangerSubmitting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {dangerSubmitting && <Loader2 size={14} className="animate-spin" />}
+                {dangerSubmitting ? "Resetting..." : "Reset & Re-sync"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ToastViewport toasts={toast.toasts} onDismiss={toast.dismiss} />
     </div>
   );
 }

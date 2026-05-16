@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 // fcose: better organic spread than vanilla cose. Drop-in extension
 // — register once at module load, then use ``layout: { name: "fcose" }``.
@@ -36,6 +42,29 @@ interface GraphCanvasProps {
   /** Callback so parent can read the current orphan count for the
    *  pill. Optional for the same reason as ``showOrphans``. */
   onOrphanCount?: (count: number) => void;
+  /** Nodes with fewer connections than this are rendered without their
+   *  label until hovered or selected. Default 3 hides ~70% of labels
+   *  in the typical hairball. Set to 0 to always show all labels. */
+  labelMinDegree?: number;
+  /** Min/max opacity for the recency ramp on edges with a `valid_from`
+   *  timestamp. Edges without `valid_from` render at `edgeOpacityMin`. */
+  edgeOpacityMin?: number;
+  edgeOpacityMax?: number;
+}
+
+/**
+ * Imperative handle exposed to the parent via `ref`. Used by the cmd-K
+ * palette to pan/zoom to a chosen entity without round-tripping through
+ * React state.
+ *
+ * NOTE: this is the first `useImperativeHandle` in `web/src/components/graph/`.
+ * The pattern is justified here because the palette → graph call is a
+ * one-shot animation, not a state-derived render — modeling it as state
+ * would create a temporary "focused" prop that races with the cytoscape
+ * animation lifecycle.
+ */
+export interface GraphCanvasHandle {
+  focusNode: (id: string) => void;
 }
 
 /** Cache of node positions keyed by entity ID for deterministic layout */
@@ -65,6 +94,7 @@ function buildNode(
   e: GraphEntity,
   connectionCount: Map<string, number>,
   filteredIds: Set<string>,
+  labelMinDegree: number,
 ): ElementDefinition {
   const colors = getTypeColors(e.type);
   const conns = connectionCount.get(e.id) ?? 0;
@@ -77,10 +107,16 @@ function buildNode(
   // Larger label font so the user doesn't have to zoom in to read each
   // node — 11 px base for orphans, scaling up to 14 px for hubs.
   const fontSize = conns === 0 ? 11 : Math.min(14, 11 + Math.floor(conns / 2));
+  const label = prepareLabel(e.name);
+  // E-2: hide labels for low-degree nodes by default; the `.hovered` /
+  // `.focused` / selection classes override via cytoscape style and bind
+  // back to `data(label)` to reveal.
+  const visibleLabel = conns >= labelMinDegree ? label : "";
   return {
     data: {
       id: e.id,
-      label: prepareLabel(e.name),
+      label,
+      visibleLabel,
       type: e.type,
       bgColor: colors.node,
       borderColor: colors.nodeBorder,
@@ -95,15 +131,27 @@ function buildNode(
   };
 }
 
-export function GraphCanvas({
-  entities,
-  relationships,
-  visibleTypes,
-  showOrphans = false,
-  onSelectEntity,
-  selectedEntityId,
-  onOrphanCount,
-}: GraphCanvasProps) {
+export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function GraphCanvas(
+  {
+    entities,
+    relationships,
+    visibleTypes,
+    showOrphans = false,
+    onSelectEntity,
+    selectedEntityId,
+    onOrphanCount,
+    // Default threshold ≥1 — every node with at least one edge keeps its
+    // label visible. Truly isolated (degree 0) nodes still rely on the
+    // hover/.neighbor/.selected rules to reveal on demand. Originally
+    // tuned to ≥3 for the dense 470-node `biz-consumer-council` graph,
+    // but that hid most labels in sparse channels (e.g. 29-node casual
+    // channels) where degree-1 nodes are the norm.
+    labelMinDegree = 1,
+    edgeOpacityMin = 0.3,
+    edgeOpacityMax = 1.0,
+  },
+  ref,
+) {
   // Stable no-op so the count callback is always callable without
   // a per-render undefined check. Consumers that DO pass a real
   // callback get the count; consumers that omit it silently drop it.
@@ -125,15 +173,52 @@ export function GraphCanvas({
     onOrphanCountRef.current = safeOnOrphanCount;
   });
 
+  // Imperative API for the cmd-K palette → fit-to-node animation.
+  // Held in a ref so consumers can call it from inside `onSelect`
+  // without going through React state. `useImperativeHandle`
+  // re-binds on every render because the closure captures `cyRef`.
+  useImperativeHandle(ref, () => ({
+    focusNode(id: string) {
+      const cy = cyRef.current;
+      if (!cy) return;
+      const node = cy.getElementById(id);
+      if (node.length === 0) return;
+      // Clear any prior dimming/highlighting so the user sees the
+      // focused node + its neighborhood clearly. Mirrors the tap path.
+      const neighborhood = node.closedNeighborhood();
+      cy.elements().removeClass("dimmed highlighted hover neighbor focused");
+      cy.elements().addClass("dimmed");
+      neighborhood.removeClass("dimmed");
+      neighborhood.nodes().addClass("neighbor");
+      neighborhood.edges().addClass("highlighted");
+      // Propagate the selection up so the EntityPanel opens for the
+      // chosen entity, matching the cytoscape-tap behaviour.
+      onSelectRef.current(id);
+      cy.animate({
+        fit: { eles: node, padding: 80 },
+        duration: 400,
+        easing: "ease-in-out-cubic" as cytoscape.Css.TransitionTimingFunction,
+      });
+      // Temporary `.focused` class for ~2 seconds so the chosen node
+      // pulses visually even after the fit completes.
+      node.addClass("focused");
+      window.setTimeout(() => {
+        node.removeClass("focused");
+      }, 2000);
+    },
+  }));
+
   // Main build effect — fires when data or type filter changes.
   // Never adds orphan nodes here; the showOrphans effect handles that.
   useEffect(() => {
     if (!containerRef.current) return;
 
     const visibleSet = new Set(visibleTypes);
+    // Cap raised to 2000 (effectively unlimited at our scale). The .slice
+    // form is preserved so we never accidentally feed undefined to cytoscape.
     const filtered = entities
       .filter((e) => visibleSet.has(e.type))
-      .slice(0, 80);
+      .slice(0, 2000);
 
     const filteredIds = new Set(filtered.map((e) => e.id));
 
@@ -163,19 +248,58 @@ export function GraphCanvas({
     const hasCachedPositions = renderableEntities.some((e) => positionCache.has(e.id));
 
     const nodes: ElementDefinition[] = renderableEntities.map((e) =>
-      buildNode(e, connectionCount, filteredIds),
+      buildNode(e, connectionCount, filteredIds, labelMinDegree),
     );
 
-    const edges: ElementDefinition[] = relationships
-      .filter((r) => filteredIds.has(r.source_id) && filteredIds.has(r.target_id))
-      .map((r, i) => ({
+    // D — compute the min/max valid_from timestamps over the visible edges
+    // for the recency ramp. Falls back to a flat opacity if no edge has a
+    // usable timestamp (e.g. a graph composed entirely of legacy rels).
+    const visibleRels = relationships.filter(
+      (r) => filteredIds.has(r.source_id) && filteredIds.has(r.target_id),
+    );
+    const validFromTs = visibleRels
+      .map((r) => (r.valid_from ? Date.parse(r.valid_from) : NaN))
+      .filter((t) => Number.isFinite(t)) as number[];
+    const tMin = validFromTs.length > 0 ? Math.min(...validFromTs) : null;
+    const tMax = validFromTs.length > 0 ? Math.max(...validFromTs) : null;
+
+    const edges: ElementDefinition[] = visibleRels.map((r, i) => {
+      const t = r.valid_from ? Date.parse(r.valid_from) : NaN;
+      // D-2: null valid_from → edgeOpacityMin (treat as oldest).
+      let opacity = edgeOpacityMin;
+      if (
+        tMin !== null &&
+        tMax !== null &&
+        tMax > tMin &&
+        Number.isFinite(t)
+      ) {
+        const frac = (t - tMin) / (tMax - tMin);
+        opacity = edgeOpacityMin + frac * (edgeOpacityMax - edgeOpacityMin);
+      } else if (Number.isFinite(t)) {
+        // All edges share a single timestamp → render at max so they read
+        // as "current" rather than uniformly dim.
+        opacity = edgeOpacityMax;
+      }
+      const isCoMention = r.type === "CO_MENTIONED";
+      return {
+        // Tag synthetic co-mention edges via cytoscape class so the
+        // dashed/dimmer style block can pick them up without inspecting
+        // data attributes in the selector.
+        classes: isCoMention ? "co-mention" : "",
         data: {
           id: r.id || `edge-${i}`,
           source: r.source_id,
           target: r.target_id,
-          label: r.type.replace(/_/g, " "),
+          // Co-mention edges carry a tiny "co-mentioned" hint instead of
+          // a verb, so users can tell what the dashed line means. Real
+          // relationships keep their LLM-emitted verb (snake_case → space).
+          label: isCoMention ? "co-mentioned" : r.type.replace(/_/g, " "),
+          // Co-mention opacity is anchored low — they're contextual hints,
+          // not first-class relationships.
+          opacity: isCoMention ? Math.min(0.35, opacity) : opacity,
         },
-      }));
+      };
+    });
 
     const isDark = document.documentElement.classList.contains("dark");
     const labelColor = isDark ? "#e2e8f0" : "#1e293b";
@@ -203,8 +327,11 @@ export function GraphCanvas({
             "background-color": "data(bgColor)",
             "border-color": "data(borderColor)",
             "border-width": 1.5,
-            // Label sits below the node, not inside
-            label: "data(label)",
+            // E-2: hide labels for low-degree nodes via the
+            // `visibleLabel` data attribute (empty string for hidden).
+            // Hover/selection/focus classes below re-bind to the full
+            // `label` to reveal.
+            label: "data(visibleLabel)",
             color: labelColor,
             "font-size": "data(fontSize)",
             "font-weight": 500,
@@ -242,6 +369,9 @@ export function GraphCanvas({
             "border-color": "#ffffff",
             "overlay-color": "#0B4F6C",
             "overlay-opacity": 0.15,
+            // Always show label when selected — overrides the
+            // E-2 visibleLabel hiding for low-degree nodes.
+            label: "data(label)",
           },
         },
         {
@@ -251,6 +381,20 @@ export function GraphCanvas({
             "border-color": "#ffffff",
             "overlay-color": "#0B4F6C",
             "overlay-opacity": 0.1,
+            // Reveal full label on hover even when E-2 hid it.
+            label: "data(label)",
+          },
+        },
+        {
+          // cmd-K palette focus pulse: 2-second class added in
+          // `focusNode`. Bright yellow border + visible label.
+          selector: "node.focused",
+          style: {
+            "border-width": 3,
+            "border-color": "#facc15",
+            "overlay-color": "#facc15",
+            "overlay-opacity": 0.15,
+            label: "data(label)",
           },
         },
         {
@@ -272,10 +416,14 @@ export function GraphCanvas({
           style: { opacity: 0.2 },
         },
         {
+          // Neighborhood reveal — when a node is tapped, its closed
+          // neighborhood gets `.neighbor`. Show their labels too so
+          // the user can read what they just lit up (overrides E-2).
           selector: "node.neighbor",
           style: {
             "border-width": 2.5,
             "border-color": "#facc15",
+            label: "data(label)",
           },
         },
         // ─── Edge styles ──────────────────────────────────────────────
@@ -297,9 +445,27 @@ export function GraphCanvas({
             "text-background-opacity": 0.85,
             "text-background-padding": "2px",
             "line-style": "solid",
-            opacity: 0.55,
+            // D — per-edge opacity computed from `valid_from` recency
+            // (see the buildEdges block above). Edges without a
+            // timestamp use `edgeOpacityMin` (treated as oldest).
+            opacity: "data(opacity)",
             "transition-property": "width, line-color, opacity",
             "transition-duration": "0.2s",
+          } as unknown as cytoscape.Css.Edge,
+        },
+        {
+          // Synthetic co-mention edges — derived from shared :Event
+          // nodes between entity pairs (see `list_co_mention_edges` on
+          // the store). Render as a faint dashed line with no arrow and
+          // no verb label so they fall behind real LLM-extracted
+          // relationships visually but still convey "these entities
+          // appear together".
+          selector: "edge.co-mention",
+          style: {
+            "line-style": "dashed" as const,
+            "line-dash-pattern": [4, 4],
+            "target-arrow-shape": "none",
+            width: 0.6,
           } as unknown as cytoscape.Css.Edge,
         },
         {
@@ -368,20 +534,34 @@ export function GraphCanvas({
             nodeDimensionsIncludeLabels: true,
             uniformNodeDimensions: false,
             packComponents: true,
-            // Bumped for less central collapse — multiple hub nodes
-            // (highly-connected) were sitting on top of each other.
-            // nodeSeparation 100→150 + idealEdgeLength 120→170
-            // forces hub-region clearance without scattering peripherals.
-            // nodeRepulsion 8500→12500 strengthens the overall push.
-            nodeSeparation: 150,
-            idealEdgeLength: 170,
-            edgeElasticity: 0.4,
-            nodeRepulsion: 12500,
-            gravity: 0.12,
+            // More-open layout tuning (round 2 — user feedback "too dense").
+            // Goal: meaningfully more breathing room around hubs and across
+            // the whole canvas. Strategy:
+            //   • nodeSeparation 150 → 240 — extra space between neighbours
+            //   • idealEdgeLength 170 → 260 — longer edges spread the cluster
+            //   • nodeRepulsion 12500 → 28000 — much stronger global push
+            //   • gravity 0.12 → 0.05 — much weaker central pull so the
+            //     peripheries don't bounce back toward the centre
+            //   • edgeElasticity 0.4 → 0.3 — edges hold their length longer
+            //     instead of contracting under repulsion
+            //   • numIter 3000 → 4500 — extra iterations for the stronger
+            //     forces to converge cleanly
+            //   • tile: true with generous padding — pack disconnected
+            //     components into tidy tiles instead of having them
+            //     compete with the main connected component for canvas
+            //     real-estate. Keeps the orphan/low-degree leaves out of
+            //     the way of the readable hub-and-spoke structure.
+            nodeSeparation: 240,
+            idealEdgeLength: 260,
+            edgeElasticity: 0.3,
+            nodeRepulsion: 28000,
+            gravity: 0.05,
             gravityRange: 3.8,
-            numIter: 3000,
-            tile: false,
-            padding: 60,
+            numIter: 4500,
+            tile: true,
+            tilingPaddingVertical: 60,
+            tilingPaddingHorizontal: 60,
+            padding: 80,
             fit: true,
           } as unknown as cytoscape.LayoutOptions,
       // Lower minZoom so the aggressively-spread layout doesn't get
@@ -575,7 +755,7 @@ export function GraphCanvas({
       cyRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entities, relationships, visibleTypes]);
+  }, [entities, relationships, visibleTypes, labelMinDegree, edgeOpacityMin, edgeOpacityMax]);
 
   // ─── Show / hide orphan nodes without remounting cytoscape ──────────
   // When showOrphans flips true we cy.add() the orphan nodes with preset
@@ -605,7 +785,11 @@ export function GraphCanvas({
     const emptyIds = new Set<string>();
 
     const newElements: ElementDefinition[] = orphans.map((e, i) => {
-      const node = buildNode(e, emptyCount, emptyIds);
+      // Orphans have zero edges, so they would always be label-hidden
+      // under the E-2 threshold. Pass `labelMinDegree=0` here so orphan
+      // labels remain visible (they're already filtered + injected into
+      // a dedicated column where the label is the only context).
+      const node = buildNode(e, emptyCount, emptyIds, 0);
       const cachedPos = positionCache.get(e.id);
       return {
         ...node,
@@ -666,4 +850,4 @@ export function GraphCanvas({
       className="flex-1 min-h-0 bg-muted/5 overflow-hidden"
     />
   );
-}
+});

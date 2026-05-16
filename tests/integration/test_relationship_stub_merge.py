@@ -85,15 +85,16 @@ def _force_settings(monkeypatch, *, stub_endpoints: bool) -> None:
     # for the test and pytest re-imports Settings between sessions.
 
 
-# ── Test 1 — unknown endpoints create Topic stubs ──────────────────────────
+# ── Test 1 — unknown endpoints create Unresolved stubs ────────────────────
 
 
 @pytest.mark.asyncio
-async def test_unknown_endpoints_create_topic_stubs(monkeypatch):
+async def test_unknown_endpoints_create_unresolved_stubs(monkeypatch):
     """MERGE path: relationship with two unknown endpoint names creates 2
-    stub Entity nodes (type='Topic', scope='global'). Verified by:
+    stub Entity nodes (type='Unresolved', scope='global'). Verified by:
     (a) the Cypher contains the stub-MERGE clause; (b) the stub_props
-    parameter contains ``"stub": true, "reason": "rel_endpoint"``.
+    parameter contains ``"stub": true, "reason": "rel_endpoint",
+    "awaiting_type": true``.
     """
     _force_settings(monkeypatch, stub_endpoints=True)
 
@@ -114,11 +115,14 @@ async def test_unknown_endpoints_create_topic_stubs(monkeypatch):
     query = calls[0]["query"]
     kwargs = calls[0]["kwargs"]
     # Cypher uses MERGE for both endpoints with composite key.
-    assert "MERGE (a:Entity {name: $source, type: 'Topic', scope: 'global'})" in query
-    assert "MERGE (b:Entity {name: $target, type: 'Topic', scope: 'global'})" in query
+    # Variables are ``a_raw`` / ``b_raw`` so the apoc.refactor.mergeNodes
+    # absorption step (symmetric heal) can replace them with the typed
+    # sibling without aliasing the relationship endpoints.
+    assert "MERGE (a_raw:Entity {name: $source, type: 'Unresolved', scope: 'global'})" in query
+    assert "MERGE (b_raw:Entity {name: $target, type: 'Unresolved', scope: 'global'})" in query
     # ON CREATE SET writes the stub marker.
     assert "ON CREATE SET" in query
-    assert kwargs["stub_props"] == '{"stub": true, "reason": "rel_endpoint"}'
+    assert kwargs["stub_props"] == '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
     assert kwargs["source"] == "UnknownA"
     assert kwargs["target"] == "UnknownB"
 
@@ -128,16 +132,17 @@ async def test_unknown_endpoints_create_topic_stubs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_known_endpoints_unchanged(monkeypatch):
-    """When the endpoint Entity already exists at ``(name, 'Topic',
+    """When the endpoint Entity already exists at ``(name, 'Unresolved',
     'global')`` (i.e. real, not stub), ``ON CREATE SET`` does NOT fire
     so the existing properties remain intact. The Cypher we issue is
     the same; we assert the structure here and rely on the integration
     semantics of MERGE for the rewrite-prevention guarantee.
 
     The composite-key design intentionally creates a NEW
-    ``(name, 'Topic', 'global')`` stub when a real entity exists with a
-    richer type like ``Tool`` — tracked as Q-DUP-1 in
-    ``.omc/plans/pipeline-realign-v2.md``.
+    ``(name, 'Unresolved', 'global')`` stub when a real entity exists
+    with a richer type like ``Tool`` — the heal-path in
+    :meth:`Neo4jStore.upsert_entity` collapses the two on the next
+    typed write.
     """
     _force_settings(monkeypatch, stub_endpoints=True)
 
@@ -191,9 +196,15 @@ async def test_episodic_link_unknown_entity_creates_stub(monkeypatch):
     assert created == 1
     assert len(calls) == 1
     query = calls[0]["query"]
-    # MERGE the Entity (not MATCH) with the composite key.
-    assert "MERGE (e:Entity {name: link.entity_name, type: 'Topic', scope: 'global'})" in query
+    # MERGE the Entity (not MATCH) with the composite key. Variable is
+    # ``e_raw`` so the apoc.refactor.mergeNodes absorption step can
+    # replace it with the typed sibling for the MENTIONED_IN edge.
+    assert (
+        "MERGE (e_raw:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'})"
+        in query
+    )
     assert '"reason": "episodic_link"' in query
+    assert '"awaiting_type": true' in query
     # Event MERGE still present.
     assert "MERGE (ep:Event {weaviate_id: link.weaviate_fact_id})" in query
     assert "MERGE (e)-[:MENTIONED_IN]->(ep)" in query
@@ -283,31 +294,31 @@ async def test_stub_explosion_cap(monkeypatch, caplog):
     }
 
 
-# ── Test 5 — persister post-hoc stub uses Topic ────────────────────────────
+# ── Test 5 — persister post-hoc stub uses Unresolved ──────────────────────
 
 
-def test_persister_post_hoc_stub_type_is_topic():
-    """Regression test for criterion #7: the post-hoc stub at
-    ``persister.py:438`` must produce ``type='Topic'``. Implemented as
-    a static-source check — the function constructs a ``GraphEntity``
-    with the literal ``type=`` keyword and a static-source grep is the
-    cheapest reliable verification (the actual stub-creation path is
-    exercised by the full ingestion pipeline tests).
+def test_persister_post_hoc_stub_type_is_unresolved():
+    """Regression test: the post-hoc stub block in the persister must
+    produce ``type='Unresolved'`` so it aligns with the in-Cypher MERGE
+    default and can be healed by the ``upsert_entity`` heal-path. The
+    literal ``type="Topic"`` must NOT appear in the post-hoc stub block
+    (it would mismatch the in-Cypher MERGE default and leak Topic
+    monoculture back into the graph).
     """
     from pathlib import Path
 
     src = Path("src/beever_atlas/agents/ingestion/persister.py").read_text(encoding="utf-8")
-    # The persister builds the post-hoc stub list in the loop over
-    # ``missing_names``. The literal ``type="Project"`` must NOT appear
-    # in the post-hoc stub block (it would mismatch the in-Cypher
-    # MERGE default and trigger the Q-DUP-1 duplicate pattern).
     assert 'type="Project"' not in src, (
         'persister.py still constructs a stub with type="Project" — '
-        'must be "Topic" to align with the in-Cypher MERGE default.'
+        'must be "Unresolved" to align with the in-Cypher MERGE default.'
     )
-    # Positive assertion: the post-hoc loop now uses Topic.
-    assert 'type="Topic"' in src, (
-        'expected the post-hoc stub block to construct GraphEntity(type="Topic", ...)'
+    assert 'type="Topic"' not in src, (
+        'persister.py still constructs a stub with type="Topic" — '
+        'must be "Unresolved" to align with the in-Cypher MERGE default.'
+    )
+    # Positive assertion: the post-hoc loop now uses Unresolved.
+    assert 'type="Unresolved"' in src, (
+        'expected the post-hoc stub block to construct GraphEntity(type="Unresolved", ...)'
     )
 
 

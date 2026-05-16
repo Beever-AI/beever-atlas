@@ -61,6 +61,43 @@ class NullGraphStore:
     async def prune_expired_pending(self, grace_period_days: int = 7) -> int:
         return 0
 
+    async def prune_stub_orphans(self, ttl_hours: int = 24) -> int:
+        return 0
+
+    async def list_co_mention_edges(
+        self,
+        channel_id: str,
+        min_shared: int = 2,
+        limit: int = 500,
+    ) -> list[GraphRelationship]:
+        return []
+
+    # ------------------------------------------------------------------
+    # Unresolved-classifier helpers (PR-A) — no-op for the null backend
+    # ------------------------------------------------------------------
+
+    async def list_unresolved_stubs(
+        self,
+        channel_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def fetch_incident_contexts_batch(
+        self,
+        names: list[str],
+        limit_per_name: int = 3,
+    ) -> dict[str, list[str]]:
+        return {}
+
+    async def mark_unresolved_attempt(
+        self,
+        name: str,
+        scope: str,
+        channel_id: str | None,
+    ) -> None:
+        return None
+
     # ------------------------------------------------------------------
     # Relationship CRUD
     # ------------------------------------------------------------------
@@ -162,6 +199,10 @@ class NullGraphStore:
         # uses DETACH DELETE so it has no separate `relationships_deleted`
         # key — the null shape mirrors that.
         return {"entities_deleted": 0, "events_deleted": 0, "media_deleted": 0}
+
+    async def delete_channel_wiki_graph(self, channel_id: str) -> int:
+        # No-op — the null backend stores no WikiPage nodes.
+        return 0
 
     # ------------------------------------------------------------------
     # Entity-registry support

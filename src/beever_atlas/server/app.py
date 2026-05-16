@@ -941,6 +941,72 @@ async def lifespan(app: FastAPI):
                 "Consolidation-after-extraction wiring failed (non-fatal): %s", exc
             )
 
+    # Unresolved classifier — second pass after memory settles (PR-A).
+    # Lives in the FastAPI lifespan (NOT services/scheduler.py) per the
+    # post-critic A-1 fix: subscribe_memory_settled calls only fire when
+    # registered on the live ExtractionWorker instance, which is owned
+    # by this lifespan via the get_extraction_worker() singleton. The
+    # consolidation block above is the model for this wiring.
+    try:
+        import asyncio as _asyncio_uc
+
+        from beever_atlas.services.extraction_worker import (
+            get_extraction_worker as _get_extraction_worker_uc,
+        )
+        from beever_atlas.services.unresolved_classifier import (
+            UnresolvedClassifier,
+        )
+
+        _uc_worker = _get_extraction_worker_uc()
+        if _uc_worker is not None:
+            _uc_classifier = UnresolvedClassifier(stores=stores, settings=settings)
+
+            async def _run_unresolved_classifier(channel_id: str) -> None:
+                try:
+                    report = await _uc_classifier.classify_channel(channel_id)
+                    logging.getLogger(__name__).info(
+                        "unresolved_classifier: channel=%s processed=%d "
+                        "classified=%d low_confidence=%d new_types=%d "
+                        "llm_calls=%d",
+                        channel_id,
+                        report.processed,
+                        report.classified,
+                        report.low_confidence,
+                        report.new_types_accepted,
+                        report.llm_calls,
+                    )
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "unresolved_classifier raised channel=%s "
+                        "(best-effort, will retry on next memory_settled)",
+                        channel_id,
+                        exc_info=True,
+                    )
+
+            def _on_memory_settled_unresolved(channel_id: str) -> None:
+                task = _asyncio_uc.create_task(_run_unresolved_classifier(channel_id))
+
+                def _log_exc_uc(t: _asyncio_uc.Task) -> None:
+                    if t.cancelled():
+                        return
+                    exc = t.exception()
+                    if exc is not None:
+                        logging.getLogger(__name__).warning(
+                            "unresolved_classifier fan-out task raised channel=%s: %s",
+                            channel_id,
+                            exc,
+                            exc_info=exc,
+                        )
+
+                task.add_done_callback(_log_exc_uc)
+
+            _uc_worker.subscribe_memory_settled(_on_memory_settled_unresolved)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "UnresolvedClassifier subscriber init failed (non-fatal): %s",
+            exc,
+        )
+
     # Initialize outbound MCP registry — non-blocking, skips unreachable servers
     from beever_atlas.agents.mcp_registry import init_mcp_registry
 

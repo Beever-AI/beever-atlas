@@ -94,6 +94,68 @@ class GraphStore(Protocol):
         """
         ...
 
+    async def list_co_mention_edges(
+        self,
+        channel_id: str,
+        min_shared: int = 2,
+        limit: int = 500,
+    ) -> list[GraphRelationship]:
+        """Return synthetic CO_MENTIONED relationships between entity
+        pairs that share at least *min_shared* Event nodes in the
+        channel. Surfaces implicit co-occurrence when explicit
+        LLM-extracted relationships are sparse.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # Unresolved-classifier helpers (PR-A)
+    # ------------------------------------------------------------------
+
+    async def list_unresolved_stubs(
+        self,
+        channel_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return Unresolved stub entities awaiting type classification.
+
+        Per-channel pivot via ``MENTIONED_IN→Event{channel_id}`` so
+        workspace-wide stubs without an incident event in the channel
+        are filtered out. Excludes stubs whose ``classifier_attempts``
+        already exceeds the retry budget.
+        """
+        ...
+
+    async def fetch_incident_contexts_batch(
+        self,
+        names: list[str],
+        limit_per_name: int = 3,
+    ) -> dict[str, list[str]]:
+        """Return up to *limit_per_name* incident-edge contexts per
+        candidate name in a single round-trip. Used by the unresolved
+        classifier to gather disambiguating signal for each stub.
+        """
+        ...
+
+    async def mark_unresolved_attempt(
+        self,
+        name: str,
+        scope: str,
+        channel_id: str | None,
+    ) -> None:
+        """Bump ``classifier_attempts`` and stamp
+        ``classifier_low_confidence_at = now`` on the stub. Idempotent."""
+        ...
+
+    async def prune_stub_orphans(self, ttl_hours: int = 24) -> int:
+        """Delete ``Unresolved``-typed stub entities that never gained any
+        edges and are older than *ttl_hours*.
+
+        Stubs are written with ``status='active'`` (not ``pending``), so
+        ``prune_expired_pending`` does not catch them. Returns the number
+        of orphans purged.
+        """
+        ...
+
     # ------------------------------------------------------------------
     # Relationship CRUD
     # ------------------------------------------------------------------
@@ -191,6 +253,18 @@ class GraphStore(Protocol):
     async def delete_channel_data(self, channel_id: str) -> dict[str, int]:
         """Delete all entities, events, media, and relationships for a
         channel.  Returns counts of deleted items."""
+        ...
+
+    async def delete_channel_wiki_graph(self, channel_id: str) -> int:
+        """Delete ``:WikiPage`` nodes for a channel (and their relationships).
+
+        Per-channel reset (``POST /api/admin/channels/{id}/reset``) wipes
+        wiki-page rows from MongoDB; the matching nodes in the graph would
+        otherwise linger as dangling references. Kept separate from
+        :meth:`delete_channel_data` so the latter's semantics stay
+        unchanged. Returns the number of nodes deleted (zero on backends
+        that don't store WikiPage nodes — Nebula / NullGraph stubs).
+        """
         ...
 
     # ------------------------------------------------------------------

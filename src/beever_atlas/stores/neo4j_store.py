@@ -125,6 +125,15 @@ class Neo4jStore:
                 "CREATE INDEX event_weaviate_id IF NOT EXISTS FOR (ev:Event) ON (ev.weaviate_id)"
             )
             await session.run("CREATE INDEX media_url IF NOT EXISTS FOR (m:Media) ON (m.url)")
+            # Parallel index on the new ``(channel_id, target_lang, slug)``
+            # composite that upsert_wiki_page_node now MERGEs on, so the
+            # MERGE remains O(1). The legacy ``(channel_id, slug)`` index
+            # (if present from earlier deployments) is left alone — it
+            # still services any pre-existing rows.
+            await session.run(
+                "CREATE INDEX wiki_page_channel_lang_slug IF NOT EXISTS "
+                "FOR (w:WikiPage) ON (w.channel_id, w.target_lang, w.slug)"
+            )
             await session.run("MATCH (e:Entity) WHERE e.aliases IS NULL SET e.aliases = []")
             await session.run("MATCH (e:Entity) WHERE e.status IS NULL SET e.status = 'active'")
 
@@ -274,11 +283,127 @@ class Neo4jStore:
         """MERGE an Entity node by name+type (and channel_id for channel scope).
 
         Returns the node element ID.
+
+        Symmetric heal-path: for typed writes (``entity.type != 'Unresolved'``),
+        after the typed MERGE we look for every sibling row sharing
+        ``(name, scope)`` whose type is ``Unresolved`` or ``Topic`` and
+        absorb them into the typed row via
+        ``apoc.refactor.mergeNodes([typed] + sibs, {properties: 'discard',
+        mergeRels: true})``. This collapses parallel rows created by the
+        in-Cypher stub MERGE paths in
+        :meth:`_upsert_relationship_with_stub_flag` and
+        :meth:`batch_create_episodic_links`, regardless of which write
+        arrives first. ``mergeRels: true`` also dedupes parallel edges
+        (e.g., two ``MENTIONED_IN→Event(X)`` edges collapse into one).
+        ``properties: 'discard'`` keeps the typed row's properties
+        authoritative; stub flags such as ``awaiting_type`` get dropped.
         """
         now_iso = datetime.now(tz=UTC).isoformat()
         props_json = json.dumps(entity.properties)
 
         async with self._driver.session() as session:
+            if entity.type != "Unresolved":
+                # Symmetric heal: MERGE the typed row, then absorb every
+                # Unresolved/Topic sibling for the same (name, scope) into
+                # it via apoc.refactor.mergeNodes. The CASE guard avoids
+                # calling mergeNodes with a single-element list when no
+                # stubs exist (APOC emits a noisy log line otherwise).
+                if entity.scope == "channel" and entity.channel_id:
+                    heal_result = await session.run(
+                        """
+                        MERGE (typed:Entity {name: $name, type: $type, channel_id: $channel_id})
+                          ON CREATE SET
+                            typed.scope             = $scope,
+                            typed.properties        = $properties,
+                            typed.aliases           = $aliases,
+                            typed.source_message_id = $source_message_id,
+                            typed.message_ts        = $message_ts,
+                            typed.status            = $status,
+                            typed.pending_since     = $pending_since,
+                            typed.created_at        = $now,
+                            typed.updated_at        = $now
+                          ON MATCH SET
+                            typed.scope             = $scope,
+                            typed.properties        = $properties,
+                            typed.aliases           = $aliases,
+                            typed.source_message_id = $source_message_id,
+                            typed.message_ts        = $message_ts,
+                            typed.updated_at        = $now
+                        WITH typed
+                        OPTIONAL MATCH (sib:Entity {name: $name, scope: $scope})
+                          WHERE sib.type IN ['Unresolved', 'Topic']
+                            AND elementId(sib) <> elementId(typed)
+                        WITH typed, collect(sib) AS sibs
+                        CALL apoc.refactor.mergeNodes(
+                          CASE WHEN size(sibs) > 0 THEN [typed] + sibs ELSE [typed] END,
+                          {properties: 'discard', mergeRels: true}
+                        ) YIELD node
+                        RETURN elementId(node) AS eid
+                        """,
+                        name=entity.name,
+                        type=entity.type,
+                        channel_id=entity.channel_id,
+                        scope=entity.scope,
+                        properties=props_json,
+                        aliases=entity.aliases,
+                        source_message_id=entity.source_message_id,
+                        message_ts=entity.message_ts,
+                        status=entity.status,
+                        pending_since=entity.pending_since.isoformat()
+                        if entity.pending_since
+                        else None,
+                        now=now_iso,
+                    )
+                else:
+                    heal_result = await session.run(
+                        """
+                        MERGE (typed:Entity {name: $name, type: $type, scope: 'global'})
+                          ON CREATE SET
+                            typed.channel_id        = null,
+                            typed.properties        = $properties,
+                            typed.aliases           = $aliases,
+                            typed.source_message_id = $source_message_id,
+                            typed.message_ts        = $message_ts,
+                            typed.status            = $status,
+                            typed.pending_since     = $pending_since,
+                            typed.created_at        = $now,
+                            typed.updated_at        = $now
+                          ON MATCH SET
+                            typed.properties        = $properties,
+                            typed.aliases           = $aliases,
+                            typed.source_message_id = $source_message_id,
+                            typed.message_ts        = $message_ts,
+                            typed.updated_at        = $now
+                        WITH typed
+                        OPTIONAL MATCH (sib:Entity {name: $name, scope: 'global'})
+                          WHERE sib.type IN ['Unresolved', 'Topic']
+                            AND elementId(sib) <> elementId(typed)
+                        WITH typed, collect(sib) AS sibs
+                        CALL apoc.refactor.mergeNodes(
+                          CASE WHEN size(sibs) > 0 THEN [typed] + sibs ELSE [typed] END,
+                          {properties: 'discard', mergeRels: true}
+                        ) YIELD node
+                        RETURN elementId(node) AS eid
+                        """,
+                        name=entity.name,
+                        type=entity.type,
+                        properties=props_json,
+                        aliases=entity.aliases,
+                        source_message_id=entity.source_message_id,
+                        message_ts=entity.message_ts,
+                        status=entity.status,
+                        pending_since=entity.pending_since.isoformat()
+                        if entity.pending_since
+                        else None,
+                        now=now_iso,
+                    )
+                record = await heal_result.single()
+                return record["eid"]  # type: ignore[index]
+
+            # Unresolved write — preserve the legacy stub-creation MERGE so
+            # the in-Cypher relationship/episodic-link stub paths keep
+            # working. Typed writes will later absorb these via the
+            # symmetric heal above.
             if entity.scope == "channel" and entity.channel_id:
                 result = await session.run(
                     """
@@ -417,11 +542,14 @@ class Neo4jStore:
         flag (PR-2):
 
         * ``true`` (default) — uses ``MERGE`` on both endpoint entities. If
-          an endpoint name does not exist as ``(name, 'Topic', 'global')``
+          an endpoint name does not exist as ``(name, 'Unresolved', 'global')``
           a stub Entity is auto-created with ``properties`` containing
-          ``"stub": true, "reason": "rel_endpoint"``. The composite UNIQUE
-          constraint at ``(name, type, scope)`` serialises concurrent stub
-          creation under racing batches.
+          ``"stub": true, "reason": "rel_endpoint", "awaiting_type": true``
+          plus a top-level ``awaiting_type=true`` node property. A later
+          typed ``upsert_entity`` for the same name promotes the row in
+          place via the heal-path (see :meth:`upsert_entity`). The
+          composite UNIQUE constraint at ``(name, type, scope)``
+          serialises concurrent stub creation under racing batches.
         * ``false`` — legacy ``MATCH`` semantics; relationships referencing
           unknown endpoints are silently skipped and a warning is logged.
         """
@@ -451,28 +579,57 @@ class Neo4jStore:
                 # REMOVE) tripped a Neo4j 5+ Cypher syntax error around the
                 # WITH/REMOVE/CALL fence. This pure-MERGE form avoids that
                 # by computing the count from a property already being set.
-                stub_props = '{"stub": true, "reason": "rel_endpoint"}'
+                # Stubs are typed ``Unresolved`` (backend-only synthetic
+                # type, never emitted by the LLM) plus
+                # ``awaiting_type=true`` so a subsequent typed
+                # ``upsert_entity`` for the same name can promote the row
+                # in place. The flag lives BOTH inside the JSON
+                # ``properties`` string (for application code that reads
+                # entities back) and as a top-level node property (for
+                # Cypher filtering by ``prune_stub_orphans`` and the
+                # heal-path). See ``upsert_entity`` heal-path for details.
+                stub_props = '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
                 result = await session.run(
                     """
-                    MERGE (a:Entity {name: $source, type: 'Topic', scope: 'global'})
+                    MERGE (a_raw:Entity {name: $source, type: 'Unresolved', scope: 'global'})
                       ON CREATE SET
-                        a.channel_id = null,
-                        a.properties = $stub_props,
-                        a.aliases    = [],
-                        a.status     = 'active',
-                        a.created_at = $now,
-                        a.updated_at = $now
-                    MERGE (b:Entity {name: $target, type: 'Topic', scope: 'global'})
+                        a_raw.channel_id = null,
+                        a_raw.properties = $stub_props,
+                        a_raw.aliases    = [],
+                        a_raw.status     = 'active',
+                        a_raw.awaiting_type = true,
+                        a_raw.created_at = $now,
+                        a_raw.updated_at = $now
+                    WITH a_raw
+                    OPTIONAL MATCH (a_typed:Entity {name: $source, scope: 'global'})
+                      WHERE NOT a_typed.type IN ['Unresolved', 'Topic']
+                        AND elementId(a_typed) <> elementId(a_raw)
+                    WITH a_raw, head(collect(a_typed)) AS a_typed_pick
+                    CALL apoc.refactor.mergeNodes(
+                      CASE WHEN a_typed_pick IS NOT NULL THEN [a_typed_pick, a_raw] ELSE [a_raw] END,
+                      {properties: 'discard', mergeRels: true}
+                    ) YIELD node AS a
+                    MERGE (b_raw:Entity {name: $target, type: 'Unresolved', scope: 'global'})
                       ON CREATE SET
-                        b.channel_id = null,
-                        b.properties = $stub_props,
-                        b.aliases    = [],
-                        b.status     = 'active',
-                        b.created_at = $now,
-                        b.updated_at = $now
+                        b_raw.channel_id = null,
+                        b_raw.properties = $stub_props,
+                        b_raw.aliases    = [],
+                        b_raw.status     = 'active',
+                        b_raw.awaiting_type = true,
+                        b_raw.created_at = $now,
+                        b_raw.updated_at = $now
+                    WITH a, b_raw
+                    OPTIONAL MATCH (b_typed:Entity {name: $target, scope: 'global'})
+                      WHERE NOT b_typed.type IN ['Unresolved', 'Topic']
+                        AND elementId(b_typed) <> elementId(b_raw)
+                    WITH a, b_raw, head(collect(b_typed)) AS b_typed_pick
+                    CALL apoc.refactor.mergeNodes(
+                      CASE WHEN b_typed_pick IS NOT NULL THEN [b_typed_pick, b_raw] ELSE [b_raw] END,
+                      {properties: 'discard', mergeRels: true}
+                    ) YIELD node AS b
                     WITH a, b,
-                         (CASE WHEN a.created_at = $now THEN 1 ELSE 0 END
-                          + CASE WHEN b.created_at = $now THEN 1 ELSE 0 END) AS stubs_created
+                         (CASE WHEN a.type = 'Unresolved' AND a.created_at = $now THEN 1 ELSE 0 END
+                          + CASE WHEN b.type = 'Unresolved' AND b.created_at = $now THEN 1 ELSE 0 END) AS stubs_created
                     CALL apoc.merge.relationship(
                         a,
                         $rel_type,
@@ -806,6 +963,24 @@ class Neo4jStore:
             "entities_deleted": entities_deleted + orphans_deleted,
         }
 
+    async def delete_channel_wiki_graph(self, channel_id: str) -> int:
+        """Drop ``:WikiPage`` nodes (and their relationships) for a channel.
+
+        Per-channel reset wipes wiki rows in MongoDB; the matching graph
+        nodes (with their ``REFERENCES_ENTITY`` / ``REFERENCES`` edges)
+        would otherwise linger as dangling references. ``DETACH DELETE``
+        removes the page node plus every incident edge in one statement.
+        Kept separate from :meth:`delete_channel_data` so that method's
+        Entity/Event/Media semantics stay unchanged.
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                "MATCH (w:WikiPage {channel_id: $channel_id}) DETACH DELETE w RETURN count(w) AS n",
+                channel_id=channel_id,
+            )
+            record = await result.single()
+            return int(record["n"]) if record else 0
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
@@ -928,7 +1103,7 @@ class Neo4jStore:
     async def list_relationships(
         self,
         channel_id: str | None = None,
-        limit: int = 200,
+        limit: int = 1000,
     ) -> list[GraphRelationship]:
         """Return relationships between entities, optionally scoped to a channel.
 
@@ -949,7 +1124,8 @@ class Neo4jStore:
         query = (
             f"MATCH (a:Entity)-[r]->(b:Entity) {where} "  # noqa: S608
             "RETURN a.name AS src, b.name AS tgt, type(r) AS rel_type, "
-            "r.confidence AS confidence, r.context AS context "
+            "r.confidence AS confidence, r.context AS context, "
+            "r.valid_from AS valid_from "
             "LIMIT $limit"
         )
         async with self._driver.session() as session:
@@ -964,9 +1140,194 @@ class Neo4jStore:
                     target=row.get("tgt", ""),
                     confidence=float(row.get("confidence") or 0.0),
                     context=row.get("context") or "",
+                    valid_from=row.get("valid_from"),
                 )
             )
         return rels
+
+    async def list_co_mention_edges(
+        self,
+        channel_id: str,
+        min_shared: int = 2,
+        limit: int = 500,
+    ) -> list[GraphRelationship]:
+        """Return synthetic CO_MENTIONED edges between entity pairs that
+        share at least ``min_shared`` ``Event`` nodes in this channel.
+
+        Used by the Memory Graph UI to surface implicit co-occurrence
+        between entities when explicit LLM-extracted relationships are
+        sparse (common in casual channels). Each pair appears once,
+        ordered by ``elementId(a) < elementId(b)`` so the same pair is
+        not returned in both directions.
+
+        Confidence is set to ``min(1.0, shared / 5.0)`` so the UI can
+        scale opacity / edge weight. Verb is the synthetic constant
+        ``CO_MENTIONED``. ``valid_from`` is the most-recent shared event
+        timestamp (so the time-window filter still drops stale pairs).
+        """
+        if not channel_id:
+            return []
+        async with self._driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (a:Entity)-[:MENTIONED_IN]->(ev:Event {channel_id: $channel_id})
+                MATCH (b:Entity)-[:MENTIONED_IN]->(ev)
+                WHERE elementId(a) < elementId(b)
+                WITH a, b, count(ev) AS shared, max(ev.message_ts) AS most_recent
+                WHERE shared >= $min_shared
+                RETURN a.name AS src, b.name AS tgt, shared, most_recent
+                ORDER BY shared DESC
+                LIMIT $limit
+                """,
+                channel_id=channel_id,
+                min_shared=min_shared,
+                limit=limit,
+            )
+            records = await result.data()
+        out: list[GraphRelationship] = []
+        for row in records:
+            shared = int(row.get("shared") or 0)
+            confidence = min(1.0, shared / 5.0)
+            out.append(
+                GraphRelationship(
+                    type="CO_MENTIONED",
+                    source=row.get("src", ""),
+                    target=row.get("tgt", ""),
+                    confidence=confidence,
+                    context=f"co-mentioned in {shared} events",
+                    valid_from=row.get("most_recent"),
+                )
+            )
+        return out
+
+    # ------------------------------------------------------------------
+    # Unresolved-classifier helpers (PR-A)
+    # ------------------------------------------------------------------
+
+    async def list_unresolved_stubs(
+        self,
+        channel_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return Unresolved stub entities awaiting type classification.
+
+        Scoping (A-2 fix): when ``channel_id`` is provided, accepts a
+        stub that either has ``channel_id`` set directly OR is reachable
+        via a ``MENTIONED_IN→Event{channel_id}`` edge — mirrors the
+        per-channel pivot in :meth:`list_relationships` so workspace-
+        wide stubs without an incident event in the channel are filtered
+        out.
+
+        Excludes stubs with ``classifier_attempts >= 2`` (idempotency
+        gate — see :meth:`mark_unresolved_attempt`). Caller layers a
+        ``classifier_low_confidence_at`` recency check in Python so the
+        7-day TTL stays operator-tunable without a redeploy.
+        """
+        if channel_id is not None:
+            where = (
+                "WHERE e.type = 'Unresolved' "
+                "AND e.awaiting_type = true "
+                "AND coalesce(e.classifier_attempts, 0) < 2 "
+                "AND (e.channel_id = $channel_id "
+                "OR EXISTS { MATCH (e)-[:MENTIONED_IN]->(ev:Event) "
+                "WHERE ev.channel_id = $channel_id })"
+            )
+            params: dict[str, Any] = {"channel_id": channel_id, "limit": limit}
+        else:
+            where = (
+                "WHERE e.type = 'Unresolved' "
+                "AND e.awaiting_type = true "
+                "AND coalesce(e.classifier_attempts, 0) < 2"
+            )
+            params = {"limit": limit}
+        query = (
+            f"MATCH (e:Entity) {where} "  # noqa: S608
+            "RETURN e.name AS name, e.scope AS scope, "
+            "e.channel_id AS channel_id, "
+            "coalesce(e.classifier_attempts, 0) AS attempts, "
+            "e.classifier_low_confidence_at AS low_confidence_at "
+            "ORDER BY e.created_at ASC "
+            "LIMIT $limit"
+        )
+        async with self._driver.session() as session:
+            result = await session.run(query, **params)
+            records = await result.data()
+        return [
+            {
+                "name": row.get("name", ""),
+                "scope": row.get("scope") or "global",
+                "channel_id": row.get("channel_id"),
+                "attempts": int(row.get("attempts") or 0),
+                "low_confidence_at": row.get("low_confidence_at"),
+            }
+            for row in records
+        ]
+
+    async def fetch_incident_contexts_batch(
+        self,
+        names: list[str],
+        limit_per_name: int = 3,
+    ) -> dict[str, list[str]]:
+        """Return up to ``limit_per_name`` incident-edge contexts per
+        candidate name in a SINGLE Cypher round-trip (A-4 fix).
+
+        Used by the unresolved classifier to gather the disambiguating
+        signal for each stub.  Empty/missing contexts are filtered out
+        in Cypher so the LLM never sees zero-signal rows.
+        """
+        if not names:
+            return {}
+        query = """
+        UNWIND $names AS target_name
+        CALL (target_name) {
+          MATCH (e:Entity {name: target_name})-[r]-(other:Entity)
+          WHERE r.context IS NOT NULL AND r.context <> ''
+          RETURN r.context AS ctx
+          ORDER BY coalesce(r.valid_from, '') DESC
+          LIMIT $limit_per_name
+        }
+        RETURN target_name AS name, collect(ctx) AS contexts
+        """
+        async with self._driver.session() as session:
+            result = await session.run(query, names=names, limit_per_name=limit_per_name)
+            records = await result.data()
+        return {
+            row.get("name", ""): [c for c in (row.get("contexts") or []) if c] for row in records
+        }
+
+    async def mark_unresolved_attempt(
+        self,
+        name: str,
+        scope: str,
+        channel_id: str | None,
+    ) -> None:
+        """Bump ``classifier_attempts`` and stamp
+        ``classifier_low_confidence_at = now`` on the stub.
+
+        Idempotent — repeated calls just increment. Channel-scoped
+        stubs match by ``(name, scope='channel', channel_id)``; global
+        stubs match by ``(name, scope='global')``.
+        """
+        now_iso = datetime.now(tz=UTC).isoformat()
+        if scope == "channel" and channel_id:
+            query = (
+                "MATCH (e:Entity {name: $name, scope: 'channel', "
+                "channel_id: $channel_id}) "
+                "WHERE e.type = 'Unresolved' "
+                "SET e.classifier_attempts = coalesce(e.classifier_attempts, 0) + 1, "
+                "e.classifier_low_confidence_at = $now"
+            )
+            params = {"name": name, "channel_id": channel_id, "now": now_iso}
+        else:
+            query = (
+                "MATCH (e:Entity {name: $name, scope: 'global'}) "
+                "WHERE e.type = 'Unresolved' "
+                "SET e.classifier_attempts = coalesce(e.classifier_attempts, 0) + 1, "
+                "e.classifier_low_confidence_at = $now"
+            )
+            params = {"name": name, "now": now_iso}
+        async with self._driver.session() as session:
+            await session.run(query, **params)
 
     async def list_media_relationships(
         self,
@@ -1274,6 +1635,40 @@ class Neo4jStore:
             record = await result.single()
         return int(record["n"]) if record else 0
 
+    async def prune_stub_orphans(self, ttl_hours: int = 24) -> int:
+        """Delete Unresolved stub entities that have no edges and are older than ``ttl_hours``.
+
+        Stubs are created by :meth:`_upsert_relationship_with_stub_flag`
+        and :meth:`batch_create_episodic_links` for unknown endpoint
+        names. They are typed ``Unresolved`` or (in legacy syncs) ``Topic``
+        with ``status='active'`` (so ``prune_expired_pending`` does not
+        catch them). Once a stub has any incident edge it is kept — a
+        later typed write absorbs it via the ``upsert_entity`` symmetric
+        heal-path. Only truly orphaned Unresolved-or-Topic stubs older
+        than the TTL are purged.
+
+        Note: the ``awaiting_type`` flag is intentionally NOT required —
+        legacy Topic stubs from pre-fix syncs do not have that flag set.
+        The remaining filters (no edges, older than cutoff) are
+        sufficient guard rails for edge-less stubs.
+
+        Returns the number purged.
+        """
+        from datetime import timedelta
+
+        cutoff = (datetime.now(tz=UTC) - timedelta(hours=ttl_hours)).isoformat()
+        async with self._driver.session() as session:
+            result = await session.run(
+                "MATCH (e:Entity) "
+                "WHERE e.type IN ['Unresolved', 'Topic'] "
+                "AND NOT EXISTS { MATCH (e)--() } "
+                "AND e.created_at < $cutoff "
+                "DETACH DELETE e RETURN count(e) AS n",
+                cutoff=cutoff,
+            )
+            record = await result.single()
+        return int(record["n"]) if record else 0
+
     async def fuzzy_match_entity(self, name: str, threshold: float = 0.8) -> list[GraphEntity]:
         """Find entities whose name is similar to `name` using Jaro-Winkler distance.
 
@@ -1300,12 +1695,20 @@ class Neo4jStore:
     # ------------------------------------------------------------------
 
     async def find_entity_by_name_or_alias(self, name: str) -> str | None:
-        """Find an entity by exact name or alias.  Returns canonical name."""
+        """Find an entity by exact name or alias.  Returns canonical name.
+
+        Prefers typed siblings over Unresolved/Topic stubs so that wiki
+        citation resolution paths bind to the authoritative row when both
+        a typed entity and a stub coexist for the same name.
+        """
         async with self._driver.session() as session:
             result = await session.run(
                 "MATCH (e:Entity) "
                 "WHERE e.name = $name OR $name IN coalesce(e.aliases, []) "
-                "RETURN e.name AS canonical LIMIT 1",
+                "RETURN e.name AS canonical "
+                "ORDER BY CASE WHEN e.type IN ['Unresolved', 'Topic'] THEN 1 ELSE 0 END, "
+                "         e.updated_at DESC "
+                "LIMIT 1",
                 name=name,
             )
             record = await result.single()
@@ -1418,10 +1821,12 @@ class Neo4jStore:
         flag (PR-2):
 
         * ``true`` (default) — MERGEs the Entity by
-          ``(name, 'Topic', 'global')`` so unknown entity_tags from a
+          ``(name, 'Unresolved', 'global')`` so unknown entity_tags from a
           fact (whose owning entity may not have committed yet) still
           link to the Event via a stub Entity. Stubs are tagged
-          ``{"stub": true, "reason": "episodic_link"}``.
+          ``{"stub": true, "reason": "episodic_link", "awaiting_type": true}``.
+          A later typed ``upsert_entity`` for the same name promotes
+          the row in place via the heal-path.
         * ``false`` — legacy MATCH semantics; links to unknown entity
           names are silently dropped.
         """
@@ -1432,16 +1837,33 @@ class Neo4jStore:
         use_merge = get_settings().neo4j_relationship_stub_endpoints
         async with self._driver.session() as session:
             if use_merge:
+                # Per link: MERGE the Unresolved stub, then immediately
+                # absorb it into any existing typed sibling for the same
+                # name via apoc.refactor.mergeNodes — same symmetric-heal
+                # pattern as upsert_entity and _upsert_relationship_with_stub_flag.
+                # The MENTIONED_IN edge then attaches to the surviving node
+                # (typed sibling if present, else the just-created stub),
+                # keeping the channel-scoped view consistent.
                 result = await session.run(
                     "UNWIND $links AS link "
-                    "MERGE (e:Entity {name: link.entity_name, type: 'Topic', scope: 'global'}) "
+                    "MERGE (e_raw:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'}) "
                     "  ON CREATE SET "
-                    "    e.channel_id = null, "
-                    '    e.properties = \'{"stub": true, "reason": "episodic_link"}\', '
-                    "    e.aliases    = [], "
-                    "    e.status     = 'active', "
-                    "    e.created_at = toString(datetime()), "
-                    "    e.updated_at = toString(datetime()) "
+                    "    e_raw.channel_id = null, "
+                    '    e_raw.properties = \'{"stub": true, "reason": "episodic_link", "awaiting_type": true}\', '
+                    "    e_raw.aliases    = [], "
+                    "    e_raw.status     = 'active', "
+                    "    e_raw.awaiting_type = true, "
+                    "    e_raw.created_at = toString(datetime()), "
+                    "    e_raw.updated_at = toString(datetime()) "
+                    "WITH link, e_raw "
+                    "OPTIONAL MATCH (e_typed:Entity {name: link.entity_name, scope: 'global'}) "
+                    "  WHERE NOT e_typed.type IN ['Unresolved', 'Topic'] "
+                    "    AND elementId(e_typed) <> elementId(e_raw) "
+                    "WITH link, e_raw, head(collect(e_typed)) AS e_typed_pick "
+                    "CALL apoc.refactor.mergeNodes( "
+                    "  CASE WHEN e_typed_pick IS NOT NULL THEN [e_typed_pick, e_raw] ELSE [e_raw] END, "
+                    "  {properties: 'discard', mergeRels: true} "
+                    ") YIELD node AS e "
                     "MERGE (ep:Event {weaviate_id: link.weaviate_fact_id}) "
                     "  ON CREATE SET ep.message_ts = link.message_ts, ep.channel_id = link.channel_id "
                     "MERGE (e)-[:MENTIONED_IN]->(ep) "
@@ -1531,13 +1953,16 @@ class Neo4jStore:
         title: str,
         version: int,
         last_updated: datetime,
+        target_lang: str = "en",
     ) -> str:
-        """MERGE a WikiPage node keyed by ``(channel_id, slug)``.
+        """MERGE a WikiPage node keyed by ``(channel_id, target_lang, slug)``.
 
         Returns the node element ID. Idempotent — the maintainer calls
         this on every successful ``apply_update`` so existing nodes
         update their ``kind``/``title``/``version``/``last_updated``
-        in place.
+        in place. ``target_lang`` is part of the MERGE key so ``:en``
+        and ``:zh-HK`` runs against the same ``page_id`` do not stomp
+        each other.
         """
         now_iso = datetime.now(tz=UTC).isoformat()
         last_updated_iso = (
@@ -1546,7 +1971,7 @@ class Neo4jStore:
         async with self._driver.session() as session:
             result = await session.run(
                 """
-                MERGE (w:WikiPage {channel_id: $channel_id, slug: $slug})
+                MERGE (w:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $slug})
                 ON CREATE SET
                     w.kind         = $kind,
                     w.title        = $title,
@@ -1563,6 +1988,7 @@ class Neo4jStore:
                 RETURN elementId(w) AS eid
                 """,
                 channel_id=channel_id,
+                target_lang=target_lang,
                 slug=slug,
                 kind=kind,
                 title=title,
@@ -1579,25 +2005,60 @@ class Neo4jStore:
         channel_id: str,
         src_slug: str,
         dst_slug: str,
+        target_lang: str = "en",
     ) -> None:
         """MERGE a (:WikiPage)-[:REFERENCES]->(:WikiPage) edge.
 
-        Idempotent. Both endpoints are MERGEd by ``(channel_id, slug)``
-        so calling this with a destination slug whose node does not yet
-        exist still succeeds — Neo4j creates a placeholder node that
-        ``upsert_wiki_page_node`` will subsequently enrich on the next
-        apply_update against that page.
+        Idempotent. Both endpoints are MERGEd by
+        ``(channel_id, target_lang, slug)`` so calling this with a
+        destination slug whose node does not yet exist still succeeds —
+        Neo4j creates a placeholder node that ``upsert_wiki_page_node``
+        will subsequently enrich on the next apply_update against that
+        page.
         """
         async with self._driver.session() as session:
             await session.run(
                 """
-                MERGE (src:WikiPage {channel_id: $channel_id, slug: $src_slug})
-                MERGE (dst:WikiPage {channel_id: $channel_id, slug: $dst_slug})
+                MERGE (src:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $src_slug})
+                MERGE (dst:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $dst_slug})
                 MERGE (src)-[:REFERENCES]->(dst)
                 """,
                 channel_id=channel_id,
+                target_lang=target_lang,
                 src_slug=src_slug,
                 dst_slug=dst_slug,
+            )
+
+    async def upsert_wiki_reference_entity_edge(
+        self,
+        *,
+        channel_id: str,
+        target_lang: str,
+        src_slug: str,
+        entity_name: str,
+    ) -> None:
+        """MERGE a (:WikiPage)-[:REFERENCES_ENTITY]->(:Entity) edge.
+
+        Idempotent. The WikiPage is MATCHed by
+        ``(channel_id, target_lang, slug)`` — it must already exist
+        (the caller invokes :meth:`upsert_wiki_page_node` first). The
+        Entity is also MATCHed (not MERGEd) so a wikilink targeting a
+        name with no real entity behind it does not manufacture a stub
+        — the edge is silently dropped instead. The caller is expected
+        to resolve the title via :meth:`find_entity_by_name_or_alias`
+        before invoking this method.
+        """
+        async with self._driver.session() as session:
+            await session.run(
+                """
+                MATCH (src:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $src_slug})
+                MATCH (e:Entity {name: $entity_name})
+                MERGE (src)-[:REFERENCES_ENTITY]->(e)
+                """,
+                channel_id=channel_id,
+                target_lang=target_lang,
+                src_slug=src_slug,
+                entity_name=entity_name,
             )
 
     async def get_wiki_graph(self, channel_id: str) -> dict[str, Any]:

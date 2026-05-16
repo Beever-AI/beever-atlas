@@ -352,8 +352,55 @@ class PersisterAgent(BaseAgent):
                         len(entities),
                     )
                 if relationships:
+                    # Verb normalization (PR-B): collapse the long tail of
+                    # LLM-emitted verbs into a small canonical set BEFORE
+                    # writing to Neo4j. Mutates rel.type in place; source/
+                    # target/direction untouched. Audit ledger is rolled
+                    # into sync_summary.normalizations[] for replay-based
+                    # recovery (per v2 plan §B.5 — no per-edge field).
+                    from beever_atlas.agents.ingestion.verb_normalizer import (
+                        normalize_relationships,
+                        summarize_normalizations,
+                    )
+
+                    # Use a fresh name for the normalized list so the
+                    # closure capture of the outer ``relationships`` (set
+                    # at line 313 of the enclosing function) isn't shadowed
+                    # by a function-local assignment — F823 from ruff.
+                    normalized_rels, _norm_log = normalize_relationships(
+                        relationships, sync_job_id=sync_job_id
+                    )
+                    if _norm_log and channel_id and sync_job_id:
+                        from beever_atlas.services.batch_processor import (
+                            increment_sync_metric,
+                        )
+
+                        increment_sync_metric(
+                            channel_id,
+                            sync_job_id,
+                            "relationships_normalized_total",
+                            sum(1 for _ in _norm_log),
+                        )
+                        # Persist per-rule ledger rows so an operator can
+                        # replay the mapping later. Stored as a structured
+                        # log line keyed by sync_job_id; sync_summary
+                        # roll-up reads these via the sync_summary
+                        # collector.
+                        summary_rows = summarize_normalizations(_norm_log)
+                        for row in summary_rows:
+                            logger.info(
+                                "sync_summary: metric=verb_normalization "
+                                "original=%s canonical=%s rule=%s count=%s "
+                                "channel_id=%s sync_job_id=%s",
+                                row["original_verb"],
+                                row["canonical"],
+                                row["rule"],
+                                row["count"],
+                                channel_id,
+                                sync_job_id,
+                            )
                     _rel_eids = await stores.graph.batch_upsert_relationships(
-                        relationships,
+                        normalized_rels,
                         channel_id=channel_id,
                         sync_job_id=sync_job_id,
                         batch_idx=batch_num,
@@ -364,7 +411,7 @@ class PersisterAgent(BaseAgent):
                         sync_job_id,
                         channel_id,
                         batch_num,
-                        len(relationships),
+                        len(normalized_rels),
                     )
                     if _dropped and channel_id and sync_job_id:
                         from beever_atlas.services.batch_processor import increment_sync_metric
@@ -448,17 +495,52 @@ class PersisterAgent(BaseAgent):
 
         # --- 4. Reconcile entity_tags: create stub entities for missing names ---
         # Only create stubs for names that appear in relationships to avoid orphan nodes.
+        # Heal-path tightening:
+        #   * Confidence gate — only relationships with confidence ≥ 0.8 seed
+        #     stubs. Lower-confidence rels are too speculative to manufacture
+        #     entities from.
+        #   * 2-unknown drop — when BOTH endpoints of a rel are absent from
+        #     the typed-entity set, the rel cannot be healed and should not
+        #     have been written. We increment ``relationships_dropped_total``
+        #     with reason ``both_endpoints_unknown`` so observability picks
+        #     it up. The rel has already been committed by the earlier
+        #     ``batch_upsert_relationships`` call; the gate here prevents
+        #     us from also manufacturing the two stub Entity rows that
+        #     would otherwise connect.
         if not skip_graph:
+            extracted_names: set[str] = {e.name for e in entities}
+            high_conf_rels = [r for r in relationships if r.confidence >= 0.8]
             rel_names: set[str] = set()
-            for rel in relationships:
+            both_unknown_count = 0
+            for rel in high_conf_rels:
+                src_known = rel.source in extracted_names
+                tgt_known = rel.target in extracted_names
+                if not src_known and not tgt_known:
+                    both_unknown_count += 1
+                    continue
                 rel_names.add(rel.source)
                 rel_names.add(rel.target)
+            if both_unknown_count and channel_id and sync_job_id:
+                from beever_atlas.services.batch_processor import increment_sync_metric
+
+                increment_sync_metric(
+                    channel_id,
+                    sync_job_id,
+                    "relationships_dropped_total",
+                    both_unknown_count,
+                )
+                logger.info(
+                    "PersisterAgent: dropped %d relationships reason=both_endpoints_unknown job_id=%s channel=%s batch=%s",
+                    both_unknown_count,
+                    sync_job_id,
+                    channel_id,
+                    batch_num,
+                )
             all_tag_names: set[str] = set()
             for f in facts:
                 all_tag_names.update(f.entity_tags)
             # Intersect with relationship names — stubs without relationships are orphans
             all_tag_names &= rel_names
-            extracted_names: set[str] = {e.name for e in entities}
             missing_names = all_tag_names - extracted_names
             if missing_names:
                 try:
@@ -470,20 +552,24 @@ class PersisterAgent(BaseAgent):
                     logger.warning(
                         "PersisterAgent: batch_find_entities_by_name failed", exc_info=True
                     )
-                # Create stub entities for truly missing names.
-                # ``type='Topic'`` aligns with the in-Cypher MERGE default
-                # in upsert_relationship + batch_create_episodic_links
-                # (PR-2). ``Topic`` is generic; ``Project`` is
-                # domain-specific and the persister cannot infer the
-                # actual domain from a bare relationship endpoint.
+                # Create stub entities for truly missing names. They are
+                # tagged ``type='Unresolved'`` (backend-only synthetic
+                # type, never emitted by the LLM) plus ``awaiting_type``
+                # so a later typed ``upsert_entity`` for the same name
+                # heals the row in place via the heal-path in
+                # ``Neo4jStore.upsert_entity``.
                 stubs: list[GraphEntity] = []
                 for name in missing_names:
                     stubs.append(
                         GraphEntity(
                             name=name,
-                            type="Topic",
+                            type="Unresolved",
                             scope="global",
-                            properties={"stub": True},
+                            properties={
+                                "stub": True,
+                                "reason": "rel_endpoint",
+                                "awaiting_type": True,
+                            },
                             source_message_id=facts[0].source_message_id if facts else "",
                             message_ts=facts[0].message_ts if facts else "",
                         )

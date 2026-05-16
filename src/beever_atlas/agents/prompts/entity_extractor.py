@@ -41,20 +41,24 @@ Messages (preprocessed, JSON array):
 
 ### Entity types
 
-| Type       | Scope   | When to use |
-|------------|---------|-------------|
-| Person     | global  | Named humans who act, decide, or are referenced substantively |
-| Technology | global  | Specific named tools, frameworks, libraries, services, languages |
-| Project    | global  | Named initiatives, products, features, or repositories |
-| Team       | global  | Named organisational units, squads, or guilds |
-| Decision   | channel | Explicit choices or conclusions reached — not mere discussion |
-| Meeting    | channel | Named or time-anchored meetings referenced in this channel |
-| Artifact   | channel | Specific named docs, PRs, tickets, specs (e.g. "PR #42", not "a PR") |
+| Type         | Scope   | When to use |
+|--------------|---------|-------------|
+| Person       | global  | Named humans who act, decide, or are referenced substantively |
+| Technology   | global  | Specific named tools, frameworks, libraries, services, languages |
+| Project      | global  | Named initiatives, products, features, or repositories |
+| Team         | global  | Named organisational units, squads, or guilds |
+| Decision     | channel | Explicit choices or conclusions reached — not mere discussion |
+| Meeting      | channel | Named or time-anchored meetings referenced in this channel |
+| Artifact     | channel | Specific named docs, PRs, tickets, specs (e.g. "PR #42", not "a PR") |
+| Organization | global  | Companies, regulators, vendors. Example: "AlibabaCloud" (vendor), "Consumer Council" (regulator). |
+| Concept      | global  | Abstract domain ideas. Example: "PIA", "DPO", "data residency", "response-time SLA". |
+| Location     | global  | Geographic/jurisdictional boundaries. Example: "Hong Kong", "Mainland China". |
+| Event        | channel | One-off events distinct from recurring Meetings. Example: tender deadline, product launch, go-live date. |
 
 **Scope**: `global` entities are meaningful workspace-wide. `channel` entities are
 only meaningful within {channel_name}.
 
-**Extending types**: These 7 types cover most workplace knowledge. If you encounter
+**Extending types**: These 11 types cover most workplace knowledge. If you encounter
 a concept that genuinely doesn't fit (e.g., a recurring Workflow, a tracked Metric,
 a team Ritual, or a domain Concept), you may create a new type. Rules for new types:
 - Use PascalCase (e.g., "Workflow", not "workflow" or "WORKFLOW")

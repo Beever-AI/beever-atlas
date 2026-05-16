@@ -124,6 +124,60 @@ class MockGraphStore:
             self._id_map.pop(entity.id, None)
         return len(to_remove)
 
+    async def prune_stub_orphans(self, ttl_hours: int = 24) -> int:
+        from datetime import timedelta
+
+        cutoff = datetime.now(tz=UTC) - timedelta(hours=ttl_hours)
+        connected = {r.source for r in self._relationships} | {
+            r.target for r in self._relationships
+        }
+        to_remove = [
+            name
+            for name, e in self._entities.items()
+            if e.type == "Unresolved"
+            and getattr(e, "awaiting_type", False)
+            and name not in connected
+            and getattr(e, "created_at", None) is not None
+            and e.created_at < cutoff
+        ]
+        for name in to_remove:
+            entity = self._entities.pop(name)
+            self._id_map.pop(entity.id, None)
+        return len(to_remove)
+
+    async def list_co_mention_edges(
+        self,
+        channel_id: str,
+        min_shared: int = 2,
+        limit: int = 500,
+    ) -> list[GraphRelationship]:
+        # MockGraphStore does not model Event nodes / MENTIONED_IN edges,
+        # so no synthetic co-mention pairs can be derived. Returning []
+        # matches the production behaviour for channels with no facts.
+        return []
+
+    async def list_unresolved_stubs(
+        self,
+        channel_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def fetch_incident_contexts_batch(
+        self,
+        names: list[str],
+        limit_per_name: int = 3,
+    ) -> dict[str, list[str]]:
+        return {}
+
+    async def mark_unresolved_attempt(
+        self,
+        name: str,
+        scope: str,
+        channel_id: str | None,
+    ) -> None:
+        return None
+
     # -- Relationship CRUD ---------------------------------------------------
 
     async def upsert_relationship(self, rel: GraphRelationship) -> str:
@@ -232,6 +286,11 @@ class MockGraphStore:
             entity = self._entities.pop(name)
             self._id_map.pop(entity.id, None)
         return {"entities_deleted": len(to_remove), "events_deleted": 0, "media_deleted": 0}
+
+    async def delete_channel_wiki_graph(self, channel_id: str) -> int:
+        # The mock does not model :WikiPage nodes — return 0 to satisfy
+        # the protocol contract.
+        return 0
 
     # -- Entity-registry support ---------------------------------------------
 

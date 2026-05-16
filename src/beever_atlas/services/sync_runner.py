@@ -664,31 +664,74 @@ class SyncRunner:
         channel_id: str,
         explicit_connection_id: str | None,
     ) -> str | None:
-        """Resolve which platform connection should be used for channel fetches."""
+        """Resolve which platform connection should be used for channel fetches.
+
+        Priority order:
+          1. Explicit connection_id from the caller.
+          2. Connections whose ``selected_channels`` contains the channel id —
+             the opt-in path. Tiebreaks alphabetically on id.
+          3. Generic bridge probe — ask each connected adapter "do you know
+             this channel?" and pick the first that responds successfully.
+             Covers channels synced via "explore + click sync" (no explicit
+             selection list entry), and channels whose sync_state was wiped
+             by ``/api/admin/channels/{id}/reset``. Same pattern used by
+             ``api/channels.get_channel`` for direct-URL navigation —
+             generic, no platform-format heuristics.
+        """
         if explicit_connection_id:
             return explicit_connection_id
 
         stores = get_stores()
         connections = await stores.platform.list_connections()
-        candidates = [
-            c
-            for c in connections
-            if c.status == "connected" and channel_id in (c.selected_channels or [])
-        ]
-        if not candidates:
-            return None
-        if len(candidates) == 1:
-            return candidates[0].id
+        connected = [c for c in connections if c.status == "connected"]
 
-        # Deterministic fallback for duplicate channel IDs across connections.
-        selected = sorted(candidates, key=lambda c: c.id)[0]
-        logger.warning(
-            "SyncRunner: channel %s is selected in %d connections; defaulting to connection %s",
-            channel_id,
-            len(candidates),
-            selected.id,
-        )
-        return selected.id
+        # Path 2: explicit selected_channels membership.
+        selected_candidates = [c for c in connected if channel_id in (c.selected_channels or [])]
+        if len(selected_candidates) == 1:
+            return selected_candidates[0].id
+        if len(selected_candidates) > 1:
+            # Deterministic fallback for duplicate channel IDs across
+            # explicitly-selected connections.
+            selected = sorted(selected_candidates, key=lambda c: c.id)[0]
+            logger.warning(
+                "SyncRunner: channel %s is selected in %d connections; defaulting to connection %s",
+                channel_id,
+                len(selected_candidates),
+                selected.id,
+            )
+            return selected.id
+
+        # Path 3: generic bridge probe across every connected connection.
+        # Whichever adapter's bridge can fetch channel info owns the channel
+        # — works for any platform, no format heuristics.
+        try:
+            from beever_atlas.adapters.bridge import BridgeError
+            from beever_atlas.services.channel_discovery import make_bridge_adapter
+        except Exception:  # noqa: BLE001
+            return None
+
+        for conn in connected:
+            adapter = make_bridge_adapter(conn.id)
+            try:
+                await adapter.get_channel_info(channel_id)
+                logger.info(
+                    "SyncRunner: bridge probe matched channel %s to connection %s (platform=%s)",
+                    channel_id,
+                    conn.id,
+                    conn.platform,
+                )
+                return conn.id
+            except (KeyError, BridgeError):
+                continue
+            except Exception:  # noqa: BLE001
+                continue
+            finally:
+                try:
+                    await adapter.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        return None
 
     async def _start_file_sync(
         self,

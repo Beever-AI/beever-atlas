@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from beever_atlas.infra.auth import require_admin
@@ -559,6 +559,331 @@ async def llm_throttle_metrics() -> dict:
     except Exception as exc:  # noqa: BLE001 — never crash an observability endpoint
         logger.warning("llm-throttle metrics: snapshot failed: %s", exc)
         return {"providers": []}
+
+
+# ---------------------------------------------------------------------------
+# Per-channel reset — drop derived memory + optionally re-sync
+# ---------------------------------------------------------------------------
+
+
+@router.post("/channels/{channel_id}/reset")
+async def reset_channel_data(
+    channel_id: str,
+    i_understand_data_loss: str = Query(
+        ...,
+        description="Explicit confirmation token — must be the literal string 'yes'.",
+    ),
+    languages: list[str] = Query(
+        default=["en"],
+        description="Wiki languages to wipe in MongoDB. Defaults to ['en'].",
+    ),
+    trigger_resync: bool = Query(
+        default=False,
+        description="When true, kick off a full sync immediately after the wipe.",
+    ),
+) -> dict:
+    """Drop a channel's derived memory (facts, entities, wiki, graph,
+    sync state) and optionally trigger a re-sync.
+
+    Messages stay intact in MongoDB. Only derived data is wiped, so the
+    next sync auto-resolves to ``full`` and rebuilds everything with the
+    current pipeline. Designed to be safely callable after pipeline
+    changes without losing the original message history.
+
+    Stages run in fixed order — the orphan-global Entity cleanup in
+    :meth:`GraphStore.delete_channel_data` depends on the channel's
+    Events being gone first (the same ordering used inside that method),
+    and the sync-state delete must land last so it is not re-written by
+    any in-flight worker tick that observes the half-dropped state.
+
+    Each stage is wrapped in ``try/except``: a partial failure populates
+    ``errors`` and the remaining stages continue. The endpoint never
+    returns 500 from a store hiccup; the operator inspects ``errors``
+    and re-runs (the endpoint is idempotent — counts go to zero on a
+    second call).
+
+    Auth: ``X-Admin-Token`` (router-level ``require_admin`` dependency).
+    """
+    import logging as _log
+
+    log = _log.getLogger(__name__)
+
+    if i_understand_data_loss != "yes":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirmation token mismatch — pass i_understand_data_loss=yes",
+        )
+
+    stores = get_stores()
+
+    # Concurrent-sync gate — refuse to drop derived data while a sync
+    # is actively rewriting it. The race would leave the channel half-
+    # purged AND half-extracted; operators should cancel or wait.
+    try:
+        latest = await stores.mongodb.get_latest_sync_job(channel_id)
+    except Exception:  # noqa: BLE001 — never let a status read leak as a 500
+        latest = None
+    if latest is not None and getattr(latest, "status", "") == "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="sync in progress, cannot reset",
+        )
+
+    results: dict[str, int] = {}
+    errors: list[str] = []
+
+    # Wiki state (pages, cache bundle, generation status, Neo4j :WikiPage
+    # nodes, version archive) is INTENTIONALLY untouched here. The wiki
+    # subsystem owns its own reset path at
+    # ``POST /api/channels/{id}/wiki/refresh?mode=rebuild`` which archives
+    # the current wiki to ``wiki_versions`` BEFORE wiping — preserving
+    # rollback. Reset is a derived-knowledge primitive; the UI sequences
+    # ``/reset`` → ``/wiki/refresh?mode=rebuild`` → ``/sync`` for the
+    # one-click "fresh start" UX.
+
+    # 1. Drop derived graph data (Events, Media, channel-scoped Entities,
+    #    plus orphan-global Entity cleanup). Counts come back as
+    #    {events_deleted, media_deleted, entities_deleted}.
+    try:
+        graph_counts = await stores.graph.delete_channel_data(channel_id)
+        results["events_deleted"] = int(graph_counts.get("events_deleted", 0) or 0)
+        results["media_deleted"] = int(graph_counts.get("media_deleted", 0) or 0)
+        results["entities_deleted"] = int(graph_counts.get("entities_deleted", 0) or 0)
+    except Exception as exc:  # noqa: BLE001
+        # Surface only the operation name to the caller — the raw
+        # exception string can leak stack-trace fragments / internal
+        # details. Full exception is logged server-side at WARN.
+        errors.append("delete_channel_data failed")
+        log.warning(
+            "reset_channel_data: delete_channel_data failed channel=%s: %s",
+            channel_id,
+            exc,
+        )
+
+    # 2. Drop Weaviate facts + clusters + summaries for the channel.
+    try:
+        weaviate_n = await stores.weaviate.delete_by_channel(channel_id)
+        results["weaviate_deleted"] = int(weaviate_n or 0)
+    except Exception as exc:  # noqa: BLE001
+        errors.append("weaviate.delete_by_channel failed")
+        log.warning(
+            "reset_channel_data: weaviate.delete_by_channel failed channel=%s: %s",
+            channel_id,
+            exc,
+        )
+
+    # 3. Drop sync state (MongoDB). Run before the message-state flip so
+    #    any in-flight worker that observes the half-dropped state has
+    #    nothing to re-anchor to — the next sync auto-resolves to ``full``.
+    try:
+        await stores.mongodb.clear_channel_sync_state(channel_id)
+        results["sync_state_cleared"] = 1
+    except Exception as exc:  # noqa: BLE001
+        errors.append("clear_channel_sync_state failed")
+        log.warning(
+            "reset_channel_data: clear_channel_sync_state failed channel=%s: %s",
+            channel_id,
+            exc,
+        )
+
+    # 4. Flip every preserved ``channel_messages`` row back to
+    #    ``extraction_status='pending'`` so the next sync re-extracts.
+    #    Without this the worker treats messages as ``done`` and the
+    #    pipeline skips them, leaving the freshly-wiped graph empty.
+    #
+    #     ``next_attempt_at`` must be SET to ``now`` (not unset). The
+    #     worker's claim filter is ``{"next_attempt_at": {"$lte": now}}``;
+    #     a missing field never satisfies ``$lte`` in MongoDB, so unsetting
+    #     would silently freeze the row out of the claim queue.
+    #
+    #     Messages themselves are intentionally preserved (they are the
+    #     authoritative source of truth from the platform).
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+
+        now_utc = _dt.now(tz=_tz.utc)
+        result = await stores.mongodb.db["channel_messages"].update_many(
+            {"channel_id": channel_id},
+            {
+                "$set": {
+                    "extraction_status": "pending",
+                    "next_attempt_at": now_utc,
+                    "attempt_count": 0,
+                },
+                "$unset": {"extraction_error": ""},
+            },
+        )
+        results["messages_marked_pending"] = int(result.modified_count)
+    except Exception as exc:  # noqa: BLE001
+        errors.append("reset_extraction_status failed")
+        log.warning(
+            "reset_channel_data: extraction_status reset failed channel=%s: %s",
+            channel_id,
+            exc,
+        )
+
+    # 5. Optionally trigger a follow-up sync via the SyncRunner directly
+    #    (the same path the user-facing /api/channels/{id}/sync endpoint
+    #    uses). Failure here is NON-fatal: the deletions are already
+    #    committed across stores, so a partial-rollback would leave the
+    #    channel in a worse state than just reporting the trigger error.
+    #
+    #    Resolve the platform connection generically: ``SyncRunner._resolve_connection_id``
+    #    filters by ``selected_channels`` membership only, which is often empty for
+    #    channels synced via the "explore + click sync" path. To stay platform-agnostic,
+    #    we ask each connected bridge adapter "do you know this channel?" and use the
+    #    first connection whose ``get_channel_info`` succeeds — the exact pattern used
+    #    by ``api/channels.get_channel`` for direct-URL navigation. No platform-format
+    #    heuristics, no hardcoded regex.
+    resync_job_id: str | None = None
+    if trigger_resync:
+        try:
+            from beever_atlas.adapters.bridge import BridgeError
+            from beever_atlas.api.sync import get_sync_runner
+            from beever_atlas.services.channel_discovery import make_bridge_adapter
+
+            preferred_connection_id: str | None = None
+            try:
+                connections = await stores.platform.list_connections()
+                connected = [c for c in connections if c.status == "connected"]
+
+                # First preference: connections that explicitly opted-in this channel
+                # (selected_channels). Authoritative when present.
+                in_selected = [c for c in connected if channel_id in (c.selected_channels or [])]
+                if in_selected:
+                    preferred_connection_id = sorted(in_selected, key=lambda c: c.id)[0].id
+                else:
+                    # Fallback: probe each bridge adapter generically. Whichever
+                    # connection's bridge can fetch the channel info owns the
+                    # channel — works for any platform, no format heuristics.
+                    for conn in connected:
+                        adapter = make_bridge_adapter(conn.id)
+                        try:
+                            await adapter.get_channel_info(channel_id)
+                            preferred_connection_id = conn.id
+                            break
+                        except (KeyError, BridgeError):
+                            continue
+                        except Exception:  # noqa: BLE001
+                            continue
+                        finally:
+                            await adapter.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "reset_channel_data: connection lookup failed channel=%s: %s — "
+                    "letting SyncRunner resolve via fallback.",
+                    channel_id,
+                    exc,
+                )
+
+            runner = get_sync_runner()
+            resync_job_id = await runner.start_sync(
+                channel_id,
+                sync_type="full",
+                use_batch_api=False,
+                connection_id=preferred_connection_id,
+                owner_principal_id="admin:reset",
+            )
+            # Kick the extraction worker so the freshly-pending rows are
+            # claimed on the next tick rather than after the 10s tick floor.
+            # ``SyncRunner`` only kicks on ``inserted_count > 0``; on a
+            # re-sync existing rows are matched-not-inserted, so kick here.
+            try:
+                from beever_atlas.services.extraction_worker import (
+                    get_extraction_worker,
+                )
+
+                _worker = get_extraction_worker()
+                if _worker is not None:
+                    _worker.kick()
+            except Exception:  # noqa: BLE001 — best-effort
+                log.debug(
+                    "reset_channel_data: extraction worker kick failed",
+                    exc_info=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            errors.append("start_sync failed")
+            log.warning(
+                "reset_channel_data: trigger_resync failed channel=%s: %s",
+                channel_id,
+                exc,
+            )
+
+    # Single warning-level audit line so operators can grep for resets
+    # in the application log without re-enabling DEBUG.
+    log.warning(
+        "ADMIN RESET channel=%s principal=admin counts=%s errors=%s resync_job_id=%s",
+        channel_id,
+        results,
+        errors,
+        resync_job_id,
+    )
+
+    return {
+        "status": "reset_complete",
+        "channel_id": channel_id,
+        "counts": results,
+        "errors": errors,
+        "resync_job_id": resync_job_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unresolved classifier (PR-A) — on-demand second pass for one channel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/channels/{channel_id}/classify-unresolved")
+async def classify_unresolved(
+    channel_id: str,
+    dry_run: bool = Query(
+        default=False,
+        description="When true, returns the candidate count without running the LLM dispatch.",
+    ),
+    limit: int = Query(default=500, ge=1, le=2000),
+    force: bool = Query(
+        default=False,
+        description="Bypass the 7-day classifier_low_confidence_at defer gate.",
+    ),
+) -> dict:
+    """Run the post-extraction Unresolved-stub classifier for one channel.
+
+    Auth: ``X-Admin-Token`` (router-level dependency). Mirrors the
+    auto-fire path bound to ``memory_settled``; useful for ad-hoc
+    backfills against channels that synced before the classifier
+    shipped.
+    """
+    from beever_atlas.infra.config import get_settings as _gs
+    from beever_atlas.services.unresolved_classifier import UnresolvedClassifier
+
+    stores = get_stores()
+    settings = _gs()
+
+    if dry_run:
+        try:
+            stubs = await stores.graph.list_unresolved_stubs(channel_id=channel_id, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            # Don't echo raw exception text to the caller (CodeQL
+            # info-exposure). Log full detail server-side and surface a
+            # generic message instead.
+            logger.warning(
+                "classify_unresolved dry-run: list_unresolved_stubs failed channel=%s: %s",
+                channel_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="classify_unresolved dry-run failed; see server logs",
+            ) from exc
+        return {
+            "channel_id": channel_id,
+            "dry_run": True,
+            "candidate_count": len(stubs),
+        }
+
+    classifier = UnresolvedClassifier(stores=stores, settings=settings)
+    report = await classifier.classify_channel(channel_id, limit=limit, force=force)
+    return report.to_dict()
 
 
 __all__ = ["router"]
