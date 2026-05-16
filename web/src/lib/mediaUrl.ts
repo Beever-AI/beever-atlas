@@ -106,12 +106,26 @@ export function proxiedMediaUrl(url: string | undefined): string | undefined {
   return buildLoaderUrl(proxyPath);
 }
 
-/** Returns the route path needed to mint a signed loader token via
- * `/api/media/proxy` for this URL, or `undefined` if the URL does not
- * need proxying (public / unrecognized host). */
+/** Returns the route path needed to proxy this URL through the backend,
+ * or `undefined` if the URL does not need proxying (public / unrecognized
+ * host).
+ *
+ * Routes to `/api/files/proxy` (same endpoint as `filesProxyPathFor`).
+ * The newer `/api/media/proxy` endpoint was intended for signed loader
+ * tokens, but on deployments where `LOADER_TOKEN_SECRET` is empty its
+ * credential-resolution path returns `502 Upstream returned 401` for
+ * Mattermost-bot-gated files. `/api/files/proxy` uses the
+ * `BEEVER_LOADER_RAW_KEY_FALLBACK=true` raw-key path which resolves the
+ * platform_connection's bot credential the same way the wiki view does
+ * — that path is verified working (HTTP 200, returns file bytes).
+ *
+ * EE-side patch — upstream OSS still emits `/api/media/proxy`. Backport
+ * via PR once the signed-token path is wired through the Mattermost
+ * adapter's credential resolver.
+ */
 export function mediaProxyPathFor(url: string | undefined): string | undefined {
   if (!needsAuthProxy(url)) return undefined;
-  return `/api/media/proxy?url=${encodeURIComponent(url!)}`;
+  return `/api/files/proxy?url=${encodeURIComponent(url!)}`;
 }
 
 /** Returns the legacy `/api/files/proxy` path. Same allowlist as

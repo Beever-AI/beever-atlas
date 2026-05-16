@@ -65,10 +65,15 @@ describe("needsAuthProxy", () => {
 });
 
 describe("mediaProxyPathFor / filesProxyPathFor", () => {
-  it("returns the /api/media/proxy path for proxied URLs", () => {
+  // EE-side patch: mediaProxyPathFor now routes to /api/files/proxy (same
+  // as filesProxyPathFor) because the /api/media/proxy signed-token path
+  // returns 502 "Upstream returned 401" when LOADER_TOKEN_SECRET is empty
+  // and BEEVER_LOADER_RAW_KEY_FALLBACK=true. The /api/files/proxy raw-key
+  // path is the working route for Mattermost-bot-gated files.
+  it("returns the /api/files/proxy path for proxied URLs", () => {
     const url = "https://team.votee.com/api/v4/files/abc";
     expect(mediaProxyPathFor(url)).toBe(
-      `/api/media/proxy?url=${encodeURIComponent(url)}`,
+      `/api/files/proxy?url=${encodeURIComponent(url)}`,
     );
   });
 
