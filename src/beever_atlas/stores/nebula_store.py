@@ -907,6 +907,51 @@ class NebulaStore:
                 f'status = "active", pending_since = ""'
             )
 
+    async def list_co_mention_edges(
+        self,
+        channel_id: str,
+        min_shared: int = 2,
+        limit: int = 500,
+    ) -> list[GraphRelationship]:
+        # Nebula adapter does not currently model co-mention derivation;
+        # the Memory Graph view falls back to explicit relationships only.
+        return []
+
+    # ------------------------------------------------------------------
+    # Unresolved-classifier helpers (PR-A) — no-op for the Nebula backend
+    # ------------------------------------------------------------------
+
+    async def list_unresolved_stubs(
+        self,
+        channel_id: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        # Nebula adapter does not currently surface Unresolved stub
+        # classification; the classifier service treats this as a no-op
+        # for non-Neo4j backends.
+        return []
+
+    async def fetch_incident_contexts_batch(
+        self,
+        names: list[str],
+        limit_per_name: int = 3,
+    ) -> dict[str, list[str]]:
+        return {}
+
+    async def mark_unresolved_attempt(
+        self,
+        name: str,
+        scope: str,
+        channel_id: str | None,
+    ) -> None:
+        return None
+
+    async def prune_stub_orphans(self, ttl_hours: int = 24) -> int:
+        # Nebula adapter does not currently distinguish Unresolved stubs from
+        # other pending entities — keep the orphan reconciler no-op-safe here
+        # and let prune_expired_pending handle the legacy ``pending`` path.
+        return 0
+
     async def prune_expired_pending(self, grace_period_days: int = 7) -> int:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=grace_period_days)).isoformat()
         resp = await self._execute_with_space(
@@ -1412,6 +1457,12 @@ class NebulaStore:
             "media_deleted": media_deleted,
             "entities_deleted": entities_deleted + orphans_deleted,
         }
+
+    async def delete_channel_wiki_graph(self, channel_id: str) -> int:
+        # No-op for the Nebula backend — the unified wiki+graph redesign
+        # writes :WikiPage nodes only to Neo4j. Return 0 to satisfy the
+        # GraphStore protocol contract without issuing any nGQL.
+        return 0
 
     # ------------------------------------------------------------------
     # Entity-registry support

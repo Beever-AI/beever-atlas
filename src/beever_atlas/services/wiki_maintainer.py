@@ -1733,7 +1733,7 @@ class WikiMaintainer:
         # ``_upsert_wiki_graph`` itself so a Neo4j hiccup never crashes
         # the maintainer's primary path.
         if use_kind_dispatch:
-            await self._upsert_wiki_graph(page, resolved_slugs)
+            await self._upsert_wiki_graph(page, resolved_slugs, target_lang=target_lang)
         # Drift A/B comparator (gated by ``Settings.wiki_drift_ab``). MUST run
         # AFTER ``save_page`` succeeds so the comparator sees the canonical
         # incremental output the user will read. The schedule helper is
@@ -1824,6 +1824,8 @@ class WikiMaintainer:
         self,
         page: "WikiPage",
         resolved_slugs: list[str],
+        *,
+        target_lang: str = "en",
     ) -> None:
         """Best-effort Neo4j upsert for the page node + REFERENCES edges.
 
@@ -1832,6 +1834,11 @@ class WikiMaintainer:
         gain parity), and any runtime Neo4j failure. The maintainer's
         primary path stays unaffected — page content is already saved
         to Mongo before this call.
+
+        Also emits ``:REFERENCES_ENTITY`` edges for every wikilink that
+        resolves against the entity registry. This is the writer side
+        of the WikiPage→Entity bridge — without it the
+        ``get_wiki_graph`` reader has nothing to surface.
         """
         store = self._graph_store
         if store is None:
@@ -1849,6 +1856,7 @@ class WikiMaintainer:
                 title=page.title,
                 version=page.version,
                 last_updated=page.updated_at,
+                target_lang=target_lang,
             )
             for dst_slug in resolved_slugs:
                 if not dst_slug or dst_slug == self_slug:
@@ -1857,6 +1865,40 @@ class WikiMaintainer:
                     channel_id=page.channel_id,
                     src_slug=self_slug,
                     dst_slug=dst_slug,
+                    target_lang=target_lang,
+                )
+
+            # WikiPage → Entity bridge edges. For each wikilink title in
+            # the page body, try to resolve it against the entity
+            # registry; when it hits a real ``:Entity`` row, emit a
+            # ``:REFERENCES_ENTITY`` edge. A wikilink that resolves
+            # to a sibling wiki page (handled above) and ALSO matches a
+            # typed entity will produce both edges — that's intentional;
+            # the reader filters by edge kind.
+            if not hasattr(store, "upsert_wiki_reference_entity_edge"):
+                return
+            if not hasattr(store, "find_entity_by_name_or_alias"):
+                return
+            seen_titles: set[str] = set()
+            ordered_titles: list[str] = []
+            for section in page.sections:
+                for title in _parse_wikilinks(section.content_md):
+                    if title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    ordered_titles.append(title)
+            for title in ordered_titles:
+                try:
+                    canonical = await store.find_entity_by_name_or_alias(title)
+                except Exception:  # noqa: BLE001 — never destabilise apply_update
+                    canonical = None
+                if not canonical:
+                    continue
+                await store.upsert_wiki_reference_entity_edge(
+                    channel_id=page.channel_id,
+                    target_lang=target_lang,
+                    src_slug=self_slug,
+                    entity_name=canonical,
                 )
         except Exception:  # noqa: BLE001 — best-effort
             logger.exception(

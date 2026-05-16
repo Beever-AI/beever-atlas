@@ -17,6 +17,10 @@ export interface GraphRelationship {
   target_id: string;
   type: string;
   properties?: Record<string, unknown>;
+  /** ISO timestamp of when the relationship became valid; null/absent for
+   *  legacy edges. Used by the time-window filter (D) and edge-opacity
+   *  recency ramp in `GraphCanvas`. */
+  valid_from?: string | null;
 }
 
 export interface GraphData {
@@ -39,22 +43,39 @@ interface MediaNode {
   title: string;
 }
 
-export function useGraph(channelId: string): UseGraphReturn {
+/** Options that change what the hook asks the backend for. */
+export interface UseGraphOptions {
+  /** When true, request co-mention edges at the weakest threshold
+   *  (`shared >= 1`) so sparse channels show a more connected graph.
+   *  Defaults to false — server-side default is `shared >= 2`. */
+  looseConnections?: boolean;
+}
+
+export function useGraph(channelId: string, options: UseGraphOptions = {}): UseGraphReturn {
   const [entities, setEntities] = useState<GraphEntity[]>([]);
   const [relationships, setRelationships] = useState<GraphRelationship[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { looseConnections = false } = options;
 
   const fetch = useCallback(async () => {
     if (!channelId) return;
     setLoading(true);
     setError(null);
     try {
+      // The relationships endpoint accepts `co_mention_min_shared` to
+      // tune how aggressively to surface synthetic CO_MENTIONED edges
+      // derived from shared :Event nodes. Default 2 = "shared in at
+      // least 2 facts"; loose mode = 1 = "any shared fact counts".
+      const relsUrl =
+        `/api/graph/relationships?channel_id=${channelId}` +
+        `&limit=1000&co_mention_min_shared=${looseConnections ? 1 : 2}`;
       // Fetch entities, relationships, and media nodes in parallel.
       const [entityData, relData, mediaData] = await Promise.all([
-        api.get<GraphEntity[]>(`/api/graph/entities?channel_id=${channelId}`),
-        api.get<{ source: string; target: string; type: string; id?: string }[]>(
-          `/api/graph/relationships?channel_id=${channelId}`,
+        api.get<GraphEntity[]>(`/api/graph/entities?channel_id=${channelId}&limit=500`),
+        api.get<{ source: string; target: string; type: string; id?: string; valid_from?: string | null }[]>(
+          relsUrl,
         ),
         api.get<MediaNode[]>(`/api/graph/media?channel_id=${channelId}`),
       ]);
@@ -104,6 +125,7 @@ export function useGraph(channelId: string): UseGraphReturn {
           source_id: nameToId.get(r.source) ?? "",
           target_id: nameToId.get(r.target) ?? "",
           type: r.type,
+          valid_from: r.valid_from ?? null,
         }))
         .filter((r) => r.source_id && r.target_id);
       setRelationships(rels);
@@ -112,7 +134,7 @@ export function useGraph(channelId: string): UseGraphReturn {
     } finally {
       setLoading(false);
     }
-  }, [channelId]);
+  }, [channelId, looseConnections]);
 
   useEffect(() => {
     fetch();

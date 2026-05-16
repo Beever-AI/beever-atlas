@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
-import { FolderSync, Loader2, Network, Sparkles, SlidersHorizontal, ChevronLeft } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronLeft,
+  FolderSync,
+  Loader2,
+  Network,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Waypoints,
+} from "lucide-react";
 import { useGraph } from "@/hooks/useGraph";
 import { useChannelMemoryCount } from "@/hooks/useChannelMemoryCount";
 import { PipelineEmptyState } from "@/components/shared/PipelineEmptyState";
 import { getTypeColors } from "@/components/graph/GraphFilters";
-import { GraphCanvas } from "@/components/graph/GraphCanvas";
+import { GraphCanvas, type GraphCanvasHandle } from "@/components/graph/GraphCanvas";
 import { EntityPanel } from "@/components/graph/EntityPanel";
 import { MediaModal } from "@/components/graph/MediaModal";
+import { EntitySearchPalette } from "@/components/graph/EntitySearchPalette";
 import { FullscreenWrapper } from "@/components/shared/FullscreenWrapper";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +29,17 @@ interface Props {
   isSyncing?: boolean;
   onViewSyncHistory?: () => void;
 }
+
+/** Possible time-window values for the D-track filter pills. `null`
+ *  represents "All time" (the default — pre-D behavior). */
+type TimeWindow = 7 | 30 | 90 | null;
+
+const TIME_WINDOWS: { value: TimeWindow; label: string }[] = [
+  { value: 7, label: "7d" },
+  { value: 30, label: "30d" },
+  { value: 90, label: "90d" },
+  { value: null, label: "All" },
+];
 
 // ─── TypePill ────────────────────────────────────────────────────────────────
 // Compact row pill for the floating filter panel.
@@ -53,6 +74,35 @@ function TypePill({
   );
 }
 
+// ─── TimePill ────────────────────────────────────────────────────────────────
+// Compact pill for the time-window row. Active pill is filled.
+
+function TimePill({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors",
+        active
+          ? "border-border/70 text-foreground bg-muted"
+          : "border-border/40 text-muted-foreground/60 bg-transparent hover:border-border hover:text-foreground",
+      )}
+      aria-pressed={active}
+    >
+      {label}
+    </button>
+  );
+}
+
 // ─── MemoryGraphView ──────────────────────────────────────────────────────────
 
 /**
@@ -70,7 +120,15 @@ export function MemoryGraphView({
   isSyncing = false,
   onViewSyncHistory,
 }: Props) {
-  const { entities, relationships, loading, error, refetch } = useGraph(channelId);
+  // Loose-connections toggle: when on, the relationships endpoint
+  // surfaces co-mention edges at the weakest threshold (shared >= 1
+  // event between two entities). Helps sparse channels where the
+  // default shared >= 2 leaves many entities isolated. Defaults off
+  // so dense channels stay visually clean.
+  const [looseConnections, setLooseConnections] = useState(false);
+  const { entities, relationships, loading, error, refetch } = useGraph(channelId, {
+    looseConnections,
+  });
   const { hasMemories, isLoading: isMemoryCountLoading } = useChannelMemoryCount(channelId);
   const [visibleTypes, setVisibleTypes] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,11 +138,23 @@ export function MemoryGraphView({
     mediaType: string;
   } | null>(null);
 
+  // D — time-window pills. `null` means "all time" (pre-D behavior).
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>(null);
+
+  // E-3 — cmd-K palette open/close
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Imperative ref into the canvas — used by the palette to pan/zoom
+  // to the selected entity.
+  const canvasRef = useRef<GraphCanvasHandle | null>(null);
+
   // Floating filter panel open/close
   // Filter panel defaults open — the user said the floating pill is too
   // hidden as a slim vertical strip. The panel still collapses on
   // click; the user can dismiss when they want canvas real-estate.
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  // Default collapsed so the panel doesn't steal canvas real estate on
+  // first paint. Users can open it via the slim left rail.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Orphan node toggle — GraphCanvas handles the cy.add/remove internally;
   // we just pass the boolean down.
@@ -104,6 +174,33 @@ export function MemoryGraphView({
     }
   }, [refreshNonce, refetch]);
 
+  // E-3 (E-1 fix) — document-level cmd-K (or ctrl-K) hotkey toggle.
+  // Bound at document level so it works regardless of focus target.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isHotkey = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      if (!isHotkey) return;
+      e.preventDefault();
+      setPaletteOpen((open) => !open);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // D — client-side time filter. Null timeWindow keeps everything; for
+  // other windows, edges WITHOUT a `valid_from` stay visible (treated
+  // as "always visible" / "legacy"), edges with a stale timestamp drop.
+  const filteredRelationships = useMemo(() => {
+    if (timeWindow === null) return relationships;
+    const cutoff = Date.now() - timeWindow * 86400_000;
+    return relationships.filter((r) => {
+      if (!r.valid_from) return true; // null = always visible
+      const t = Date.parse(r.valid_from);
+      if (!Number.isFinite(t)) return true;
+      return t >= cutoff;
+    });
+  }, [relationships, timeWindow]);
+
   const selectedEntity = selectedId
     ? entities.find((e) => e.id === selectedId) ?? null
     : null;
@@ -122,6 +219,24 @@ export function MemoryGraphView({
       }
     }
     setSelectedId(id);
+  };
+
+  // C — navigate by name (from EntityPanel's Card tab's related entities)
+  const handleNavigate = (name: string) => {
+    const target = entities.find(
+      (e) => e.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (target) {
+      setSelectedId(target.id);
+      // Pan the canvas to the new entity so the user has visual context.
+      canvasRef.current?.focusNode(target.id);
+    }
+  };
+
+  // E-3 — palette selection routes through focusNode + selection state.
+  const handlePaletteSelect = (id: string) => {
+    setSelectedId(id);
+    canvasRef.current?.focusNode(id);
   };
 
   if (loading) {
@@ -171,13 +286,19 @@ export function MemoryGraphView({
     );
   }
 
+  const timeFilterEmpty =
+    timeWindow !== null &&
+    filteredRelationships.length === 0 &&
+    relationships.length > 0;
+
   return (
     // No top filter bar — canvas fills full height below Memory↔Graph toggle.
     <FullscreenWrapper label="Enlarge graph" className="flex-1 min-h-0">
       <div className="relative flex h-full w-full min-h-0 overflow-hidden">
         <GraphCanvas
+          ref={canvasRef}
           entities={entities}
-          relationships={relationships}
+          relationships={filteredRelationships}
           visibleTypes={visibleTypes}
           showOrphans={showOrphans}
           selectedEntityId={selectedId}
@@ -188,12 +309,106 @@ export function MemoryGraphView({
         {selectedEntity && (
           <EntityPanel
             entity={selectedEntity}
-            relationships={relationships}
+            relationships={filteredRelationships}
             allEntities={entities}
             channelId={channelId}
             onClose={() => setSelectedId(null)}
+            onNavigate={handleNavigate}
           />
         )}
+
+        {/* ── Top-right toolbar: search + time-window pills ──────────── */}
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Search entities (⌘K)"
+            title="Search entities (⌘K)"
+            className={cn(
+              "inline-flex items-center justify-center w-8 h-8 rounded-xl",
+              "border border-border/60 bg-card/85 backdrop-blur-sm shadow-sm",
+              "text-muted-foreground hover:text-foreground hover:bg-card transition-colors",
+            )}
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+          {/* Co-mention toggle. When ON, the server surfaces co-mention
+              edges at the weakest threshold (shared >= 1) so sparse
+              channels show a more connected graph. Labeled "Show all
+              co-mentions" with explanatory tooltip so users don't have
+              to guess what "Loose" means. */}
+          <button
+            type="button"
+            onClick={() => setLooseConnections((v) => !v)}
+            aria-pressed={looseConnections}
+            aria-label={
+              looseConnections
+                ? "Hide weak co-mention edges"
+                : "Show all co-mention edges, including single-mention pairs"
+            }
+            title={
+              looseConnections
+                ? (
+                  "Showing ALL co-mentions: any two entities that appear " +
+                  "in the same fact get a dashed link. Click to hide weak " +
+                  "ones (only show pairs appearing in 2+ shared facts)."
+                )
+                : (
+                  "Click to include weak co-mentions: link any two entities " +
+                  "that ever appear in the same fact. Useful for sparse " +
+                  "channels where most entities look isolated."
+                )
+            }
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2.5 h-8 rounded-xl border shadow-sm",
+              "backdrop-blur-sm transition-colors text-[11px] font-medium",
+              looseConnections
+                ? "border-primary/60 bg-primary/15 text-primary hover:bg-primary/20"
+                : "border-border/60 bg-card/85 text-muted-foreground hover:text-foreground hover:bg-card",
+            )}
+          >
+            <Waypoints className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{looseConnections ? "All co-mentions" : "Show weak ties"}</span>
+          </button>
+          <div
+            className={cn(
+              "inline-flex items-center gap-1 rounded-xl border border-border/60",
+              "bg-card/85 backdrop-blur-sm px-1.5 py-1 shadow-sm",
+            )}
+          >
+            {TIME_WINDOWS.map((w) => (
+              <TimePill
+                key={w.label}
+                label={w.label}
+                active={timeWindow === w.value}
+                onClick={() => setTimeWindow(w.value)}
+              />
+            ))}
+          </div>
+        </div>
+        {/* ── End top-right toolbar ─────────────────────────────────── */}
+
+        {/* ── Empty-window overlay ───────────────────────────────────── */}
+        {timeFilterEmpty && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+            <div className="pointer-events-auto rounded-xl border border-border/60 bg-card/95 backdrop-blur-sm shadow-md px-5 py-4 max-w-sm text-center">
+              <p className="text-sm font-medium text-foreground mb-1">
+                No activity in the last {timeWindow} days
+              </p>
+              <p className="text-xs text-muted-foreground mb-3">
+                Try a longer window to see older relationships.
+              </p>
+              <button
+                type="button"
+                onClick={() => setTimeWindow(null)}
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium border border-border/70 text-foreground bg-muted hover:bg-muted/80 transition-colors"
+              >
+                Show all time
+              </button>
+            </div>
+          </div>
+        )}
+        {/* ── End empty-window overlay ──────────────────────────────── */}
 
         {/* ── Floating left filter panel ─────────────────────────────── */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
@@ -303,6 +518,25 @@ export function MemoryGraphView({
           )}
         </div>
         {/* ── End floating filter panel ──────────────────────────────── */}
+
+        {/* ── Footer count pill ─────────────────────────────────────── */}
+        <div className="absolute bottom-3 right-3 z-20 pointer-events-none">
+          <div
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border border-border/60",
+              "bg-card/85 backdrop-blur-sm px-2.5 py-1 shadow-sm",
+              "text-[10px] font-medium text-muted-foreground/80",
+            )}
+          >
+            {entities.length} entities · {filteredRelationships.length} relationships
+            {timeWindow !== null && (
+              <span className="ml-1 text-muted-foreground/60">
+                · last {timeWindow}d
+              </span>
+            )}
+          </div>
+        </div>
+        {/* ── End footer count pill ─────────────────────────────────── */}
       </div>
 
       {mediaModal && (
@@ -313,6 +547,13 @@ export function MemoryGraphView({
           onClose={() => setMediaModal(null)}
         />
       )}
+
+      <EntitySearchPalette
+        entities={entities}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelect={handlePaletteSelect}
+      />
     </FullscreenWrapper>
   );
 }
