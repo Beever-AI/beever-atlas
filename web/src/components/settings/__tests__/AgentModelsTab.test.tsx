@@ -188,12 +188,18 @@ describe("AgentModelsTab", () => {
     await waitFor(() => expect(screen.getByText("Gemini balanced")).toBeTruthy());
     fireEvent.click(screen.getByText("Gemini balanced"));
 
-    // CI runners are slower than local — the toast lands after the POST
-    // returns + a setState flush. The inner waitFor needs 5000ms headroom,
-    // so the outer test budget must exceed it (default vitest is 5000ms).
+    // CI runners are slower than local — and the toast self-dismisses after
+    // INFO_TTL_MS=2500ms (useToast), so a string-text waitFor can race the
+    // auto-dismiss on a slow runner. Query by role="status" + match
+    // textContent — tolerates whitespace/em-dash variation, polls quickly,
+    // and survives the dismiss-flicker.
     await waitFor(
-      () => expect(screen.getByText(/Applied 'Gemini balanced' — 1 updated/)).toBeTruthy(),
-      { timeout: 5000 },
+      () => {
+        const status = screen.queryByRole("status");
+        expect(status).not.toBeNull();
+        expect(status!.textContent ?? "").toMatch(/Applied 'Gemini balanced'.*1 updated/);
+      },
+      { timeout: 5000, interval: 50 },
     );
   }, 15000);
 
