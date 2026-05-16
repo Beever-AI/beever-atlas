@@ -115,8 +115,11 @@ async def test_unknown_endpoints_create_unresolved_stubs(monkeypatch):
     query = calls[0]["query"]
     kwargs = calls[0]["kwargs"]
     # Cypher uses MERGE for both endpoints with composite key.
-    assert "MERGE (a:Entity {name: $source, type: 'Unresolved', scope: 'global'})" in query
-    assert "MERGE (b:Entity {name: $target, type: 'Unresolved', scope: 'global'})" in query
+    # Variables are ``a_raw`` / ``b_raw`` so the apoc.refactor.mergeNodes
+    # absorption step (symmetric heal) can replace them with the typed
+    # sibling without aliasing the relationship endpoints.
+    assert "MERGE (a_raw:Entity {name: $source, type: 'Unresolved', scope: 'global'})" in query
+    assert "MERGE (b_raw:Entity {name: $target, type: 'Unresolved', scope: 'global'})" in query
     # ON CREATE SET writes the stub marker.
     assert "ON CREATE SET" in query
     assert kwargs["stub_props"] == '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
@@ -193,8 +196,13 @@ async def test_episodic_link_unknown_entity_creates_stub(monkeypatch):
     assert created == 1
     assert len(calls) == 1
     query = calls[0]["query"]
-    # MERGE the Entity (not MATCH) with the composite key.
-    assert "MERGE (e:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'})" in query
+    # MERGE the Entity (not MATCH) with the composite key. Variable is
+    # ``e_raw`` so the apoc.refactor.mergeNodes absorption step can
+    # replace it with the typed sibling for the MENTIONED_IN edge.
+    assert (
+        "MERGE (e_raw:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'})"
+        in query
+    )
     assert '"reason": "episodic_link"' in query
     assert '"awaiting_type": true' in query
     # Event MERGE still present.
