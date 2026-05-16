@@ -650,6 +650,9 @@ async def reset_channel_data(
         results["media_deleted"] = int(graph_counts.get("media_deleted", 0) or 0)
         results["entities_deleted"] = int(graph_counts.get("entities_deleted", 0) or 0)
     except Exception as exc:  # noqa: BLE001
+        # Surface only the operation name to the caller — the raw
+        # exception string can leak stack-trace fragments / internal
+        # details. Full exception is logged server-side at WARN.
         errors.append("delete_channel_data failed")
         log.warning(
             "reset_channel_data: delete_channel_data failed channel=%s: %s",
@@ -746,9 +749,7 @@ async def reset_channel_data(
 
                 # First preference: connections that explicitly opted-in this channel
                 # (selected_channels). Authoritative when present.
-                in_selected = [
-                    c for c in connected if channel_id in (c.selected_channels or [])
-                ]
+                in_selected = [c for c in connected if channel_id in (c.selected_channels or [])]
                 if in_selected:
                     preferred_connection_id = sorted(in_selected, key=lambda c: c.id)[0].id
                 else:
@@ -860,11 +861,20 @@ async def classify_unresolved(
 
     if dry_run:
         try:
-            stubs = await stores.graph.list_unresolved_stubs(
-                channel_id=channel_id, limit=limit
-            )
+            stubs = await stores.graph.list_unresolved_stubs(channel_id=channel_id, limit=limit)
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            # Don't echo raw exception text to the caller (CodeQL
+            # info-exposure). Log full detail server-side and surface a
+            # generic message instead.
+            logger.warning(
+                "classify_unresolved dry-run: list_unresolved_stubs failed channel=%s: %s",
+                channel_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="classify_unresolved dry-run failed; see server logs",
+            ) from exc
         return {
             "channel_id": channel_id,
             "dry_run": True,
@@ -872,9 +882,7 @@ async def classify_unresolved(
         }
 
     classifier = UnresolvedClassifier(stores=stores, settings=settings)
-    report = await classifier.classify_channel(
-        channel_id, limit=limit, force=force
-    )
+    report = await classifier.classify_channel(channel_id, limit=limit, force=force)
     return report.to_dict()
 
 

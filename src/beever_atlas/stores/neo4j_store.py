@@ -588,9 +588,7 @@ class Neo4jStore:
                 # entities back) and as a top-level node property (for
                 # Cypher filtering by ``prune_stub_orphans`` and the
                 # heal-path). See ``upsert_entity`` heal-path for details.
-                stub_props = (
-                    '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
-                )
+                stub_props = '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
                 result = await session.run(
                     """
                     MERGE (a_raw:Entity {name: $source, type: 'Unresolved', scope: 'global'})
@@ -977,8 +975,7 @@ class Neo4jStore:
         """
         async with self._driver.session() as session:
             result = await session.run(
-                "MATCH (w:WikiPage {channel_id: $channel_id}) "
-                "DETACH DELETE w RETURN count(w) AS n",
+                "MATCH (w:WikiPage {channel_id: $channel_id}) DETACH DELETE w RETURN count(w) AS n",
                 channel_id=channel_id,
             )
             record = await result.single()
@@ -1292,13 +1289,10 @@ class Neo4jStore:
         RETURN target_name AS name, collect(ctx) AS contexts
         """
         async with self._driver.session() as session:
-            result = await session.run(
-                query, names=names, limit_per_name=limit_per_name
-            )
+            result = await session.run(query, names=names, limit_per_name=limit_per_name)
             records = await result.data()
         return {
-            row.get("name", ""): [c for c in (row.get("contexts") or []) if c]
-            for row in records
+            row.get("name", ""): [c for c in (row.get("contexts") or []) if c] for row in records
         }
 
     async def mark_unresolved_attempt(

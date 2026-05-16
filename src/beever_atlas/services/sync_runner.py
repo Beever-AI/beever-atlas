@@ -686,9 +686,7 @@ class SyncRunner:
         connected = [c for c in connections if c.status == "connected"]
 
         # Path 2: explicit selected_channels membership.
-        selected_candidates = [
-            c for c in connected if channel_id in (c.selected_channels or [])
-        ]
+        selected_candidates = [c for c in connected if channel_id in (c.selected_channels or [])]
         if len(selected_candidates) == 1:
             return selected_candidates[0].id
         if len(selected_candidates) > 1:
@@ -696,8 +694,7 @@ class SyncRunner:
             # explicitly-selected connections.
             selected = sorted(selected_candidates, key=lambda c: c.id)[0]
             logger.warning(
-                "SyncRunner: channel %s is selected in %d connections; "
-                "defaulting to connection %s",
+                "SyncRunner: channel %s is selected in %d connections; defaulting to connection %s",
                 channel_id,
                 len(selected_candidates),
                 selected.id,
@@ -718,8 +715,7 @@ class SyncRunner:
             try:
                 await adapter.get_channel_info(channel_id)
                 logger.info(
-                    "SyncRunner: bridge probe matched channel %s to "
-                    "connection %s (platform=%s)",
+                    "SyncRunner: bridge probe matched channel %s to connection %s (platform=%s)",
                     channel_id,
                     conn.id,
                     conn.platform,

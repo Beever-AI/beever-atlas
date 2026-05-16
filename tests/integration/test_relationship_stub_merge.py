@@ -119,10 +119,7 @@ async def test_unknown_endpoints_create_unresolved_stubs(monkeypatch):
     assert "MERGE (b:Entity {name: $target, type: 'Unresolved', scope: 'global'})" in query
     # ON CREATE SET writes the stub marker.
     assert "ON CREATE SET" in query
-    assert (
-        kwargs["stub_props"]
-        == '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
-    )
+    assert kwargs["stub_props"] == '{"stub": true, "reason": "rel_endpoint", "awaiting_type": true}'
     assert kwargs["source"] == "UnknownA"
     assert kwargs["target"] == "UnknownB"
 
@@ -197,10 +194,7 @@ async def test_episodic_link_unknown_entity_creates_stub(monkeypatch):
     assert len(calls) == 1
     query = calls[0]["query"]
     # MERGE the Entity (not MATCH) with the composite key.
-    assert (
-        "MERGE (e:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'})"
-        in query
-    )
+    assert "MERGE (e:Entity {name: link.entity_name, type: 'Unresolved', scope: 'global'})" in query
     assert '"reason": "episodic_link"' in query
     assert '"awaiting_type": true' in query
     # Event MERGE still present.

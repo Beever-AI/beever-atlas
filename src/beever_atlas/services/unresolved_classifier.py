@@ -255,9 +255,7 @@ class UnresolvedClassifier:
                     for s in batch
                 ]
                 try:
-                    classifications = await self._dispatch_batch(
-                        candidates, observed_types
-                    )
+                    classifications = await self._dispatch_batch(candidates, observed_types)
                     report.llm_calls += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -278,9 +276,7 @@ class UnresolvedClassifier:
                     confidence = float(cls.confidence)
                     # Gate: new type acceptance requires high
                     # confidence OR presence in channel/catalog.
-                    is_known = (
-                        inferred in CANONICAL_TYPES or inferred in observed_types
-                    )
+                    is_known = inferred in CANONICAL_TYPES or inferred in observed_types
                     if not is_known and confidence < NEW_TYPE_THRESHOLD:
                         # Parked as low-confidence; stub stays
                         # Unresolved.
@@ -313,9 +309,7 @@ class UnresolvedClassifier:
         and as half of the new-type gate (A-5).
         """
         try:
-            entities = await self._stores.graph.list_entities(
-                channel_id=channel_id, limit=500
-            )
+            entities = await self._stores.graph.list_entities(channel_id=channel_id, limit=500)
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "UnresolvedClassifier: observed-types lookup failed channel=%s: %s",
@@ -323,11 +317,7 @@ class UnresolvedClassifier:
                 exc,
             )
             return set()
-        return {
-            e.type
-            for e in entities
-            if e.type and e.type not in {"Unresolved", "Topic"}
-        }
+        return {e.type for e in entities if e.type and e.type not in {"Unresolved", "Topic"}}
 
     async def _dispatch_batch(
         self,

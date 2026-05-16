@@ -126,9 +126,7 @@ def _make_stores_mock(
         return 0
 
     stores.graph.batch_upsert_entities = AsyncMock(side_effect=fake_batch_upsert_entities)
-    stores.graph.batch_upsert_relationships = AsyncMock(
-        side_effect=fake_batch_upsert_relationships
-    )
+    stores.graph.batch_upsert_relationships = AsyncMock(side_effect=fake_batch_upsert_relationships)
     stores.graph.batch_create_episodic_links = AsyncMock(
         side_effect=fake_batch_create_episodic_links
     )
@@ -253,9 +251,7 @@ async def test_two_unknown_endpoints_drop_rel_and_increment_counter(monkeypatch)
     metrics = await _run_persister(ctx, stores, monkeypatch)
 
     # No entity created with name MysteryA or MysteryB.
-    all_created_names = {
-        e.name for batch in captured["batch_upsert_entities"] for e in batch
-    }
+    all_created_names = {e.name for batch in captured["batch_upsert_entities"] for e in batch}
     assert "MysteryA" not in all_created_names
     assert "MysteryB" not in all_created_names
 

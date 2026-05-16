@@ -128,7 +128,9 @@ class MockGraphStore:
         from datetime import timedelta
 
         cutoff = datetime.now(tz=UTC) - timedelta(hours=ttl_hours)
-        connected = {r.source for r in self._relationships} | {r.target for r in self._relationships}
+        connected = {r.source for r in self._relationships} | {
+            r.target for r in self._relationships
+        }
         to_remove = [
             name
             for name, e in self._entities.items()

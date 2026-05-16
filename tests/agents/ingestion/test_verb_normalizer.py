@@ -209,9 +209,15 @@ def test_summarize_normalizations_counts_duplicates() -> None:
     (e.g. 200 PLANS_TO_USE edges in one sync), the roll-up rolls them
     up into one row with the correct count."""
     log = [
-        NormalizationLog(raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"),
-        NormalizationLog(raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"),
-        NormalizationLog(raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"),
+        NormalizationLog(
+            raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"
+        ),
+        NormalizationLog(
+            raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"
+        ),
+        NormalizationLog(
+            raw_verb="PLANS_TO_USE", canonical_verb="USES", rule="literal:PLANS_TO_USE"
+        ),
         NormalizationLog(raw_verb="BUILT", canonical_verb="CREATED", rule="literal:BUILT"),
     ]
     rows = summarize_normalizations(log)

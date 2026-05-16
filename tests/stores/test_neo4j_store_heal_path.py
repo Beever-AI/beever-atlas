@@ -289,7 +289,10 @@ async def test_upsert_wiki_reference_entity_edge_idempotent(monkeypatch):
     query = calls[0]["query"]
     assert "MERGE (src)-[:REFERENCES_ENTITY]->(e)" in query
     # WikiPage is MATCHed (must exist), Entity is MATCHed (no stub creation).
-    assert "MATCH (src:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $src_slug})" in query
+    assert (
+        "MATCH (src:WikiPage {channel_id: $channel_id, target_lang: $target_lang, slug: $src_slug})"
+        in query
+    )
     assert "MATCH (e:Entity {name: $entity_name})" in query
 
 

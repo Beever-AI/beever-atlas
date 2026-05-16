@@ -992,8 +992,7 @@ async def lifespan(app: FastAPI):
                     exc = t.exception()
                     if exc is not None:
                         logging.getLogger(__name__).warning(
-                            "unresolved_classifier fan-out task raised "
-                            "channel=%s: %s",
+                            "unresolved_classifier fan-out task raised channel=%s: %s",
                             channel_id,
                             exc,
                             exc_info=exc,
