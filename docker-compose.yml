@@ -45,12 +45,7 @@ services:
       - beever-atlas
 
   weaviate:
-    # Pulled from Docker Hub mirror instead of cr.weaviate.io because the
-    # Weaviate-hosted registry has been unreachable from us-east-2 (and many
-    # other regions) since 2026-05-14. SHA pin dropped for now because the
-    # Docker Hub manifest digest differs from the cr.weaviate.io one. Revert
-    # to `cr.weaviate.io/...@sha256:...` when that registry is back.
-    image: semitechnologies/weaviate:1.28.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0@sha256:58b576d36eace6a33f1a0866b9fd13fd58abfb9ce1eaaa419758c70b6a427e36
     ports: ["127.0.0.1:8080:8080", "127.0.0.1:50051:50051"]
     volumes: [weaviate_data:/var/lib/weaviate]
     environment:
