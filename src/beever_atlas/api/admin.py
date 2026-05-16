@@ -650,7 +650,7 @@ async def reset_channel_data(
         results["media_deleted"] = int(graph_counts.get("media_deleted", 0) or 0)
         results["entities_deleted"] = int(graph_counts.get("entities_deleted", 0) or 0)
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"delete_channel_data: {exc}")
+        errors.append("delete_channel_data failed")
         log.warning(
             "reset_channel_data: delete_channel_data failed channel=%s: %s",
             channel_id,
@@ -662,7 +662,7 @@ async def reset_channel_data(
         weaviate_n = await stores.weaviate.delete_by_channel(channel_id)
         results["weaviate_deleted"] = int(weaviate_n or 0)
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"weaviate.delete_by_channel: {exc}")
+        errors.append("weaviate.delete_by_channel failed")
         log.warning(
             "reset_channel_data: weaviate.delete_by_channel failed channel=%s: %s",
             channel_id,
@@ -676,7 +676,7 @@ async def reset_channel_data(
         await stores.mongodb.clear_channel_sync_state(channel_id)
         results["sync_state_cleared"] = 1
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"clear_channel_sync_state: {exc}")
+        errors.append("clear_channel_sync_state failed")
         log.warning(
             "reset_channel_data: clear_channel_sync_state failed channel=%s: %s",
             channel_id,
@@ -712,7 +712,7 @@ async def reset_channel_data(
         )
         results["messages_marked_pending"] = int(result.modified_count)
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"reset_extraction_status: {exc}")
+        errors.append("reset_extraction_status failed")
         log.warning(
             "reset_channel_data: extraction_status reset failed channel=%s: %s",
             channel_id,
@@ -801,7 +801,7 @@ async def reset_channel_data(
                     exc_info=True,
                 )
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"start_sync: {exc}")
+            errors.append("start_sync failed")
             log.warning(
                 "reset_channel_data: trigger_resync failed channel=%s: %s",
                 channel_id,
