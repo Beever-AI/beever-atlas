@@ -363,7 +363,11 @@ class PersisterAgent(BaseAgent):
                         summarize_normalizations,
                     )
 
-                    relationships, _norm_log = normalize_relationships(
+                    # Use a fresh name for the normalized list so the
+                    # closure capture of the outer ``relationships`` (set
+                    # at line 313 of the enclosing function) isn't shadowed
+                    # by a function-local assignment — F823 from ruff.
+                    normalized_rels, _norm_log = normalize_relationships(
                         relationships, sync_job_id=sync_job_id
                     )
                     if _norm_log and channel_id and sync_job_id:
@@ -396,7 +400,7 @@ class PersisterAgent(BaseAgent):
                                 sync_job_id,
                             )
                     _rel_eids = await stores.graph.batch_upsert_relationships(
-                        relationships,
+                        normalized_rels,
                         channel_id=channel_id,
                         sync_job_id=sync_job_id,
                         batch_idx=batch_num,
@@ -407,7 +411,7 @@ class PersisterAgent(BaseAgent):
                         sync_job_id,
                         channel_id,
                         batch_num,
-                        len(relationships),
+                        len(normalized_rels),
                     )
                     if _dropped and channel_id and sync_job_id:
                         from beever_atlas.services.batch_processor import increment_sync_metric

@@ -29,7 +29,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from beever_atlas.api import admin as admin_mod
 from beever_atlas.api.admin import router as admin_router
 from beever_atlas.infra import auth as auth_mod
 from beever_atlas.stores import init_stores
