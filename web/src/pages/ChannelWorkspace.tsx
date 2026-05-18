@@ -21,6 +21,7 @@ import { SyncProgress } from "@/components/channel/SyncProgress";
 import { NextSyncBadge } from "@/components/channel/NextSyncBadge";
 import { useSync } from "@/hooks/useSync";
 import { LanguageBadge } from "@/components/channel/LanguageBadge";
+import { useSyncStatus } from "@/contexts/SyncStatusContext";
 
 interface ChannelInfo {
   channel_id: string;
@@ -205,6 +206,30 @@ export function ChannelWorkspace() {
 
   const isMember = channel?.is_member === true;
   const { syncState, triggerSync, isSyncing, error: syncError } = useSync(id ?? "", channel?.connection_id ?? null);
+
+  // RES-285 — publish the strict "is sync actually running right now?"
+  // signal up to SyncStatusContext so Sidebar can gate its top-nav.
+  //
+  // We narrow `syncState.state` to a primitive boolean BEFORE handing it
+  // to the setter — the context uses two separate `useState` cells
+  // (boolean + string|null) precisely so React's `Object.is` bail-out
+  // applies and consumers don't re-render on identical publishes.
+  //
+  // Gate fires ONLY on `state === "syncing"`. NOT on `error` (terminal —
+  // user needs Settings to fix), NOT on `idle`/`completed`.
+  const { setIsSyncRunning, setChannelId: setSyncingChannelId } = useSyncStatus();
+  const isSyncRunningHere = syncState.state === "syncing";
+  useEffect(() => {
+    setIsSyncRunning(isSyncRunningHere);
+    setSyncingChannelId(isSyncRunningHere ? (id ?? null) : null);
+    // Clear the gate when the channel unmounts (route change, navigate
+    // away). Without this, navigating from a syncing channel to /
+    // would leave the gate stuck on.
+    return () => {
+      setIsSyncRunning(false);
+      setSyncingChannelId(null);
+    };
+  }, [isSyncRunningHere, id, setIsSyncRunning, setSyncingChannelId]);
   // PR-B: when the failure banner copy is built from sync state errors,
   // prefer the deduped form (single line per unique message + count)
   // so a Gemini 503 storm shows "AI provider temporarily unavailable
