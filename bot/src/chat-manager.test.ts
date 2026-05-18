@@ -277,3 +277,123 @@ describe("ChatManager — isTransitioning flag", () => {
     assert.strictEqual(cm.isTransitioning(), false);
   });
 });
+
+// ── Scheduled adapter recycle (RES-286) ─────────────────────────────────────
+
+describe("ChatManager — scheduleAdapterRecycle()", () => {
+  it("fires rebuild() on the configured interval", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+
+    // Seed an adapter so the recycle path doesn't early-return.
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: { botToken: "x", signingSecret: "y" },
+    });
+
+    cm.scheduleAdapterRecycle(20);
+    await new Promise((r) => setTimeout(r, 70));
+    cm.stopAdapterRecycle();
+
+    assert.ok(rebuildCount >= 2, `expected at least 2 rebuilds, got ${rebuildCount}`);
+  });
+
+  it("skips recycle when no adapters are registered", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+
+    cm.scheduleAdapterRecycle(15);
+    await new Promise((r) => setTimeout(r, 60));
+    cm.stopAdapterRecycle();
+
+    assert.strictEqual(rebuildCount, 0);
+  });
+
+  it("skips recycle while transitioning to avoid concurrent rebuild", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+    (cm as any).transitioning = true;
+
+    cm.scheduleAdapterRecycle(15);
+    await new Promise((r) => setTimeout(r, 60));
+    cm.stopAdapterRecycle();
+
+    assert.strictEqual(rebuildCount, 0);
+  });
+
+  it("intervalMs <= 0 disables the timer (no recycle)", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(0);
+    await new Promise((r) => setTimeout(r, 40));
+    cm.stopAdapterRecycle();
+
+    assert.strictEqual(rebuildCount, 0);
+  });
+
+  it("calling scheduleAdapterRecycle twice replaces the timer (no double-fire)", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(15);
+    cm.scheduleAdapterRecycle(15);
+    await new Promise((r) => setTimeout(r, 50));
+    cm.stopAdapterRecycle();
+
+    // With a single active timer at 15ms, expect ~3 fires in 50ms — not 6.
+    assert.ok(rebuildCount <= 4, `expected ≤4 rebuilds (single timer), got ${rebuildCount}`);
+  });
+
+  it("stopAdapterRecycle() halts further rebuilds", async () => {
+    const cm = makeChatManager();
+    let rebuildCount = 0;
+    (cm as any).rebuild = async () => {
+      rebuildCount++;
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(15);
+    await new Promise((r) => setTimeout(r, 50));
+    cm.stopAdapterRecycle();
+    const countAfterStop = rebuildCount;
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.strictEqual(rebuildCount, countAfterStop);
+  });
+});

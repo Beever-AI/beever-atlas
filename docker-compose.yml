@@ -108,6 +108,16 @@ services:
     # bridge was the outlier (issue #34). Backend (8000) and web (3000)
     # remain on 0.0.0.0 since they're behind a reverse proxy in prod.
     ports: ["127.0.0.1:3001:3001"]
+    # RES-286 — bot self-heals after any exit (OOM, crash, SIGKILL).
+    # On a t4g.medium (4 GiB, no swap) running 6 hot services, an
+    # unrestricted bot can leak past the host's free-memory headroom in
+    # ~18 h via the long-lived chat-adapter-mattermost WebSocket and take
+    # everything down with it. `mem_limit` caps the bot in cgroup-land;
+    # `NODE_OPTIONS --max-old-space-size` keeps V8 GCing aggressively
+    # below the cgroup line so SIGTERM/graceful shutdown still fires.
+    restart: unless-stopped
+    mem_limit: 768m
+    memswap_limit: 768m
     depends_on:
       redis:
         condition: service_healthy
@@ -119,11 +129,19 @@ services:
       REDIS_URL: redis://redis:6379
       BOT_PORT: "3001"
       BRIDGE_API_KEY: ${BRIDGE_API_KEY:-}
+      NODE_OPTIONS: "--max-old-space-size=512"
+      # Structural leak fix — rebuild the chat-adapter set every 6 h so
+      # accumulated WebSocket state in chat-adapter-mattermost (1.1.2 has
+      # a slow leak in its long-lived ws + unbounded handler closures) is
+      # discarded long before it threatens the cgroup limit. Set to 0 to
+      # disable (e.g. local dev).
+      ADAPTER_RECYCLE_INTERVAL_MS: "21600000"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 45s
 
 volumes:
   weaviate_data:

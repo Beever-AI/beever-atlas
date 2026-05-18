@@ -51,6 +51,11 @@ export class ChatManager {
   /** Maps workspace identifiers to connectionId for URL-based routing.
    *  e.g. Slack team_id "T0APJ2FNUKZ" → connectionId "abc-123" */
   private workspaceIdMap: Map<string, string> = new Map();
+  /** RES-286 — scheduled adapter recycle timer.
+   *  Tears down + rebuilds every adapter periodically to drop accumulated
+   *  state (notably the chat-adapter-mattermost ws closures and bridge.ts
+   *  module-level user cache). */
+  private recycleTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(redisUrl: string, registerHandlers: (bot: Chat) => void) {
     this.redisUrl = redisUrl;
@@ -241,6 +246,54 @@ export class ChatManager {
     } finally {
       this.transitioning = false;
       this.notifyRebuildCompleteListeners();
+    }
+  }
+
+  /**
+   * RES-286 — schedule periodic adapter recycle to drop accumulated state in
+   * long-lived adapter websockets (the chat-adapter-mattermost leak in
+   * particular). Each tick calls `rebuild()` which discards the old Chat
+   * instance + every adapter and reconstructs them fresh from stored configs.
+   *
+   * Re-entry is naturally guarded by `transitioning`: if the previous rebuild
+   * is still in flight when the timer fires, the new rebuild simply runs
+   * after; `rebuild()` is idempotent.
+   *
+   * Webhook deliveries during the ~1 s rebuild window are buffered by
+   * `WebhookBuffer` and replayed once the new bot is ready, so users see
+   * no degradation from a recycle.
+   *
+   * Calling this more than once replaces the existing timer.
+   *
+   * @param intervalMs how often to recycle. Pass 0 or a negative value to
+   *                   disable (useful for tests and local dev).
+   */
+  scheduleAdapterRecycle(intervalMs: number): void {
+    if (this.recycleTimer) {
+      clearInterval(this.recycleTimer);
+      this.recycleTimer = null;
+    }
+    if (intervalMs <= 0) {
+      console.log("ChatManager: adapter recycle disabled");
+      return;
+    }
+    this.recycleTimer = setInterval(() => {
+      if (this.adapters.size === 0) return;
+      if (this.transitioning) return;
+      console.log(`ChatManager: scheduled adapter recycle (every ${Math.round(intervalMs / 1000)}s)`);
+      this.rebuild().catch((err: unknown) => {
+        console.error("ChatManager: scheduled recycle failed:", err);
+      });
+    }, intervalMs);
+    this.recycleTimer.unref();
+    console.log(`ChatManager: adapter recycle enabled (every ${Math.round(intervalMs / 1000)}s)`);
+  }
+
+  /** Stop the recycle timer (used during graceful shutdown / tests). */
+  stopAdapterRecycle(): void {
+    if (this.recycleTimer) {
+      clearInterval(this.recycleTimer);
+      this.recycleTimer = null;
     }
   }
 

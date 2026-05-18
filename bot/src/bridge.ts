@@ -1584,6 +1584,14 @@ class TelegramBridge implements PlatformBridge {
 
 const mattermostUserCache = new Map<string, { name: string; image: string | null }>();
 
+/** RES-286 — let callers (notably ChatManager's scheduled adapter recycle)
+ *  drop this module-level cache. Without this hook the Map grows unbounded
+ *  over the bot's lifetime since entries are added on every user lookup but
+ *  never expire. */
+export function clearMattermostUserCache(): void {
+  mattermostUserCache.clear();
+}
+
 class MattermostBridge implements PlatformBridge {
   private baseUrl: string;
   private botToken: string;
@@ -2576,10 +2584,14 @@ export function registerBridgeRoutes(
   // wiring time. Moved out of module-load so tests can import the file.
   assertBridgeAuthReady();
 
-  // Subscribe to adapter rebuilds to clear the bridge singleton cache.
-  // This ensures stale adapter references are never reused after unregister/reregister.
+  // Subscribe to adapter rebuilds to clear bridge-level caches. This is
+  // critical for the RES-286 scheduled adapter recycle: every 6 h the
+  // ChatManager tears down and rebuilds the adapters, and these caches
+  // must be dropped in lockstep or they'd hold stale adapter references
+  // (bridgeCache) and unbounded user lookups (mattermostUserCache).
   chatManager.onRebuild(() => {
     clearBridgeCache();
+    clearMattermostUserCache();
   });
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
