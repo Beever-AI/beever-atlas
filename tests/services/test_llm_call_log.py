@@ -273,6 +273,104 @@ def test_dispatch_owns_recording_contextvar_skips_custom_logger() -> None:
     assert _DISPATCH_OWNS_RECORDING.get() is False
 
 
+# ── RES-284 — ring buffer TTL ────────────────────────────────────────────────
+
+
+def test_snapshot_default_ttl_keeps_recent_entries() -> None:
+    """Just-recorded entries are well inside the 30-min default TTL."""
+    import time
+
+    llm_call_log.record_call(
+        started_at=time.monotonic(),
+        kind="completion",
+        consumer="qa_agent",
+        provider="openai",
+        model="gpt-4o-mini",
+        api_base=None,
+        exc=RuntimeError("transient 429"),
+    )
+    snap = llm_call_log.snapshot()
+    assert len(snap) == 1
+    assert snap[0]["ok"] is False
+
+
+def test_snapshot_filters_entries_older_than_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RES-284: a failure recorded >ttl seconds ago must not surface — the
+    stale-failure regression that haunted Agent Models for hours after a
+    sync run."""
+    import time as _real_time
+
+    fixed_now = 1_700_000_000.0
+    # Record at t=fixed_now
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now)
+    llm_call_log.record_call(
+        started_at=_real_time.monotonic(),
+        kind="completion",
+        consumer="qa_agent",
+        provider="openai",
+        model="gpt-4o-mini",
+        api_base=None,
+        exc=RuntimeError("upstream failure from yesterday"),
+    )
+    assert len(llm_call_log.snapshot(expires_after_seconds=1800)) == 1
+
+    # Fast-forward 31 minutes (> default 1800 s TTL)
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now + 31 * 60)
+    assert llm_call_log.snapshot(expires_after_seconds=1800) == []
+    # But a longer TTL window still returns it
+    assert len(llm_call_log.snapshot(expires_after_seconds=2 * 3600)) == 1
+
+
+def test_snapshot_ttl_boundary_just_inside_and_outside(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entries at exactly TTL seconds old are kept; one second older are dropped."""
+    import time as _real_time
+
+    fixed_now = 1_700_000_000.0
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now)
+    llm_call_log.record_call(
+        started_at=_real_time.monotonic(),
+        kind="completion",
+        consumer=None,
+        provider="openai",
+        model="m",
+        api_base=None,
+        response=type("R", (), {"model": "m"})(),
+    )
+
+    # At exactly TTL seconds later — still inside (cutoff is >=)
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now + 1800)
+    assert len(llm_call_log.snapshot(expires_after_seconds=1800)) == 1
+
+    # One second past — dropped
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now + 1801)
+    assert llm_call_log.snapshot(expires_after_seconds=1800) == []
+
+
+def test_snapshot_negative_ttl_disables_filtering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass a negative ``expires_after_seconds`` to inspect arbitrarily old
+    entries (operators debugging an outage)."""
+    import time as _real_time
+
+    fixed_now = 1_700_000_000.0
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now)
+    llm_call_log.record_call(
+        started_at=_real_time.monotonic(),
+        kind="completion",
+        consumer=None,
+        provider="openai",
+        model="m",
+        api_base=None,
+        exc=RuntimeError("ancient failure"),
+    )
+
+    # 7 days later: default TTL would drop it, negative TTL keeps it.
+    monkeypatch.setattr(llm_call_log.time, "time", lambda: fixed_now + 7 * 86400)
+    assert llm_call_log.snapshot() == []
+    assert len(llm_call_log.snapshot(expires_after_seconds=-1)) == 1
+
+
 def test_snapshot_serialisation_shape() -> None:
     """Every field in the dataclass must round-trip through ``asdict``."""
     import time

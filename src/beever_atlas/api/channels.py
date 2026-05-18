@@ -511,7 +511,11 @@ async def list_channels() -> list[ChannelResponse]:
             *[stores.mongodb.get_channel_display_name(cid) for cid in orphaned_ids]
         )
         for cid, name in zip(orphaned_ids, name_results):
-            platform = _detect_platform_from_channel_id(cid) or "discord"
+            # RES-287/4a — orphaned channels (no connection_id) used to fall
+            # back to "discord", which caused the sidebar to show the Discord
+            # icon on Mattermost/Slack workspaces. "unknown" is the truthful
+            # answer; PlatformIcon renders a neutral MessageSquare for it.
+            platform = _detect_platform_from_channel_id(cid) or "unknown"
             all_channels.append(
                 ChannelInfo(
                     channel_id=cid,
@@ -664,7 +668,8 @@ async def get_channel(
     synced_ids = await stores.mongodb.list_synced_channel_ids()
     if channel_id in synced_ids:
         name = await stores.mongodb.get_channel_display_name(channel_id)
-        platform = _detect_platform_from_channel_id(channel_id) or "discord"
+        # RES-287/4a — see list_channels above; same orphan-platform fallback.
+        platform = _detect_platform_from_channel_id(channel_id) or "unknown"
         return await _enrich_with_language(
             ChannelResponse(
                 channel_id=channel_id,

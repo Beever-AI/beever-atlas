@@ -185,7 +185,11 @@ def _annotate(
 
 def _derive_native_identity(kind: str, item: dict) -> str | None:
     if kind == "channel_message":
-        platform = item.get("platform") or "slack"
+        # RES-287/4a — sibling of the api/channels.py fallback. Orphan items
+        # without a platform field used to silently become "slack", producing
+        # broken Slack permalinks on Mattermost/Discord data. The permalink
+        # resolver handles "unknown" gracefully (returns None).
+        platform = item.get("platform") or "unknown"
         channel_id = item.get("channel_id") or ""
         message_ts = item.get("message_ts") or item.get("timestamp") or ""
         fact_id = item.get("fact_id") or item.get("id") or "0"

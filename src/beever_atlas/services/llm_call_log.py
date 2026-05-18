@@ -94,7 +94,13 @@ class RecentLLMCall:
 
 
 _RING_SIZE = 50
-_recent: deque[RecentLLMCall] = deque(maxlen=_RING_SIZE)
+# RES-284 — entries are stored as (wall_clock_ts, call) tuples so `snapshot()`
+# can age out stale failures. Without the TTL, a burst of `ok=false` calls
+# during a misconfiguration sticks in the buffer until 50 newer calls evict
+# them or the process restarts — which is what painted the Agent Models tab
+# red for hours after the LiteLLM-embeddings migration sync.
+_recent: deque[tuple[float, RecentLLMCall]] = deque(maxlen=_RING_SIZE)
+_DEFAULT_TTL_SECONDS = 1800.0  # 30 minutes — paired with FE poll interval (15s)
 
 
 def _now_iso() -> str:
@@ -143,27 +149,39 @@ def record_call(
             error_class = type(exc).__name__
             error_summary = _redact(str(exc)[:200])
         _recent.append(
-            RecentLLMCall(
-                ts=_now_iso(),
-                kind=kind,
-                consumer=consumer,
-                provider=provider,
-                model=model,
-                api_base=api_base,
-                latency_ms=elapsed_ms if ok else None,
-                ok=ok,
-                response_model=response_model if isinstance(response_model, str) else None,
-                error_class=error_class,
-                error_summary=error_summary,
+            (
+                time.time(),  # RES-284 — wall-clock TTL anchor
+                RecentLLMCall(
+                    ts=_now_iso(),
+                    kind=kind,
+                    consumer=consumer,
+                    provider=provider,
+                    model=model,
+                    api_base=api_base,
+                    latency_ms=elapsed_ms if ok else None,
+                    ok=ok,
+                    response_model=response_model if isinstance(response_model, str) else None,
+                    error_class=error_class,
+                    error_summary=error_summary,
+                ),
             )
         )
     except Exception:  # noqa: BLE001 — never crash dispatch on logging
         pass
 
 
-def snapshot() -> list[dict[str, Any]]:
-    """Return the ring buffer newest-first, serialised to dicts."""
-    return [asdict(r) for r in reversed(_recent)]
+def snapshot(expires_after_seconds: float = _DEFAULT_TTL_SECONDS) -> list[dict[str, Any]]:
+    """Return the ring buffer newest-first, serialised to dicts.
+
+    RES-284: entries older than ``expires_after_seconds`` (default 30 min) are
+    filtered out. This prevents a single failure burst from haunting the
+    Agent Models tab for hours after the underlying cause is resolved.
+    Pass a negative value to disable filtering (debug/test use).
+    """
+    if expires_after_seconds < 0:
+        return [asdict(call) for _ts, call in reversed(_recent)]
+    cutoff = time.time() - expires_after_seconds
+    return [asdict(call) for ts, call in reversed(_recent) if ts >= cutoff]
 
 
 def clear() -> None:

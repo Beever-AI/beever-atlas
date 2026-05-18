@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from beever_atlas.services.llm_call_log import snapshot as _snapshot
@@ -43,7 +43,16 @@ class RecentLLMCallsResponse(BaseModel):
 
 
 @router.get("/recent-llm-calls", response_model=RecentLLMCallsResponse)
-async def recent_llm_calls() -> RecentLLMCallsResponse:
+async def recent_llm_calls(
+    max_age_seconds: float = Query(
+        1800.0,
+        ge=0,
+        description=(
+            "RES-284 — drop entries older than this many seconds (default 30 min). "
+            "Set to a large value (e.g. 86400) to inspect older calls for debugging."
+        ),
+    ),
+) -> RecentLLMCallsResponse:
     """Return the most recent LLM dispatch calls, newest first.
 
     Use cases:
@@ -55,8 +64,10 @@ async def recent_llm_calls() -> RecentLLMCallsResponse:
         upstream returned without exposing credentials.
 
     Bounded to the last 50 calls. Process-local — uvicorn restart resets.
+    Filtered by ``max_age_seconds`` to prevent stale failures from haunting
+    the Agent Models tab indefinitely (RES-284).
     """
-    rows: list[dict[str, Any]] = _snapshot()
+    rows: list[dict[str, Any]] = _snapshot(expires_after_seconds=max_age_seconds)
     return RecentLLMCallsResponse(calls=[RecentLLMCallResponse(**r) for r in rows])
 
 
