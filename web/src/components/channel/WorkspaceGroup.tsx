@@ -8,6 +8,7 @@ import { WikiStateIcon } from "@/components/shared/WikiStateIcon";
 import type { WikiState } from "@/hooks/useWikiStates";
 import { compareChannelsByWikiState, summarizeWikiCoverage, wikiStateLabel } from "@/lib/wikiState";
 import { FavoriteButton } from "./FavoriteButton";
+import { useSyncStatus } from "@/contexts/SyncStatusContext";
 
 interface Channel {
   channel_id: string;
@@ -55,6 +56,10 @@ export function WorkspaceGroup({
   const isDisconnected =
     connectionStatus != null && connectionStatus !== "connected";
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  // Read the cross-cutting sync-status signal so we can paint a pulsing
+  // indicator on every channel row currently running a sync — supports
+  // concurrent syncs across multiple channels.
+  const { syncingChannels } = useSyncStatus();
 
   const handleToggle = () => {
     setCollapsed(!collapsed);
@@ -129,6 +134,12 @@ export function WorkspaceGroup({
         sorted.map((ch) => {
           const wikiState = getWikiState ? getWikiState(ch.channel_id) : "ready";
           const isEmpty = wikiState === "empty" || wikiState === "errored";
+          // RES-285 / sidebar feedback — light up the row of whichever
+          // channel is currently syncing so the user can find it again
+          // (especially useful when they've navigated away to another
+          // channel mid-sync — the top-nav gate told them "something is
+          // syncing" but didn't say where).
+          const isCurrentlySyncing = syncingChannels.has(ch.channel_id);
           return (
             <Tooltip key={ch.channel_id}>
               <TooltipTrigger
@@ -152,8 +163,27 @@ export function WorkspaceGroup({
                       )
                     }
                   >
-                    <WikiStateIcon state={wikiState} size={13} />
-                    <span className={cn("truncate flex-1", !ch.is_member && "opacity-60")}>
+                    {isCurrentlySyncing ? (
+                      // Pulsing dot replaces the wiki-state icon while a
+                      // sync is running on this channel — it's the
+                      // single strongest "where the action is" signal.
+                      <span
+                        className="inline-flex items-center justify-center w-[13px] h-[13px] shrink-0"
+                        aria-label="Syncing"
+                        title="Syncing"
+                      >
+                        <span className="block w-2 h-2 rounded-full bg-primary animate-pulse" />
+                      </span>
+                    ) : (
+                      <WikiStateIcon state={wikiState} size={13} />
+                    )}
+                    <span
+                      className={cn(
+                        "truncate flex-1",
+                        !ch.is_member && "opacity-60",
+                        isCurrentlySyncing && "font-medium text-foreground",
+                      )}
+                    >
                       {ch.name}
                     </span>
                     {showWorkspaceName && (
@@ -171,7 +201,7 @@ export function WorkspaceGroup({
               <TooltipContent side="right" className="text-xs">
                 <span className="block font-medium">{ch.name}</span>
                 <span className="block text-muted-foreground/70 text-[11px] mt-0.5">
-                  {wikiStateLabel(wikiState)}
+                  {isCurrentlySyncing ? "Syncing now…" : wikiStateLabel(wikiState)}
                 </span>
               </TooltipContent>
             </Tooltip>

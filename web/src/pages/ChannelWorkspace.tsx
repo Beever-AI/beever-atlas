@@ -129,12 +129,16 @@ export function ChannelWorkspace() {
   // hidden. Hydrated from the same localStorage key SyncProgressV2
   // wrote to in earlier uncontrolled mode.
   const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
+    // Default: collapsed. Users find the bar arresting when expanded by
+    // default; once they've explicitly clicked Expand once, we remember
+    // it. `raw === "false"` is the only signal we treat as opt-in-to-
+    // expanded; anything else (null, "true", junk) → collapsed.
+    if (typeof window === "undefined") return true;
     try {
       const raw = window.localStorage.getItem("beever.monitor.collapsed");
-      return raw === "true";
+      return raw !== "false";
     } catch {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -207,29 +211,44 @@ export function ChannelWorkspace() {
   const isMember = channel?.is_member === true;
   const { syncState, triggerSync, isSyncing, error: syncError } = useSync(id ?? "", channel?.connection_id ?? null);
 
-  // RES-285 — publish the strict "is sync actually running right now?"
-  // signal up to SyncStatusContext so Sidebar can gate its top-nav.
+  // RES-285 + follow-up — publish THIS channel's sync state to the
+  // shared SyncStatusContext so Sidebar (top-nav gate + per-row
+  // indicator) reflects it from ANY page in the app, not just from
+  // inside this workspace.
   //
-  // We narrow `syncState.state` to a primitive boolean BEFORE handing it
-  // to the setter — the context uses two separate `useState` cells
-  // (boolean + string|null) precisely so React's `Object.is` bail-out
-  // applies and consumers don't re-render on identical publishes.
+  // Claim / release model — we only mark OURSELVES; other channels'
+  // publishers manage their own slots. Concurrent syncs across
+  // multiple channels are fully supported: each channel's
+  // ChannelWorkspace publishes independently, and the Provider's
+  // background poller releases stale ids when their syncs complete.
   //
-  // Gate fires ONLY on `state === "syncing"`. NOT on `error` (terminal —
-  // user needs Settings to fix), NOT on `idle`/`completed`.
-  const { setIsSyncRunning, setChannelId: setSyncingChannelId } = useSyncStatus();
-  const isSyncRunningHere = syncState.state === "syncing";
+  // Active-sync detection mirrors `useSync.ts:300-304`: the backend
+  // may return `state: "idle"` while phases are still `in_flight`
+  // (the "warming up" window after dispatch). Both signals count.
+  // `error` is excluded — terminal state, gating the nav on error
+  // would trap users away from Settings.
+  //
+  // NO unmount cleanup. If we cleared on unmount, the sidebar
+  // indicator for an actively-syncing channel would disappear the
+  // moment the user navigated away — defeating the point. The
+  // Provider's poller is responsible for the eventual release.
+  const { claim: claimSync, release: releaseSync } = useSyncStatus();
+  const anyPhaseInFlight = (syncState.phases ?? []).some(
+    (p) => p.state === "in_flight",
+  );
+  const isSyncRunningHere =
+    syncState.state === "syncing" || anyPhaseInFlight;
   useEffect(() => {
-    setIsSyncRunning(isSyncRunningHere);
-    setSyncingChannelId(isSyncRunningHere ? (id ?? null) : null);
-    // Clear the gate when the channel unmounts (route change, navigate
-    // away). Without this, navigating from a syncing channel to /
-    // would leave the gate stuck on.
-    return () => {
-      setIsSyncRunning(false);
-      setSyncingChannelId(null);
-    };
-  }, [isSyncRunningHere, id, setIsSyncRunning, setSyncingChannelId]);
+    if (!id) return;
+    if (isSyncRunningHere) {
+      claimSync(id);
+    } else {
+      // Idempotent release — release() is a no-op if we don't hold the
+      // slot, so this is safe to call on every render where we're not
+      // syncing (it's the "I'm done" signal from THIS channel only).
+      releaseSync(id);
+    }
+  }, [isSyncRunningHere, id, claimSync, releaseSync]);
   // PR-B: when the failure banner copy is built from sync state errors,
   // prefer the deduped form (single line per unique message + count)
   // so a Gemini 503 storm shows "AI provider temporarily unavailable

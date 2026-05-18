@@ -19,7 +19,6 @@ import { SidebarConversationList } from "./SidebarConversationList";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTheme } from "@/hooks/useTheme";
 import { useAskSessions } from "@/contexts/AskSessionsContext";
-import { useSyncStatus } from "@/contexts/SyncStatusContext";
 import { api, adminHeaders } from "@/lib/api";
 import { useState, useEffect, useCallback, useRef } from "react";
 
@@ -52,11 +51,6 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const resizingRef = useRef(false);
   const { resolvedTheme, toggleTheme } = useTheme();
   const { isActive: isAskActive } = useAskSessions();
-  // RES-285 — read the global "is a channel currently syncing?" signal so
-  // we can gate the top-nav NavLinks below. Channel-list switching is NOT
-  // gated; the Home logo + Home NavLink are NOT gated (universal escape
-  // hatch — user must always be able to reach the dashboard).
-  const { isSyncRunning, channelId: syncingChannelId } = useSyncStatus();
 
   useEffect(() => {
     window.localStorage.setItem(WIDTH_KEY, String(width));
@@ -145,41 +139,27 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       </div>
 
       {/* Nav items
-       *  RES-285 — when `isSyncRunning` is true, gate every top-nav link
-       *  EXCEPT Home (`to === "/"`). Home is a universal escape hatch,
-       *  intentionally left clickable so a stuck sync never traps the
-       *  user. The gate is a triple-defense:
-       *    1. `aria-disabled` — assistive tech announces the state
-       *    2. `tabIndex={-1}` — keyboard tab skips the link
-       *    3. `onClick preventDefault` — click and Enter do nothing
-       *  A Tooltip names the syncing channel so users understand why.
+       *  Note: previously these links were gated during active sync
+       *  (RES-285 Bug B). That was decided against — locking the nav
+       *  is paternalistic and the sidebar row indicator already gives
+       *  the user the awareness signal they need. Users can navigate
+       *  freely during sync; the bot keeps syncing in the background.
        */}
       <nav className="py-2 shrink-0">
         {navItems.map(({ to, icon: Icon, label }) => {
-          const gated = isSyncRunning && to !== "/";
           const navLink = (
             <NavLink
               key={to}
               to={to}
               end={to === "/"}
-              aria-disabled={gated ? true : undefined}
-              tabIndex={gated ? -1 : undefined}
-              onClick={(e) => {
-                if (gated) {
-                  e.preventDefault();
-                  return;
-                }
-                if (open) onClose();
-              }}
+              onClick={() => { if (open) onClose(); }}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-2.5 px-3 py-1.5 text-[14px] transition-all duration-150 rounded-lg relative mx-1",
                   isActive
                     ? "bg-primary/10 text-primary font-medium"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                  collapsed && "justify-center px-0 mx-0",
-                  gated &&
-                    "opacity-50 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground",
+                  collapsed && "justify-center px-0 mx-0"
                 )
               }
             >
@@ -192,24 +172,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             return (
               <Tooltip key={to}>
                 <TooltipTrigger render={navLink} />
-                <TooltipContent side="right">
-                  {gated
-                    ? `Sync in progress${syncingChannelId ? ` on #${syncingChannelId}` : ""} — wait for completion`
-                    : label}
-                </TooltipContent>
-              </Tooltip>
-            );
-          }
-          // Even when expanded, surface a tooltip on gated items so users
-          // understand the disabled state rather than wondering why their
-          // click did nothing.
-          if (gated) {
-            return (
-              <Tooltip key={to}>
-                <TooltipTrigger render={navLink} />
-                <TooltipContent side="right">
-                  {`Sync in progress${syncingChannelId ? ` on #${syncingChannelId}` : ""} — wait for completion`}
-                </TooltipContent>
+                <TooltipContent side="right">{label}</TooltipContent>
               </Tooltip>
             );
           }
