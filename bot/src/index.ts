@@ -447,6 +447,13 @@ function startServer(chatManager: ChatManager): void {
       // once it's actually wedged, not during legitimate 1-s recycle windows.
       // The full `memory` block lets operators graph RSS between recycles
       // and catch leak regressions early.
+      //
+      // SECURITY: this endpoint is unauthenticated and exposes
+      // `process.memoryUsage()` + uptime. The bot listens on `127.0.0.1:3001`
+      // (internal management surface; see docker-compose.yml `bot.ports`).
+      // If the bot port is ever exposed beyond loopback, gate this response
+      // behind the same `BRIDGE_API_KEY` Bearer auth that `/bridge/*` uses,
+      // or move memory/uptime to a separate `/debug/health` route.
       const transitioning = chatManager.isTransitioning();
       jsonResponse(res, transitioning ? 503 : 200, {
         status: transitioning ? "transitioning" : "ok",
@@ -757,8 +764,19 @@ async function main(): Promise<void> {
   // long-lived adapter websockets (notably chat-adapter-mattermost 1.1.2,
   // which leaks ~37 MB/h via its ws message handler closures). Default is
   // 6 h; set ADAPTER_RECYCLE_INTERVAL_MS=0 to disable for local dev.
-  const recycleMs = parseInt(process.env.ADAPTER_RECYCLE_INTERVAL_MS || "21600000", 10);
-  chatManager.scheduleAdapterRecycle(Number.isFinite(recycleMs) ? recycleMs : 21_600_000);
+  //
+  // A floor of 60 s applies to any positive override — a too-small interval
+  // would thrash the websocket and degrade availability. The `=== 0` escape
+  // hatch is preserved so dev/tests can opt out entirely.
+  const RECYCLE_DEFAULT_MS = 21_600_000;
+  const RECYCLE_FLOOR_MS = 60_000;
+  const recycleRaw = parseInt(process.env.ADAPTER_RECYCLE_INTERVAL_MS || `${RECYCLE_DEFAULT_MS}`, 10);
+  const recycleMs = !Number.isFinite(recycleRaw)
+    ? RECYCLE_DEFAULT_MS
+    : recycleRaw === 0
+      ? 0
+      : Math.max(recycleRaw, RECYCLE_FLOOR_MS);
+  chatManager.scheduleAdapterRecycle(recycleMs);
 
   startServer(chatManager);
   console.log("Bot service ready");

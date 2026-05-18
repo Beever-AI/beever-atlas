@@ -396,4 +396,78 @@ describe("ChatManager — scheduleAdapterRecycle()", () => {
 
     assert.strictEqual(rebuildCount, countAfterStop);
   });
+
+  it("swallows rebuild() errors and keeps ticking (until failure limit)", async () => {
+    const cm = makeChatManager();
+    let attempts = 0;
+    (cm as any).rebuild = async () => {
+      attempts++;
+      throw new Error("simulated rebuild failure");
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(15);
+    await new Promise((r) => setTimeout(r, 60));
+    cm.stopAdapterRecycle();
+
+    // Should have attempted at least 2 ticks before the circuit breaker stops
+    // it (RECYCLE_FAILURE_LIMIT is 3). The .catch() must not crash the timer.
+    assert.ok(attempts >= 2, `expected at least 2 attempts, got ${attempts}`);
+  });
+
+  it("circuit breaker halts the timer after RECYCLE_FAILURE_LIMIT consecutive failures", async () => {
+    const cm = makeChatManager();
+    let attempts = 0;
+    (cm as any).rebuild = async () => {
+      attempts++;
+      throw new Error("simulated rebuild failure");
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(10);
+    // Wait long enough that the breaker would have tripped (3 failures × 10 ms
+    // + some scheduling slack), then a stretch where further ticks could fire.
+    await new Promise((r) => setTimeout(r, 200));
+    const attemptsAfterTrip = attempts;
+    await new Promise((r) => setTimeout(r, 100));
+
+    // After the breaker trips no further attempts should occur.
+    assert.strictEqual(attempts, attemptsAfterTrip);
+    // And the trip should have happened at exactly RECYCLE_FAILURE_LIMIT (3)
+    // — not earlier and not (much) later.
+    assert.ok(attempts >= 3, `expected ≥3 attempts before trip, got ${attempts}`);
+    assert.ok(attempts <= 4, `expected ≤4 attempts (timer race), got ${attempts}`);
+  });
+
+  it("resets consecutive-failure counter after a successful rebuild", async () => {
+    const cm = makeChatManager();
+    let attempts = 0;
+    (cm as any).rebuild = async () => {
+      attempts++;
+      // Fail every other tick — the breaker should NEVER trip because a
+      // success resets the counter.
+      if (attempts % 2 === 1) throw new Error("flaky");
+    };
+    (cm as any).adapters.set("slack:conn-1", {
+      platform: "slack",
+      connectionId: "conn-1",
+      config: {},
+    });
+
+    cm.scheduleAdapterRecycle(10);
+    await new Promise((r) => setTimeout(r, 200));
+    cm.stopAdapterRecycle();
+
+    // Without reset, attempts would max out at 3-4 before the breaker fires.
+    // With reset, we expect many more attempts in 200 ms × 10 ms interval.
+    assert.ok(attempts >= 5, `expected ≥5 attempts (counter reset on success), got ${attempts}`);
+  });
 });

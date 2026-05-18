@@ -56,6 +56,13 @@ export class ChatManager {
    *  state (notably the chat-adapter-mattermost ws closures and bridge.ts
    *  module-level user cache). */
   private recycleTimer: ReturnType<typeof setInterval> | null = null;
+  /** RES-286 — circuit breaker. If `rebuild()` throws on
+   *  `RECYCLE_FAILURE_LIMIT` consecutive scheduled ticks the timer halts so
+   *  we don't fill logs with the same error every 6 h. The first failure
+   *  on each run is still surfaced; the timer can be re-enabled by another
+   *  call to `scheduleAdapterRecycle(...)`. */
+  private consecutiveRecycleFailures: number = 0;
+  private static readonly RECYCLE_FAILURE_LIMIT = 3;
 
   constructor(redisUrl: string, registerHandlers: (bot: Chat) => void) {
     this.redisUrl = redisUrl;
@@ -277,13 +284,29 @@ export class ChatManager {
       console.log("ChatManager: adapter recycle disabled");
       return;
     }
+    this.consecutiveRecycleFailures = 0;
     this.recycleTimer = setInterval(() => {
       if (this.adapters.size === 0) return;
       if (this.transitioning) return;
       console.log(`ChatManager: scheduled adapter recycle (every ${Math.round(intervalMs / 1000)}s)`);
-      this.rebuild().catch((err: unknown) => {
-        console.error("ChatManager: scheduled recycle failed:", err);
-      });
+      this.rebuild()
+        .then(() => {
+          this.consecutiveRecycleFailures = 0;
+        })
+        .catch((err: unknown) => {
+          this.consecutiveRecycleFailures++;
+          console.error(
+            `ChatManager: scheduled recycle failed (${this.consecutiveRecycleFailures}/${ChatManager.RECYCLE_FAILURE_LIMIT}):`,
+            err,
+          );
+          if (this.consecutiveRecycleFailures >= ChatManager.RECYCLE_FAILURE_LIMIT) {
+            console.error(
+              `ChatManager: recycle halted after ${this.consecutiveRecycleFailures} consecutive failures; ` +
+                "investigate logs and re-enable via a process restart or another scheduleAdapterRecycle() call",
+            );
+            this.stopAdapterRecycle();
+          }
+        });
     }, intervalMs);
     this.recycleTimer.unref();
     console.log(`ChatManager: adapter recycle enabled (every ${Math.round(intervalMs / 1000)}s)`);
@@ -295,6 +318,7 @@ export class ChatManager {
       clearInterval(this.recycleTimer);
       this.recycleTimer = null;
     }
+    this.consecutiveRecycleFailures = 0;
   }
 
   getCurrentBot(): Chat | null {
