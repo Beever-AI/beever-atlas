@@ -183,10 +183,30 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const [zoom, setZoom] = useState(1);
 
+  // RES-287/4b — mirrors the canonical pattern in
+  // `channel/MermaidBlock.tsx` (lines 129-184). The previous implementation
+  // had no cleanup on this useEffect, so React StrictMode's double-invoke
+  // fired two concurrent `mermaid.render()` coroutines against the singleton
+  // mermaid instance. The first (aborted) call corrupted mermaid's internal
+  // state and the second produced an error SVG → setError fired → fallback
+  // <details> tile rendered. With N MermaidBlocks on a wiki page, the page
+  // stacked N error tiles. The cancellation flag + clearTimeout + parse-first
+  // pattern below eliminates the race.
   useEffect(() => {
-    const render = async () => {
+    let cancelled = false;
+
+    // Debounce so we don't re-run mermaid's expensive parse+render on every
+    // rapid prop change (StrictMode double-invoke, theme flip, etc.). 250ms
+    // matches the channel/MermaidBlock implementation.
+    const debounceMs = 250;
+    const timer = setTimeout(() => {
+      if (!cancelled) void render();
+    }, debounceMs);
+
+    async function render(): Promise<void> {
       const theme = resolvedTheme === "dark" ? "dark" : "light";
       await ensureMermaidInit(theme, mermaidThemeConfig(theme));
+      if (cancelled) return;
       const sanitized = sanitizeMermaid(chart);
       // Mermaid v10+ resolves the promise even on parse errors, but returns a
       // diagnostic SVG containing the error text. Detect these cases explicitly.
@@ -197,24 +217,41 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
       const newId = () => `m${Math.random().toString(36).slice(2).replace(/[^a-zA-Z0-9]/g, "")}`;
 
       try {
+        // Parse first so bad syntax throws cleanly instead of returning a
+        // valid-shape SVG that contains "Syntax error in text". Some mermaid
+        // versions swallow the throw inside render() — parse() is the only
+        // path that reliably surfaces malformed source.
+        await mermaid.parse(sanitized, { suppressErrors: false });
+        if (cancelled) return;
         const id = newId();
         const result = await mermaid.render(id, sanitized);
+        if (cancelled) return;
         if (isErrorSvg(result.svg)) throw new Error("mermaid returned error svg");
         setSvg(result.svg);
         setError(null);
       } catch {
+        if (cancelled) return;
         try {
+          const simplified = simplifyMermaid(sanitized);
+          await mermaid.parse(simplified, { suppressErrors: false });
+          if (cancelled) return;
           const id2 = newId();
-          const result2 = await mermaid.render(id2, simplifyMermaid(sanitized));
+          const result2 = await mermaid.render(id2, simplified);
+          if (cancelled) return;
           if (isErrorSvg(result2.svg)) throw new Error("mermaid returned error svg after simplify");
           setSvg(result2.svg);
           setError(null);
         } catch (err2) {
+          if (cancelled) return;
           setError(String(err2));
         }
       }
+    }
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
     };
-    render();
   }, [chart, resolvedTheme]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z + 0.25, 3)), []);
