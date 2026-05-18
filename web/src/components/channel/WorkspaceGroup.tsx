@@ -57,8 +57,9 @@ export function WorkspaceGroup({
     connectionStatus != null && connectionStatus !== "connected";
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   // Read the cross-cutting sync-status signal so we can paint a pulsing
-  // indicator on whichever channel row is currently running a sync.
-  const { channelId: syncingChannelId } = useSyncStatus();
+  // indicator on every channel row currently running a sync — supports
+  // concurrent syncs across multiple channels.
+  const { syncingChannels } = useSyncStatus();
 
   const handleToggle = () => {
     setCollapsed(!collapsed);
@@ -138,7 +139,7 @@ export function WorkspaceGroup({
           // (especially useful when they've navigated away to another
           // channel mid-sync — the top-nav gate told them "something is
           // syncing" but didn't say where).
-          const isCurrentlySyncing = ch.channel_id === syncingChannelId;
+          const isCurrentlySyncing = syncingChannels.has(ch.channel_id);
           return (
             <Tooltip key={ch.channel_id}>
               <TooltipTrigger

@@ -52,11 +52,21 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const resizingRef = useRef(false);
   const { resolvedTheme, toggleTheme } = useTheme();
   const { isActive: isAskActive } = useAskSessions();
-  // RES-285 — read the global "is a channel currently syncing?" signal so
-  // we can gate the top-nav NavLinks below. Channel-list switching is NOT
-  // gated; the Home logo + Home NavLink are NOT gated (universal escape
-  // hatch — user must always be able to reach the dashboard).
-  const { isSyncRunning, channelId: syncingChannelId } = useSyncStatus();
+  // RES-285 — read the global "which channels are syncing right now?"
+  // signal so we can gate the top-nav NavLinks below. Derived: any
+  // channel in the set means a sync is active. Channel-list switching
+  // and the Home NavLink + logo stay clickable as escape hatches.
+  const { syncingChannels } = useSyncStatus();
+  const isSyncRunning = syncingChannels.size > 0;
+  // Tooltip copy: name the count of running syncs rather than try to
+  // resolve channel ids → display names here (Sidebar doesn't have the
+  // channels map handy). The Sidebar row indicator already points to
+  // which specific channels are syncing — this is the supporting
+  // explanation for the disabled nav state.
+  const gateTooltipText =
+    syncingChannels.size === 1
+      ? "Sync in progress — wait for completion"
+      : `${syncingChannels.size} syncs in progress — wait for completion`;
 
   useEffect(() => {
     window.localStorage.setItem(WIDTH_KEY, String(width));
@@ -194,7 +204,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                 <TooltipTrigger render={navLink} />
                 <TooltipContent side="right">
                   {gated
-                    ? `Sync in progress${syncingChannelId ? ` on #${syncingChannelId}` : ""} — wait for completion`
+                    ? gateTooltipText
                     : label}
                 </TooltipContent>
               </Tooltip>
@@ -208,7 +218,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               <Tooltip key={to}>
                 <TooltipTrigger render={navLink} />
                 <TooltipContent side="right">
-                  {`Sync in progress${syncingChannelId ? ` on #${syncingChannelId}` : ""} — wait for completion`}
+                  {gateTooltipText}
                 </TooltipContent>
               </Tooltip>
             );
