@@ -189,7 +189,11 @@ async function syncConnectionsFromBackend(chatManager: ChatManager, label: strin
 }
 
 async function loadConnectionsFromBackend(chatManager: ChatManager): Promise<void> {
-  const delays = [1000, 2000, 4000, 8000, 16000];
+  // RES-286 — compressed from [1, 2, 4, 8, 16]s (31 s worst case) so that a
+  // bot restart only blocks `/bridge/...` calls for ~12 s, not ~31 s. The
+  // backend health check + Redis are typically up within ~3 s; we keep five
+  // retries for genuinely slow boots but cap the trailing waits at 4 s each.
+  const delays = [500, 1000, 2000, 4000, 4000];
 
   for (let attempt = 0; attempt < delays.length; attempt++) {
     try {
@@ -438,10 +442,25 @@ function startServer(chatManager: ChatManager): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // Health check
     if (req.method === "GET" && req.url === "/health") {
-      jsonResponse(res, 200, {
-        status: "ok",
+      // RES-286 — return 503 while the chat manager is rebuilding adapters
+      // (recycle or sync) so docker healthcheck retries kick the bot only
+      // once it's actually wedged, not during legitimate 1-s recycle windows.
+      // The full `memory` block lets operators graph RSS between recycles
+      // and catch leak regressions early.
+      //
+      // SECURITY: this endpoint is unauthenticated and exposes
+      // `process.memoryUsage()` + uptime. The bot listens on `127.0.0.1:3001`
+      // (internal management surface; see docker-compose.yml `bot.ports`).
+      // If the bot port is ever exposed beyond loopback, gate this response
+      // behind the same `BRIDGE_API_KEY` Bearer auth that `/bridge/*` uses,
+      // or move memory/uptime to a separate `/debug/health` route.
+      const transitioning = chatManager.isTransitioning();
+      jsonResponse(res, transitioning ? 503 : 200, {
+        status: transitioning ? "transitioning" : "ok",
         adapters: chatManager.listAdapters(),
-        transitioning: chatManager.isTransitioning(),
+        transitioning,
+        uptime_seconds: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
       });
       return;
     }
@@ -479,6 +498,7 @@ function startServer(chatManager: ChatManager): void {
       clearInterval(backgroundSyncTimer);
       backgroundSyncTimer = null;
     }
+    chatManager.stopAdapterRecycle();
     server.close();
     const bot = chatManager.getCurrentBot();
     if (bot) {
@@ -739,6 +759,24 @@ async function main(): Promise<void> {
 
   // Start periodic background sync for self-healing
   startBackgroundSync(chatManager);
+
+  // RES-286 — schedule periodic adapter recycle to drop accumulated state in
+  // long-lived adapter websockets (notably chat-adapter-mattermost 1.1.2,
+  // which leaks ~37 MB/h via its ws message handler closures). Default is
+  // 6 h; set ADAPTER_RECYCLE_INTERVAL_MS=0 to disable for local dev.
+  //
+  // A floor of 60 s applies to any positive override — a too-small interval
+  // would thrash the websocket and degrade availability. The `=== 0` escape
+  // hatch is preserved so dev/tests can opt out entirely.
+  const RECYCLE_DEFAULT_MS = 21_600_000;
+  const RECYCLE_FLOOR_MS = 60_000;
+  const recycleRaw = parseInt(process.env.ADAPTER_RECYCLE_INTERVAL_MS || `${RECYCLE_DEFAULT_MS}`, 10);
+  const recycleMs = !Number.isFinite(recycleRaw)
+    ? RECYCLE_DEFAULT_MS
+    : recycleRaw === 0
+      ? 0
+      : Math.max(recycleRaw, RECYCLE_FLOOR_MS);
+  chatManager.scheduleAdapterRecycle(recycleMs);
 
   startServer(chatManager);
   console.log("Bot service ready");

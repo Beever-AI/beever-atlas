@@ -6,11 +6,12 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from beever_atlas.infra.auth import Principal, require_user
 from beever_atlas.infra.config import get_settings
+from beever_atlas.infra.rate_limit import limiter
 from beever_atlas.stores import get_stores
 
 logger = logging.getLogger(__name__)
@@ -418,8 +419,18 @@ async def validate_connection(connection_id: str) -> ConnectionResponse:
 
 
 @router.get("/api/connections/{connection_id}/channels", response_model=list[ChannelItem])
-async def list_connection_channels(connection_id: str) -> list[ChannelItem]:
-    """List available channels for a platform connection."""
+@limiter.limit("20/minute")
+async def list_connection_channels(
+    request: Request,  # noqa: ARG001 — required by slowapi to identify the caller
+    connection_id: str,
+) -> list[ChannelItem]:
+    """List available channels for a platform connection.
+
+    Rate-limited to 20/minute per client (RES-286 security review): the FE
+    Refresh button can be clicked rapidly, and each call proxies to the
+    upstream Mattermost/Slack/etc. API. The cap prevents a runaway client
+    from exhausting the bot token's upstream rate limit.
+    """
     stores = get_stores()
     conn = await stores.platform.get_connection(connection_id)
     if conn is None:

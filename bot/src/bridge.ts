@@ -339,6 +339,14 @@ function parseQuery(url: string): URLSearchParams {
 const userProfileCache = new Map<string, { name: string; image: string | null }>();
 const USER_LOOKUP_CONCURRENCY = 8;
 
+/** RES-286 — let callers (notably ChatManager's scheduled adapter recycle)
+ *  drop this cross-platform user-profile cache. Entries here are name+avatar
+ *  lookups against Slack/Discord/Teams/etc. — re-fetching is cheap and the
+ *  Map is otherwise unbounded over the bot's lifetime. */
+export function clearUserProfileCache(): void {
+  userProfileCache.clear();
+}
+
 // ── SlackBridge ──────────────────────────────────────────────────────────────
 
 /** Hosts allowed for token-bearing Slack file fetches (CodeQL alert #27).
@@ -1185,6 +1193,27 @@ interface TeamsConversationRecord {
 
 const teamsConversationRegistry = new Map<string, Map<string, TeamsConversationRecord>>();
 
+/** RES-286 — Teams "I've seen this conversation" registry is populated from
+ *  webhooks and is the only source of truth for `TeamsBridge.listChannels()`
+ *  (Bot Framework exposes no list API). It must NOT be wholesale-cleared on
+ *  adapter recycle — that would empty the sidebar until each conversation
+ *  posts again. Instead, drop only entries whose `lastSeenAt` is older than
+ *  `maxAgeMs` (default 30 days). Returns the number of entries pruned. */
+export function pruneStaleTeamsConversations(maxAgeMs: number = 30 * 24 * 60 * 60 * 1000): number {
+  const cutoff = Date.now() - maxAgeMs;
+  let pruned = 0;
+  for (const [connId, bucket] of teamsConversationRegistry.entries()) {
+    for (const [convId, rec] of bucket.entries()) {
+      if (rec.lastSeenAt < cutoff) {
+        bucket.delete(convId);
+        pruned++;
+      }
+    }
+    if (bucket.size === 0) teamsConversationRegistry.delete(connId);
+  }
+  return pruned;
+}
+
 export function recordTeamsConversation(
   connectionId: string,
   activity: {
@@ -1470,6 +1499,25 @@ interface TelegramChatEntry {
 }
 const telegramChatRegistry = new Map<string, Map<string, TelegramChatEntry>>();
 
+/** RES-286 — Telegram chat registry, populated from webhooks. Same shape as
+ *  `teamsConversationRegistry` (the only source of truth for
+ *  `TelegramBridge.listChannels()`), so we age out stale entries instead of
+ *  wholesale-clearing. Returns the number of entries pruned. */
+export function pruneStaleTelegramChats(maxAgeMs: number = 30 * 24 * 60 * 60 * 1000): number {
+  const cutoff = Date.now() - maxAgeMs;
+  let pruned = 0;
+  for (const [connId, bucket] of telegramChatRegistry.entries()) {
+    for (const [chatId, rec] of bucket.entries()) {
+      if (rec.lastSeenAt < cutoff) {
+        bucket.delete(chatId);
+        pruned++;
+      }
+    }
+    if (bucket.size === 0) telegramChatRegistry.delete(connId);
+  }
+  return pruned;
+}
+
 export function recordTelegramChat(
   connectionId: string,
   chat: { id: number | string; title?: string; type?: string; first_name?: string; last_name?: string; username?: string },
@@ -1583,6 +1631,14 @@ class TelegramBridge implements PlatformBridge {
 // but does not expose listing/history methods.
 
 const mattermostUserCache = new Map<string, { name: string; image: string | null }>();
+
+/** RES-286 — let callers (notably ChatManager's scheduled adapter recycle)
+ *  drop this module-level cache. Without this hook the Map grows unbounded
+ *  over the bot's lifetime since entries are added on every user lookup but
+ *  never expire. */
+export function clearMattermostUserCache(): void {
+  mattermostUserCache.clear();
+}
 
 class MattermostBridge implements PlatformBridge {
   private baseUrl: string;
@@ -2576,10 +2632,30 @@ export function registerBridgeRoutes(
   // wiring time. Moved out of module-load so tests can import the file.
   assertBridgeAuthReady();
 
-  // Subscribe to adapter rebuilds to clear the bridge singleton cache.
-  // This ensures stale adapter references are never reused after unregister/reregister.
+  // Subscribe to adapter rebuilds to clear bridge-level caches. Critical
+  // for the RES-286 scheduled adapter recycle: every 6 h the ChatManager
+  // tears down and rebuilds adapters, and these caches must be dropped in
+  // lockstep — otherwise they hold stale adapter references (`bridgeCache`)
+  // or grow without bound across the bot's lifetime.
+  //
+  // Cache shape and what we do with each:
+  //  - `bridgeCache`              — stale singleton adapter refs   → clear
+  //  - `mattermostUserCache`      — per-user metadata, cheap to refetch → clear
+  //  - `userProfileCache`         — same shape, cross-platform     → clear
+  //  - `teamsConversationRegistry`/`telegramChatRegistry` — ONLY source of
+  //    truth for `listChannels()` on those platforms (populated from inbound
+  //    webhooks; no list API exists). Wholesale-clearing would empty the
+  //    sidebar until each conversation posts again, so we age out stale
+  //    entries instead (default 30 day TTL).
   chatManager.onRebuild(() => {
     clearBridgeCache();
+    clearMattermostUserCache();
+    clearUserProfileCache();
+    const teamsPruned = pruneStaleTeamsConversations();
+    const telegramPruned = pruneStaleTelegramChats();
+    if (teamsPruned > 0 || telegramPruned > 0) {
+      console.log(`Bridge: rebuild pruned ${teamsPruned} stale Teams + ${telegramPruned} stale Telegram entries`);
+    }
   });
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {

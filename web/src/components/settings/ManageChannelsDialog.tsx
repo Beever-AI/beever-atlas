@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Loader2, AlertCircle, Save } from "lucide-react";
+import { X, Loader2, AlertCircle, Save, RefreshCw } from "lucide-react";
 import { ChannelSelector } from "./ChannelSelector";
 import { useConnectionChannels, useUpdateChannels } from "@/hooks/useConnections";
 import type { PlatformConnection } from "@/lib/types";
@@ -10,7 +10,7 @@ interface ManageChannelsDialogProps {
 }
 
 export function ManageChannelsDialog({ connection, onClose }: ManageChannelsDialogProps) {
-  const { channels, loading, error } = useConnectionChannels(connection.id);
+  const { channels, loading, error, refetch } = useConnectionChannels(connection.id);
   const { updateChannels, loading: saving, error: saveError } = useUpdateChannels(connection.id);
   const [selected, setSelected] = useState<string[]>(connection.selected_channels);
 
@@ -42,13 +42,31 @@ export function ManageChannelsDialog({ connection, onClose }: ManageChannelsDial
               {connection.display_name || connection.platform}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
-          >
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
+          <div className="flex items-center gap-1">
+            {/* RES-286 — refresh button. Calling refetch() re-fetches the bot's
+                live channel list, so a channel the user just added the bot to
+                (e.g. tech-studio on Mattermost) shows up without restarting the
+                bot or reopening the dialog. */}
+            <button
+              type="button"
+              onClick={refetch}
+              disabled={loading}
+              title="Refresh channel list"
+              aria-label="Refresh channel list"
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw
+                className={`w-4 h-4 text-muted-foreground ${loading ? "animate-spin" : ""}`}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+            >
+              <X className="w-4 h-4 text-muted-foreground" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
