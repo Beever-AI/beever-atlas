@@ -13,7 +13,6 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { Dashboard } from "@/pages/Dashboard";
 import { Channels } from "@/pages/Channels";
-import { ChannelWorkspace } from "@/pages/ChannelWorkspace";
 import { AskPage } from "@/pages/AskPage";
 import { SharedAskPage } from "@/pages/SharedAskPage";
 import {
@@ -38,6 +37,8 @@ import { ChannelSettingsTab } from "@/components/channel/ChannelSettingsTab";
 import { SyncHistoryTab } from "@/components/channel/SyncHistoryTab";
 import { useTheme } from "@/hooks/useTheme";
 import { ChannelDefaultRedirect } from "@/pages/ChannelWorkspace";
+import { ChannelWorkspaceRoute } from "@/routes/ChannelWorkspaceRoute";
+import { SyncStatusProvider } from "@/contexts/SyncStatusContext";
 
 function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -62,6 +63,7 @@ function AppShell() {
 
   return (
     <AskSessionsProvider>
+    <SyncStatusProvider>
     <div className="grid grid-cols-[auto_1fr] h-screen h-dvh bg-background">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {/* Mobile overlay */}
@@ -85,7 +87,10 @@ function AppShell() {
             <Routes location={location}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/channels" element={<Channels />} />
-              <Route path="/channels/:id" element={<ChannelWorkspace />}>
+              {/* RES-285 — `ChannelWorkspaceRoute` mounts <ChannelWorkspace
+                  key={id} /> so the entire subtree (and every useState in
+                  it) resets atomically on channel switch. */}
+              <Route path="/channels/:id" element={<ChannelWorkspaceRoute />}>
                 <Route index element={<ChannelDefaultRedirect />} />
                 <Route path="wiki" element={<WikiTab />} />
                 <Route path="wiki/:slug" element={<WikiTab />} />
@@ -136,6 +141,7 @@ function AppShell() {
         </main>
       </div>
     </div>
+    </SyncStatusProvider>
     </AskSessionsProvider>
   );
 }
