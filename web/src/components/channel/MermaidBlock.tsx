@@ -129,6 +129,30 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   useEffect(() => {
     let cancelled = false;
 
+    // RES-287/4b round 2 — same orphan-DOM reaper as wiki/MermaidBlock.
+    // mermaid v11's render() leaves a temp `<div id="d${id}">` in body
+    // after parse failures. Track every id we ask it to render and
+    // remove the matching DOM after each attempt so the bomb-emoji
+    // syntax-error SVG never escapes into the page below us.
+    const usedIds = new Set<string>([diagramId, `${diagramId}s`]);
+    const purgeOrphans = () => {
+      for (const id of usedIds) {
+        for (const candidate of [id, `d${id}`, `d${id}-svg`]) {
+          const el = document.getElementById(candidate);
+          if (el && document.body.contains(el)) el.remove();
+        }
+      }
+      Array.from(document.body.children).forEach((el) => {
+        if (
+          (el.tagName === "DIV" || el.tagName === "svg" || el.tagName === "SVG") &&
+          (el.querySelector('[class*="error-icon"]') ||
+            el.textContent?.includes("Syntax error in text"))
+        ) {
+          el.remove();
+        }
+      });
+    };
+
     // Debounce so we don't re-run mermaid's expensive parse+render on every
     // streamed token while the LLM is still emitting the code block. Each
     // re-render also replaces the rendered SVG, which caused visible layout
@@ -153,8 +177,9 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           await mermaid.parse(source, { suppressErrors: false });
           ({ svg: rendered } = await mermaid.render(diagramId, source));
         } catch {
-          // First attempt failed; retry with a best-effort simplification so
-          // malformed LLM output still produces *something* renderable.
+          // First attempt failed; reap mermaid's orphan DOM before the
+          // retry, otherwise its error SVG stacks beneath the body.
+          purgeOrphans();
           source = simplifyMermaid(processed);
           await mermaid.parse(source, { suppressErrors: false });
           ({ svg: rendered } = await mermaid.render(`${diagramId}s`, source));
@@ -174,12 +199,15 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           setError(err instanceof Error ? err.message : String(err));
           setSvg(null);
         }
+      } finally {
+        purgeOrphans();
       }
     }
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      purgeOrphans();
     };
   }, [code, diagramId]);
 

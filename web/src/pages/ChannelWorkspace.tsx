@@ -129,12 +129,16 @@ export function ChannelWorkspace() {
   // hidden. Hydrated from the same localStorage key SyncProgressV2
   // wrote to in earlier uncontrolled mode.
   const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
+    // Default: collapsed. Users find the bar arresting when expanded by
+    // default; once they've explicitly clicked Expand once, we remember
+    // it. `raw === "false"` is the only signal we treat as opt-in-to-
+    // expanded; anything else (null, "true", junk) → collapsed.
+    if (typeof window === "undefined") return true;
     try {
       const raw = window.localStorage.getItem("beever.monitor.collapsed");
-      return raw === "true";
+      return raw !== "false";
     } catch {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -210,15 +214,23 @@ export function ChannelWorkspace() {
   // RES-285 — publish the strict "is sync actually running right now?"
   // signal up to SyncStatusContext so Sidebar can gate its top-nav.
   //
-  // We narrow `syncState.state` to a primitive boolean BEFORE handing it
-  // to the setter — the context uses two separate `useState` cells
-  // (boolean + string|null) precisely so React's `Object.is` bail-out
-  // applies and consumers don't re-render on identical publishes.
+  // We narrow to a primitive boolean BEFORE handing it to the setter —
+  // the context uses two separate `useState` cells (boolean +
+  // string|null) precisely so React's `Object.is` bail-out applies and
+  // consumers don't re-render on identical publishes.
   //
-  // Gate fires ONLY on `state === "syncing"`. NOT on `error` (terminal —
-  // user needs Settings to fix), NOT on `idle`/`completed`.
+  // Active-sync detection mirrors `useSync.ts:300-304`: the backend can
+  // legitimately return `state: "idle"` while phases are still
+  // `in_flight` (the "warming up" window after dispatch but before the
+  // top-level state transitions). Both signals must light up the gate.
+  // We deliberately exclude `error` — the sync is terminal at that
+  // point and locking the user out of Settings would trap recovery.
   const { setIsSyncRunning, setChannelId: setSyncingChannelId } = useSyncStatus();
-  const isSyncRunningHere = syncState.state === "syncing";
+  const anyPhaseInFlight = (syncState.phases ?? []).some(
+    (p) => p.state === "in_flight",
+  );
+  const isSyncRunningHere =
+    syncState.state === "syncing" || anyPhaseInFlight;
   useEffect(() => {
     setIsSyncRunning(isSyncRunningHere);
     setSyncingChannelId(isSyncRunningHere ? (id ?? null) : null);

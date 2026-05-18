@@ -195,6 +195,41 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   useEffect(() => {
     let cancelled = false;
 
+    // RES-287/4b round 2 — mermaid v11's `render(id, text)` creates a
+    // temporary `<div id="d${id}">` in `document.body` to compute the
+    // SVG. On success it removes the div; on PARSE FAILURE mid-render
+    // it leaves the div with a bomb-emoji "Syntax error in text" SVG
+    // visible at the bottom of the page (mermaid's own DOM, NOT our
+    // React fallback). The wrapper below + `purgeOrphans()` reaps
+    // every temp div mermaid might have left behind for the ids we
+    // asked it to render, regardless of which catch branch we hit.
+    const usedIds = new Set<string>();
+    const purgeOrphans = () => {
+      // Mermaid v11 wraps the SVG in `<div id="d${id}">`; older versions
+      // used `${id}` directly. Try both, and as a belt-and-braces sweep,
+      // remove any direct child of <body> whose subtree contains the
+      // signature bomb-emoji error markup.
+      for (const id of usedIds) {
+        for (const candidate of [id, `d${id}`, `d${id}-svg`]) {
+          const el = document.getElementById(candidate);
+          if (el && document.body.contains(el)) el.remove();
+        }
+      }
+      // Sweep any straggler "Syntax error in text" / error-icon SVGs
+      // that escaped the id-based purge (e.g. mermaid used a different
+      // id format internally). Scoped to direct body children so we
+      // never touch the legitimate inline SVGs we just set via setSvg.
+      Array.from(document.body.children).forEach((el) => {
+        if (
+          (el.tagName === "DIV" || el.tagName === "svg" || el.tagName === "SVG") &&
+          (el.querySelector('[class*="error-icon"]') ||
+            el.textContent?.includes("Syntax error in text"))
+        ) {
+          el.remove();
+        }
+      });
+    };
+
     // Debounce so we don't re-run mermaid's expensive parse+render on every
     // rapid prop change (StrictMode double-invoke, theme flip, etc.). 250ms
     // matches the channel/MermaidBlock implementation.
@@ -211,10 +246,16 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
       // Mermaid v10+ resolves the promise even on parse errors, but returns a
       // diagnostic SVG containing the error text. Detect these cases explicitly.
       const isErrorSvg = (svg: string) =>
-        svg.includes("Syntax error in text") || svg.includes("class=\"error-icon\"");
+        svg.includes("Syntax error in text") ||
+        svg.includes("class=\"error-icon\"") ||
+        svg.includes("mermaid version");
       // Mermaid IDs must start with a letter; Math.random().toString(36).slice(2)
       // can begin with a digit, which breaks selector lookups inside mermaid.
-      const newId = () => `m${Math.random().toString(36).slice(2).replace(/[^a-zA-Z0-9]/g, "")}`;
+      const newId = () => {
+        const id = `m${Math.random().toString(36).slice(2).replace(/[^a-zA-Z0-9]/g, "")}`;
+        usedIds.add(id);
+        return id;
+      };
 
       try {
         // Parse first so bad syntax throws cleanly instead of returning a
@@ -230,6 +271,9 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
         setSvg(result.svg);
         setError(null);
       } catch {
+        // Purge orphan mermaid DOM from the failed first attempt before
+        // we try simplification — otherwise the error svg accumulates.
+        purgeOrphans();
         if (cancelled) return;
         try {
           const simplified = simplifyMermaid(sanitized);
@@ -245,12 +289,18 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
           if (cancelled) return;
           setError(String(err2));
         }
+      } finally {
+        // Always reap — succeeds on a no-op when there's nothing to clean.
+        purgeOrphans();
       }
     }
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      // One last reap on unmount so navigating away from a page mid-
+      // render doesn't leave the bomb SVG behind on the new page.
+      purgeOrphans();
     };
   }, [chart, resolvedTheme]);
 

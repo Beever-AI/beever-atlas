@@ -1205,10 +1205,47 @@ export function WikiTab() {
       );
     }
 
-    // Default path — ``pending`` (no maintenance yet), ``skipped``
-    // (feature flag off), or no phases at all (legacy backend).
-    // Original behaviour: show the Sync / Generate CTA depending on
-    // whether the channel has any memories.
+    // RES-285 follow-up — "almost ready" state. Sync + extraction are
+    // done (hasMemories=true) and overview_wiki is queued (pending) but
+    // wiki_maintenance hasn't produced any entity pages yet
+    // (wikiMaintDone=0). The auto-overview subscriber on the backend
+    // will fire shortly; until it does, the previous behaviour showed
+    // a misleading "No Wiki Yet" copy with a Generate CTA that didn't
+    // tell the user the system was already going to build it for them.
+    //
+    // We narrow on `overviewState === "pending"` specifically (NOT
+    // `undefined`) — undefined means the backend has no phase report,
+    // which is the legacy / feature-flag-off path where auto-overview
+    // is NOT coming, so the default "click Generate" CTA is correct.
+    if (overviewState === "pending" && wikiMaintDone === 0 && hasMemories) {
+      return (
+        <PipelineEmptyState
+          icon={Sparkles}
+          title="Wiki will start shortly"
+          description="Sync and extraction are complete — the wiki will start building automatically. You can also click Generate to start it now."
+          steps={[
+            { label: "Sync channel", icon: FolderSync, done: true, active: false },
+            { label: "Build memories", icon: Sparkles, done: true, active: false },
+            { label: "Generate wiki", icon: BookOpen, done: false, active: true },
+          ]}
+        >
+          <WikiRegenerateButton
+            currentLang={targetLang}
+            supportedLanguages={supported}
+            isRefreshing={isRefreshing}
+            onRegenerate={() => handleRegenerateInLang(targetLang)}
+            onRegenerateInLang={handleSwitchLang}
+            label="Generate"
+            size="lg"
+          />
+        </PipelineEmptyState>
+      );
+    }
+
+    // Default path — `undefined` overviewState (legacy backend, feature
+    // flag off, or stale data), `skipped`, or any case we didn't catch
+    // above. Falls back to the original "Sync / Generate CTA depending
+    // on whether the channel has any memories" UX.
     //
     // sync-monitor-redesign — hide the Generate CTA while any pipeline
     // phase is ``in_flight``. The SyncProgressV2 card above already
