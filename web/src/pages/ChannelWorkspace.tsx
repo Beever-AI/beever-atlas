@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { useParams, Outlet, useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import {
@@ -11,6 +11,7 @@ import {
   FileText,
   History,
   Settings,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useConnectionMap } from "@/hooks/useConnectionMap";
@@ -297,6 +298,53 @@ export function ChannelWorkspace() {
   const syncCompletedWithNoNew =
     syncState.state === "idle" && !!syncState.job_id && (syncState.total_messages ?? 0) === 0;
 
+  // Stale-failure dismiss UX. After a sync fails, the backend keeps
+  // returning the error state on `/sync/status` until a newer sync
+  // succeeds — leaving the red banner visible forever for channels
+  // where the user doesn't want to retry. We let the user dismiss the
+  // current failure, persisted per-channel in localStorage. The
+  // signature is `{job_id}|{first 200 chars of message}` so:
+  //   * A NEW failure (different job_id) shows the banner again.
+  //   * A re-render with the SAME failure stays dismissed.
+  // Cooldown messages are intentionally NOT dismissable — they're
+  // time-bounded and informative, not noise.
+  const failureSignature = useMemo(() => {
+    if (!syncFailureMessage) return null;
+    return `${syncState.job_id ?? "?"}|${syncFailureMessage.slice(0, 200)}`;
+  }, [syncFailureMessage, syncState.job_id]);
+  const dismissStorageKey = id ? `beever.sync-failure-dismissed.${id}` : null;
+  const [dismissedFailureSig, setDismissedFailureSig] = useState<string | null>(() => {
+    if (typeof window === "undefined" || !dismissStorageKey) return null;
+    try {
+      return window.localStorage.getItem(dismissStorageKey);
+    } catch {
+      return null;
+    }
+  });
+  // If the user navigates between channels, re-hydrate from storage so
+  // each channel's dismissal state is correct.
+  useEffect(() => {
+    if (typeof window === "undefined" || !dismissStorageKey) return;
+    try {
+      setDismissedFailureSig(window.localStorage.getItem(dismissStorageKey));
+    } catch {
+      setDismissedFailureSig(null);
+    }
+  }, [dismissStorageKey]);
+  const failureDismissed =
+    !isCoolingDown &&
+    failureSignature != null &&
+    failureSignature === dismissedFailureSig;
+  const dismissFailureBanner = useCallback(() => {
+    if (!failureSignature || !dismissStorageKey) return;
+    setDismissedFailureSig(failureSignature);
+    try {
+      window.localStorage.setItem(dismissStorageKey, failureSignature);
+    } catch {
+      /* localStorage quota — fine, dismissal is in-memory only */
+    }
+  }, [failureSignature, dismissStorageKey]);
+
   function handleRefreshStatus() {
     if (!id) return;
     setRefreshing(true);
@@ -397,16 +445,33 @@ export function ChannelWorkspace() {
           </div>
           {isMember && (
             <>
-              {displayFailureMessage && (
+              {displayFailureMessage && !failureDismissed && (
                 <div
                   className={cn(
-                    "rounded-lg border px-3 py-2 text-xs",
+                    "rounded-lg border px-3 py-2 text-xs flex items-start gap-2",
                     isCoolingDown
                       ? "border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300"
                       : "border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300",
                   )}
                 >
-                  {isCoolingDown ? displayFailureMessage : `Sync failed: ${displayFailureMessage}`}
+                  <span className="flex-1 min-w-0 break-words">
+                    {isCoolingDown ? displayFailureMessage : `Sync failed: ${displayFailureMessage}`}
+                  </span>
+                  {/* Dismiss is only offered for the failure banner — cooldown
+                      timers are time-bounded informational state and shouldn't
+                      hide. Per-channel localStorage means a NEW failure (new
+                      job_id) brings the banner back. */}
+                  {!isCoolingDown && failureSignature && (
+                    <button
+                      type="button"
+                      onClick={dismissFailureBanner}
+                      aria-label="Dismiss sync failure"
+                      title="Dismiss this failure (will reappear if a newer sync also fails)"
+                      className="shrink-0 -mr-1 -mt-0.5 p-0.5 rounded hover:bg-rose-200/40 dark:hover:bg-rose-900/40 transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               )}
               {syncCompletedWithNoNew && (
