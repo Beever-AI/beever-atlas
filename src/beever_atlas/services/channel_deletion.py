@@ -450,6 +450,27 @@ async def _purge_fanout(channel_id: str, stores: Any, *, principal_id: str) -> d
             exc,
         )
 
+    # 8b. Wiki render cache + generation status (all languages) — purge-only.
+    #     GET /api/channels/{id}/wiki serves the RENDERED blob from the
+    #     ``wiki_cache`` collection (keyed ``{channel_id}:{lang}``), not from
+    #     ``wiki_pages`` — so without this the wiki kept being served (HTTP 200)
+    #     after a hard delete even though every other store was emptied.
+    #     Instantiate WikiCache directly (there is no ``stores.wiki``).
+    try:
+        from beever_atlas.infra.config import get_settings
+        from beever_atlas.wiki.cache import WikiCache
+
+        wiki_cache = WikiCache(get_settings().mongodb_uri)
+        cache_n = await wiki_cache.delete_all_for_channel(channel_id)
+        counts["wiki_cache_deleted"] = int(cache_n or 0)
+    except Exception as exc:  # noqa: BLE001
+        errors["wiki_cache_delete_all_for_channel"] = str(exc)
+        logger.warning(
+            "purge fan-out: WikiCache.delete_all_for_channel failed channel=%s: %s",
+            channel_id,
+            exc,
+        )
+
     # 9. Chat history (purge-only).
     try:
         chat_n = await stores.chat_history.delete_by_channel(channel_id)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -386,6 +387,27 @@ class WikiCache:
         await self._ensure_db()
         key = _cache_key(channel_id, target_lang)
         await self._status_collection.delete_one({"channel_id": key})
+
+    async def delete_all_for_channel(self, channel_id: str) -> int:
+        """Hard-delete the rendered wiki blob + generation status for a channel
+        across ALL languages — used by the channel hard-purge.
+
+        ``delete_wiki`` only clears one language; a purge must remove every
+        ``{channel_id}:{lang}`` row (``_cache_key``) plus the legacy bare
+        ``channel_id`` row. Both are matched with an anchored prefix
+        (``^<id>(:|$)``) so an id can never collide with another that merely
+        shares a prefix. Returns total rows deleted across ``wiki_cache`` +
+        ``wiki_generation_status``. Does NOT touch ``wiki_pages`` — the purge
+        fan-out deletes those via ``WikiPageStore.delete_all_for_channel_all_langs``.
+        """
+        await self._ensure_db()
+        pattern = {"$regex": f"^{re.escape(channel_id)}(:|$)"}
+        deleted = 0
+        r1 = await self._collection.delete_many({"channel_id": pattern})
+        deleted += int(r1.deleted_count or 0)
+        r2 = await self._status_collection.delete_many({"channel_id": pattern})
+        deleted += int(r2.deleted_count or 0)
+        return deleted
 
     def close(self) -> None:
         # The Motor client is now a module-level singleton; do not close it
