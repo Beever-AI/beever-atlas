@@ -651,9 +651,7 @@ async def reset_channel_data(
     # and this response envelope) stays here.
     from beever_atlas.services.channel_deletion import _ordered_store_fanout
 
-    fanout = await _ordered_store_fanout(
-        channel_id, mode="reset", principal_id="admin:reset"
-    )
+    fanout = await _ordered_store_fanout(channel_id, mode="reset", principal_id="admin:reset")
     results: dict[str, int] = fanout["results"]
     errors: list[str] = fanout["errors"]
 

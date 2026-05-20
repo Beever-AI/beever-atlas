@@ -245,9 +245,7 @@ async def test_purge_happy_path_fans_out_to_every_store(patched) -> None:
     # Unlinked only from the connection that linked the channel; conn-a's
     # remaining channels keep C-other.
     assert result["unlinked_from"] == ["conn-a"]
-    s.platform.update_connection.assert_awaited_once_with(
-        "conn-a", selected_channels=["C-other"]
-    )
+    s.platform.update_connection.assert_awaited_once_with("conn-a", selected_channels=["C-other"])
 
     # Policy delete + scheduler de-reg (order: policy first).
     s.mongodb.delete_channel_policy.assert_awaited_once_with(_CHANNEL_ID)
@@ -356,9 +354,7 @@ async def test_purge_reenters_after_stale_lock(patched) -> None:
 async def test_purge_partial_failure_retains_lock_and_audits(patched) -> None:
     """One store raising → status='partial', remaining stages still run, audit
     STILL written, lock RETAINED (the reaper re-runs)."""
-    patched.stores.weaviate.delete_by_channel = AsyncMock(
-        side_effect=RuntimeError("weaviate down")
-    )
+    patched.stores.weaviate.delete_by_channel = AsyncMock(side_effect=RuntimeError("weaviate down"))
 
     result = await cd.purge_channel(_CHANNEL_ID, principal_id="user:alice")
 
@@ -425,9 +421,7 @@ async def test_reset_mode_flips_messages_and_skips_wiki(patched) -> None:
     data + Weaviate facts + sync state, and SKIPS wiki pages, graph :WikiPage,
     QA history, chat history, connection unlink, scheduler de-reg, and the
     purge lock entirely."""
-    out = await cd._ordered_store_fanout(
-        _CHANNEL_ID, mode="reset", principal_id="admin:reset"
-    )
+    out = await cd._ordered_store_fanout(_CHANNEL_ID, mode="reset", principal_id="admin:reset")
 
     # Reset return shape: results dict + errors LIST (admin's contract).
     assert isinstance(out["results"], dict)

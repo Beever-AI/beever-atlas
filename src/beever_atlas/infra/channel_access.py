@@ -215,8 +215,7 @@ async def assert_channel_delete_access(principal: Principal | str, channel_id: s
         if kind in ("user", "mcp") or _is_elevated():
             return
         logger.info(
-            "channel_delete deny: channel=%s principal=%s kind=%s "
-            "reason=single_tenant_non_user",
+            "channel_delete deny: channel=%s principal=%s kind=%s reason=single_tenant_non_user",
             channel_id,
             pid,
             kind,
@@ -236,8 +235,7 @@ async def assert_channel_delete_access(principal: Principal | str, channel_id: s
         if _is_elevated():
             return
         logger.info(
-            "channel_delete deny: channel=%s principal=%s kind=%s "
-            "reason=orphan_requires_admin",
+            "channel_delete deny: channel=%s principal=%s kind=%s reason=orphan_requires_admin",
             channel_id,
             pid,
             kind,

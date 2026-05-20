@@ -206,9 +206,7 @@ async def test_cross_channel_survival_mixed_v1_v2() -> None:
 
 
 async def test_no_matching_channel_is_noop() -> None:
-    store, coll = _store(
-        [{"session_id": "s1", "channel_id": "C2", "messages": [{"role": "u"}]}]
-    )
+    store, coll = _store([{"session_id": "s1", "channel_id": "C2", "messages": [{"role": "u"}]}])
     deleted = await store.delete_by_channel("C1")
     assert deleted == 0
     assert len(coll.docs) == 1

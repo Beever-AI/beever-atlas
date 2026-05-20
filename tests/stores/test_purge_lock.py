@@ -23,7 +23,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
 from pymongo.errors import DuplicateKeyError
 
 from beever_atlas.stores.mongodb_store import (
@@ -120,7 +119,9 @@ class _FakePurgeLocks:
         self._docs[channel_id] = new_doc
         return {**new_doc}
 
-    async def find_one(self, query: dict[str, Any], projection: Any = None) -> dict[str, Any] | None:
+    async def find_one(
+        self, query: dict[str, Any], projection: Any = None
+    ) -> dict[str, Any] | None:
         for doc in self._docs.values():
             if self._matches(doc, query):
                 return {**doc}

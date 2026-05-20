@@ -145,9 +145,7 @@ class MongoDBStore:
         # not-yet-present field is a no-op create that any later backfill /
         # write picks up incrementally.)
         await self._channel_purge_locks.create_index("channel_id", unique=True)
-        await self._write_intents.create_index(
-            "channel_id", name="write_intents_channel_id"
-        )
+        await self._write_intents.create_index("channel_id", name="write_intents_channel_id")
         await self._pipeline_checkpoints.create_index(
             "channel_id", name="pipeline_checkpoints_channel_id"
         )
@@ -1006,9 +1004,7 @@ class MongoDBStore:
         counts["channel_sync_state"] = await self._channel_sync_state.count_documents(
             {"channel_id": channel_id}
         )
-        counts["sync_jobs"] = await self._sync_jobs.count_documents(
-            {"channel_id": channel_id}
-        )
+        counts["sync_jobs"] = await self._sync_jobs.count_documents({"channel_id": channel_id})
         await self.clear_channel_sync_state(channel_id)
 
         return counts

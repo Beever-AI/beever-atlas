@@ -401,8 +401,7 @@ async def delete_connection(
         others = [c for c in all_connections if c.id != connection_id]
         for channel_id in conn.selected_channels:
             shared = any(
-                channel_id in (getattr(other, "selected_channels", None) or [])
-                for other in others
+                channel_id in (getattr(other, "selected_channels", None) or []) for other in others
             )
             if not shared:
                 sole_owned.append(channel_id)

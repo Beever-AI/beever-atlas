@@ -101,9 +101,7 @@ async def purge_channel(channel_id: str, *, principal_id: str) -> dict:
         )
         return {"channel_id": channel_id, "status": "already_in_progress"}
 
-    fanout = await _ordered_store_fanout(
-        channel_id, mode="purge", principal_id=principal_id
-    )
+    fanout = await _ordered_store_fanout(channel_id, mode="purge", principal_id=principal_id)
     counts: dict[str, int] = fanout["counts"]
     errors: dict[str, str] = fanout["errors"]
     unlinked_from: list[str] = fanout["unlinked_from"]
@@ -303,9 +301,7 @@ async def _reset_fanout(channel_id: str, stores: Any) -> dict[str, Any]:
     return {"results": results, "errors": errors, "sync_cancelled": False}
 
 
-async def _purge_fanout(
-    channel_id: str, stores: Any, *, principal_id: str
-) -> dict[str, Any]:
+async def _purge_fanout(channel_id: str, stores: Any, *, principal_id: str) -> dict[str, Any]:
     """Full destructive subset of the fan-out — see :func:`_ordered_store_fanout`.
 
     Steps 1-10. Each stage is isolated in its own try/except: an error is
@@ -328,9 +324,7 @@ async def _purge_fanout(
         sync_cancelled = await sync_runner.cancel_sync(channel_id)
     except Exception as exc:  # noqa: BLE001
         errors["cancel_sync"] = str(exc)
-        logger.warning(
-            "purge fan-out: cancel_sync failed channel=%s: %s", channel_id, exc
-        )
+        logger.warning("purge fan-out: cancel_sync failed channel=%s: %s", channel_id, exc)
     try:
         from beever_atlas.services.pipeline_orchestrator import cancel_consolidation
 
@@ -451,8 +445,7 @@ async def _purge_fanout(
     except Exception as exc:  # noqa: BLE001
         errors["delete_all_for_channel_all_langs"] = str(exc)
         logger.warning(
-            "purge fan-out: WikiPageStore.delete_all_for_channel_all_langs "
-            "failed channel=%s: %s",
+            "purge fan-out: WikiPageStore.delete_all_for_channel_all_langs failed channel=%s: %s",
             channel_id,
             exc,
         )

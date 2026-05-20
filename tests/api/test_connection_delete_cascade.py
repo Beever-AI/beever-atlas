@@ -63,9 +63,7 @@ def _wire(monkeypatch, *, target, others, purge=None):
     monkeypatch.setattr(connections_mod, "_unregister_adapter", AsyncMock(return_value=None))
     monkeypatch.setattr(connections_mod, "_refresh_proxy_hosts", AsyncMock(return_value=None))
 
-    spy = purge or AsyncMock(
-        return_value={"channel_id": "x", "status": "completed", "errors": {}}
-    )
+    spy = purge or AsyncMock(return_value={"channel_id": "x", "status": "completed", "errors": {}})
     # The endpoint does a LAZY ``from beever_atlas.services.channel_deletion
     # import purge_channel`` inside the handler, so the import resolves to the
     # source module's symbol — patch THAT, not the connections module.

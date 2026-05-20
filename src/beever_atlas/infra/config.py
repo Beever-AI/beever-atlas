@@ -766,9 +766,7 @@ class Settings(BaseSettings):
     # staleness bound and this reaper threshold matches it. Set
     # CHANNEL_PURGE_REAPER_ENABLED=false on processes that don't run the
     # scheduler (e.g. bare worker replicas) to avoid duplicate reapers.
-    channel_purge_reaper_enabled: bool = Field(
-        default=True, alias="CHANNEL_PURGE_REAPER_ENABLED"
-    )
+    channel_purge_reaper_enabled: bool = Field(default=True, alias="CHANNEL_PURGE_REAPER_ENABLED")
     channel_purge_reaper_threshold_s: float = Field(
         default=900.0, alias="CHANNEL_PURGE_REAPER_THRESHOLD_S"
     )

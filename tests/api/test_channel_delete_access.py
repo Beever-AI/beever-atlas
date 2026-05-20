@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 import beever_atlas.stores as stores_mod
 from beever_atlas.infra import channel_access as channel_access_mod
@@ -60,8 +61,6 @@ def _force_settings(monkeypatch, **overrides):
     monkeypatch.setattr(channel_access_mod, "get_settings", _fake_get_settings)
 
 
-from fastapi import HTTPException
-
 # ---------------------------------------------------------------------------
 # Single-tenant
 # ---------------------------------------------------------------------------
@@ -70,17 +69,13 @@ from fastapi import HTTPException
 async def test_single_tenant_user_allowed(monkeypatch):
     _install_fake_stores(monkeypatch, [])
     _force_settings(monkeypatch, beever_single_tenant=True)
-    await channel_access_mod.assert_channel_delete_access(
-        Principal("user:abc", kind="user"), "C1"
-    )
+    await channel_access_mod.assert_channel_delete_access(Principal("user:abc", kind="user"), "C1")
 
 
 async def test_single_tenant_mcp_allowed(monkeypatch):
     _install_fake_stores(monkeypatch, [])
     _force_settings(monkeypatch, beever_single_tenant=True)
-    await channel_access_mod.assert_channel_delete_access(
-        Principal("mcp:xyz", kind="mcp"), "C1"
-    )
+    await channel_access_mod.assert_channel_delete_access(Principal("mcp:xyz", kind="mcp"), "C1")
 
 
 async def test_single_tenant_bridge_denied(monkeypatch):
@@ -104,9 +99,7 @@ async def test_multi_tenant_owner_allowed(monkeypatch):
         [_conn(connection_id="c1", selected=["C1"], owner="user:abc")],
     )
     _force_settings(monkeypatch, beever_single_tenant=False)
-    await channel_access_mod.assert_channel_delete_access(
-        Principal("user:abc", kind="user"), "C1"
-    )
+    await channel_access_mod.assert_channel_delete_access(Principal("user:abc", kind="user"), "C1")
 
 
 async def test_multi_tenant_non_owner_denied(monkeypatch):

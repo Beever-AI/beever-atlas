@@ -345,8 +345,7 @@ class QAHistoryStore:
             # counts rather than silently dropping objects.
             if result.failed > 0:
                 logger.error(
-                    "QAHistoryStore.delete_by_channel %s: %d failed, %d succeeded "
-                    "(matched=%d)",
+                    "QAHistoryStore.delete_by_channel %s: %d failed, %d succeeded (matched=%d)",
                     channel_id,
                     int(result.failed),
                     int(result.successful),
