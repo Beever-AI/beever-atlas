@@ -992,6 +992,16 @@ class MongoDBStore:
         counts["wiki_proposed_edits"] = await _delete_many(
             self._wiki_proposed_edits, {"channel_id": channel_id}
         )
+        # ``wiki_versions`` — the published, versioned wiki snapshot that
+        # ``GET /api/channels/{id}/wiki`` and the channel overview read from
+        # (see api/sync.py). Purge-only: ``_reset_fanout`` deliberately
+        # preserves the versioned wiki, so this lives here (the purge
+        # aggregator), never on the reset path. Omitting it left the wiki served
+        # (HTTP 200) after a hard delete even though ``wiki_pages`` was gone.
+        # No dedicated store attr — access the collection via ``_db``.
+        counts["wiki_versions"] = await _delete_many(
+            self._db["wiki_versions"], {"channel_id": channel_id}
+        )
         counts["write_intents"] = await _delete_many(
             self._write_intents, {"channel_id": channel_id}
         )
