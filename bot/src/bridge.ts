@@ -472,15 +472,32 @@ function encodeUrlSearch(search: string): string {
 
 class SlackBridge implements PlatformBridge {
   private adapter: SlackAdapter;
+  private _token?: string;
 
   constructor(adapter: SlackAdapter) {
     this.adapter = adapter;
   }
 
+  /**
+   * Resolve the connection's bot token. @chat-adapter/slack@4.28.x no longer
+   * authenticates the raw WebClient — it resolves the token per request via
+   * `defaultBotTokenProvider()`. Calling `client.<method>()` without a token
+   * therefore fails with `not_authed` (→ 403). Every Web API call below passes
+   * this token explicitly. Cached: one connection has exactly one bot token.
+   */
+  private async token(): Promise<string | undefined> {
+    if (this._token) return this._token;
+    const provider = (this.adapter as any).defaultBotTokenProvider;
+    this._token = typeof provider === "function"
+      ? await provider()
+      : (this.adapter as any).botToken;
+    return this._token;
+  }
+
   async resolveUser(userId: string): Promise<{ name: string; image: string | null }> {
     if (userProfileCache.has(userId)) return userProfileCache.get(userId)!;
     try {
-      const result = await (this.adapter as any).client.users.info({ user: userId });
+      const result = await (this.adapter as any).client.users.info({ user: userId, token: await this.token() });
       const profile = result.user?.profile;
       const resolved = {
         name: result.user?.real_name || result.user?.name || userId,
@@ -504,6 +521,7 @@ class SlackBridge implements PlatformBridge {
         types: "public_channel,private_channel",
         limit: 200,
         exclude_archived: true,
+        token: await this.token(),
         ...(cursor ? { cursor } : {}),
       });
 
@@ -526,7 +544,7 @@ class SlackBridge implements PlatformBridge {
   }
 
   async getChannel(id: string): Promise<NormalizedChannel> {
-    const result = await (this.adapter as any).client.conversations.info({ channel: id });
+    const result = await (this.adapter as any).client.conversations.info({ channel: id, token: await this.token() });
     const ch = result.channel;
     return {
       channel_id: id,
@@ -543,6 +561,7 @@ class SlackBridge implements PlatformBridge {
     const historyParams: Record<string, unknown> = {
       channel: channelId,
       limit: opts.limit,
+      token: await this.token(),
     };
     if (opts.since) {
       const sinceEpoch = new Date(opts.since).getTime() / 1000;
@@ -558,7 +577,7 @@ class SlackBridge implements PlatformBridge {
     // Get channel name
     let channelName = "";
     try {
-      const chInfo = await (this.adapter as any).client.conversations.info({ channel: channelId });
+      const chInfo = await (this.adapter as any).client.conversations.info({ channel: channelId, token: await this.token() });
       channelName = chInfo.channel?.name || "";
     } catch { /* ignore */ }
 
@@ -645,7 +664,7 @@ class SlackBridge implements PlatformBridge {
     let count = 0;
     let cursor: string | undefined;
     do {
-      const params: Record<string, unknown> = { channel: channelId, limit: 200 };
+      const params: Record<string, unknown> = { channel: channelId, limit: 200, token: await this.token() };
       if (cursor) params.cursor = cursor;
       const result = await (this.adapter as any).client.conversations.history(params);
       count += (result.messages || []).length;
@@ -659,6 +678,7 @@ class SlackBridge implements PlatformBridge {
       channel: channelId,
       ts: threadId,
       limit: 200,
+      token: await this.token(),
     });
 
     const rawReplies = result.messages || [];

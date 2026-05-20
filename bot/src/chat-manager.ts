@@ -192,7 +192,11 @@ export class ChatManager {
             adapterInstances[key] = slackAdapter;
             // Cache team_id → connectionId for URL-based file routing
             try {
-              const authResult = await (slackAdapter as any).client.auth.test();
+              // @chat-adapter/slack@4.28.x resolves the bot token per request
+              // (defaultBotTokenProvider) rather than authenticating the raw
+              // client, so auth.test() must be given the token explicitly or it
+              // fails with not_authed and Slack file routing is degraded.
+              const authResult = await (slackAdapter as any).client.auth.test({ token: entry.config.botToken });
               if (authResult?.team_id) {
                 this.workspaceIdMap.set(authResult.team_id, entry.connectionId);
                 console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
