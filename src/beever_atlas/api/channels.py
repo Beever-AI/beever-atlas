@@ -11,10 +11,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from fastapi.responses import JSONResponse
+
 from beever_atlas.adapters import ChannelInfo, get_adapter
 from beever_atlas.adapters.bridge import BridgeError, ChatBridgeAdapter
 from beever_atlas.infra.auth import Principal, require_user
-from beever_atlas.infra.channel_access import assert_channel_access
+from beever_atlas.infra.channel_access import (
+    assert_channel_access,
+    assert_channel_delete_access,
+)
 from beever_atlas.infra.config import get_settings
 from beever_atlas.services.channel_discovery import (
     fetch_connection_channels,
@@ -994,6 +999,125 @@ async def clear_channel_data(
         results["mongodb_error"] = str(exc)
 
     return results
+
+
+async def _channel_is_referenced_anywhere(channel_id: str) -> bool:
+    """Return True if ``channel_id`` is known to the deployment at all.
+
+    A channel is a valid hard-delete target when it is referenced by any
+    connection's ``selected_channels`` (sync pick-list) OR has synced data
+    (``list_synced_channel_ids`` — the same orphan resolution the GET
+    ``/api/channels/{id}`` handler uses for direct-URL navigation). Orphans
+    that still hold data are valid delete targets; only a genuinely-unknown
+    channel (referenced nowhere) is a 404.
+    """
+    stores = get_stores()
+    connections = await stores.platform.list_connections()
+    for conn in connections:
+        if channel_id in (getattr(conn, "selected_channels", None) or []):
+            return True
+    synced_ids = await stores.mongodb.list_synced_channel_ids()
+    return channel_id in set(synced_ids)
+
+
+@router.delete("/api/channels/{channel_id}")
+async def delete_channel(
+    channel_id: str,
+    confirm: str = Query(
+        ...,
+        description=(
+            "Type-to-confirm guard. Must equal the channel's display name "
+            "(what the UI shows); the raw channel_id is accepted only as a "
+            "fallback when no display name is stored."
+        ),
+    ),
+    principal: Principal = Depends(require_user),
+):
+    """Hard-purge a channel from every store (delete-channel-v2 Wave 3).
+
+    This is the DESTRUCTIVE full delete — distinct from
+    ``DELETE /api/channels/{channel_id}/data`` (which only resets derived
+    data and keeps the channel addressable). It unlinks the channel from
+    every connection, de-registers its scheduler timers, and deletes all
+    Mongo / Weaviate / graph / wiki / chat data behind an atomically-claimed
+    purge lock (see :func:`beever_atlas.services.channel_deletion.purge_channel`).
+
+    Order of checks (authz BEFORE everything else):
+
+      1. ``assert_channel_delete_access`` — tenancy-aware destructive authz.
+         Stricter than the read path: no orphan-permissive fallback.
+      2. ``confirm`` must match the channel display name (the channel_id is
+         accepted only as a fallback when no display name is stored); a
+         mismatch is a 400 and NO store is touched (the lock is never
+         claimed). This is anti-accidental UI friction, not an authz control.
+      3. 404 only when the channel is referenced nowhere (no connection
+         pick-list, no synced data). Orphans with data are valid targets.
+
+    Status → HTTP mapping (the service never raises for a missing channel
+    and never 500s — per-store failures are isolated into ``errors``):
+
+      * ``"completed"`` (``errors == {}``) → 200 with the full result body.
+      * ``"partial"``   (``errors != {}``) → 207 with the full result body
+        (incl. ``errors``); the lock is retained and the reaper converges.
+      * ``"already_in_progress"`` (CAS loser) → 200 with ``{channel_id,
+        status}`` only (NO ``counts``/``errors``) plus a message.
+    """
+    from beever_atlas.services.channel_deletion import purge_channel
+
+    # 1. Destructive authz FIRST — before confirm validation or any lookup.
+    await assert_channel_delete_access(principal, channel_id)
+
+    stores = get_stores()
+
+    # 2. Type-to-confirm guard. ``confirm`` is anti-accidental UI friction
+    #    (make the user type what they see) — NOT an authz control; the real
+    #    destructive authz is ``assert_channel_delete_access`` above. The
+    #    channel display name is not a secret. When a display name is stored we
+    #    accept ONLY that (trimmed) — the UI sends exactly what the user sees,
+    #    so also accepting the raw id is a needless second key that widens the
+    #    accepted set. The raw ``channel_id`` is accepted ONLY as a fallback
+    #    when no display name exists (orphans the UI labels by id). Validate
+    #    AFTER authz but BEFORE touching any store (no lock claimed on mismatch).
+    #    NOTE: ``confirm`` stays a query param on purpose — the shared
+    #    ``web/src/lib/api.ts`` ``delete`` wrapper has no request-body support
+    #    and DELETE-with-body is fragile across proxies/clients.
+    display_name = await stores.mongodb.get_channel_display_name(channel_id)
+    if display_name and display_name.strip():
+        accepted = {display_name.strip()}
+    else:
+        accepted = {channel_id}
+    if confirm not in accepted:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "confirm does not match the channel name; "
+                "type the channel name exactly to confirm deletion"
+            ),
+        )
+
+    # 3. 404 only when the channel is referenced nowhere.
+    if not await _channel_is_referenced_anywhere(channel_id):
+        raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
+
+    result = await purge_channel(channel_id, principal_id=principal.id)
+    status = result.get("status")
+
+    if status == "already_in_progress":
+        # CAS loser — another purge (re-click or reaper) already holds the
+        # lock. The body has ONLY {channel_id, status}; do NOT assume counts.
+        return {
+            **result,
+            "message": "A delete for this channel is already in progress.",
+        }
+
+    if status == "partial":
+        # At least one store failed; the lock is retained and the reaper
+        # will converge. Surface 207 so the frontend can warn instead of
+        # treating the channel as fully gone.
+        return JSONResponse(status_code=207, content=result)
+
+    # "completed" — clean run, 200 with the full body.
+    return result
 
 
 # `proxy_file` was relocated to `beever_atlas.api.loaders` (issue #88) so it

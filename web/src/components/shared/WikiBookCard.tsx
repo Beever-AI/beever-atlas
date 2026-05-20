@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, MoreHorizontal, Trash2 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
 import { WikiStateIcon } from "@/components/shared/WikiStateIcon";
 import { formatRelativeTime, wikiStateLabel } from "@/lib/wikiState";
+import { DeleteChannelDialog } from "@/components/shared/DeleteChannelDialog";
 import type { WikiState } from "@/hooks/useWikiStates";
 import { cn } from "@/lib/utils";
+import { useSyncStatus } from "@/contexts/SyncStatusContext";
 
 interface WikiBookCardProps {
   channelId: string;
@@ -18,6 +21,10 @@ interface WikiBookCardProps {
   size?: "sm" | "md";
   to?: string;
   animationDelayMs?: number;
+  /** When provided, a kebab (⋯) menu with a Delete action is rendered. */
+  onDeleted?: (channelId: string) => void;
+  /** Passed through to DeleteChannelDialog to show the sync-running warning. */
+  channelKind?: "file" | "chat";
 }
 
 /**
@@ -46,8 +53,14 @@ export function WikiBookCard({
   size = "md",
   to,
   animationDelayMs,
+  onDeleted,
+  channelKind,
 }: WikiBookCardProps) {
   const { resolvedTheme } = useTheme();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [kebabOpen, setKebabOpen] = useState(false);
+  const { syncingChannels } = useSyncStatus();
+  const isChannelSyncing = syncingChannels.has(channelId);
   const isDark = resolvedTheme === "dark";
   const platformStyle = getPlatformBadgeStyle(platform, isDark);
   const isEmpty = state === "empty" || state === "errored";
@@ -101,10 +114,17 @@ export function WikiBookCard({
       ? "hover:shadow-[6px_6px_0_-1px_rgba(255,255,255,0.06),12px_12px_0_-2px_rgba(255,255,255,0.04),0_4px_24px_-8px_hsl(var(--primary)/0.4)]"
       : "hover:shadow-[6px_6px_0_-1px_rgba(15,23,42,0.1),12px_12px_0_-2px_rgba(15,23,42,0.06),0_4px_24px_-8px_hsl(var(--primary)/0.3)]";
 
+  // Close kebab when clicking outside
+  function handleLinkClick() {
+    if (kebabOpen) setKebabOpen(false);
+  }
+
   return (
+    <>
     <Link
       to={href}
       state={{ channel_name: name, platform }}
+      onClick={handleLinkClick}
       // Outer wrapper carries the stacked-book shadow and the hover
       // translate. Some right/bottom margin so the stack shadow has
       // room to render without being clipped.
@@ -163,15 +183,52 @@ export function WikiBookCard({
             >
               {name}
             </span>
-            <ArrowUpRight
-              className={cn(
-                "w-4 h-4 transition-all shrink-0 mt-0.5",
-                isEmpty
-                  ? "text-muted-foreground/0 group-hover:text-muted-foreground/50"
-                  : "text-muted-foreground/30 group-hover:text-primary group-hover:scale-110",
-              )}
-              aria-hidden
-            />
+            {onDeleted ? (
+              <div className="relative shrink-0 mt-0.5">
+                <button
+                  type="button"
+                  aria-label="Channel actions"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setKebabOpen((v) => !v);
+                  }}
+                  className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:!opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+                {kebabOpen && (
+                  <div
+                    className="absolute right-0 top-6 z-10 min-w-[130px] rounded-lg border border-border bg-card shadow-lg py-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setKebabOpen(false);
+                        setDeleteOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ArrowUpRight
+                className={cn(
+                  "w-4 h-4 transition-all shrink-0 mt-0.5",
+                  isEmpty
+                    ? "text-muted-foreground/0 group-hover:text-muted-foreground/50"
+                    : "text-muted-foreground/30 group-hover:text-primary group-hover:scale-110",
+                )}
+                aria-hidden
+              />
+            )}
           </div>
 
           {/* Preface */}
@@ -225,5 +282,21 @@ export function WikiBookCard({
         </div>
       </div>
     </Link>
+
+    {onDeleted && (
+      <DeleteChannelDialog
+        open={deleteOpen}
+        channelId={channelId}
+        channelName={name}
+        channelKind={channelKind}
+        isSyncing={isChannelSyncing}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={(id) => {
+          setDeleteOpen(false);
+          onDeleted(id);
+        }}
+      />
+    )}
+    </>
   );
 }

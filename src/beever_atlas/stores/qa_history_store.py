@@ -322,6 +322,40 @@ class QAHistoryStore:
 
         await asyncio.to_thread(_delete)
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """HARD-delete every QAHistory entry for ``channel_id``.
+
+        delete-channel-v2 Wave 1. Unlike :meth:`soft_delete` (the per-entry
+        ``is_deleted=True`` flag used by the user-facing delete), this purges
+        the rows outright and IGNORES ``is_deleted`` — both live and
+        soft-deleted Q&A for the channel are removed when the channel itself
+        is purged.
+
+        Modelled on ``WeaviateStore.delete_by_channel`` — uses the v4 batch
+        ``data.delete_many`` with a server-side ``where`` filter (no 10k
+        client-side cap). Returns the server-reported successful count.
+        """
+
+        def _delete() -> int:
+            collection = self._collection()
+            result = collection.data.delete_many(
+                where=Filter.by_property("channel_id").equal(channel_id),
+            )
+            # Surface partial failures so the Wave 2 fan-out reports honest
+            # counts rather than silently dropping objects.
+            if result.failed > 0:
+                logger.error(
+                    "QAHistoryStore.delete_by_channel %s: %d failed, %d succeeded "
+                    "(matched=%d)",
+                    channel_id,
+                    int(result.failed),
+                    int(result.successful),
+                    int(result.matches),
+                )
+            return int(result.successful)
+
+        return await asyncio.to_thread(_delete)
+
     #: Maximum Weaviate objects scanned per call. Surfaced on the result
     #: so callers can tell whether they hit the cap and should narrow
     #: their query (or introduce pagination in a future phase).

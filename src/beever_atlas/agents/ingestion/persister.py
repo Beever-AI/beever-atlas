@@ -167,10 +167,18 @@ class PersisterAgent(BaseAgent):
         stores = get_stores()
 
         # --- 1. Create outbox write intent in MongoDB ---
+        # Persist the owning channel top-level so the channel hard-purge
+        # (delete-channel-v2) can drop this intent in one indexed pass.
+        # Extraction batches are per-channel (session-scoped), so the
+        # session ``channel_id`` is the right value. The ``"unknown"``
+        # sentinel (channel_id absent from session state) maps to None so
+        # the purge filter never matches a bogus channel.
+        intent_channel_id = channel_id if channel_id and channel_id != "unknown" else None
         intent_id = await stores.mongodb.create_write_intent(
             facts=embedded_facts,
             entities=entity_dicts,
             relationships=relationship_dicts,
+            channel_id=intent_channel_id,
         )
         logger.info(
             "PersisterAgent: intent created job_id=%s channel=%s batch=%s intent=%s facts=%d entities=%d relationships=%d",

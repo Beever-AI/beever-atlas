@@ -576,6 +576,32 @@ class WikiPageStore:
                 pass
         return deleted
 
+    async def delete_all_for_channel_all_langs(self, channel_id: str) -> int:
+        """Bulk-delete every page row for ``channel_id`` across ALL languages.
+
+        delete-channel-v2 Wave 1. Like :meth:`delete_all_for_channel` but
+        WITHOUT the ``target_lang`` filter, so a channel hard-purge wipes
+        every translation (``en``, ``es``, ...) in one pass. The single-lang
+        method is intentionally kept — the wiki ``mode=rebuild`` / reset path
+        still scopes to one language.
+
+        Also clears the ``wiki_redirects`` rows for the channel across all
+        languages (best-effort — stale redirects are advisory and would just
+        resolve to "not found"). Returns the count of page rows deleted.
+        """
+        deleted = 0
+        if self._collection is not None:
+            result = await self._collection.delete_many({"channel_id": channel_id})
+            deleted = int(result.deleted_count or 0)
+        if self._redirects is not None:
+            try:
+                await self._redirects.delete_many({"channel_id": channel_id})
+            except Exception:
+                # Best-effort — redirect rows are advisory; a stale redirect
+                # just resolves to "not found" on the next hit.
+                pass
+        return deleted
+
     # ------------------------------------------------------------------
     # wiki-llm-native-redesign — curation API support (§5.5)
     # ------------------------------------------------------------------

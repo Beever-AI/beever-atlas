@@ -379,6 +379,12 @@ class _FakeMongo:
     def db(self) -> Any:
         return _FakeDB(self)
 
+    async def get_purging_channel_ids(self) -> set[str]:
+        """Sim default: no channels are mid-purge. Mirrors the real store's
+        accessor so ExtractionWorker.tick's Wave-0 purge filter resolves
+        cleanly instead of hitting the broad-except fallback."""
+        return set()
+
     async def claim_pending_messages_for_extraction(
         self,
         *,
@@ -386,18 +392,23 @@ class _FakeMongo:
         channel_id: str | None = None,
         settle_seconds: int = 5,
         max_retries: int = 5,
+        purging_channel_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return up to ``batch_size`` rows whose extraction_status=pending.
 
         Atomically flips them to extracting + bumps attempt_count.
         Honours per-row ``next_attempt_at`` retry barriers.
+        Excludes channels in ``purging_channel_ids`` (delete-channel Wave 0).
         """
         now = datetime.now(tz=UTC)
+        purging = purging_channel_ids or set()
         out: list[dict[str, Any]] = []
         for msg in self.messages:
             if len(out) >= batch_size:
                 break
             if channel_id is not None and msg.channel_id != channel_id:
+                continue
+            if msg.channel_id in purging:
                 continue
             if msg.extraction_status == "pending":
                 # Retry barrier: rows reset to pending after a failure carry

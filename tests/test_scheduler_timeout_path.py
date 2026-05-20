@@ -28,6 +28,9 @@ async def test_execute_sync_timeout_does_not_leak_semaphore_permit():
 
     mock_stores = MagicMock()
     mock_stores.mongodb.get_sync_status = AsyncMock(return_value=None)
+    # delete-channel-v2 Wave 0 — _execute_sync now consults the purge guard
+    # before resolving policy; channel is not purging here.
+    mock_stores.mongodb.is_purging = AsyncMock(return_value=False)
 
     # Make resolve_effective_policy return a trivial policy with cooldown=0 so
     # we go straight to the semaphore acquire path.

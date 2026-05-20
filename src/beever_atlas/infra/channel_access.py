@@ -165,6 +165,110 @@ async def assert_channel_access(principal: Principal | str, channel_id: str) -> 
     )
 
 
+async def assert_channel_delete_access(principal: Principal | str, channel_id: str) -> None:
+    """Raise ``HTTPException(403)`` if ``principal`` may not HARD-DELETE ``channel_id``.
+
+    delete-channel-v2 Wave 0. This is the authz chokepoint for the
+    DESTRUCTIVE path and is intentionally STRICTER than the read-path
+    :func:`assert_channel_access`, which is orphan-permissive (it lets a
+    single operator browse channels no connection has claimed). A purge is
+    irreversible, so the orphan-permissive read fallback MUST NOT apply.
+
+    Decision table (Principle #4 of the plan):
+
+    Single-tenant (OSS default, ``BEEVER_SINGLE_TENANT=true``):
+      - Allow ``user`` and ``mcp`` principals (shared key → one principal;
+        single-operator trust). This mirrors the existing single-tenant
+        allowance in ``assert_channel_access`` / ``assert_connection_owned``.
+      - Bridge principals are NOT admitted here. (In practice they are also
+        blocked UPSTREAM by ``require_user`` on the endpoint once
+        ``BEEVER_ALLOW_BRIDGE_AS_USER=false``; this is defence-in-depth.)
+
+    Multi-tenant (EE, ``BEEVER_SINGLE_TENANT=false``):
+      - The principal must OWN (via ``owner_principal_id``) at least one
+        connection whose ``selected_channels`` contains ``channel_id``.
+      - Orphan (no connection currently lists the channel in any
+        ``selected_channels``) → require an admin / elevated principal.
+        Documented limitation: an orphan whose owning connection was deleted
+        is admin-cleanup-only in EE until per-channel owner is persisted.
+
+    Admin / elevated detection: there is no admin flag on ``Principal`` —
+    admin auth is the separate ``X-Admin-Token`` path that resolves to the
+    bare string ``"admin"`` (auth.py ``require_admin``). We therefore treat a
+    principal whose id is ``"admin"`` as elevated. Wave 3 wires the endpoint;
+    if a richer elevated-principal concept lands later, extend
+    ``_is_elevated`` only.
+    """
+    pid = _principal_id(principal)
+    kind = _principal_kind(principal)
+    settings = get_settings()
+    single_tenant = bool(getattr(settings, "beever_single_tenant", True))
+
+    def _is_elevated() -> bool:
+        # ``require_admin`` resolves to the literal "admin"; that is the only
+        # elevated principal the system currently mints.
+        return pid == "admin"
+
+    if single_tenant:
+        # Single-operator trust: any user/mcp principal may delete. Bridge
+        # is excluded (and blocked upstream by require_user).
+        if kind in ("user", "mcp") or _is_elevated():
+            return
+        logger.info(
+            "channel_delete deny: channel=%s principal=%s kind=%s "
+            "reason=single_tenant_non_user",
+            channel_id,
+            pid,
+            kind,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Channel delete access denied",
+        )
+
+    # Multi-tenant (EE).
+    stores = get_stores()
+    connections = await stores.platform.list_connections()
+    matching = [c for c in connections if channel_id in (c.selected_channels or [])]
+
+    if not matching:
+        # Orphan — no connection claims this channel. Admin-only cleanup.
+        if _is_elevated():
+            return
+        logger.info(
+            "channel_delete deny: channel=%s principal=%s kind=%s "
+            "reason=orphan_requires_admin",
+            channel_id,
+            pid,
+            kind,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Channel delete access denied",
+        )
+
+    # Owned-by-caller match wins.
+    for conn in matching:
+        owner = getattr(conn, "owner_principal_id", None)
+        if owner and owner == pid:
+            return
+
+    # Elevated principals may delete any owned channel (admin override).
+    if _is_elevated():
+        return
+
+    logger.info(
+        "channel_delete deny: channel=%s principal=%s kind=%s reason=owner_mismatch",
+        channel_id,
+        pid,
+        kind,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Channel delete access denied",
+    )
+
+
 async def assert_connection_owned(principal: Principal | str, connection_id: str) -> None:
     """Raise ``ConnectionAccessDenied`` if ``principal`` doesn't own ``connection_id``.
 

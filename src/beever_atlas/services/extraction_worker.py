@@ -387,11 +387,27 @@ class ExtractionWorker:
         # per tick and lets ``BatchProcessor`` re-batch them internally
         # (token-aware batcher) before fanning out.
         claim_size = settings.sync_batch_size * settings.ingest_batch_concurrency
+        # delete-channel-v2 Wave 0 — fetch the active purge set ONCE per tick
+        # and pass it into the claim. The periodic tick drains every channel
+        # (channel_id=None), so without this a purge in flight would have its
+        # rows re-claimed and re-extracted by the global drain. Best-effort:
+        # a Mongo blip here must not stall extraction, so we fall back to an
+        # empty set (the claim still excludes nothing — the durable lock +
+        # per-stage idempotency in the Wave-2 service remain the backstop).
+        try:
+            purging_channel_ids = await stores.mongodb.get_purging_channel_ids()
+        except Exception:  # noqa: BLE001 — guard fetch must not crash the tick
+            logger.exception(
+                "ExtractionWorker: get_purging_channel_ids failed — "
+                "proceeding without purge filter this tick"
+            )
+            purging_channel_ids = set()
         claimed = await stores.mongodb.claim_pending_messages_for_extraction(
             batch_size=claim_size,
             channel_id=channel_id,
             settle_seconds=self._settle_seconds,
             max_retries=_MAX_RETRIES,
+            purging_channel_ids=purging_channel_ids,
         )
         counters = {"claimed": len(claimed), "succeeded": 0, "failed": 0, "channels": 0}
         if not claimed:

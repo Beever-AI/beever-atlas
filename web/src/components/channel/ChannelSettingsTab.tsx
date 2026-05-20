@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Loader2, Clock, Zap, Calendar, Hand, ChevronDown, ChevronRight, Settings2, Info, Sparkles, FolderTree, BookOpen, AlertTriangle, RefreshCw, X as XIcon } from "lucide-react";
+import { Loader2, Clock, Zap, Calendar, Hand, ChevronDown, ChevronRight, Settings2, Info, Sparkles, FolderTree, BookOpen, AlertTriangle, RefreshCw, Trash2, X as XIcon } from "lucide-react";
 import { useChannelPolicy } from "@/hooks/useChannelPolicy";
 import { useChannelSummary } from "@/hooks/useChannelSummary";
 import { useToast } from "@/hooks/useToast";
 import { ToastViewport } from "@/components/settings/ToastViewport";
 import { API_BASE, ApiError, adminHeaders, authFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { DeleteChannelDialog } from "@/components/shared/DeleteChannelDialog";
+import { useSyncStatus } from "@/contexts/SyncStatusContext";
 import type { SyncConfig, IngestionConfig, ConsolidationConfig, ConsolidationStrategy, WikiConfig, WikiGenerationStrategy, WikiMaintenanceMode } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,11 @@ export function ChannelSettingsTab() {
   // summary endpoint resolves.
   const channelDisplayName = summary?.channel_name || channelId;
   const dangerMatch = confirmText.trim() === channelDisplayName.trim() && confirmText.trim().length > 0;
+
+  // Danger Zone — Delete channel permanently dialog state.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const { syncingChannels } = useSyncStatus();
+  const isChannelSyncing = syncingChannels.has(channelId);
 
   async function handleDangerConfirm() {
     if (!dangerMatch || dangerSubmitting) return;
@@ -706,7 +713,7 @@ export function ChannelSettingsTab() {
           the next sync will re-extract everything with the current pipeline. Use this
           after pipeline changes.
         </p>
-        <div>
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={openDangerDialog}
@@ -714,6 +721,14 @@ export function ChannelSettingsTab() {
           >
             <RefreshCw className="h-3.5 w-3.5" />
             Reset &amp; Re-sync
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/15 text-destructive border border-destructive/30 text-sm font-medium hover:bg-destructive/25 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete channel permanently
           </button>
         </div>
       </div>
@@ -794,6 +809,18 @@ export function ChannelSettingsTab() {
       )}
 
       <ToastViewport toasts={toast.toasts} onDismiss={toast.dismiss} />
+
+      <DeleteChannelDialog
+        open={deleteOpen}
+        channelId={channelId}
+        channelName={channelDisplayName}
+        isSyncing={isChannelSyncing}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={() => {
+          setDeleteOpen(false);
+          navigate("/channels");
+        }}
+      />
     </div>
   );
 }

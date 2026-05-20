@@ -97,6 +97,13 @@ class SyncScheduler:
         # subscribe to ``on_extraction_done`` without a constructor weave.
         await self._register_extraction_worker_jobs()
 
+        # delete-channel-v2 Wave 0 — channel hard-purge reaper. Re-invokes the
+        # purge for stale ``channel_purge_locks`` rows (crashed / partial
+        # purges). Flag-disable-able for processes that don't run the
+        # scheduler. The Wave-2 purge service plugs into the seam in
+        # ``_purge_reaper_tick``.
+        await self._register_purge_reaper_job()
+
         # apscheduler 4 — ``__aenter__`` initialises the data store + locks,
         # but does NOT start the job-runner loop. Without this call, schedules
         # are stored but never fire. The previous codebase didn't call it
@@ -141,6 +148,20 @@ class SyncScheduler:
             logger.info("SyncScheduler: re-registered jobs for channel=%s", channel_id)
         else:
             logger.info("SyncScheduler: removed jobs for channel=%s", channel_id)
+
+    async def deregister_channel_jobs(self, channel_id: str) -> None:
+        """Unconditionally remove ``sync:{id}`` + ``consolidate:{id}`` timers.
+
+        delete-channel-v2 Wave 0 thin wrapper for the Wave-2 purge service.
+        Unlike :meth:`on_policy_changed` (which RE-registers when a policy
+        still exists), this only removes — so the service can de-register
+        deterministically without depending on policy-delete ordering. Safe
+        no-op when the scheduler hasn't started.
+        """
+        if not self._started:
+            return
+        await self._remove_jobs(channel_id)
+        logger.info("SyncScheduler: de-registered jobs for channel=%s (purge)", channel_id)
 
     async def acquire_sync_semaphore(self) -> None:
         """Acquire the global concurrency semaphore (for manual syncs too)."""
@@ -328,6 +349,92 @@ class SyncScheduler:
                 exc_info=True,
             )
 
+    async def _register_purge_reaper_job(self) -> None:
+        """Register the channel hard-purge reaper periodic job.
+
+        delete-channel-v2 Wave 0. Scans ``channel_purge_locks`` for stale
+        rows (purges that crashed mid-run) and re-invokes the purge for each
+        so a partial purge converges with no user re-click. Flag-disabled via
+        ``CHANNEL_PURGE_REAPER_ENABLED`` for processes that don't run the
+        scheduler. Pattern mirrors ``_register_extraction_worker_jobs``.
+        """
+        from beever_atlas.infra.config import get_settings
+
+        settings = get_settings()
+        if not settings.channel_purge_reaper_enabled:
+            logger.info("SyncScheduler: purge reaper disabled by config")
+            return
+        interval = max(30, int(settings.channel_purge_reaper_interval_s))
+        # Overlap guard: cap concurrent runs of the reaper task at 1 so a slow
+        # tick (re-running purges for many stale locks) can't have a second tick
+        # pile up on top of it. ``max_running_jobs`` is APScheduler v4's
+        # task-level concurrency cap (it defaults to 1, but we set it explicitly
+        # here since the reaper does heavyweight cross-store work per tick).
+        await self._scheduler.configure_task(
+            self._purge_reaper_tick,
+            max_running_jobs=1,
+        )
+        await self._scheduler.add_schedule(
+            self._purge_reaper_tick,
+            IntervalTrigger(seconds=interval),
+            id="purge:reaper",
+            conflict_policy="do_nothing",
+        )
+        logger.info(
+            "SyncScheduler: purge reaper registered interval=%ds threshold=%.0fs",
+            interval,
+            settings.channel_purge_reaper_threshold_s,
+        )
+
+    async def _purge_reaper_tick(self) -> None:
+        """Re-invoke the purge for every stale ``channel_purge_locks`` row.
+
+        Seam for Wave 2: the actual fan-out lives in
+        ``services.channel_deletion.purge_channel`` which does NOT exist yet.
+        We import it lazily inside the job and guard with try/except so this
+        Wave-0 reaper is structurally complete and harmless until the Wave-2
+        service lands — at which point this loop starts converging partial
+        purges with zero further wiring. ``purge_channel`` re-claims via CAS
+        (idempotent / re-entrant), so re-invoking a still-running purge is
+        safe (the loser returns ``already_in_progress``).
+        """
+        from beever_atlas.infra.config import get_settings
+        from beever_atlas.stores import get_stores
+
+        settings = get_settings()
+        stores = get_stores()
+        try:
+            stale = await stores.mongodb.list_stale_purge_locks(
+                older_than_s=settings.channel_purge_reaper_threshold_s
+            )
+        except Exception as exc:
+            logger.error(
+                "SyncScheduler: purge reaper failed to list stale locks: %s",
+                exc,
+                exc_info=True,
+            )
+            return
+        if not stale:
+            return
+        # Lazy import — keeps the ``services → services`` dependency local and
+        # avoids importing the deletion fan-out at scheduler module load.
+        from beever_atlas.services.channel_deletion import purge_channel
+
+        for channel_id in stale:
+            try:
+                await purge_channel(channel_id, principal_id="reaper")
+                logger.info(
+                    "SyncScheduler: purge reaper re-invoked purge channel=%s",
+                    channel_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "SyncScheduler: purge reaper re-invoke failed channel=%s: %s",
+                    channel_id,
+                    exc,
+                    exc_info=True,
+                )
+
     # ------------------------------------------------------------------
     # Job execution
     # ------------------------------------------------------------------
@@ -340,6 +447,16 @@ class SyncScheduler:
         try:
             # Check cooldown
             stores = get_stores()
+            # delete-channel-v2 Wave 0 — abort a scheduled sync for a purging
+            # channel. The timer may still fire between policy-delete and
+            # de-register (or in a stale-lock window); bail out here so the
+            # wall-clock scheduler can't resurrect a channel being torn down.
+            if await stores.mongodb.is_purging(channel_id):
+                logger.info(
+                    "SyncScheduler: skipping scheduled sync — channel is purging channel=%s",
+                    channel_id,
+                )
+                return
             effective = await resolve_effective_policy(channel_id)
             cooldown = effective.sync.min_sync_interval_minutes or 0
 

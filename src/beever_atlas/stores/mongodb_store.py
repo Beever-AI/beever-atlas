@@ -29,6 +29,16 @@ from beever_atlas.models.sync_policy import (
 logger = logging.getLogger(__name__)
 
 
+# delete-channel-v2 Wave 0 — default staleness threshold for the channel
+# hard-purge lock. A ``channel_purge_locks`` doc whose ``started_at`` is
+# older than this is treated as abandoned (a crashed purge): writers ignore
+# it and the reaper re-invokes the purge. 15 minutes is a deliberate ceiling
+# above the max expected purge duration (multi-store fan-out is seconds, not
+# minutes) so a slow-but-succeeding purge is never double-run by the reaper.
+# Should-fix #5 of the plan. Callers may override per-call.
+PURGE_LOCK_STALE_AFTER_S: float = 900.0
+
+
 class MongoDBStore:
     """Manages MongoDB collections for Beever Atlas."""
 
@@ -42,6 +52,21 @@ class MongoDBStore:
         self._channel_policies = self._db["channel_policies"]
         self._global_policy_defaults = self._db["global_policy_defaults"]
         self._pipeline_checkpoints = self._db["pipeline_checkpoints"]
+        # Channel hard-purge lock (delete-channel-v2 Wave 0). A durable,
+        # atomically-claimed gate (its OWN collection, decoupled from
+        # ``channel_sync_state`` so data-purge never touches the gate). One
+        # doc per in-progress purge: ``{channel_id (unique), state:"purging",
+        # started_at, owner_principal_id}``. Writers check it; the reaper
+        # re-runs stale locks. See ``claim_purge`` / ``release_purge``.
+        self._channel_purge_locks = self._db["channel_purge_locks"]
+        # Channel purge audit log (delete-channel-v2 Wave 2). A RETAINED
+        # collection — it is the durable record of every hard-purge and is
+        # NEVER referenced by ``purge_channel`` (which only deletes channel
+        # *data*). One doc per purge run: ``{channel_id, principal_id,
+        # purge_run_id, counts, errors, unlinked_from, ts}``. The
+        # ``purge_run_id`` (UUID per invocation) keeps reaper re-runs of the
+        # same channel distinguishable (should-fix #6).
+        self._channel_audit_log = self._db["channel_audit_log"]
         # Durable Message Store: replaces the prior in-memory
         # ``list[NormalizedMessage]`` flow during sync and serves as the queue
         # substrate for the background ExtractionWorker.
@@ -107,6 +132,25 @@ class MongoDBStore:
         await self._activity_events.create_index([("timestamp", -1)])
         await self._channel_policies.create_index("channel_id", unique=True)
         await self._pipeline_checkpoints.create_index("batch_key", unique=True)
+        # delete-channel-v2 Wave 0 — channel hard-purge lock + channel-scoped
+        # purge indexes.
+        #
+        # Index-on-missing-field decision: ``write_intents.channel_id`` and
+        # ``pipeline_checkpoints.channel_id`` are written in Wave 1, but
+        # ``create_index`` does NOT error when the field is absent on existing
+        # documents — Mongo simply indexes those rows under a null key (a
+        # standard non-sparse, non-unique index). Creating the indexes now is
+        # therefore idempotent and forward-safe; Wave 1 only has to start
+        # *writing* the field. (Verified: a plain ascending index over a
+        # not-yet-present field is a no-op create that any later backfill /
+        # write picks up incrementally.)
+        await self._channel_purge_locks.create_index("channel_id", unique=True)
+        await self._write_intents.create_index(
+            "channel_id", name="write_intents_channel_id"
+        )
+        await self._pipeline_checkpoints.create_index(
+            "channel_id", name="pipeline_checkpoints_channel_id"
+        )
         # memory-then-wiki-pipeline-realignment — wiki_dirty_queue indexes.
         # Primary lookup is by ``(channel_id, page_id)`` for upsert; status
         # field is the predicate for claim/recover sweeps.
@@ -206,6 +250,15 @@ class MongoDBStore:
         await self._wiki_proposed_edits.create_index(
             [("channel_id", 1), ("slug", 1), ("status", 1)],
             name="wiki_proposed_edits_channel_slug_status",
+        )
+        # delete-channel-v2 Wave 2 — retained channel purge audit log.
+        # Compound (channel_id, ts DESC) so an operator can pull a single
+        # channel's purge history (incl. reaper re-runs distinguished by
+        # ``purge_run_id``) in one scan, newest-first. NOT a TTL index —
+        # this collection is the durable record and must outlive the data.
+        await self._channel_audit_log.create_index(
+            [("channel_id", 1), ("ts", -1)],
+            name="channel_audit_log_channel_ts",
         )
         # P0-2: media extractor content-hash cache index.
         await self._media_cache_store.ensure_indexes()
@@ -858,6 +911,144 @@ class MongoDBStore:
         await self._channel_sync_state.delete_one({"channel_id": channel_id})
         await self._sync_jobs.delete_many({"channel_id": channel_id})
 
+    async def purge_channel(self, channel_id: str) -> dict[str, int]:
+        """Hard-delete every Mongo document this store owns for ``channel_id``.
+
+        delete-channel-v2 Wave 1 aggregator. Deletes per-collection and
+        returns a ``{collection_name: deleted_count}`` map so the Wave 2
+        fan-out service can record honest per-store counts in the audit log.
+
+        Field names were verified against each write path (NOT assumed):
+          * ``channel_messages`` — top-level ``channel_id`` (ChannelMessage).
+          * ``imported_messages`` — top-level ``channel_id`` (api/imports.py).
+            Legacy collection mid-migration with NO dedicated store attr, so
+            it is reached via ``self._db[...]`` and wrapped in try/except —
+            its absence must not abort the purge.
+          * ``activity_events`` — ``channel_id`` top-level, but sync-history
+            rows also carry it under ``details.channel_id`` (ActivityEvent),
+            so an ``$or`` covers both.
+          * ``wiki_dirty_queue`` / ``wiki_drift_reports`` /
+            ``wiki_merge_proposals`` / ``wiki_proposed_edits`` — top-level
+            ``channel_id`` (verified via their indexes + write paths).
+          * ``write_intents`` — top-level ``channel_id`` (Wave 1 field, now
+            indexed). Mixed-channel / legacy-null intents are NOT matched
+            here; the reconciler's per-fact filter neutralises them.
+          * ``pipeline_checkpoints`` — top-level ``channel_id`` written by
+            ``save_pipeline_checkpoint`` (no regex/join on ``batch_key``).
+
+        Does NOT touch ``channel_purge_locks`` (the gate) or any audit log —
+        those are managed by the Wave 2 service. ``clear_channel_sync_state``
+        is reused at the end so ``channel_sync_state`` + ``sync_jobs`` are
+        cleared with the same semantics the reset path already relies on.
+
+        The counts for ``channel_sync_state`` and ``sync_jobs`` are reported
+        separately (re-counted before the clear) because
+        ``clear_channel_sync_state`` returns nothing.
+        """
+        # INVARIANT: never touch _channel_audit_log or _channel_purge_locks here.
+        counts: dict[str, int] = {}
+
+        async def _delete_many(coll: Any, query: dict[str, Any]) -> int:
+            result = await coll.delete_many(query)
+            return int(result.deleted_count or 0)
+
+        counts["channel_messages"] = await _delete_many(
+            self._channel_messages, {"channel_id": channel_id}
+        )
+
+        # Legacy collection mid-migration — no store attr; best-effort so a
+        # missing collection / driver hiccup never aborts the rest of the purge.
+        # A FAILURE here is real data loss (legacy messages survive the purge),
+        # so we surface a sentinel (``imported_messages_error``) in the returned
+        # counts. The Wave-2 service promotes that sentinel into ``errors`` so
+        # the run is reported "partial" and the purge lock is RETAINED for the
+        # reaper — without it a lone imported_messages failure would silently
+        # release the lock and the reaper would never retry.
+        try:
+            counts["imported_messages"] = await _delete_many(
+                self._db["imported_messages"], {"channel_id": channel_id}
+            )
+        except Exception:
+            logger.warning(
+                "purge_channel: imported_messages delete failed for channel=%s "
+                "(best-effort, continuing)",
+                channel_id,
+                exc_info=True,
+            )
+            counts["imported_messages"] = 0
+            counts["imported_messages_error"] = 1
+
+        counts["activity_events"] = await _delete_many(
+            self._activity_events,
+            {"$or": [{"channel_id": channel_id}, {"details.channel_id": channel_id}]},
+        )
+        counts["wiki_dirty_queue"] = await _delete_many(
+            self._wiki_dirty_queue, {"channel_id": channel_id}
+        )
+        counts["wiki_drift_reports"] = await _delete_many(
+            self._wiki_drift_reports, {"channel_id": channel_id}
+        )
+        counts["wiki_merge_proposals"] = await _delete_many(
+            self._wiki_merge_proposals, {"channel_id": channel_id}
+        )
+        counts["wiki_proposed_edits"] = await _delete_many(
+            self._wiki_proposed_edits, {"channel_id": channel_id}
+        )
+        counts["write_intents"] = await _delete_many(
+            self._write_intents, {"channel_id": channel_id}
+        )
+        counts["pipeline_checkpoints"] = await _delete_many(
+            self._pipeline_checkpoints, {"channel_id": channel_id}
+        )
+
+        # Re-count then clear sync state + sync jobs via the existing helper so
+        # the reset path and the purge path share identical semantics.
+        counts["channel_sync_state"] = await self._channel_sync_state.count_documents(
+            {"channel_id": channel_id}
+        )
+        counts["sync_jobs"] = await self._sync_jobs.count_documents(
+            {"channel_id": channel_id}
+        )
+        await self.clear_channel_sync_state(channel_id)
+
+        return counts
+
+    async def log_channel_purge_audit(
+        self,
+        *,
+        channel_id: str,
+        principal_id: str,
+        counts: dict[str, int],
+        errors: dict[str, str],
+        unlinked_from: list[str],
+        purge_run_id: str,
+        ts: datetime | None = None,
+    ) -> None:
+        """Append one durable audit record for a channel hard-purge run.
+
+        delete-channel-v2 Wave 2. Writes to the RETAINED ``channel_audit_log``
+        collection (NEVER touched by :meth:`purge_channel`), so the record of
+        what was deleted survives the deletion. Called by the Wave-2 fan-out
+        service AFTER all store stages, BEFORE the lock release, so a crash
+        between audit and release leaves the lock for the reaper to re-run.
+
+        ``purge_run_id`` (a UUID assigned per ``purge_channel`` invocation)
+        distinguishes a reaper re-run of the same channel from the original
+        attempt — multiple rows for one ``channel_id`` are expected and each
+        carries its own run id (should-fix #6).
+        """
+        await self._channel_audit_log.insert_one(
+            {
+                "channel_id": channel_id,
+                "principal_id": principal_id,
+                "purge_run_id": purge_run_id,
+                "counts": counts,
+                "errors": errors,
+                "unlinked_from": unlinked_from,
+                "ts": ts if ts is not None else datetime.now(tz=UTC),
+            }
+        )
+
     # ------------------------------------------------------------------
     # Contradiction watermark (P0-1 pipeline-cost-latency-reduction-v2)
     # ------------------------------------------------------------------
@@ -947,6 +1138,149 @@ class MongoDBStore:
         )
         return result is not None
 
+    # ------------------------------------------------------------------
+    # Channel hard-purge lock (delete-channel-v2 Wave 0)
+    # ------------------------------------------------------------------
+
+    async def claim_purge(
+        self,
+        channel_id: str,
+        *,
+        stale_after_s: float = PURGE_LOCK_STALE_AFTER_S,
+        owner_principal_id: str | None = None,
+    ) -> bool:
+        """Atomically claim the hard-purge lock for ``channel_id``.
+
+        This is the cross-process CAS gate that prevents two concurrent
+        purges (user re-click + reaper, or two EE workers) from both
+        running the destructive fan-out and bricking the channel. Modelled
+        on :meth:`advance_contradiction_watermark` — a ``find_one_and_update``
+        with a ``$or`` filter that grants only when no lock exists OR the
+        existing lock is stale (its ``started_at`` is older than
+        ``stale_after_s``).
+
+        Returns:
+            True  — this call WON the lock (a fresh lock was created or a
+                    stale one reclaimed); the caller may run the fan-out.
+            False — a fresh (non-stale) lock is already held by another
+                    purge; the caller must abort (do NOT run the fan-out).
+
+        Concurrency note: with ``upsert=True`` and a unique index on
+        ``channel_id``, two simultaneous inserts (both observing "no doc")
+        race — one wins, the other raises ``DuplicateKeyError``. We catch
+        that and return False (treat the loser as "lost"). The single-doc
+        ``$or`` filter handles the stale-reclaim case without a race because
+        ``find_one_and_update`` is atomic at the document level.
+        """
+        from pymongo import ReturnDocument
+        from pymongo.errors import DuplicateKeyError
+
+        now = datetime.now(tz=UTC)
+        stale_cutoff = now - timedelta(seconds=stale_after_s)
+        set_doc: dict[str, Any] = {"state": "purging", "started_at": now}
+        if owner_principal_id is not None:
+            set_doc["owner_principal_id"] = owner_principal_id
+        try:
+            result = await self._channel_purge_locks.find_one_and_update(
+                {
+                    "channel_id": channel_id,
+                    "$or": [
+                        {"started_at": {"$lt": stale_cutoff}},
+                        {"started_at": {"$exists": False}},
+                    ],
+                },
+                {
+                    "$set": set_doc,
+                    "$setOnInsert": {"channel_id": channel_id},
+                },
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
+            # Concurrent insert lost the upsert race — a fresh lock now
+            # exists and is held by the winner. Treat as "lost".
+            return False
+        # ``upsert=True`` with ``return_document=AFTER`` always returns the
+        # post-image when this call matched or inserted. If the doc existed
+        # AND was fresh (failed the $or), Mongo would raise DuplicateKeyError
+        # on the upsert attempt (handled above), so a non-None result here
+        # means we hold the lock.
+        return result is not None
+
+    async def release_purge(self, channel_id: str) -> None:
+        """Delete the hard-purge lock doc for ``channel_id`` (terminal success).
+
+        Idempotent — a missing doc is a no-op. Called only after the fan-out
+        completes with no errors; on partial failure the lock is RETAINED so
+        the reaper re-runs the purge to convergence.
+        """
+        await self._channel_purge_locks.delete_one({"channel_id": channel_id})
+
+    async def is_purging(
+        self,
+        channel_id: str,
+        *,
+        stale_after_s: float = PURGE_LOCK_STALE_AFTER_S,
+    ) -> bool:
+        """Return True iff a NON-stale purge lock exists for ``channel_id``.
+
+        A stale lock (``started_at`` older than ``stale_after_s``) is treated
+        as not-purging so a crashed purge does not wedge a channel's writers
+        forever — the reaper will eventually reclaim it.
+        """
+        now = datetime.now(tz=UTC)
+        stale_cutoff = now - timedelta(seconds=stale_after_s)
+        doc = await self._channel_purge_locks.find_one(
+            {
+                "channel_id": channel_id,
+                "started_at": {"$gte": stale_cutoff},
+            }
+        )
+        return doc is not None
+
+    async def get_purging_channel_ids(
+        self,
+        *,
+        stale_after_s: float = PURGE_LOCK_STALE_AFTER_S,
+    ) -> set[str]:
+        """Return the set of channel_ids holding a NON-stale purge lock.
+
+        Used by the ExtractionWorker per-tick to build the ``$nin`` claim
+        filter and by other writer guards that need the full active set.
+        Stale locks are excluded (same rationale as :meth:`is_purging`).
+        """
+        now = datetime.now(tz=UTC)
+        stale_cutoff = now - timedelta(seconds=stale_after_s)
+        ids: set[str] = set()
+        async for doc in self._channel_purge_locks.find(
+            {"started_at": {"$gte": stale_cutoff}},
+            {"channel_id": 1},
+        ):
+            cid = doc.get("channel_id")
+            if cid:
+                ids.add(cid)
+        return ids
+
+    async def list_stale_purge_locks(self, older_than_s: float) -> list[str]:
+        """Return channel_ids whose purge lock is stale (for the reaper).
+
+        A lock is stale when its ``started_at`` is older than
+        ``older_than_s`` seconds — i.e. the purge that claimed it likely
+        crashed mid-run. The reaper re-invokes ``purge_channel`` for each,
+        which re-claims via CAS (idempotent / re-entrant).
+        """
+        now = datetime.now(tz=UTC)
+        stale_cutoff = now - timedelta(seconds=older_than_s)
+        ids: list[str] = []
+        async for doc in self._channel_purge_locks.find(
+            {"started_at": {"$lt": stale_cutoff}},
+            {"channel_id": 1},
+        ):
+            cid = doc.get("channel_id")
+            if cid:
+                ids.append(cid)
+        return ids
+
     async def count_synced_channels(self) -> int:
         """Return the number of channels that have a sync state record."""
         return await self._channel_sync_state.count_documents({})
@@ -984,9 +1318,24 @@ class MongoDBStore:
         facts: list[dict[str, Any]],
         entities: list[dict[str, Any]],
         relationships: list[dict[str, Any]],
+        channel_id: str | None = None,
     ) -> str:
-        """Create a WriteIntent and return its ID."""
-        intent = WriteIntent(facts=facts, entities=entities, relationships=relationships)
+        """Create a WriteIntent and return its ID.
+
+        ``channel_id`` is the owning channel for this intent and is persisted
+        top-level so the channel hard-purge (``delete-channel-v2``) can drop
+        the intent in one indexed pass. The persister passes its session-scoped
+        ``channel_id`` (extraction batches are per-channel today). Pass ``None``
+        when a single intent batches facts from more than one channel — the
+        WriteReconciler's per-fact channel filter (Wave 0) handles purge safety
+        in that case regardless of the top-level value.
+        """
+        intent = WriteIntent(
+            facts=facts,
+            entities=entities,
+            relationships=relationships,
+            channel_id=channel_id,
+        )
         await self._write_intents.insert_one(intent.model_dump())
         return intent.id
 
@@ -1631,6 +1980,7 @@ class MongoDBStore:
         channel_id: str | None = None,
         settle_seconds: int = 5,
         max_retries: int = 5,
+        purging_channel_ids: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Atomically claim up to ``batch_size`` pending OR failed-and-due messages.
 
@@ -1680,8 +2030,23 @@ class MongoDBStore:
             "next_attempt_at": {"$lte": now},
             "created_at": {"$lt": now - timedelta(seconds=settle_seconds)},
         }
+        # delete-channel-v2 Wave 0 — writer guard at the CLAIM. The periodic
+        # tick passes ``channel_id=None`` and drains ALL channels, so a
+        # per-channel guard is insufficient; the worker pre-fetches the
+        # purging set once per tick and passes it here as a ``$nin`` so a
+        # purge in flight can never have its rows re-claimed (and thus
+        # re-extracted into Weaviate/graph) by the global drain.
+        purging = set(purging_channel_ids or ())
         if channel_id is not None:
+            # Explicit single-channel scope (manual "extract now"). If that
+            # very channel is purging, claim nothing rather than racing the
+            # purge fan-out.
+            if channel_id in purging:
+                return []
             filter_doc["channel_id"] = channel_id
+        elif purging:
+            # Global drain — exclude every purging channel.
+            filter_doc["channel_id"] = {"$nin": list(purging)}
         # ``attempt_count`` is intentionally NOT reset on the
         # failed → extracting shortcut. The total attempts encode the
         # retry budget (capped by ``max_retries``) and the worker's

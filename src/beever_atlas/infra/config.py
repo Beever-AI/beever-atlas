@@ -757,6 +757,25 @@ class Settings(BaseSettings):
     # ``stores.platform_store.PlatformStore.backfill_legacy_owners``).
     beever_single_tenant: bool = Field(default=True, alias="BEEVER_SINGLE_TENANT")
 
+    # delete-channel-v2 Wave 0 — channel hard-purge reaper. A periodic
+    # scheduler job that re-invokes the purge for any ``channel_purge_locks``
+    # row whose ``started_at`` is older than ``channel_purge_reaper_threshold_s``
+    # (a crashed / partial purge). The threshold MUST exceed the max expected
+    # purge duration so a slow-but-succeeding purge is never double-run; the
+    # store-level default ``PURGE_LOCK_STALE_AFTER_S`` (900s) is the writer-guard
+    # staleness bound and this reaper threshold matches it. Set
+    # CHANNEL_PURGE_REAPER_ENABLED=false on processes that don't run the
+    # scheduler (e.g. bare worker replicas) to avoid duplicate reapers.
+    channel_purge_reaper_enabled: bool = Field(
+        default=True, alias="CHANNEL_PURGE_REAPER_ENABLED"
+    )
+    channel_purge_reaper_threshold_s: float = Field(
+        default=900.0, alias="CHANNEL_PURGE_REAPER_THRESHOLD_S"
+    )
+    channel_purge_reaper_interval_s: int = Field(
+        default=300, alias="CHANNEL_PURGE_REAPER_INTERVAL_S"
+    )
+
     # Media extractor content-hash cache (P0-2).
     # When True, ImageExtractor / VideoExtractor / AudioExtractor skip the
     # Gemini vision/audio call and return the cached description when the same

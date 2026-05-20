@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from beever_atlas.infra.auth import Principal, require_user
@@ -365,12 +365,47 @@ async def _refresh_proxy_hosts(stores) -> None:
 
 
 @router.delete("/api/connections/{connection_id}", status_code=204)
-async def delete_connection(connection_id: str) -> None:
-    """Disconnect and remove a platform connection."""
+async def delete_connection(
+    connection_id: str,
+    cascade: bool = Query(
+        default=True,
+        description=(
+            "When true (default), hard-purge channels SOLELY owned by this "
+            "connection (no other connection lists them in selected_channels). "
+            "Shared channels are never purged. Set false to skip the cascade."
+        ),
+    ),
+    principal: Principal = Depends(require_user),
+) -> None:
+    """Disconnect and remove a platform connection.
+
+    delete-channel-v2 Wave 3: when ``cascade`` is true (default), channels
+    SOLELY owned by this connection are hard-purged through
+    :func:`beever_atlas.services.channel_deletion.purge_channel`. "Sole-owned"
+    = no OTHER remaining connection's ``selected_channels`` lists the channel.
+    Shared channels (still referenced elsewhere) are left untouched — we don't
+    even call purge for them. Each purge is best-effort: a failure is logged
+    and never blocks the connection delete (still returns 204).
+    """
     stores = get_stores()
     conn = await stores.platform.get_connection(connection_id)
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
+
+    # Compute channels solely owned by this connection BEFORE deletion, so the
+    # "is it shared?" scan sees the other connections as they stand now. A
+    # channel is sole-owned iff no OTHER connection lists it in selected_channels.
+    sole_owned: list[str] = []
+    if cascade and getattr(conn, "selected_channels", None):
+        all_connections = await stores.platform.list_connections()
+        others = [c for c in all_connections if c.id != connection_id]
+        for channel_id in conn.selected_channels:
+            shared = any(
+                channel_id in (getattr(other, "selected_channels", None) or [])
+                for other in others
+            )
+            if not shared:
+                sole_owned.append(channel_id)
 
     # Unregister from bot service (best-effort — don't fail if bot is down)
     await _unregister_adapter(conn.id)
@@ -381,6 +416,41 @@ async def delete_connection(connection_id: str) -> None:
 
     logger.info("Deleted platform connection id=%s platform=%s", connection_id, conn.platform)
     await _refresh_proxy_hosts(stores)
+
+    # Cascade: hard-purge each sole-owned channel best-effort. A purge failure
+    # must NOT fail the connection delete (the connection is already gone).
+    if sole_owned:
+        from beever_atlas.infra.channel_access import assert_channel_delete_access
+        from beever_atlas.services.channel_deletion import purge_channel
+
+        principal_id = getattr(principal, "id", None) or str(principal) or "connection_delete"
+        for channel_id in sole_owned:
+            # Per-channel destructive authz: a purge is irreversible, so re-check
+            # the SAME guard the direct DELETE /api/channels/{id} path enforces
+            # for each cascaded channel. On denial we SKIP that one channel (log
+            # + continue) rather than 403'ing the whole connection delete — the
+            # connection is already gone and other sole-owned channels the
+            # principal CAN delete should still be purged.
+            try:
+                await assert_channel_delete_access(principal, channel_id)
+            except HTTPException:
+                logger.warning(
+                    "connection delete cascade: skipping channel %s — principal "
+                    "%s lacks destructive authz (connection %s)",
+                    channel_id,
+                    principal_id,
+                    connection_id,
+                )
+                continue
+            try:
+                await purge_channel(channel_id, principal_id=principal_id)
+            except Exception:
+                logger.exception(
+                    "connection delete cascade: purge failed for sole-owned "
+                    "channel %s (connection %s) — continuing",
+                    channel_id,
+                    connection_id,
+                )
 
 
 @router.post("/api/connections/{connection_id}/validate", response_model=ConnectionResponse)

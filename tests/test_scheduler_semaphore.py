@@ -34,6 +34,9 @@ async def test_timeout_does_not_release_semaphore() -> None:
     fake_stores = type("Stores", (), {})()
     fake_stores.mongodb = type("M", (), {})()
     fake_stores.mongodb.get_sync_status = AsyncMock(return_value=None)
+    # delete-channel-v2 Wave 0 — _execute_sync now consults the purge
+    # guard before resolving policy; channel is not purging here.
+    fake_stores.mongodb.is_purging = AsyncMock(return_value=False)
 
     with (
         patch(
@@ -70,6 +73,9 @@ async def test_successful_acquire_still_releases() -> None:
     fake_stores = type("Stores", (), {})()
     fake_stores.mongodb = type("M", (), {})()
     fake_stores.mongodb.get_sync_status = AsyncMock(return_value=None)
+    # delete-channel-v2 Wave 0 — _execute_sync now consults the purge
+    # guard before resolving policy; channel is not purging here.
+    fake_stores.mongodb.is_purging = AsyncMock(return_value=False)
 
     fake_runner = type("R", (), {})()
     fake_runner.start_sync = AsyncMock(return_value="job-1")

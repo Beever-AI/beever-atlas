@@ -177,6 +177,72 @@ class ChatHistoryStore:
             },
         )
 
+    async def delete_by_channel(self, channel_id: str) -> int:
+        """HARD-delete a channel's chat history across BOTH schema variants.
+
+        delete-channel-v2 Wave 1. Handles the dual schema this collection
+        carries (see the class docstring):
+
+          * v1 (channel-scoped): the session has a top-level ``channel_id``.
+            The whole session document is deleted.
+          * v2 (session-scoped): there is no top-level ``channel_id``; each
+            message carries its own. We ``$pull`` the messages belonging to
+            ``channel_id`` out of every session, then delete any session that
+            is left with an empty ``messages`` array (it held only this
+            channel's turns). Mixed-channel v2 sessions that retain messages
+            from OTHER channels are kept — only the purged channel's turns
+            are stripped.
+
+        Return value (precise): the number of session DOCUMENTS removed —
+        i.e. v1 sessions deleted outright PLUS v2 sessions that became empty
+        after the per-message pull. v2 sessions that were merely trimmed (but
+        still hold other channels' messages) are NOT counted, because the
+        session document survives.
+        """
+        # v1: top-level channel_id → drop the whole session.
+        v1_result = await self._collection.delete_many({"channel_id": channel_id})
+        v1_deleted = int(v1_result.deleted_count or 0)
+
+        # v2: identify the affected sessions BEFORE the pull. We only delete
+        # sessions that become empty *as a result of this purge* — never a
+        # brand-new ``create_session_v2`` row that legitimately has an empty
+        # ``messages`` array and never carried this channel's turns.
+        affected_ids: list[str] = []
+        async for doc in self._collection.find(
+            {
+                "channel_id": {"$exists": False},
+                "messages.channel_id": channel_id,
+            },
+            {"_id": 0, "session_id": 1},
+        ):
+            sid = doc.get("session_id")
+            if sid is not None:
+                affected_ids.append(sid)
+
+        if not affected_ids:
+            return v1_deleted
+
+        # Strip this channel's messages from those v2 sessions.
+        await self._collection.update_many(
+            {"session_id": {"$in": affected_ids}},
+            {
+                "$pull": {"messages": {"channel_id": channel_id}},
+                "$set": {"updated_at": self._now()},
+            },
+        )
+
+        # Delete the affected v2 sessions left with no messages — they held
+        # only the purged channel's turns.
+        empty_result = await self._collection.delete_many(
+            {
+                "session_id": {"$in": affected_ids},
+                "messages": {"$size": 0},
+            }
+        )
+        v2_emptied = int(empty_result.deleted_count or 0)
+
+        return v1_deleted + v2_emptied
+
     @staticmethod
     def _flatten_citations_in_place(messages: list[dict]) -> None:
         """Mutate messages so that `citations` is always a flat legacy list.

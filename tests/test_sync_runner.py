@@ -701,6 +701,11 @@ async def test_start_sync_recovers_stale_running_job(monkeypatch: pytest.MonkeyP
     )
 
     class _Mongo:
+        async def is_purging(self, channel_id: str, **kwargs) -> bool:
+            # delete-channel-v2 Wave 0 — start_sync now consults the purge
+            # guard at function entry; this channel is not purging.
+            return False
+
         async def get_sync_status(self, channel_id: str):
             calls["get_sync_status"] = channel_id
             return stale

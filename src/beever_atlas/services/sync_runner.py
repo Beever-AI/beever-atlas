@@ -163,6 +163,18 @@ class SyncRunner:
         self._progress_callback = progress_callback
         stores = get_stores()
         settings = get_settings()
+        # delete-channel-v2 Wave 0 — purge guard at FUNCTION ENTRY. Placed
+        # before the stale-job recovery write below so a purging channel is
+        # never touched (the recovery path would otherwise write sync_jobs
+        # rows for a channel being torn down). Raising ValueError matches the
+        # existing "already running" contract — callers (scheduler, API)
+        # already catch ValueError and skip.
+        if await stores.mongodb.is_purging(channel_id):
+            logger.info(
+                "SyncRunner: refusing start_sync — channel is purging channel=%s",
+                channel_id,
+            )
+            raise ValueError(f"Channel {channel_id} is being purged; sync refused.")
         if sync_type not in {"auto", "full", "incremental"}:
             raise ValueError(
                 f"Invalid sync_type '{sync_type}'. Use one of: auto, full, incremental."
@@ -1136,6 +1148,40 @@ class SyncRunner:
 
         finally:
             self._active_tasks.pop(channel_id, None)
+
+    async def cancel_sync(self, channel_id: str) -> bool:
+        """Cancel the in-flight sync task for ``channel_id`` (process-local).
+
+        Scoped mirror of :meth:`shutdown` for a single channel — used by the
+        Wave-2 purge service as best-effort cleanup BEFORE the durable lock +
+        writer guards take over (the lock is the cross-process guarantee;
+        this just stops a same-process task sooner). Cancels the task, awaits
+        it, swallows ``CancelledError``, and pops it from the registry.
+
+        Returns:
+            True if a live task was cancelled, False if none was active.
+
+        EE caveat: only cancels tasks in THIS process. In a multi-worker
+        deployment a sync running in another worker is stopped by the lock +
+        guards, not by this call.
+        """
+        task = self._active_tasks.get(channel_id)
+        if task is None or task.done():
+            self._active_tasks.pop(channel_id, None)
+            return False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — log, don't propagate
+            logger.warning(
+                "SyncRunner: task raised during cancel_sync channel=%s: %s",
+                channel_id,
+                exc,
+            )
+        self._active_tasks.pop(channel_id, None)
+        return True
 
     async def shutdown(self) -> None:
         """Cancel all active sync and consolidation tasks gracefully."""

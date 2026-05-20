@@ -26,12 +26,39 @@ _consolidation_tasks: dict[str, asyncio.Task] = {}
 # channel that never had a per-batch consolidation is a no-op.
 _channels_pending_summary: set[str] = set()
 
+# delete-channel-v2 Wave 0 — purge guard for the SYNC ``_spawn_consolidation``.
+# ``_spawn_consolidation`` is intentionally synchronous (the read-then-set of
+# ``_consolidation_tasks`` must be await-free to stay atomic in one event
+# loop), so it cannot ``await is_purging``. Chosen approach: a process-local
+# cached snapshot of purging channel_ids, refreshed by ``_refresh_purging_snapshot``
+# which the async callers (``on_ingestion_complete``, ``consolidate_only``,
+# ``trigger_consolidation``) await immediately before spawning. The sync
+# function then does a cheap membership check against the snapshot. This keeps
+# the spawn await-free while still gating it; the snapshot is at most one
+# call-stale, which is acceptable because the durable purge lock + reconciler
+# per-fact filter (Wave 0) are the real convergence guarantees.
+_purging_snapshot: set[str] = set()
+
+
+async def _refresh_purging_snapshot() -> None:
+    """Refresh the cached purging-channel snapshot read by the sync
+    ``_spawn_consolidation`` guard. Best-effort — a Mongo blip leaves the
+    prior snapshot in place rather than crashing the caller."""
+    global _purging_snapshot
+    try:
+        _purging_snapshot = await get_stores().mongodb.get_purging_channel_ids()
+    except Exception:  # noqa: BLE001 — guard refresh must not break the pipeline
+        logger.exception("Orchestrator: failed to refresh purging snapshot")
+
 
 async def on_ingestion_complete(channel_id: str, facts_created: int) -> None:
     """Called by SyncRunner after ingestion finishes.
 
     Decides whether to trigger consolidation based on the channel's policy.
     """
+    # delete-channel-v2 Wave 0 — refresh the purge snapshot the sync
+    # ``_spawn_consolidation`` guard reads.
+    await _refresh_purging_snapshot()
     policy = await resolve_effective_policy(channel_id)
     strategy = policy.consolidation.strategy
 
@@ -85,7 +112,17 @@ def _spawn_consolidation(channel_id: str) -> None:
     ``_consolidation_tasks[channel_id]`` runs with no ``await`` in
     between, so within a single event loop it is atomic and concurrent
     callers cannot both observe "no running task" and each create one.
+
+    delete-channel-v2 Wave 0 — purge guard. Reads the cached snapshot
+    (refreshed by the async callers via ``_refresh_purging_snapshot``) so
+    the function stays await-free; skips spawning for a purging channel.
     """
+    if channel_id in _purging_snapshot:
+        logger.info(
+            "Orchestrator: skipping consolidation — channel is purging channel=%s",
+            channel_id,
+        )
+        return
     existing = _consolidation_tasks.get(channel_id)
     if existing and not existing.done():
         logger.info(
@@ -196,6 +233,8 @@ async def consolidate_only(channel_id: str) -> None:
     (the same strategies the subscriber already checks before calling us).
     """
     logger.info("Orchestrator: consolidate_only (no counter) channel=%s", channel_id)
+    # delete-channel-v2 Wave 0 — refresh the purge snapshot before spawning.
+    await _refresh_purging_snapshot()
     # Race fix: set the summarize-settled gate SYNCHRONOUSLY before spawning
     # the consolidation task. The previous add inside ``_run_consolidation``
     # only flipped the gate after the event loop scheduled the task, which
@@ -218,12 +257,47 @@ async def consolidate_only(channel_id: str) -> None:
 async def trigger_consolidation(channel_id: str) -> None:
     """Manually trigger consolidation regardless of policy. Used by API."""
     logger.info("Orchestrator: manual consolidation triggered channel=%s", channel_id)
+    # delete-channel-v2 Wave 0 — refresh the purge snapshot before spawning.
+    await _refresh_purging_snapshot()
     _spawn_consolidation(channel_id)
 
 
 def get_active_consolidation_tasks() -> dict[str, asyncio.Task]:
     """Return the active consolidation tasks dict (for shutdown)."""
     return _consolidation_tasks
+
+
+async def cancel_consolidation(channel_id: str) -> bool:
+    """Cancel the in-flight consolidation task for ``channel_id`` (process-local).
+
+    Analogous to :meth:`SyncRunner.cancel_sync` — best-effort same-process
+    cleanup used by the Wave-2 purge service before the durable lock + guards
+    take over. Cancels the task, awaits it, swallows ``CancelledError``, pops
+    it from the registry.
+
+    Returns:
+        True if a live task was cancelled, False if none was active.
+
+    EE caveat: only cancels tasks in THIS process; cross-worker stops rely on
+    the purge lock + the ``_spawn_consolidation`` guard.
+    """
+    task = _consolidation_tasks.get(channel_id)
+    if task is None or task.done():
+        _consolidation_tasks.pop(channel_id, None)
+        return False
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:  # noqa: BLE001 — log, don't propagate
+        logger.warning(
+            "Orchestrator: task raised during cancel_consolidation channel=%s: %s",
+            channel_id,
+            exc,
+        )
+    _consolidation_tasks.pop(channel_id, None)
+    return True
 
 
 async def summarize_settled_for_channel(channel_id: str) -> None:

@@ -629,9 +629,6 @@ async def reset_channel_data(
             detail="sync in progress, cannot reset",
         )
 
-    results: dict[str, int] = {}
-    errors: list[str] = []
-
     # Wiki state (pages, cache bundle, generation status, Neo4j :WikiPage
     # nodes, version archive) is INTENTIONALLY untouched here. The wiki
     # subsystem owns its own reset path at
@@ -641,86 +638,24 @@ async def reset_channel_data(
     # ``/reset`` → ``/wiki/refresh?mode=rebuild`` → ``/sync`` for the
     # one-click "fresh start" UX.
 
-    # 1. Drop derived graph data (Events, Media, channel-scoped Entities,
-    #    plus orphan-global Entity cleanup). Counts come back as
-    #    {events_deleted, media_deleted, entities_deleted}.
-    try:
-        graph_counts = await stores.graph.delete_channel_data(channel_id)
-        results["events_deleted"] = int(graph_counts.get("events_deleted", 0) or 0)
-        results["media_deleted"] = int(graph_counts.get("media_deleted", 0) or 0)
-        results["entities_deleted"] = int(graph_counts.get("entities_deleted", 0) or 0)
-    except Exception as exc:  # noqa: BLE001
-        # Surface only the operation name to the caller — the raw
-        # exception string can leak stack-trace fragments / internal
-        # details. Full exception is logged server-side at WARN.
-        errors.append("delete_channel_data failed")
-        log.warning(
-            "reset_channel_data: delete_channel_data failed channel=%s: %s",
-            channel_id,
-            exc,
-        )
+    # Stages 1-4 (graph data + Weaviate facts + sync-state clear + the
+    # message-flip-to-pending) are delegated to the shared ordered fan-out
+    # (delete-channel-v2 Wave 2, ``mode="reset"``) so reset and the full
+    # hard-purge can never drift in ordering. The reset subset deliberately
+    # SKIPS wiki + chat-history deletes, does NOT unlink connections /
+    # deregister jobs, and does NOT touch the purge lock — see
+    # ``services.channel_deletion._ordered_store_fanout``. The shared helper
+    # returns the SAME ``results`` keys + ``errors`` strings this endpoint has
+    # always exposed, so the response shape is unchanged. Reset-specific logic
+    # (the 409 gate above, the confirm token, the trigger_resync branch below,
+    # and this response envelope) stays here.
+    from beever_atlas.services.channel_deletion import _ordered_store_fanout
 
-    # 2. Drop Weaviate facts + clusters + summaries for the channel.
-    try:
-        weaviate_n = await stores.weaviate.delete_by_channel(channel_id)
-        results["weaviate_deleted"] = int(weaviate_n or 0)
-    except Exception as exc:  # noqa: BLE001
-        errors.append("weaviate.delete_by_channel failed")
-        log.warning(
-            "reset_channel_data: weaviate.delete_by_channel failed channel=%s: %s",
-            channel_id,
-            exc,
-        )
-
-    # 3. Drop sync state (MongoDB). Run before the message-state flip so
-    #    any in-flight worker that observes the half-dropped state has
-    #    nothing to re-anchor to — the next sync auto-resolves to ``full``.
-    try:
-        await stores.mongodb.clear_channel_sync_state(channel_id)
-        results["sync_state_cleared"] = 1
-    except Exception as exc:  # noqa: BLE001
-        errors.append("clear_channel_sync_state failed")
-        log.warning(
-            "reset_channel_data: clear_channel_sync_state failed channel=%s: %s",
-            channel_id,
-            exc,
-        )
-
-    # 4. Flip every preserved ``channel_messages`` row back to
-    #    ``extraction_status='pending'`` so the next sync re-extracts.
-    #    Without this the worker treats messages as ``done`` and the
-    #    pipeline skips them, leaving the freshly-wiped graph empty.
-    #
-    #     ``next_attempt_at`` must be SET to ``now`` (not unset). The
-    #     worker's claim filter is ``{"next_attempt_at": {"$lte": now}}``;
-    #     a missing field never satisfies ``$lte`` in MongoDB, so unsetting
-    #     would silently freeze the row out of the claim queue.
-    #
-    #     Messages themselves are intentionally preserved (they are the
-    #     authoritative source of truth from the platform).
-    try:
-        from datetime import datetime as _dt, timezone as _tz
-
-        now_utc = _dt.now(tz=_tz.utc)
-        result = await stores.mongodb.db["channel_messages"].update_many(
-            {"channel_id": channel_id},
-            {
-                "$set": {
-                    "extraction_status": "pending",
-                    "next_attempt_at": now_utc,
-                    "attempt_count": 0,
-                },
-                "$unset": {"extraction_error": ""},
-            },
-        )
-        results["messages_marked_pending"] = int(result.modified_count)
-    except Exception as exc:  # noqa: BLE001
-        errors.append("reset_extraction_status failed")
-        log.warning(
-            "reset_channel_data: extraction_status reset failed channel=%s: %s",
-            channel_id,
-            exc,
-        )
+    fanout = await _ordered_store_fanout(
+        channel_id, mode="reset", principal_id="admin:reset"
+    )
+    results: dict[str, int] = fanout["results"]
+    errors: list[str] = fanout["errors"]
 
     # 5. Optionally trigger a follow-up sync via the SyncRunner directly
     #    (the same path the user-facing /api/channels/{id}/sync endpoint

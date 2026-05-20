@@ -60,8 +60,29 @@ class WriteReconciler:
 
         wi: WriteIntent = intent  # type: ignore[assignment]
 
+        # delete-channel-v2 Wave 0 — per-fact purge filter. An intent may carry
+        # facts/entities for MULTIPLE channels (mixed-channel intents) and/or
+        # have no top-level channel_id (pre-backfill rows). We therefore filter
+        # at the per-item level on each row's own ``channel_id`` rather than
+        # skipping the whole intent: drop facts/entities whose channel is being
+        # purged, replay the rest, and STILL mark the intent complete at the end
+        # so a purging channel cannot livelock the reconciler or resurrect data.
+        # Best-effort: a Mongo blip fetching the set leaves us with an empty
+        # set (replay everything) — the durable purge lock is the backstop.
+        try:
+            purging_ids = await stores.mongodb.get_purging_channel_ids()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — guard fetch must not break reconciliation
+            logger.exception(
+                "WriteReconciler: get_purging_channel_ids failed for intent %s — "
+                "proceeding without purge filter",
+                intent_id,
+            )
+            purging_ids = set()
+
         facts: list[AtomicFact] = []
         for fd in wi.facts:
+            if fd.get("channel_id") in purging_ids:
+                continue  # channel is being purged — do not resurrect this fact
             # Content-derived deterministic ID — same memory_text +
             # same sorted entity_tags yields the same UUID across retries.
             entity_names = fd.get("entity_tags") or []
@@ -70,12 +91,29 @@ class WriteReconciler:
             facts.append(fact)
 
         entities: list[GraphEntity] = [
-            GraphEntity(**{k: v for k, v in ed.items() if k != "id"}) for ed in wi.entities
+            GraphEntity(**{k: v for k, v in ed.items() if k != "id"})
+            for ed in wi.entities
+            if ed.get("channel_id") not in purging_ids
         ]
-        relationships: list[GraphRelationship] = [
-            GraphRelationship(**{k: v for k, v in rd.items() if k != "id"})
-            for rd in wi.relationships
-        ]
+        # Relationships pragmatically: GraphRelationship rows do not reliably
+        # carry a channel_id on the intent payload, so we cannot per-row filter
+        # them the way we do facts/entities. We drop ALL relationships when ANY
+        # of the intent's facts/entities belonged to a purging channel (a
+        # conservative over-drop) and otherwise replay them unchanged. This may
+        # drop a relationship that bridged a surviving channel, but the
+        # alternative (resurrecting edges into a purged channel's graph) is
+        # worse; the Wave-2 graph delete + reaper converge the surviving side.
+        intent_touches_purged_channel = any(
+            fd.get("channel_id") in purging_ids for fd in wi.facts
+        ) or any(ed.get("channel_id") in purging_ids for ed in wi.entities)
+        relationships: list[GraphRelationship] = (
+            []
+            if (intent_touches_purged_channel and purging_ids)
+            else [
+                GraphRelationship(**{k: v for k, v in rd.items() if k != "id"})
+                for rd in wi.relationships
+            ]
+        )
 
         if not wi.weaviate_done:
             if facts:

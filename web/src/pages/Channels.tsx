@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -94,13 +94,21 @@ export function Channels() {
   const { connections, getWorkspaceName } = useConnectionMap();
   const { getState: getWikiState } = useWikiStates();
 
-  useEffect(() => {
-    api
+  const loadChannels = useCallback(() => {
+    return api
       .get<Channel[]>("/api/channels")
       .then(setChannels)
       .catch(() => setChannels([]))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    loadChannels();
+    // Refetch when a channel is deleted (the delete hook dispatches this)
+    // or a connection changes, so the grid stays consistent.
+    window.addEventListener("connections-changed", loadChannels);
+    return () => window.removeEventListener("connections-changed", loadChannels);
+  }, [loadChannels]);
 
   const connectedCount = useMemo(() => channels.filter((ch) => ch.is_member).length, [channels]);
   const availableCount = useMemo(() => channels.filter((ch) => !ch.is_member).length, [channels]);
@@ -279,6 +287,10 @@ export function Channels() {
                               preface={ch.topic || ch.purpose || undefined}
                               size="sm"
                               animationDelayMs={Math.min(idx, 8) * 40}
+                              channelKind={ch.platform === "file" ? "file" : "chat"}
+                              onDeleted={(id) =>
+                                setChannels((prev) => prev.filter((c) => c.channel_id !== id))
+                              }
                             />
                           );
                         })}

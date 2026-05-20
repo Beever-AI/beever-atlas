@@ -73,6 +73,20 @@ class WriteIntent(BaseModel):
     """Outbox pattern: a pending write intent in MongoDB."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    channel_id: str | None = None
+    """Owning channel for this intent's facts/entities, set at creation by
+    ``create_write_intent`` from the persister's session-scoped
+    ``channel_id`` (see ``delete-channel-v2`` Wave 1).
+
+    Indexed (``write_intents.channel_id``) so the channel hard-purge can
+    delete intents in one pass instead of scanning nested ``facts[]``.
+
+    ``None`` means EITHER a legacy row written before the field existed
+    (the backfill script derives it from ``facts[].channel_id`` where all
+    facts agree) OR an intent that genuinely batches facts from more than
+    one channel. Both cases are handled by the WriteReconciler's per-fact
+    channel filter (Wave 0), which never resurrects a purging channel's
+    facts regardless of the top-level value."""
     facts: list[dict[str, Any]] = Field(default_factory=list)
     entities: list[dict[str, Any]] = Field(default_factory=list)
     relationships: list[dict[str, Any]] = Field(default_factory=list)
