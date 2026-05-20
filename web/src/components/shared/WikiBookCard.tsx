@@ -129,7 +129,7 @@ export function WikiBookCard({
       // translate. Some right/bottom margin so the stack shadow has
       // room to render without being clipped.
       className={cn(
-        "block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-xl",
+        "group block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-xl",
         "transition-all duration-200 hover:-translate-y-1 hover:-translate-x-0.5 active:translate-y-0 active:translate-x-0",
         !isEmpty && "mr-2 mb-2",
         stackShadow,
@@ -193,7 +193,7 @@ export function WikiBookCard({
                     e.stopPropagation();
                     setKebabOpen((v) => !v);
                   }}
-                  className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:!opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  className="p-0.5 rounded opacity-70 group-hover:opacity-100 hover:!opacity-100 hover:bg-muted/60 transition-opacity text-muted-foreground hover:text-foreground"
                 >
                   <MoreHorizontal className="w-4 h-4" />
                 </button>
