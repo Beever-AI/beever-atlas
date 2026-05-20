@@ -365,15 +365,16 @@ class SyncScheduler:
             logger.info("SyncScheduler: purge reaper disabled by config")
             return
         interval = max(30, int(settings.channel_purge_reaper_interval_s))
-        # Overlap guard: cap concurrent runs of the reaper task at 1 so a slow
-        # tick (re-running purges for many stale locks) can't have a second tick
-        # pile up on top of it. ``max_running_jobs`` is APScheduler v4's
-        # task-level concurrency cap (it defaults to 1, but we set it explicitly
-        # here since the reaper does heavyweight cross-store work per tick).
-        await self._scheduler.configure_task(
-            self._purge_reaper_tick,
-            max_running_jobs=1,
-        )
+        # NOTE: do NOT call ``self._scheduler.configure_task(self._purge_reaper_tick,
+        # max_running_jobs=1)`` here. APScheduler v4's ``configure_task`` serialises
+        # the callable via ``callable_to_ref``, which raises ``SerializationError``
+        # on a bound instance method — that exception aborts ``startup()`` before
+        # ``start_in_background()`` runs, silently disabling ALL background jobs
+        # (the ExtractionWorker tick included → extraction stuck at 0/N pending).
+        # ``add_schedule`` stores the bound method directly (no serialisation),
+        # matching every other job here. An overlap cap is unnecessary:
+        # ``_purge_reaper_tick`` re-invokes CAS-idempotent purges (a still-running
+        # purge returns ``already_in_progress``), so concurrent ticks are safe.
         await self._scheduler.add_schedule(
             self._purge_reaper_tick,
             IntervalTrigger(seconds=interval),
