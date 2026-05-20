@@ -204,10 +204,10 @@ describe("useDeleteChannel", () => {
     window.removeEventListener("connections-changed", handler);
   });
 
-  it("on non-207 error: throws, no release, no connections-changed", async () => {
+  it("on non-207 error (500): throws, no release, no connections-changed", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     fetchMock.mockResolvedValue(
-      makeResponse({ detail: "Not found" }, false, 404),
+      makeResponse({ detail: "Internal Server Error" }, false, 500),
     );
 
     const dispatchedEvents: string[] = [];
@@ -222,6 +222,38 @@ describe("useDeleteChannel", () => {
 
     expect(mockRelease).not.toHaveBeenCalled();
     expect(dispatchedEvents).not.toContain("connections-changed");
+
+    window.removeEventListener("connections-changed", handler);
+  });
+
+  it("on 404: treats as already-deleted — resolves completed, releases, fires connections-changed", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValue(
+      makeResponse({ detail: "Channel not found" }, false, 404),
+    );
+
+    const dispatchedEvents: string[] = [];
+    const handler = () => dispatchedEvents.push("connections-changed");
+    window.addEventListener("connections-changed", handler);
+
+    const { result } = renderHook(() => useDeleteChannel());
+
+    let returnedResult:
+      | Awaited<ReturnType<typeof result.current.remove>>
+      | undefined;
+    await act(async () => {
+      returnedResult = await result.current.remove("ch-1", "general");
+    });
+
+    // 404 = already gone: idempotent success, not a thrown error.
+    expect(returnedResult?.status).toBe("completed");
+    expect(returnedResult?.channel_id).toBe("ch-1");
+    expect(mockRelease).toHaveBeenCalledWith("ch-1");
+    expect(dispatchedEvents).toContain("connections-changed");
+    expect(mockShow).toHaveBeenCalledWith(
+      expect.stringContaining("already deleted"),
+      "info",
+    );
 
     window.removeEventListener("connections-changed", handler);
   });

@@ -89,11 +89,15 @@ class _FakeDB:
     purge-only ``wiki_versions`` snapshot delete."""
 
     def __init__(
-        self, imported: _FakeCollection, wiki_versions: _FakeCollection
+        self,
+        imported: _FakeCollection,
+        wiki_versions: _FakeCollection,
+        wiki_version_counters: _FakeCollection,
     ) -> None:
         self._collections = {
             "imported_messages": imported,
             "wiki_versions": wiki_versions,
+            "wiki_version_counters": wiki_version_counters,
         }
 
     def __getitem__(self, name: str) -> _FakeCollection:
@@ -123,7 +127,14 @@ def _store_with_fakes() -> tuple[MongoDBStore, dict[str, _FakeCollection]]:
         "wiki_versions",
         [{"channel_id": cid}, {"channel_id": other}],
     )
-    store._db = _FakeDB(imported, wiki_versions)  # type: ignore[attr-defined]
+    # wiki_version_counters is keyed by ``_id`` == channel_id, not ``channel_id``.
+    wiki_version_counters = _seed(
+        "wiki_version_counters",
+        [{"_id": cid}, {"_id": other}],
+    )
+    store._db = _FakeDB(  # type: ignore[attr-defined]
+        imported, wiki_versions, wiki_version_counters
+    )
     store._activity_events = _seed(  # type: ignore[attr-defined]
         "activity_events",
         [
@@ -171,6 +182,7 @@ async def test_purge_channel_returns_per_collection_counts() -> None:
     assert counts["wiki_merge_proposals"] == 2
     assert counts["wiki_proposed_edits"] == 0
     assert counts["wiki_versions"] == 1
+    assert counts["wiki_version_counters"] == 1
     assert counts["write_intents"] == 1
     assert counts["pipeline_checkpoints"] == 1
     assert counts["channel_sync_state"] == 1
@@ -187,6 +199,7 @@ async def test_purge_channel_leaves_other_channels_intact() -> None:
     assert {d["channel_id"] for d in colls["activity_events"].docs} == {"C2"}
     assert [d["channel_id"] for d in colls["wiki_dirty_queue"].docs] == ["C2"]
     assert [d["channel_id"] for d in colls["wiki_versions"].docs] == ["C2"]
+    assert [d["_id"] for d in colls["wiki_version_counters"].docs] == ["C2"]
     assert [d["channel_id"] for d in colls["write_intents"].docs] == ["C2"]
     assert [d["channel_id"] for d in colls["channel_sync_state"].docs] == ["C2"]
     assert [d["channel_id"] for d in colls["sync_jobs"].docs] == ["C2"]

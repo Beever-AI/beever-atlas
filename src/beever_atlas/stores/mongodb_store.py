@@ -1002,6 +1002,13 @@ class MongoDBStore:
         counts["wiki_versions"] = await _delete_many(
             self._db["wiki_versions"], {"channel_id": channel_id}
         )
+        # ``wiki_version_counters`` — the atomic per-channel version sequence
+        # (WikiVersionStore._next_version_number). Keyed by ``_id`` == channel_id
+        # (NOT ``channel_id``). Purge it so a re-ingested channel restarts
+        # numbering from 1 and no channel_id lingers after a hard delete.
+        counts["wiki_version_counters"] = await _delete_many(
+            self._db["wiki_version_counters"], {"_id": channel_id}
+        )
         counts["write_intents"] = await _delete_many(
             self._write_intents, {"channel_id": channel_id}
         )

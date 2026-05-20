@@ -394,14 +394,15 @@ class WikiCache:
 
         ``delete_wiki`` only clears one language; a purge must remove every
         ``{channel_id}:{lang}`` row (``_cache_key``) plus the legacy bare
-        ``channel_id`` row. Both are matched with an anchored prefix
-        (``^<id>(:|$)``) so an id can never collide with another that merely
-        shares a prefix. Returns total rows deleted across ``wiki_cache`` +
+        ``channel_id`` row. Both are matched with an end-anchored prefix
+        (``^<id>(:.+)?$`` — same shape as ``mark_all_stale``) so an id can never
+        collide with another that merely shares a prefix (``C1`` must not match
+        ``C12``). Returns total rows deleted across ``wiki_cache`` +
         ``wiki_generation_status``. Does NOT touch ``wiki_pages`` — the purge
         fan-out deletes those via ``WikiPageStore.delete_all_for_channel_all_langs``.
         """
         await self._ensure_db()
-        pattern = {"$regex": f"^{re.escape(channel_id)}(:|$)"}
+        pattern = {"$regex": f"^{re.escape(channel_id)}(:.+)?$"}
         deleted = 0
         r1 = await self._collection.delete_many({"channel_id": pattern})
         deleted += int(r1.deleted_count or 0)
