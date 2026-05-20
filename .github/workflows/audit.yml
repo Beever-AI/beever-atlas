@@ -39,7 +39,12 @@ jobs:
         run: uv export --quiet --no-emit-project --format requirements-txt --no-hashes > /tmp/requirements-audit.txt
 
       - name: pip-audit (Python deps)
-        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt
+        # PYSEC-2025-183 (pyjwt): disputed by the maintainer and has NO fixed
+        # release — every pyjwt version through 2.12.1 is "affected", and the
+        # advisory is about caller-chosen key length, not a library defect.
+        # pyjwt is pulled transitively via mcp[crypto]; nothing to upgrade to.
+        # Revisit if/when an upstream fix or undispute lands.
+        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt --ignore-vuln PYSEC-2025-183
 
       - name: Set up Node
         uses: actions/setup-node@v6
