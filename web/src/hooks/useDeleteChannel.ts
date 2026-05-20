@@ -75,6 +75,16 @@ export function useDeleteChannel(): UseDeleteChannelReturn {
         toast.show(`Channel "${channelName}" deleted.`, "info");
         return result;
       } catch (err: unknown) {
+        // 404 = the channel's ingested footprint is already gone (a prior purge
+        // that converged, the reaper finished, or a double-click). Treat it as
+        // success: drop it from the grid and fire the same side-effects as a
+        // clean delete instead of surfacing a scary error.
+        if (err instanceof ApiError && err.status === 404) {
+          release(channelId);
+          window.dispatchEvent(new Event("connections-changed"));
+          toast.show(`Channel "${channelName}" was already deleted.`, "info");
+          return { channel_id: channelId, status: "completed" };
+        }
         const msg =
           err instanceof ApiError
             ? err.message

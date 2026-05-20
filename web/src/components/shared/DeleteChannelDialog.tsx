@@ -22,7 +22,7 @@ function getBodyCopy(channelName: string, channelKind: "file" | "chat" | undefin
     return `This permanently deletes the imported documents, generated wiki, and derived knowledge for ${channelName}. Uploaded files in storage may remain.`;
   }
   // chat (default)
-  return `This permanently deletes all synced messages, Q&A, the wiki, and derived knowledge for ${channelName}, and unlinks it so it won't re-sync.`;
+  return `This permanently deletes all synced messages, Q&A, the wiki, and derived knowledge for ${channelName}, and unlinks it so it won't re-sync. If ${channelName} still exists on the connected platform it will reappear here as available to ingest — only the ingested data is removed.`;
 }
 
 /**

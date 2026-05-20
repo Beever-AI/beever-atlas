@@ -1046,12 +1046,15 @@ async def delete_channel(
 
       1. ``assert_channel_delete_access`` — tenancy-aware destructive authz.
          Stricter than the read path: no orphan-permissive fallback.
-      2. ``confirm`` must match the channel display name (the channel_id is
+      2. 404 when the channel is referenced nowhere (no connection pick-list,
+         no synced data) — read-only, no lock claimed. A purged channel that
+         lingers in the grid only because it's a live channel on the connected
+         platform is "already gone" → 404, not a confusing confirm-mismatch
+         400. Orphans with data are still valid targets.
+      3. ``confirm`` must match the channel display name (the channel_id is
          accepted only as a fallback when no display name is stored); a
          mismatch is a 400 and NO store is touched (the lock is never
          claimed). This is anti-accidental UI friction, not an authz control.
-      3. 404 only when the channel is referenced nowhere (no connection
-         pick-list, no synced data). Orphans with data are valid targets.
 
     Status → HTTP mapping (the service never raises for a missing channel
     and never 500s — per-store failures are isolated into ``errors``):
@@ -1069,7 +1072,18 @@ async def delete_channel(
 
     stores = get_stores()
 
-    # 2. Type-to-confirm guard. ``confirm`` is anti-accidental UI friction
+    # 2. Existence check FIRST. A channel referenced nowhere — no connection
+    #    pick-list entry and no synced data — is already gone. This notably
+    #    covers a previously-purged channel that still shows in the grid only
+    #    because it's a live channel on the connected platform: after a purge
+    #    the stored display name is gone, so the confirm guard below would
+    #    otherwise reject the exact name the user still sees with a confusing
+    #    400. Returning 404 here is honest ("already deleted") and lets the UI
+    #    drop the card. Read-only — no lock claimed.
+    if not await _channel_is_referenced_anywhere(channel_id):
+        raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
+
+    # 3. Type-to-confirm guard. ``confirm`` is anti-accidental UI friction
     #    (make the user type what they see) — NOT an authz control; the real
     #    destructive authz is ``assert_channel_delete_access`` above. The
     #    channel display name is not a secret. When a display name is stored we
@@ -1077,10 +1091,10 @@ async def delete_channel(
     #    so also accepting the raw id is a needless second key that widens the
     #    accepted set. The raw ``channel_id`` is accepted ONLY as a fallback
     #    when no display name exists (orphans the UI labels by id). Validate
-    #    AFTER authz but BEFORE touching any store (no lock claimed on mismatch).
-    #    NOTE: ``confirm`` stays a query param on purpose — the shared
-    #    ``web/src/lib/api.ts`` ``delete`` wrapper has no request-body support
-    #    and DELETE-with-body is fragile across proxies/clients.
+    #    AFTER the existence check but BEFORE touching any store (no lock
+    #    claimed on mismatch). NOTE: ``confirm`` stays a query param on purpose
+    #    — the shared ``web/src/lib/api.ts`` ``delete`` wrapper has no
+    #    request-body support and DELETE-with-body is fragile across proxies.
     display_name = await stores.mongodb.get_channel_display_name(channel_id)
     if display_name and display_name.strip():
         accepted = {display_name.strip()}
@@ -1094,10 +1108,6 @@ async def delete_channel(
                 "type the channel name exactly to confirm deletion"
             ),
         )
-
-    # 3. 404 only when the channel is referenced nowhere.
-    if not await _channel_is_referenced_anywhere(channel_id):
-        raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
     result = await purge_channel(channel_id, principal_id=principal.id)
     status = result.get("status")
