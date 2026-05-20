@@ -100,9 +100,15 @@ openspec/
 web/openspec/
 
 # Local env backups created by ./atlas on re-runs
-.env.backup.*
+# (glob covers .env.backup, .env.backup.<x> and .env.backup-<x> variants)
+.env.backup*
 
 # Local presentation drafts and ad-hoc debug scripts (intentionally untracked)
 PRESENTATION.md
 web/test-faq.mjs
-.env.backup
+
+# Local untracked assets, demo seed data, and deploy scripts (intentionally untracked)
+assets/posters/
+scripts/deploy/
+demo/seed_slack.py
+demo/slack_demo_conversations.json
