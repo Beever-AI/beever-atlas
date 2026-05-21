@@ -205,6 +205,57 @@ async def test_get_sync_status_returns_none_when_no_rows() -> None:
     assert await store.get_sync_status("C_EMPTY") is None
 
 
+async def test_get_sync_status_fallback_ignores_worker_extraction() -> None:
+    """The fallback must skip synthetic ``worker_extraction`` rows.
+
+    The ExtractionWorker never finalizes its ``worker:<channel>:<ts>`` row to
+    ``completed``; a stuck ``running`` one is newer than the real sync job. If
+    the fallback returned it, ``/sync/status`` would report a perpetual sync
+    and the sidebar "Syncing now…" dot would never clear.
+    """
+    channel = "C_WORKER"
+    now = datetime.now(tz=UTC)
+    real_sync = _make_sync_job_doc(
+        job_id="sync-done",
+        channel_id=channel,
+        status="completed",
+        started_at=now - timedelta(minutes=5),
+        kind="sync",
+    )
+    stuck_worker = _make_sync_job_doc(
+        job_id="worker:C_WORKER:123",
+        channel_id=channel,
+        status="running",  # never finalized
+        started_at=now,  # newer than the real sync
+        kind="worker_extraction",
+    )
+    store, _ = _store_with_jobs([real_sync, stuck_worker])
+
+    result = await store.get_sync_status(channel)
+
+    assert result is not None
+    assert result.id == "sync-done"  # the real sync, not the stuck worker row
+    assert result.status == "completed"
+
+
+async def test_get_sync_status_none_when_only_worker_extraction() -> None:
+    """A lone stuck ``worker_extraction`` row must read as idle (None), not
+    as an active sync."""
+    channel = "C_ONLY_WORKER"
+    store, _ = _store_with_jobs(
+        [
+            _make_sync_job_doc(
+                job_id="worker:C_ONLY_WORKER:999",
+                channel_id=channel,
+                status="running",
+                started_at=datetime.now(tz=UTC),
+                kind="worker_extraction",
+            )
+        ]
+    )
+    assert await store.get_sync_status(channel) is None
+
+
 # ── Layer B tests ───────────────────────────────────────────────────────
 
 

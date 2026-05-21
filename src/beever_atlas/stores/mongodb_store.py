@@ -702,9 +702,17 @@ class MongoDBStore:
         ``batch_results`` array then pollutes the frontend's chip strip
         with stale DONE batches before any new work has been done.
 
-        Falls back to the most-recent row (any status) when no running
-        sync exists so legacy callers reading historical state — e.g.
-        cooldown checks in ``capabilities.sync`` — keep working.
+        Falls back to the most-recent ``kind="sync"`` row (any status) when
+        no running sync exists so legacy callers reading historical state —
+        e.g. cooldown checks in ``capabilities.sync`` — keep working.
+
+        The synthetic ``worker_extraction`` rows (``worker:<channel>:<ts>``)
+        are deliberately excluded from BOTH queries: the ExtractionWorker
+        writes per-batch progress to them but never finalizes them to
+        ``completed`` (they're internal telemetry — "a row nobody reads").
+        Including them here meant a stuck ``running`` worker row was returned
+        as the active job, so ``/sync/status`` reported a perpetual sync and
+        the sidebar "Syncing now…" dot never cleared.
         """
         running = await self._sync_jobs.find_one(
             {"channel_id": channel_id, "kind": "sync", "status": "running"},
@@ -714,7 +722,7 @@ class MongoDBStore:
             running.pop("_id", None)
             return SyncJob(**running)
         latest = await self._sync_jobs.find_one(
-            {"channel_id": channel_id},
+            {"channel_id": channel_id, "kind": "sync"},
             sort=[("started_at", -1)],
         )
         if latest is None:
