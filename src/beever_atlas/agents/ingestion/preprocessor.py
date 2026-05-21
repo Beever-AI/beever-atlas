@@ -113,13 +113,19 @@ def _is_bot_message(msg: dict[str, Any]) -> bool:
     return False
 
 
-def _is_skippable(msg: dict[str, Any]) -> bool:
+def _is_skippable(msg: dict[str, Any], keep_bot_messages: bool = False) -> bool:
     """Return True if the message should be excluded from preprocessing.
 
     Skipped if:
     - No ``text`` content (or text is purely whitespace).
-    - Sent by a bot — UNLESS it's a thread reply with substantive content (>20 chars).
+    - Sent by a bot — UNLESS it's a thread reply with substantive content (>20
+      chars), or ``keep_bot_messages`` is set (then bot authorship alone never
+      skips; empty-text and system-subtype messages are still dropped).
     - Is a Slack join/leave or other system subtype.
+
+    ``keep_bot_messages`` mirrors ``Settings.ingest_bot_messages`` — it exists for
+    deployments where "people" post through webhooks (e.g. Discord webhook
+    personas, which Discord always stamps ``author.bot=true``).
     """
     text: str = (msg.get("text") or msg.get("content") or "").strip()
     has_attachments = bool(msg.get("attachments") or msg.get("files"))
@@ -128,7 +134,7 @@ def _is_skippable(msg: dict[str, Any]) -> bool:
 
     raw_meta = msg.get("raw_metadata") if isinstance(msg.get("raw_metadata"), dict) else {}
 
-    if _is_bot_message(msg):
+    if not keep_bot_messages and _is_bot_message(msg):
         # Keep bot thread replies with substantive content (CI results, deploy notices, etc.)
         thread_id = msg.get("thread_ts") or msg.get("thread_id")
         msg_id = msg.get("ts") or msg.get("message_id")
@@ -345,8 +351,12 @@ class PreprocessorAgent(BaseAgent):
         skipped = 0
         msg_seq = 0
 
+        # Webhook-persona deployments (e.g. Discord) set this so bot-authored
+        # messages aren't dropped as integration noise. Read once per batch.
+        keep_bot_messages = get_settings().ingest_bot_messages
+
         for msg in messages:
-            if _is_skippable(msg):
+            if _is_skippable(msg, keep_bot_messages=keep_bot_messages):
                 skipped += 1
                 continue
 

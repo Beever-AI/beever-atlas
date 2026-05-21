@@ -159,6 +159,18 @@ class Settings(BaseSettings):
     entity_threshold: float = Field(default=0.6)
     max_facts_per_message: int = Field(default=2)
     sync_batch_timeout_seconds: int = Field(default=600)
+    # When true, the PreprocessorAgent KEEPS messages flagged as bot-authored
+    # (top-level ``is_bot`` or ``raw_metadata.is_bot``) instead of dropping them
+    # as integration noise. Needed when "people" are posted via webhooks — e.g.
+    # Discord webhook personas (each message carries a custom username + avatar
+    # but Discord stamps ``author.bot=true``), or community/bridged webhooks.
+    # Empty-text and system-subtype messages are still skipped. Default False
+    # preserves CI/deploy-bot noise filtering for normal deployments.
+    ingest_bot_messages: bool = Field(
+        default=False,
+        alias="INGEST_BOT_MESSAGES",
+        description="Keep bot/webhook-authored messages during preprocessing (e.g. Discord webhook personas) instead of dropping them as noise.",
+    )
 
     # ── Embedding (provider-pluggable via LiteLLM) ────────────────────────
     # Defaults preserve the legacy Jina-v4 @ 2048d behaviour bit-for-bit so
