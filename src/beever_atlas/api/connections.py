@@ -392,6 +392,28 @@ async def delete_connection(
     if conn is None:
         raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
 
+    # Destructive authz FIRST: only the connection's owner may delete it (and
+    # cascade-purge its sole-owned channels). Without this, any authenticated
+    # user could delete another tenant's connection by id — the per-channel
+    # guard in the cascade below runs only AFTER the connection row is already
+    # gone, so it cannot protect the connection itself. Mirrors the ownership
+    # check ``GET /api/connections/{id}/channels`` already enforces; safe in
+    # single-tenant mode (the helper admits un-owned/legacy connections).
+    # NOTE: ``assert_connection_owned`` raises the capability-layer
+    # ``ConnectionAccessDenied`` (no global REST handler translates it, unlike
+    # ``assert_channel_delete_access`` which raises ``HTTPException`` directly),
+    # so translate it to a 403 here.
+    from beever_atlas.capabilities.errors import ConnectionAccessDenied
+    from beever_atlas.infra.channel_access import assert_connection_owned
+
+    try:
+        await assert_connection_owned(principal, connection_id)
+    except ConnectionAccessDenied:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete this connection.",
+        ) from None
+
     # Compute channels solely owned by this connection BEFORE deletion, so the
     # "is it shared?" scan sees the other connections as they stand now. A
     # channel is sole-owned iff no OTHER connection lists it in selected_channels.

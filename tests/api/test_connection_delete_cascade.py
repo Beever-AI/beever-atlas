@@ -24,7 +24,9 @@ from beever_atlas.models.platform_connection import PlatformConnection
 from beever_atlas.server.app import app
 
 
-def _conn(*, connection_id: str, selected: list[str]) -> PlatformConnection:
+def _conn(
+    *, connection_id: str, selected: list[str], owner: str = "user:test"
+) -> PlatformConnection:
     return PlatformConnection(
         id=connection_id,
         platform="slack",
@@ -37,7 +39,7 @@ def _conn(*, connection_id: str, selected: list[str]) -> PlatformConnection:
         credential_tag=b"",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
-        owner_principal_id="user:test",
+        owner_principal_id=owner,
     )
 
 
@@ -174,3 +176,24 @@ async def test_delete_missing_connection_404(client, monkeypatch):
     resp = await client.delete("/api/connections/does-not-exist")
     assert resp.status_code == 404, resp.text
     spy.assert_not_called()
+
+
+async def test_delete_connection_denied_for_non_owner(client, monkeypatch):
+    """IDOR guard (CRITICAL): a principal that does not own the connection gets
+    403, the connection is NOT deleted, and NO channel is cascade-purged.
+
+    The test client authenticates as ``user:test`` (conftest); the target is
+    owned by a different principal, so ``assert_connection_owned`` denies it
+    (explicit non-matching owner is rejected in both single- and multi-tenant
+    mode — the single-tenant fallback only admits un-owned/legacy connections).
+    """
+    target = _conn(connection_id="conn-other", selected=["C1"], owner="user:intruder")
+    spy = _wire(monkeypatch, target=target, others=[])
+    delete_mock = AsyncMock(return_value=True)
+    connections_mod.get_stores().platform.delete_connection = delete_mock
+
+    resp = await client.delete("/api/connections/conn-other")
+
+    assert resp.status_code == 403, resp.text
+    spy.assert_not_called()  # no channel was cascade-purged
+    delete_mock.assert_not_called()  # the connection itself was NOT deleted
