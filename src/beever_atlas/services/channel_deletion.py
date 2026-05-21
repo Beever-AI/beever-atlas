@@ -44,6 +44,7 @@ failure never aborts the rest of the purge:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -341,14 +342,23 @@ async def _purge_fanout(channel_id: str, stores: Any, *, principal_id: str) -> d
     #    purge cannot self-heal into a live channel via a scheduler timer.
     try:
         connections = await stores.platform.list_connections()
-        for conn in connections:
-            selected = conn.selected_channels or []
-            if channel_id in selected:
-                await stores.platform.update_connection(
+        to_unlink = [c for c in connections if channel_id in (c.selected_channels or [])]
+        # Concurrent updates: on large (EE) deployments the matching set can be
+        # more than one, and sequential awaits would add latency toward the
+        # stale-lock threshold. gather keeps it bounded; any one failure raises
+        # and is caught below (the reaper re-runs the purge).
+        await asyncio.gather(
+            *(
+                stores.platform.update_connection(
                     conn.id,
-                    selected_channels=[c for c in selected if c != channel_id],
+                    selected_channels=[
+                        c for c in (conn.selected_channels or []) if c != channel_id
+                    ],
                 )
-                unlinked_from.append(conn.id)
+                for conn in to_unlink
+            )
+        )
+        unlinked_from.extend(conn.id for conn in to_unlink)
     except Exception as exc:  # noqa: BLE001
         errors["unlink_connections"] = str(exc)
         logger.warning(

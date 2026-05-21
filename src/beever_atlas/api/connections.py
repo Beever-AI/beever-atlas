@@ -144,10 +144,13 @@ async def _register_adapter(
             )
 
 
-async def _unregister_adapter(connection_id: str) -> None:
+async def _unregister_adapter(connection_id: str) -> bool:
     """Call DELETE /bridge/adapters/{connectionId} to remove the adapter.
 
-    Errors are logged but not re-raised — unregister is best-effort during rollback.
+    Best-effort: errors are logged, never re-raised. Returns True when the
+    adapter was unregistered (or was already absent — 404), False when the
+    bridge could not be reached or returned an error — so callers can surface a
+    clearer warning when a failed unregister precedes a destructive cascade.
     """
     async with _bridge_client() as client:
         try:
@@ -158,10 +161,13 @@ async def _unregister_adapter(connection_id: str) -> None:
                     resp.status_code,
                     connection_id,
                 )
+                return False
+            return True
         except httpx.ConnectError:
             logger.warning(
                 "Bridge unreachable during adapter rollback for connection %s", connection_id
             )
+            return False
 
 
 async def _list_bridge_channels(
@@ -428,8 +434,21 @@ async def delete_connection(
             if not shared:
                 sole_owned.append(channel_id)
 
-    # Unregister from bot service (best-effort — don't fail if bot is down)
-    await _unregister_adapter(conn.id)
+    # Unregister from bot service (best-effort — don't fail if bot is down).
+    # If unregister fails AND we're about to cascade-purge sole-owned channels,
+    # warn loudly: the bot may keep routing messages to the now-purged channels
+    # until its adapter registry is cleared (bot restart / next credential sync).
+    unregistered = await _unregister_adapter(conn.id)
+    if not unregistered and sole_owned:
+        logger.warning(
+            "connection delete: bridge adapter unregister FAILED for connection %s "
+            "while cascading a hard-purge of %d sole-owned channel(s) %s — the bot "
+            "may keep routing to these purged channels until its adapter is cleared "
+            "(restart the bot or wait for the next credential sync).",
+            connection_id,
+            len(sole_owned),
+            sole_owned,
+        )
 
     deleted = await stores.platform.delete_connection(connection_id)
     if not deleted:

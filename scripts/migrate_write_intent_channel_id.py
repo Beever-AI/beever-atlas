@@ -53,9 +53,7 @@ def _derive_channel_id(facts: list[dict[str, Any]] | None) -> str | None:
     if not facts:
         return None
     channel_ids = {
-        cid
-        for fact in facts
-        if isinstance(fact, dict) and (cid := fact.get("channel_id"))
+        cid for fact in facts if isinstance(fact, dict) and (cid := fact.get("channel_id"))
     }
     if len(channel_ids) == 1:
         return next(iter(channel_ids))
@@ -115,6 +113,15 @@ async def migrate(
             if channel_id is not None and derived != channel_id:
                 # Targeted backfill: row belongs to a different channel.
                 counters["skipped"] += 1
+                continue
+
+            # Defensive: the update below filters on ``id``. A legacy row missing
+            # that field would make the filter ``{"id": None}`` match nothing —
+            # silently losing the write while still counting it as written. Skip
+            # such rows explicitly. (App-created rows always have a UUID ``id``.)
+            if not doc.get("id"):
+                counters["skipped"] += 1
+                logger.warning("write_intent missing 'id' field, skipping: _id=%s", doc.get("_id"))
                 continue
 
             counters["planned"] += 1
