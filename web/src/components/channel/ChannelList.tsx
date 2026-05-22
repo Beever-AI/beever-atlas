@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RefreshCw } from "lucide-react";
@@ -219,6 +219,7 @@ export function ChannelList() {
             onToggleFavorite={toggleFavorite}
             showWorkspaceName
             getWikiState={getWikiState}
+            disableFold
           />
         )}
       </div>
@@ -241,19 +242,21 @@ export function ChannelList() {
         <Separator className="my-1" />
       )}
 
-      {workspaceGroups.map((group) => (
-        <WorkspaceGroup
-          key={group.key}
-          label={group.label}
-          platform={group.platform}
-          channels={group.channels}
-          defaultCollapsed={collapsedGroups[group.key] ?? false}
-          onToggleCollapse={() => handleToggleCollapse(group.key)}
-          isFavorite={isFavorite}
-          onToggleFavorite={toggleFavorite}
-          connectionStatus={group.connectionStatus}
-          getWikiState={getWikiState}
-        />
+      {workspaceGroups.map((group, i) => (
+        <Fragment key={group.key}>
+          {i > 0 && <Separator className="mx-3 my-1.5 bg-border/50" />}
+          <WorkspaceGroup
+            label={group.label}
+            platform={group.platform}
+            channels={group.channels}
+            defaultCollapsed={collapsedGroups[group.key] ?? false}
+            onToggleCollapse={() => handleToggleCollapse(group.key)}
+            isFavorite={isFavorite}
+            onToggleFavorite={toggleFavorite}
+            connectionStatus={group.connectionStatus}
+            getWikiState={getWikiState}
+          />
+        </Fragment>
       ))}
     </div>
   );
