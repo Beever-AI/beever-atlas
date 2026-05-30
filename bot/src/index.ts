@@ -7,7 +7,7 @@ config({ path: resolve(import.meta.dirname, "../../.env") });
 import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
-import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
+import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 
@@ -790,18 +790,21 @@ async function main(): Promise<void> {
       : Math.max(recycleRaw, RECYCLE_FLOOR_MS);
   chatManager.scheduleAdapterRecycle(recycleMs);
 
-  // Pre-warm the MSAL Graph token for Teams adapters. All adapters are now
-  // stable (incremental registration complete) so this targets the final
-  // ConfidentialClientApplication instance. Without pre-warming, the first
-  // user fetch after every restart pays a ~1.5–2.5s token-acquisition penalty.
-  // Fire once per Teams adapter, fire-and-forget — failure is silent and
-  // the first user request will acquire the token if this races.
-  for (const { adapter } of chatManager.getAdaptersByPlatform("teams")) {
-    const graphHttp = (adapter as any)?.app?.graph?.http;
-    if (graphHttp && typeof graphHttp.get === "function") {
-      graphHttp.get("/organization?$top=1").catch(() => {});
+  // Pre-warm the MSAL Graph token for every Teams adapter. The token is shared
+  // across all Graph reads (channel enumeration AND message fetches), so this
+  // removes the ~1.5–2.5s cold-acquire penalty from the first user request.
+  const warmTeamsAdapters = () => {
+    for (const { adapter } of chatManager.getAdaptersByPlatform("teams")) {
+      warmTeamsGraphToken(adapter);
     }
-  }
+  };
+  warmTeamsAdapters();
+  // Re-warm after every adapter rebuild (connection change OR the periodic
+  // recycle): a rebuild creates fresh adapter instances whose token cache is
+  // empty, which is exactly when the next fetch would otherwise pay the cold
+  // penalty. Fire-and-forget and Teams-filtered — a no-op when no Teams
+  // adapters are registered.
+  chatManager.onRebuildComplete(warmTeamsAdapters);
 
   startServer(chatManager);
   console.log("Bot service ready");

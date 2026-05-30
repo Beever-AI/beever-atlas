@@ -7,6 +7,7 @@ import {
   pruneStaleTelegramChats,
   clearUserProfileCache,
   clearMattermostUserCache,
+  warmTeamsGraphToken,
 } from "./bridge.js";
 
 // ── Teams conversation registry prune (RES-286) ──────────────────────────────
@@ -104,5 +105,49 @@ describe("clearUserProfileCache / clearMattermostUserCache", () => {
     assert.doesNotThrow(() => clearUserProfileCache());
     assert.doesNotThrow(() => clearMattermostUserCache());
     assert.doesNotThrow(() => clearMattermostUserCache());
+  });
+});
+
+// ── Teams Graph token pre-warm (PERF) ────────────────────────────────────────
+
+describe("warmTeamsGraphToken", () => {
+  it("calls graph.http.get('/organization?$top=1') exactly once for a Teams adapter", () => {
+    const calls: string[] = [];
+    const adapter = {
+      app: { graph: { http: { get: (path: string) => { calls.push(path); return Promise.resolve({}); } } } },
+    };
+    warmTeamsGraphToken(adapter);
+    assert.deepStrictEqual(calls, ["/organization?$top=1"]);
+  });
+
+  it("is a no-op (no throw) for adapters without a Graph http client", () => {
+    // Slack/Discord/etc. adapters have no app.graph.http — must be skipped.
+    assert.doesNotThrow(() => warmTeamsGraphToken({}));
+    assert.doesNotThrow(() => warmTeamsGraphToken({ app: {} }));
+    assert.doesNotThrow(() => warmTeamsGraphToken({ app: { graph: {} } }));
+    assert.doesNotThrow(() => warmTeamsGraphToken(null));
+    assert.doesNotThrow(() => warmTeamsGraphToken(undefined));
+  });
+
+  it("swallows a rejected get() without surfacing an unhandled rejection", async () => {
+    let getCalled = false;
+    const adapter = {
+      app: { graph: { http: { get: () => { getCalled = true; return Promise.reject(new Error("token boom")); } } } },
+    };
+    // Must not throw synchronously…
+    assert.doesNotThrow(() => warmTeamsGraphToken(adapter));
+    assert.ok(getCalled);
+    // …and the rejection must be caught (give the microtask queue a tick to
+    // settle; an uncaught rejection would crash the test runner).
+    await new Promise((r) => setTimeout(r, 5));
+  });
+
+  it("tolerates a synchronously-throwing get() (does not propagate)", () => {
+    const adapter = {
+      app: { graph: { http: { get: () => { throw new Error("sync boom"); } } } },
+    };
+    // Promise.resolve(fn()) — if get() throws synchronously it would propagate;
+    // guard against that being observable to callers.
+    assert.doesNotThrow(() => warmTeamsGraphToken(adapter));
   });
 });

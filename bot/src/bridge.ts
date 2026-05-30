@@ -1403,9 +1403,39 @@ function teamsRecordToChannel(entry: TeamsConversationRecord): NormalizedChannel
 const TEAMS_PAGE_SIZE = 50;
 const TEAMS_MESSAGE_COUNT_CAP = 500;
 
+/**
+ * PERF: fire-and-forget MSAL Graph token pre-warm for a single Teams adapter.
+ * The acquired client-credentials token is shared across ALL Graph reads —
+ * channel enumeration AND message fetches — so warming it removes the
+ * ~1.5–2.5s cold-acquire penalty from the first user request after startup or
+ * an adapter recycle. No-op for non-Teams adapters (no app.graph.http), so it
+ * is safe to call indiscriminately. Errors are swallowed: the first real
+ * request will acquire the token if this races or fails.
+ */
+export function warmTeamsGraphToken(adapter: unknown): void {
+  const graphHttp = (adapter as { app?: { graph?: { http?: { get?: (path: string) => Promise<unknown> } } } })
+    ?.app?.graph?.http;
+  if (graphHttp && typeof graphHttp.get === "function") {
+    try {
+      Promise.resolve(graphHttp.get("/organization?$top=1")).catch(() => { /* token acquired lazily on first real call */ });
+    } catch {
+      /* a synchronous throw from get() must not propagate — same lazy fallback */
+    }
+  }
+}
+
 class TeamsBridge implements PlatformBridge {
   private adapter: TeamsAdapter;
   private connectionId: string;
+  /** PERF: cache of the slow Microsoft Graph channel enumeration — one
+   *  ~1–1.5s round-trip per installed team. The live webhook registry is merged
+   *  fresh on every listChannels call, so ONLY this expensive Graph part is
+   *  cached. Mirrors DiscordBridge.channelCache. Per-instance, wiped on adapter
+   *  recycle (bridgeCache.clear). Populated only on a successful enumeration
+   *  that returned ≥1 channel, so a not-yet-discovered team is never masked. */
+  private graphChannelCache: { data: NormalizedChannel[]; expiresAt: number } | null = null;
+  private graphChannelFetchInFlight: Promise<NormalizedChannel[]> | null = null;
+  private static readonly GRAPH_CHANNEL_CACHE_TTL_MS = 60_000; // 60s
 
   constructor(adapter: TeamsAdapter, connectionId: string) {
     this.adapter = adapter;
@@ -1417,7 +1447,9 @@ class TeamsBridge implements PlatformBridge {
   }
 
   async listChannels(): Promise<NormalizedChannel[]> {
-    // --- Phase 1: in-memory registry (from inbound webhooks / conversationUpdates) ---
+    // Phase 1 — in-memory registry (inbound webhooks / conversationUpdates).
+    // Always recomputed: a cheap Map read that must reflect webhook updates
+    // (new DMs/channels) the instant they arrive, so it is NOT cached.
     const bucket = teamsConversationRegistry.get(this.connectionId);
     const registryChannels = bucket
       ? Array.from(bucket.values())
@@ -1425,27 +1457,56 @@ class TeamsBridge implements PlatformBridge {
           .map(teamsRecordToChannel)
       : [];
 
-    // --- Phase 2: Graph enumeration (zero @mention required) ---
-    // Build the set of AAD group ids (Graph team-ids) for this connection.
-    // Primary source: teamsKnownTeamIds (populated from install events and
-    // across adapter recycles as new activities arrive).
-    // Cold-start fallback: scan the adapter's Redis channelContext cache to
-    // extract teamIds written by the adapter's cacheUserContext on prior runs.
-    const teamIds = new Set(teamsKnownTeamIds.get(this.connectionId) ?? []);
+    // Phase 2 — Graph enumeration (zero @mention required). The slow part: a
+    // Redis cold-start scan plus one Graph round-trip per installed team.
+    // Cached with a short TTL and concurrent-call dedup (see below).
+    const graphChannels = await this.listGraphChannelsCached();
 
-    // Cold-start Redis scan: runs whenever this connection has no known teams,
-    // i.e. on every listChannels call until at least one teamId is found.
-    // Once any team is known the in-memory map is the source of truth until
-    // process exit — no further scans.
-    //
-    // Trade-offs:
-    //   • SCAN (not KEYS) — non-blocking, yields key batches, safe for prod Redis.
-    //   • Retry-until-success: guard is set ONLY after ≥1 teamId is found, so
-    //     calls that race the adapter initialisation (chat state not yet ready)
-    //     will retry on the next listChannels call rather than giving up.
-    //   • No cross-connection back-fill — teamIds are added only to this
-    //     connection's set; the Redis cache is shared across connections and
-    //     blindly claiming another's teams would misroute Graph credentials.
+    // Merge: Graph results are authoritative; supplement with registry entries
+    // for conversations (DMs, group chats) that Graph doesn't enumerate.
+    if (graphChannels.length > 0) {
+      const graphIds = new Set(graphChannels.map((c) => c.channel_id));
+      const extras = registryChannels.filter((c) => !graphIds.has(c.channel_id));
+      return [...graphChannels, ...extras];
+    }
+
+    // Graph unavailable or no teamIds found — return the registry as before.
+    return registryChannels;
+  }
+
+  /** PERF: TTL cache + in-flight dedup around the expensive Graph channel
+   *  enumeration. Mirrors DiscordBridge.listChannels: a fresh hit returns the
+   *  cached array instantly; concurrent callers share one in-flight fetch. */
+  private async listGraphChannelsCached(): Promise<NormalizedChannel[]> {
+    if (this.graphChannelCache && Date.now() < this.graphChannelCache.expiresAt) {
+      return this.graphChannelCache.data;
+    }
+    if (this.graphChannelFetchInFlight) {
+      return this.graphChannelFetchInFlight;
+    }
+    this.graphChannelFetchInFlight = this.enumerateGraphChannels();
+    try {
+      return await this.graphChannelFetchInFlight;
+    } finally {
+      this.graphChannelFetchInFlight = null;
+    }
+  }
+
+  /** Resolve the set of AAD group ids (Graph team-ids) for this connection.
+   *  Primary source: teamsKnownTeamIds (populated from install events and
+   *  across adapter recycles as new activities arrive). Cold-start fallback:
+   *  a one-shot Redis SCAN of the adapter's channelContext cache to recover
+   *  teamIds written by cacheUserContext on prior runs.
+   *
+   *  Trade-offs:
+   *    • SCAN (not KEYS) — non-blocking, yields key batches, safe for prod Redis.
+   *    • Retry-until-success: the guard is set ONLY after ≥1 teamId is found, so
+   *      calls that race adapter initialisation retry on the next call.
+   *    • No cross-connection back-fill — teamIds are added only to this
+   *      connection's set; the Redis cache is shared across connections and
+   *      blindly claiming another's teams would misroute Graph credentials. */
+  private async resolveTeamIds(): Promise<Set<string>> {
+    const teamIds = new Set(teamsKnownTeamIds.get(this.connectionId) ?? []);
     if (teamIds.size === 0 && !teamsColdStartScanned.has(this.connectionId)) {
       const chatState = (this.adapter as any).chat?.getState?.();
       if (chatState) {
@@ -1496,70 +1557,87 @@ class TeamsBridge implements PlatformBridge {
         teamsColdStartScanned.add(this.connectionId);
       }
     }
-
-    // Call GET /teams/{team-id}/channels for each known team.
-    // Requires RSC ChannelSettings.Read.Group (no admin consent) or application
-    // Channel.ReadBasic.All (admin consent). See block comment above.
-    const graphChannels: NormalizedChannel[] = [];
-    if (teamIds.size > 0) {
-      const graph = (this.adapter as any).app?.graph;
-      if (graph) {
-        const { teams } = await import("@microsoft/teams.graph-endpoints" as string);
-        for (const teamId of teamIds) {
-          try {
-            const resp = await graph.call(teams.channels.list, { "team-id": teamId });
-            for (const ch of (resp?.value ?? [])) {
-              const channelId = ch.id as string;
-              graphChannels.push({
-                channel_id: channelId,
-                name: ch.displayName as string || channelId,
-                platform: "teams",
-                is_member: true,
-                member_count: null,
-                topic: (ch.membershipType as string) ?? null,
-                purpose: null,
-              });
-              // Bug A fix: pre-populate the adapter's channelContext Redis cache with
-              // the CORRECT {teamId, channelId} mapping for every channel returned by
-              // Graph. Without this, `getGraphContext` falls back to
-              // `teams.getById(channelId)` which returns the team's aadGroupId but
-              // stores `channelId = <the argument>` — correct for a real channel id,
-              // but the team-root id (19:BMr7Zka…@thread.tacv2) that appears in Bot
-              // Framework `conversation.id` on conversationUpdate events maps to the
-              // same aadGroupId and gets stored with channelId = team-root, causing
-              // every channel under that root to resolve identically.  Caching here
-              // with the real channel id from the authoritative Graph channel-list
-              // ensures each channel resolves to its own messages.
-              const chatState = (this.adapter as any).chat?.getState?.();
-              if (chatState) {
-                const ctx = JSON.stringify({ teamId, channelId });
-                chatState.set(`teams:channelContext:${channelId}`, ctx, 30 * 24 * 60 * 60 * 1000)
-                  .catch(() => { /* non-fatal */ });
-              }
-            }
-          } catch (err) {
-            // safeErrorMessage extracts .message only (no stack/raw object) so
-            // an MSAL/Graph error can't carry a token into logs — consistent
-            // with the M6 sanitization applied across the bot's error paths.
-            console.warn(`TeamsBridge: Graph channels.list failed for team ${teamId}:`, safeErrorMessage(err));
-          }
-        }
-      }
-    }
-
-    // Merge: Graph results are authoritative; supplement with registry entries
-    // for conversations (DMs, group chats) that Graph doesn't enumerate.
-    if (graphChannels.length > 0) {
-      const graphIds = new Set(graphChannels.map((c) => c.channel_id));
-      // Include registry entries not already covered by Graph (DMs, groupChats).
-      const extras = registryChannels.filter((c) => !graphIds.has(c.channel_id));
-      return [...graphChannels, ...extras];
-    }
-
-    // Graph unavailable or no teamIds found — return the registry as before.
-    return registryChannels;
+    return teamIds;
   }
 
+  /** Enumerate channels for every known team via Microsoft Graph. The per-team
+   *  Graph calls are issued CONCURRENTLY (was sequential): teamIds is bounded by
+   *  how many teams the bot is installed in (a handful), so an unbounded
+   *  Promise.all stays well under Graph's per-app throttle. Result is cached on
+   *  a non-empty success only. On total failure, falls back to stale cache. */
+  private async enumerateGraphChannels(): Promise<NormalizedChannel[]> {
+    try {
+      const teamIds = await this.resolveTeamIds();
+      if (teamIds.size === 0) return this.graphChannelCache?.data ?? [];
+
+      const graph = (this.adapter as any).app?.graph;
+      if (!graph) return this.graphChannelCache?.data ?? [];
+
+      // Requires RSC ChannelSettings.Read.Group (no admin consent) or
+      // application Channel.ReadBasic.All (admin consent). See block comment.
+      const { teams } = await import("@microsoft/teams.graph-endpoints" as string);
+      const perTeam = await Promise.all(
+        [...teamIds].map((teamId) => this.listChannelsForTeam(graph, teams, teamId)),
+      );
+      const graphChannels = perTeam.flat();
+
+      // Cache a non-empty success only: a team discovered later (via webhook)
+      // must surface on the next call, not be masked by a cached empty result.
+      if (graphChannels.length > 0) {
+        this.graphChannelCache = {
+          data: graphChannels,
+          expiresAt: Date.now() + TeamsBridge.GRAPH_CHANNEL_CACHE_TTL_MS,
+        };
+      }
+      return graphChannels;
+    } catch (err) {
+      if (this.graphChannelCache) {
+        console.warn("TeamsBridge: listChannels failed, returning stale cache:", safeErrorMessage(err));
+        return this.graphChannelCache.data;
+      }
+      console.error("TeamsBridge: listChannels error (no cache):", safeErrorMessage(err));
+      return [];
+    }
+  }
+
+  /** Enumerate one team's channels and pre-populate the channelContext Redis
+   *  cache for each (Bug A: ensures per-channel message reads resolve to their
+   *  own messages, not the team root). Returns [] on failure so one bad team
+   *  never fails the whole concurrent enumeration. */
+  private async listChannelsForTeam(graph: any, teams: any, teamId: string): Promise<NormalizedChannel[]> {
+    try {
+      const resp = await graph.call(teams.channels.list, { "team-id": teamId });
+      const out: NormalizedChannel[] = [];
+      for (const ch of (resp?.value ?? [])) {
+        const channelId = ch.id as string;
+        out.push({
+          channel_id: channelId,
+          name: ch.displayName as string || channelId,
+          platform: "teams",
+          is_member: true,
+          member_count: null,
+          topic: (ch.membershipType as string) ?? null,
+          purpose: null,
+        });
+        // Pre-populate channelContext with the CORRECT {teamId, channelId} from
+        // the authoritative Graph channel-list so getGraphContext doesn't fall
+        // back to teams.getById(channelId) and collapse every channel under a
+        // team root to the same id (Bug A).
+        const chatState = (this.adapter as any).chat?.getState?.();
+        if (chatState) {
+          const ctx = JSON.stringify({ teamId, channelId });
+          chatState.set(`teams:channelContext:${channelId}`, ctx, 30 * 24 * 60 * 60 * 1000)
+            .catch(() => { /* non-fatal */ });
+        }
+      }
+      return out;
+    } catch (err) {
+      // safeErrorMessage extracts .message only (no stack/raw object) so an
+      // MSAL/Graph error can't carry a token into logs.
+      console.warn(`TeamsBridge: Graph channels.list failed for team ${teamId}:`, safeErrorMessage(err));
+      return [];
+    }
+  }
   async getChannel(id: string): Promise<NormalizedChannel> {
     const entry = teamsConversationRegistry.get(this.connectionId)?.get(id);
     if (entry) return teamsRecordToChannel(entry);
