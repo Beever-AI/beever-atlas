@@ -75,15 +75,18 @@ describe("wiki/MermaidBlock (RES-287/4b)", () => {
       </>,
     );
 
+    // Wait for BOTH blocks to settle into their fallback. Each block's
+    // parse→retry→fallback cycle is async and independent, so under load the
+    // second can lag the first — asserting immediately after a `>= 1` wait is
+    // racy (observed CI flake: got 1, expected 2). Waiting for exactly 2 also
+    // encodes the no-stacking invariant: two blocks → exactly two fallback
+    // summaries, never four (the symptom of the StrictMode race producing
+    // duplicate setError writes from the aborted first render of each block).
+    // The dedicated StrictMode test below remains the canonical guard against
+    // a single block emitting a stacked second tile.
     await waitFor(() => {
-      expect(screen.queryAllByText(/Diagram could not be rendered/i).length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryAllByText(/Diagram could not be rendered/i)).toHaveLength(2);
     });
-
-    // Two blocks → exactly two fallback summaries, never four (which would
-    // be the symptom of the StrictMode race producing duplicate setError
-    // writes from the aborted first render of each block).
-    const fallbacks = screen.queryAllByText(/Diagram could not be rendered/i);
-    expect(fallbacks).toHaveLength(2);
   });
 
   it("StrictMode double-mount does not produce stacked error tiles", async () => {

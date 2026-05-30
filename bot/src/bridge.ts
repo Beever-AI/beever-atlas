@@ -24,6 +24,7 @@ import {
   readBody,
   BodyTooLargeError,
   messageForCode,
+  safeErrorMessage,
 } from "./http-utils.js";
 export { jsonResponse, safeErrorMessage, messageForCode } from "./http-utils.js";
 import { logger } from "./logger.js";
@@ -1266,6 +1267,14 @@ const teamsKnownTeamIds = new Map<string, Set<string>>();
  */
 const teamsColdStartScanned = new Set<string>();
 
+/**
+ * A Microsoft Graph team-id is the team's AAD group object id — a GUID. Used to
+ * validate teamIds sourced from the shared Redis channelContext cache before
+ * they are interpolated into a Graph API path, so a poisoned cache entry cannot
+ * inject an arbitrary value into `graph.call(...{ "team-id": ... })`.
+ */
+const TEAMS_AAD_GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** RES-286 — Teams "I've seen this conversation" registry is populated from
  *  webhooks. It must NOT be wholesale-cleared on adapter recycle — that would
  *  empty the sidebar until each conversation posts again. Instead, drop only
@@ -1456,7 +1465,12 @@ class TeamsBridge implements PlatformBridge {
                   const ctx: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
                   if (ctx && typeof ctx === "object" && "teamId" in ctx) {
                     const tId = (ctx as { teamId: string }).teamId;
-                    if (tId) {
+                    // A Graph team-id is an AAD group GUID. Validate the shape
+                    // before it flows into `graph.call(...{ "team-id": tId })`:
+                    // the Redis keyspace is shared, so a poisoned channelContext
+                    // entry must not be able to inject an arbitrary value into a
+                    // Graph API path. Non-GUID entries are silently skipped.
+                    if (tId && TEAMS_AAD_GROUP_ID_RE.test(tId)) {
                       teamIds.add(tId);
                       let teamSet = teamsKnownTeamIds.get(this.connectionId);
                       if (!teamSet) {
@@ -1524,7 +1538,10 @@ class TeamsBridge implements PlatformBridge {
               }
             }
           } catch (err) {
-            console.warn(`TeamsBridge: Graph channels.list failed for team ${teamId}:`, String(err).slice(0, 200));
+            // safeErrorMessage extracts .message only (no stack/raw object) so
+            // an MSAL/Graph error can't carry a token into logs — consistent
+            // with the M6 sanitization applied across the bot's error paths.
+            console.warn(`TeamsBridge: Graph channels.list failed for team ${teamId}:`, safeErrorMessage(err));
           }
         }
       }
