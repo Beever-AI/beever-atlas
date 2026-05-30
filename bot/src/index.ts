@@ -10,6 +10,11 @@ import { consumeSSEStream } from "./sse-client.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
+
+// M6: log only the error message so stack traces / token values stay out of logs.
+function safeErrMsg(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).slice(0, 500);
+}
 import { WebhookBuffer } from "./webhook-buffer.js";
 import { validateEnv } from "./validate-env.js";
 
@@ -44,8 +49,15 @@ function registerHandlers(bot: Chat): void {
       const blocks = formatBlockKit(result.answer, result.citations, result.route);
       await thread.post(blocks);
     } catch (err) {
-      console.error("Error processing mention:", err);
-      await thread.post("Sorry, I encountered an error processing your question. Please try again.");
+      console.error("Error processing mention:", safeErrMsg(err));
+      // A failed reply must not throw out of the handler: that would make the
+      // webhook return 5xx and skip conversation recording (serviceUrl), which
+      // breaks later message fetches even though the activity was valid.
+      try {
+        await thread.post("Sorry, I encountered an error processing your question. Please try again.");
+      } catch (postErr) {
+        console.error("Failed to deliver error reply:", safeErrMsg(postErr));
+      }
     }
   });
 
@@ -63,8 +75,12 @@ function registerHandlers(bot: Chat): void {
       const blocks = formatBlockKit(result.answer, result.citations, result.route);
       await thread.post(blocks);
     } catch (err) {
-      console.error("Error processing follow-up:", err);
-      await thread.post("Sorry, I encountered an error. Please try again.");
+      console.error("Error processing follow-up:", safeErrMsg(err));
+      try {
+        await thread.post("Sorry, I encountered an error. Please try again.");
+      } catch (postErr) {
+        console.error("Failed to deliver error reply:", safeErrMsg(postErr));
+      }
     }
   });
 }
@@ -777,6 +793,19 @@ async function main(): Promise<void> {
       ? 0
       : Math.max(recycleRaw, RECYCLE_FLOOR_MS);
   chatManager.scheduleAdapterRecycle(recycleMs);
+
+  // Pre-warm the MSAL Graph token for Teams adapters. All adapters are now
+  // stable (incremental registration complete) so this targets the final
+  // ConfidentialClientApplication instance. Without pre-warming, the first
+  // user fetch after every restart pays a ~1.5–2.5s token-acquisition penalty.
+  // Fire once per Teams adapter, fire-and-forget — failure is silent and
+  // the first user request will acquire the token if this races.
+  for (const { adapter } of chatManager.getAdaptersByPlatform("teams")) {
+    const graphHttp = (adapter as any)?.app?.graph?.http;
+    if (graphHttp && typeof graphHttp.get === "function") {
+      graphHttp.get("/organization?$top=1").catch(() => {});
+    }
+  }
 
   startServer(chatManager);
   console.log("Bot service ready");

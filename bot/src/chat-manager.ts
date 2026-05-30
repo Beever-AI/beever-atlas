@@ -18,6 +18,12 @@ import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { createMattermostAdapter } from "chat-adapter-mattermost";
 import { createRedisState } from "@chat-adapter/state-redis";
 
+// M6: log only the error message (truncated) so stack traces / token values
+// never appear in container logs or log aggregators.
+function safeErrMsg(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).slice(0, 500);
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface AdapterEntry {
@@ -235,7 +241,7 @@ export class ChatManager {
             console.warn(`ChatManager: unknown platform "${entry.platform}", skipping`);
           }
         } catch (err) {
-          console.error(`ChatManager: failed to create adapter for "${key}":`, err);
+          console.error(`ChatManager: failed to create adapter for "${key}":`, safeErrMsg(err));
         }
       }
 
@@ -252,6 +258,21 @@ export class ChatManager {
 
       this.registerHandlers(newBot);
       this.currentBot = newBot;
+
+      // Eagerly initialize the Chat instance so every adapter gets
+      // `initialize(chat)` called (which sets `adapter.chat` and connects the
+      // Redis state). The Chat SDK otherwise defers this until the first
+      // inbound webhook, which left bridge-driven reads (e.g. Teams Graph
+      // channel-message fetch via `getGraphContext` → Redis cache) unable to
+      // resolve context until the bot had been @mentioned. Initializing here
+      // makes history fetch work without an @mention, like the other bridges.
+      // Best-effort: a failure must not abort the rebuild for other platforms.
+      try {
+        await newBot.initialize();
+      } catch (err) {
+        console.warn("ChatManager: Chat.initialize() failed (adapters still registered):", safeErrMsg(err));
+      }
+
 
       console.log(`ChatManager: bot rebuilt with adapters: ${Object.keys(adapterInstances).join(", ")}`);
     } finally {
