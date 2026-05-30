@@ -1422,7 +1422,7 @@ class TeamsBridge implements PlatformBridge {
     // across adapter recycles as new activities arrive).
     // Cold-start fallback: scan the adapter's Redis channelContext cache to
     // extract teamIds written by the adapter's cacheUserContext on prior runs.
-    let teamIds = new Set(teamsKnownTeamIds.get(this.connectionId) ?? []);
+    const teamIds = new Set(teamsKnownTeamIds.get(this.connectionId) ?? []);
 
     // Cold-start Redis scan: runs whenever this connection has no known teams,
     // i.e. on every listChannels call until at least one teamId is found.
