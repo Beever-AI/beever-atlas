@@ -44,7 +44,13 @@ jobs:
         # advisory is about caller-chosen key length, not a library defect.
         # pyjwt is pulled transitively via mcp[crypto]; nothing to upgrade to.
         # Revisit if/when an upstream fix or undispute lands.
-        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt --ignore-vuln PYSEC-2025-183
+        #
+        # PYSEC-2026-161 (starlette): fixed in starlette 1.0.1, but starlette is
+        # pulled transitively via fastapi / google-adk / sse-starlette / mcp, and
+        # google-adk (even latest 2.1.0) pins `starlette<1.0.0`. We can't reach
+        # 1.0.1 without google-adk catching up. Revisit when google-adk relaxes
+        # its starlette pin.
+        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-161
 
       - name: Set up Node
         uses: actions/setup-node@v6
