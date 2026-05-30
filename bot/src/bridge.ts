@@ -1016,7 +1016,7 @@ class DiscordBridge implements PlatformBridge {
             }
           }
         } catch (err) {
-          console.warn(`DiscordBridge: failed to list channels for guild ${guild.id}:`, err);
+          console.warn(`DiscordBridge: failed to list channels for guild ${guild.id}:`, safeErrorMessage(err));
         }
       }
 
@@ -1028,10 +1028,10 @@ class DiscordBridge implements PlatformBridge {
     } catch (err) {
       // If we have stale cached data, return it instead of empty
       if (this.channelCache) {
-        console.warn("DiscordBridge: listChannels failed, returning stale cache:", String(err).slice(0, 100));
+        console.warn("DiscordBridge: listChannels failed, returning stale cache:", safeErrorMessage(err));
         return this.channelCache.data;
       }
-      console.error("DiscordBridge: listChannels error (no cache):", err);
+      console.error("DiscordBridge: listChannels error (no cache):", safeErrorMessage(err));
       return [];
     }
   }
@@ -2481,14 +2481,14 @@ async function handleListChannels(
             const channels = await bridge.listChannels();
             allChannels.push(...channels);
           } catch (err) {
-            console.error(`Bridge: listChannels error for ${p} (${connectionId}):`, err);
+            console.error(`Bridge: listChannels error for ${p} (${connectionId}):`, safeErrorMessage(err));
           }
         }
       }
       jsonResponse(res, 200, { channels: allChannels });
     }
   } catch (err) {
-    console.error("Bridge: listChannels error:", err);
+    console.error("Bridge: listChannels error:", safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2520,7 +2520,7 @@ async function handleGetChannel(
     const channel = await bridge.getChannel(channelId);
     jsonResponse(res, 200, channel);
   } catch (err) {
-    console.error("Bridge: getChannel error:", err);
+    console.error("Bridge: getChannel error:", safeErrorMessage(err));
     jsonResponse(res, 404, { error: `Channel ${channelId} not found`, code: "NOT_FOUND" });
   }
 }
@@ -2557,7 +2557,7 @@ async function handleGetMessages(
     const messages = await bridge.getMessages(channelId, { limit, since, before, order });
     jsonResponse(res, 200, { messages });
   } catch (err) {
-    console.error("Bridge: getMessages error:", err);
+    console.error("Bridge: getMessages error:", safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2589,7 +2589,7 @@ async function handleGetMessageCount(
     const count = await bridge.getMessageCount(channelId);
     jsonResponse(res, 200, { count });
   } catch (err) {
-    console.error("Bridge: getMessageCount error:", err);
+    console.error("Bridge: getMessageCount error:", safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2622,7 +2622,7 @@ async function handleGetThreadMessages(
     const messages = await bridge.getThreadMessages(channelId, threadId);
     jsonResponse(res, 200, { messages });
   } catch (err) {
-    console.error("Bridge: getThreadMessages error:", err);
+    console.error("Bridge: getThreadMessages error:", safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2707,7 +2707,7 @@ async function handleFileProxy(
     });
     res.end(buffer);
   } catch (err) {
-    console.error("Bridge: fileProxy error:", err);
+    console.error("Bridge: fileProxy error:", safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2756,7 +2756,7 @@ async function handleRegisterAdapter(
   } catch (err) {
     // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
     // from `err`. Operators see the full error in the console.error line above.
-    console.error("Bridge: registerAdapter error:", err);
+    console.error("Bridge: registerAdapter error:", safeErrorMessage(err));
     jsonResponse(res, 500, { status: "error", message: "adapter registration failed" });
   }
 }
@@ -2778,7 +2778,7 @@ async function handleUnregisterAdapter(
   } catch (err) {
     // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
     // from `err`. Operators see the full error in the console.error line above.
-    console.error("Bridge: unregisterAdapter error:", err);
+    console.error("Bridge: unregisterAdapter error:", safeErrorMessage(err));
     jsonResponse(res, 500, { status: "error", message: "adapter unregistration failed" });
   }
 }
@@ -2878,7 +2878,7 @@ async function handleValidateAdapter(
     // arguments so user-tainted `platform` cannot influence format specifiers.
     // CodeQL js/stack-trace-exposure (alert #60): static prose, never derived
     // from `err`. Operators see the full error in the console.error line above.
-    console.error("Bridge: validateAdapter(%s) error:", platform, err);
+    console.error("Bridge: validateAdapter(%s) error:", platform, safeErrorMessage(err));
     jsonResponse(res, 200, { valid: false, error: "validation failed" });
   }
 }
@@ -2903,10 +2903,10 @@ async function handleConnectionRoute(
     const classified = classifyPlatformError(err);
     // Expected "not found" errors during multi-workspace probing — log briefly, not full stack
     if (classified.status === 404) {
-      console.warn(`Bridge: connection route (${connectionId}): ${(err as any)?.data?.error || err}`);
+      console.warn(`Bridge: connection route (${connectionId}): ${safeErrorMessage((err as any)?.data?.error ?? err)}`);
     } else {
       // CodeQL js/tainted-format-string (alert #23).
-      console.error("Bridge: connection route error (%s):", connectionId, err);
+      console.error("Bridge: connection route error (%s):", connectionId, safeErrorMessage(err));
     }
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2928,7 +2928,7 @@ async function handleConnectionChannels(
     jsonResponse(res, 200, { channels });
   } catch (err) {
     // CodeQL js/tainted-format-string (alert #24).
-    console.error("Bridge: listChannels error (connection %s):", connectionId, err);
+    console.error("Bridge: listChannels error (connection %s):", connectionId, safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }
@@ -2958,13 +2958,13 @@ async function handlePlatformChannelsAggregated(
         }
       } catch (err) {
         // CodeQL js/tainted-format-string (alert #25).
-        console.error("Bridge: listChannels error for %s:%s:", platform, connectionId, err);
+        console.error("Bridge: listChannels error for %s:%s:", platform, connectionId, safeErrorMessage(err));
       }
     }
     jsonResponse(res, 200, { channels: allChannels });
   } catch (err) {
     // CodeQL js/tainted-format-string (alert #26).
-    console.error("Bridge: aggregated listChannels error for %s:", platform, err);
+    console.error("Bridge: aggregated listChannels error for %s:", platform, safeErrorMessage(err));
     const classified = classifyPlatformError(err);
     jsonResponse(res, classified.status, { error: messageForCode(classified.code), code: classified.code });
   }

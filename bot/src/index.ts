@@ -8,13 +8,9 @@ import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation } from "./bridge.js";
-import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError } from "./http-utils.js";
+import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 
-// M6: log only the error message so stack traces / token values stay out of logs.
-function safeErrMsg(e: unknown): string {
-  return (e instanceof Error ? e.message : String(e)).slice(0, 500);
-}
 import { WebhookBuffer } from "./webhook-buffer.js";
 import { validateEnv } from "./validate-env.js";
 
@@ -49,14 +45,14 @@ function registerHandlers(bot: Chat): void {
       const blocks = formatBlockKit(result.answer, result.citations, result.route);
       await thread.post(blocks);
     } catch (err) {
-      console.error("Error processing mention:", safeErrMsg(err));
+      console.error("Error processing mention:", safeErrorMessage(err));
       // A failed reply must not throw out of the handler: that would make the
       // webhook return 5xx and skip conversation recording (serviceUrl), which
       // breaks later message fetches even though the activity was valid.
       try {
         await thread.post("Sorry, I encountered an error processing your question. Please try again.");
       } catch (postErr) {
-        console.error("Failed to deliver error reply:", safeErrMsg(postErr));
+        console.error("Failed to deliver error reply:", safeErrorMessage(postErr));
       }
     }
   });
@@ -75,11 +71,11 @@ function registerHandlers(bot: Chat): void {
       const blocks = formatBlockKit(result.answer, result.citations, result.route);
       await thread.post(blocks);
     } catch (err) {
-      console.error("Error processing follow-up:", safeErrMsg(err));
+      console.error("Error processing follow-up:", safeErrorMessage(err));
       try {
         await thread.post("Sorry, I encountered an error. Please try again.");
       } catch (postErr) {
-        console.error("Failed to deliver error reply:", safeErrMsg(postErr));
+        console.error("Failed to deliver error reply:", safeErrorMessage(postErr));
       }
     }
   });
@@ -230,7 +226,7 @@ async function loadConnectionsFromBackend(chatManager: ChatManager): Promise<voi
         await fallbackToEnvCredentials(chatManager);
       } else {
         const waitMs = delays[attempt];
-        console.warn(`Startup sync: attempt ${attempt + 1} failed (${err}), retrying in ${waitMs}ms...`);
+        console.warn(`Startup sync: attempt ${attempt + 1} failed (${safeErrorMessage(err)}), retrying in ${waitMs}ms...`);
         await new Promise((r) => setTimeout(r, waitMs));
       }
     }
@@ -338,7 +334,7 @@ function startBackgroundSync(chatManager: ChatManager): void {
     } catch (err) {
       // Only log when the bot has no adapters (self-healing scenario)
       if (chatManager.adapterCount() === 0) {
-        console.warn(`Background sync: failed (${err}), will retry in ${SYNC_INTERVAL_MS / 1000}s`);
+        console.warn(`Background sync: failed (${safeErrorMessage(err)}), will retry in ${SYNC_INTERVAL_MS / 1000}s`);
       }
     } finally {
       backgroundSyncRunning = false;
@@ -375,7 +371,7 @@ export async function lazySyncIfNeeded(chatManager: ChatManager): Promise<boolea
       await syncConnectionsFromBackend(chatManager, "Lazy sync");
       return chatManager.adapterCount() > 0;
     } catch (err) {
-      console.warn(`Lazy sync: failed (${err})`);
+      console.warn(`Lazy sync: failed (${safeErrorMessage(err)})`);
       return false;
     } finally {
       lazySyncPromise = null;
@@ -599,7 +595,7 @@ async function handleConnectionWebhook(
     // CodeQL js/tainted-format-string (alert #21): pass the format string
     // as a static literal and the user-tainted value as an argument so it
     // cannot influence format-specifier interpretation downstream.
-    console.error("Connection webhook error (%s):", connectionId, err);
+    console.error("Connection webhook error (%s):", connectionId, safeErrorMessage(err));
     res.writeHead(500);
     res.end("Internal Server Error");
   }
@@ -697,7 +693,7 @@ async function handlePlatformWebhook(
     const resBody = await webRes.text();
     res.end(resBody);
   } catch (err) {
-    console.error(`${platform} webhook error:`, err);
+    console.error(`${platform} webhook error:`, safeErrorMessage(err));
     res.writeHead(500);
     res.end("Internal Server Error");
   }
@@ -812,6 +808,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal error:", safeErrorMessage(err));
   process.exit(1);
 });

@@ -17,12 +17,11 @@ import { createTeamsAdapter } from "@chat-adapter/teams";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { createMattermostAdapter } from "chat-adapter-mattermost";
 import { createRedisState } from "@chat-adapter/state-redis";
-
-// M6: log only the error message (truncated) so stack traces / token values
-// never appear in container logs or log aggregators.
-function safeErrMsg(e: unknown): string {
-  return (e instanceof Error ? e.message : String(e)).slice(0, 500);
-}
+// M6: safeErrorMessage logs only the error message (whitespace-collapsed and
+// length-capped) so stack traces / token values never reach container logs or
+// log aggregators. Single shared definition lives in http-utils and is reused
+// here, in bridge.ts, and in index.ts.
+import { safeErrorMessage } from "./http-utils.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -154,7 +153,7 @@ export class ChatManager {
         try {
           await this.currentBot.shutdown();
         } catch (err: unknown) {
-          console.warn("ChatManager: error during shutdown:", err);
+          console.warn("ChatManager: error during shutdown:", safeErrorMessage(err));
         }
         this.currentBot = null;
       }
@@ -208,7 +207,7 @@ export class ChatManager {
                 console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
               }
             } catch (err) {
-              console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, err);
+              console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, safeErrorMessage(err));
             }
           } else if (entry.platform === "discord") {
             const discordOpts: Record<string, unknown> = {
@@ -241,7 +240,7 @@ export class ChatManager {
             console.warn(`ChatManager: unknown platform "${entry.platform}", skipping`);
           }
         } catch (err) {
-          console.error(`ChatManager: failed to create adapter for "${key}":`, safeErrMsg(err));
+          console.error(`ChatManager: failed to create adapter for "${key}":`, safeErrorMessage(err));
         }
       }
 
@@ -270,7 +269,7 @@ export class ChatManager {
       try {
         await newBot.initialize();
       } catch (err) {
-        console.warn("ChatManager: Chat.initialize() failed (adapters still registered):", safeErrMsg(err));
+        console.warn("ChatManager: Chat.initialize() failed (adapters still registered):", safeErrorMessage(err));
       }
 
 
@@ -322,7 +321,7 @@ export class ChatManager {
           this.consecutiveRecycleFailures++;
           console.error(
             `ChatManager: scheduled recycle failed (${this.consecutiveRecycleFailures}/${ChatManager.RECYCLE_FAILURE_LIMIT}):`,
-            err,
+            safeErrorMessage(err),
           );
           if (this.consecutiveRecycleFailures >= ChatManager.RECYCLE_FAILURE_LIMIT) {
             console.error(
