@@ -41,7 +41,15 @@ services:
   redis:
     # `--requirepass` enables AUTH on Redis. The default image's CMD
     # (`redis-server`) is replaced here so we can pass the flag.
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set when using docker-compose.auth.yml}"]
+    #
+    # `--appendonly yes` is re-asserted here because a compose `command:`
+    # is an array replacement, not a merge: the base file already enables
+    # AOF for durability (so a Redis restart does not wipe the Teams
+    # adapter's channelContext cache), and we MUST preserve that when
+    # the auth overlay swaps the command in. The `redis_data:/data`
+    # volume mount itself comes from the base file (compose merges
+    # `volumes:`).
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set when using docker-compose.auth.yml}", "--appendonly", "yes"]
     healthcheck:
       # `redis-cli ping` over an auth-enabled instance needs `-a <pw>`
       # (the unauthenticated client receives NOAUTH and the healthcheck

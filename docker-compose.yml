@@ -94,6 +94,20 @@ services:
   redis:
     image: redis:7-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
     ports: ["127.0.0.1:6380:6379"]
+    # AOF persistence + volume mount so cached state (Teams adapter's
+    # `chat-sdk:cache:teams:channelContext:*` entries, in particular) survives
+    # `docker compose restart redis` AND `docker compose down && up -d`.
+    # Without this, a Redis restart wiped the only durable record of the team
+    # AAD group ids that TeamsBridge.listChannels uses to enumerate channels
+    # via Microsoft Graph, and the Teams workspace vanished from the sidebar
+    # until the next inbound webhook re-cached it. Slack/Discord/Mattermost
+    # are unaffected because their `listChannels` calls the platform API
+    # directly using the bot token in MongoDB — no Redis dependency. Teams
+    # is the outlier because there is no app-only Graph endpoint to list
+    # "teams this bot is installed in"; identity is observed from incoming
+    # Bot Framework activities and must be persisted somewhere durable.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -147,3 +161,4 @@ volumes:
   weaviate_data:
   neo4j_data:
   mongo_data:
+  redis_data:
