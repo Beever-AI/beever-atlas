@@ -522,7 +522,7 @@ function StepChannels({
           <p className="text-xs text-rose-600 dark:text-rose-400">{error}</p>
         </div>
       ) : (
-        <ChannelSelector channels={channels} selected={selected} onChange={onChange} />
+        <ChannelSelector channels={channels} selected={selected} onChange={onChange} platform={platform} />
       )}
     </div>
   );

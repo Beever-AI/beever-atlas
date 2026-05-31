@@ -81,7 +81,12 @@ export function ManageChannelsDialog({ connection, onClose }: ManageChannelsDial
               <p className="text-xs text-rose-600 dark:text-rose-400">{error}</p>
             </div>
           ) : (
-            <ChannelSelector channels={channels} selected={selected} onChange={setSelected} />
+            <ChannelSelector
+              channels={channels}
+              selected={selected}
+              onChange={setSelected}
+              platform={connection.platform}
+            />
           )}
         </div>
 
