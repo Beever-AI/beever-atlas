@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -226,6 +227,12 @@ class _InternalConnectionItem(BaseModel):
     platform: str
     credentials: dict[str, str]
     status: str
+    # Mirrored from the Mongo document so the bot can seed its in-memory
+    # `teamsKnownTeamIds` Map on startup, removing the dependency on
+    # webhook reseeding or the @chat-adapter Redis cache (which is wiped
+    # on Redis restart). Always present in the response for shape
+    # stability; non-Teams platforms get an empty list.
+    teams_known_team_ids: list[str] = []
 
 
 @internal_router.get("/api/internal/connections/credentials")
@@ -249,11 +256,69 @@ async def list_connections_with_credentials() -> list[_InternalConnectionItem]:
                     platform=conn.platform,
                     credentials=creds,
                     status=conn.status,
+                    teams_known_team_ids=list(
+                        getattr(conn, "teams_known_team_ids", None) or []
+                    ),
                 )
             )
         except Exception as e:
             logger.warning("Failed to decrypt credentials for connection %s: %s", conn.id, e)
     return result
+
+
+class _RecordTeamsKnownTeamRequest(BaseModel):
+    """Body for the bot's write-through of an observed AAD group id."""
+
+    aad_group_id: str
+
+
+# A Microsoft Graph team-id is the team's AAD group object id — a GUID.
+# Validate the shape here AND in the bot before persistence so a poisoned
+# webhook (or a future Bot Framework change) can't inject an arbitrary
+# value into Mongo or downstream Graph API paths.
+_TEAMS_AAD_GROUP_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+@internal_router.post(
+    "/api/internal/connections/{connection_id}/teams-known-team-ids",
+    status_code=204,
+)
+async def record_teams_known_team_id(
+    connection_id: str,
+    body: _RecordTeamsKnownTeamRequest,
+) -> None:
+    """Bot write-through: persist an AAD group id observed from a webhook.
+
+    Called fire-and-forget from ``bridge.ts:recordTeamsConversation`` so
+    that the team-id survives a Redis cache wipe AND a bot restart.
+    Idempotent via ``$addToSet`` in the store. Returns 404 when the
+    connection id is unknown, 400 when the AAD group id doesn't match
+    the expected shape, and 422 when the connection isn't a Teams row.
+
+    Secured by the router-level ``require_bridge`` dependency. Never
+    expose to end users.
+    """
+    aad_group_id = body.aad_group_id.strip()
+    if not _TEAMS_AAD_GROUP_ID_RE.match(aad_group_id):
+        raise HTTPException(
+            status_code=400,
+            detail="aad_group_id must be a Microsoft AAD group GUID",
+        )
+
+    stores = get_stores()
+    existing = await stores.platform.get_connection(connection_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+    if existing.platform != "teams":
+        raise HTTPException(
+            status_code=422,
+            detail=f"connection {connection_id} is not a Teams connection",
+        )
+
+    await stores.platform.add_teams_known_team_id(connection_id, aad_group_id)
 
 
 @router.post("/api/connections", response_model=ConnectionResponse, status_code=201)

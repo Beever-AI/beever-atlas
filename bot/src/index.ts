@@ -7,7 +7,7 @@ config({ path: resolve(import.meta.dirname, "../../.env") });
 import { Chat } from "chat";
 import { formatBlockKit } from "./formatter.js";
 import { consumeSSEStream } from "./sse-client.js";
-import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken } from "./bridge.js";
+import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 
@@ -161,6 +161,11 @@ async function syncConnectionsFromBackend(chatManager: ChatManager, label: strin
     platform: string;
     credentials: Record<string, string>;
     status: string;
+    // Mongo-persisted AAD group ids for Teams connections; empty for other
+    // platforms. Used to seed `teamsKnownTeamIds` so listChannels works on
+    // the first call without requiring a webhook or warm Redis cache. See
+    // `seedTeamsKnownTeamIds` in bridge.ts.
+    teams_known_team_ids?: string[];
   }>;
 
   if (connections.length === 0) {
@@ -194,6 +199,18 @@ async function syncConnectionsFromBackend(chatManager: ChatManager, label: strin
     }
     console.log(`${label}: registering ${conn.platform} adapter (connection: ${conn.connection_id || "legacy"})`);
     await chatManager.register(conn.platform, normalizedCreds, conn.connection_id);
+
+    // Hydrate the in-memory Teams team-id Map from the durable Mongo record
+    // so the first `listChannels` call after a bot restart (or Redis cache
+    // wipe) returns the workspace's channels without needing an inbound
+    // webhook to reseed identity. This is the parity path with Slack/
+    // Discord/Mattermost (whose tokens already live in Mongo).
+    if (conn.platform === "teams" && conn.connection_id && conn.teams_known_team_ids?.length) {
+      seedTeamsKnownTeamIds(conn.connection_id, conn.teams_known_team_ids);
+      console.log(
+        `${label}: seeded ${conn.teams_known_team_ids.length} known team id(s) for Teams connection ${conn.connection_id}`,
+      );
+    }
   }
 
   console.log(`${label}: loaded ${connections.length} connection(s) from backend`);

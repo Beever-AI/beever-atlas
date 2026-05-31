@@ -1249,23 +1249,134 @@ const teamsConversationRegistry = new Map<string, Map<string, TeamsConversationR
 
 /**
  * Per-connection set of AAD group IDs (a.k.a. "team ids" in Graph) for teams
- * the bot is installed in. Populated by `recordTeamsConversation` when a Bot
- * Framework activity carries `channelData.team.aadGroupId` (present in install
- * and conversationUpdate events). Used by `TeamsBridge.listChannels` to call
- * `GET /teams/{aadGroupId}/channels` without any prior @mention.
+ * the bot is installed in. Populated from three sources, in priority order:
  *
- * Survives adapter recycles (module-level singleton) but is wiped on process
- * restart. `listChannels` performs a one-shot Redis SCAN per connection to
- * re-seed it on first cold-start (see `teamsColdStartScanned`).
+ *   1. Mongo (via `seedTeamsKnownTeamIds`): hydrated at startup by the bot's
+ *      connection loader from the persistent `teams_known_team_ids` field on
+ *      each Teams `PlatformConnection`. This is the parity path with how
+ *      Slack/Discord/Mattermost bootstrap from their bot tokens in Mongo —
+ *      identity survives Redis loss AND bot restart with zero webhooks.
+ *   2. Bot Framework activities (via `recordTeamsConversation`): every install
+ *      and `conversationUpdate` carries `channelData.team.aadGroupId`. New
+ *      values are written through to Mongo (fire-and-forget) so future
+ *      restarts hydrate path 1 from a complete set.
+ *   3. Redis cold-start SCAN (via `TeamsBridge.resolveTeamIds`): legacy
+ *      fallback for connections that pre-date the Mongo persistence field.
+ *      Retired automatically once a connection has at least one observed
+ *      team (see `seedTeamsKnownTeamIds` flipping `teamsColdStartScanned`).
  */
 const teamsKnownTeamIds = new Map<string, Set<string>>();
 
 /**
  * H3/M1: one-shot guard — tracks which connectionIds have already completed
  * the cold-start Redis SCAN. Prevents re-scanning on every `listChannels` call
- * and avoids the blocking `KEYS` pattern entirely.
+ * and avoids the blocking `KEYS` pattern entirely. Also flipped by
+ * `seedTeamsKnownTeamIds` so a Mongo-hydrated connection never falls back to
+ * the Redis scan on its first call.
  */
 const teamsColdStartScanned = new Set<string>();
+
+/** Seed `teamsKnownTeamIds` for a connection from the durable Mongo record.
+ *  Called by the bot's startup loader (one call per Teams connection) and
+ *  again on each adapter rebuild — idempotent. A no-op when the list is
+ *  empty so legacy connections without persisted team-ids still benefit
+ *  from the Redis cold-start scan. */
+export function seedTeamsKnownTeamIds(connectionId: string, teamIds: string[]): void {
+  if (!connectionId || !teamIds || teamIds.length === 0) return;
+  let teamSet = teamsKnownTeamIds.get(connectionId);
+  if (!teamSet) {
+    teamSet = new Set();
+    teamsKnownTeamIds.set(connectionId, teamSet);
+  }
+  for (const id of teamIds) {
+    if (id) teamSet.add(id);
+  }
+  // Mongo is now authoritative for this connection; suppress the Redis scan
+  // path entirely so a stale/wiped cache can't race the hydrated state.
+  teamsColdStartScanned.add(connectionId);
+}
+
+/** Test-only: drop cached state for a connection (or all). Clears the
+ *  in-memory team-id Map, the cold-start scan guard, AND the backend
+ *  write-through dedup Set so tests don't bleed across cases. Production
+ *  code prunes the registry via `pruneStaleTeamsConversations`. */
+export function clearTeamsKnownTeamIdsForTest(connectionId?: string): void {
+  if (connectionId) {
+    teamsKnownTeamIds.delete(connectionId);
+    teamsColdStartScanned.delete(connectionId);
+    // Drop write-through dedup entries scoped to this connection so the
+    // next observation re-fires the POST. Keyed `${connId}:${aadId}`.
+    for (const key of teamsWriteThroughInFlight) {
+      if (key.startsWith(`${connectionId}:`)) {
+        teamsWriteThroughInFlight.delete(key);
+      }
+    }
+  } else {
+    teamsKnownTeamIds.clear();
+    teamsColdStartScanned.clear();
+    teamsWriteThroughInFlight.clear();
+  }
+}
+
+/** Backend write-through dedup: keyed by `${connectionId}:${aadGroupId}` so a
+ *  burst of webhooks for the same team doesn't fire N concurrent POSTs. On
+ *  success the entry stays in place for the process lifetime (Mongo already
+ *  has the value). On transient failure (5xx/network) we clear the entry so
+ *  the next observation re-attempts. */
+const teamsWriteThroughInFlight = new Set<string>();
+
+/** Fire-and-forget POST that persists an observed AAD group id to Mongo so
+ *  it survives bot restart AND a Redis cache wipe. Called from
+ *  `recordTeamsConversation` whenever a NEW team-id surfaces for a
+ *  connection. Errors are swallowed at the call site — the in-memory Map
+ *  is the source of truth for the live process; the POST just hydrates
+ *  Mongo for next startup. */
+async function persistTeamsKnownTeamIdToBackend(
+  connectionId: string,
+  aadGroupId: string,
+): Promise<void> {
+  const dedupKey = `${connectionId}:${aadGroupId}`;
+  if (teamsWriteThroughInFlight.has(dedupKey)) return;
+  teamsWriteThroughInFlight.add(dedupKey);
+
+  const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
+  const bridgeKey = process.env.BRIDGE_API_KEY || "";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (bridgeKey) headers["Authorization"] = `Bearer ${bridgeKey}`;
+
+  try {
+    const resp = await fetch(
+      `${backendUrl}/api/internal/connections/${encodeURIComponent(connectionId)}/teams-known-team-ids`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ aad_group_id: aadGroupId }),
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (resp.ok) return;
+    // 4xx is terminal (404 unknown connection, 422 wrong platform, 400 bad
+    // GUID). Leave the dedup entry in place so we don't loop on the same
+    // bad value.
+    if (resp.status >= 400 && resp.status < 500) {
+      console.warn(
+        `TeamsBridge: backend rejected aadGroupId persist (${resp.status}) for connection ${connectionId}`,
+      );
+      return;
+    }
+    // 5xx → transient; allow retry on next observation.
+    console.warn(
+      `TeamsBridge: backend returned ${resp.status} persisting aadGroupId for ${connectionId}; will retry`,
+    );
+    teamsWriteThroughInFlight.delete(dedupKey);
+  } catch (err) {
+    console.warn(
+      `TeamsBridge: failed to persist aadGroupId for ${connectionId}:`,
+      safeErrorMessage(err),
+    );
+    teamsWriteThroughInFlight.delete(dedupKey);
+  }
+}
 
 /**
  * A Microsoft Graph team-id is the team's AAD group object id — a GUID. Used to
@@ -1377,14 +1488,28 @@ export function recordTeamsConversation(
   // TeamsBridge.listChannels can enumerate channels via Graph without any
   // prior @mention. Bot Framework install/conversationUpdate activities carry
   // `channelData.team.aadGroupId`; regular channel-message activities may not.
+  //
+  // Two-layer persistence:
+  //  • In-memory Map — covers the live process; lost on bot restart.
+  //  • Mongo via fire-and-forget POST — survives bot restart AND a Redis
+  //    cache wipe. Only fires when the id is NEW for this connection so
+  //    a steady stream of channel-message webhooks doesn't hammer the
+  //    backend with no-op upserts. Backend dedups via `$addToSet`.
   const aadGroupId = activity.channelData?.team?.aadGroupId;
-  if (aadGroupId) {
+  if (aadGroupId && TEAMS_AAD_GROUP_ID_RE.test(aadGroupId)) {
     let teamSet = teamsKnownTeamIds.get(connectionId);
     if (!teamSet) {
       teamSet = new Set();
       teamsKnownTeamIds.set(connectionId, teamSet);
     }
+    const isNew = !teamSet.has(aadGroupId);
     teamSet.add(aadGroupId);
+    if (isNew) {
+      // Fire-and-forget — never block webhook processing on the backend
+      // round-trip. The helper handles its own errors + dedup so an
+      // unhandled rejection can't escape this scope.
+      void persistTeamsKnownTeamIdToBackend(connectionId, aadGroupId);
+    }
   }
 }
 

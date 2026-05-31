@@ -8,7 +8,7 @@ using mock data and a valid encryption key.
 from __future__ import annotations
 
 import secrets
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -200,3 +200,91 @@ class TestDecryptConnectionCredentials:
 
         with pytest.raises(InvalidTag):
             store.decrypt_connection_credentials(conn)
+
+
+class TestTeamsKnownTeamIdsField:
+    """Coverage for the persistent ``teams_known_team_ids`` field added so
+    Teams connections can bootstrap their team list from Mongo (parity with
+    Slack/Discord/Mattermost bootstrapping from tokens) instead of relying
+    on the chat-adapter's Redis cache surviving every container restart."""
+
+    def test_defaults_to_empty_list(self, monkeypatch):
+        _patch_key(monkeypatch)
+        conn = _encrypted_conn(monkeypatch)
+        assert conn.teams_known_team_ids == []
+
+    def test_round_trip_preserves_team_ids(self, monkeypatch):
+        _patch_key(monkeypatch)
+        store = _make_store(monkeypatch)
+        ids = [
+            "85e9fb0c-6cf9-4e94-9cc4-eb81ea6cd9de",
+            "11111111-2222-3333-4444-555555555555",
+        ]
+        conn = _encrypted_conn(monkeypatch, platform="teams", teams_known_team_ids=ids)
+
+        doc = store._to_doc(conn)
+        assert doc["teams_known_team_ids"] == ids
+
+        # Pre-migration Mongo docs are missing the field entirely; the
+        # Pydantic default must fill in cleanly so they decode without error.
+        legacy_doc = dict(doc)
+        legacy_doc.pop("teams_known_team_ids")
+        legacy_conn = store._from_doc(legacy_doc)
+        assert legacy_conn.teams_known_team_ids == []
+
+    @pytest.mark.asyncio
+    async def test_add_teams_known_team_id_uses_addToSet_and_dedups(self, monkeypatch):
+        """The store helper must use ``$addToSet`` so concurrent writes from
+        multiple webhook deliveries don't double-insert. We mock the Motor
+        call and assert the operator + payload shape so a future refactor
+        can't silently regress to ``$push``."""
+        _patch_key(monkeypatch)
+        from beever_atlas.stores.platform_store import PlatformStore
+
+        existing = _encrypted_conn(
+            monkeypatch,
+            platform="teams",
+            teams_known_team_ids=["85e9fb0c-6cf9-4e94-9cc4-eb81ea6cd9de"],
+        )
+
+        mock_col = MagicMock()
+        # Motor returns the updated doc (we asked for return_document=True).
+        mock_col.find_one_and_update = AsyncMock(
+            return_value=PlatformStore(mock_col)._to_doc(existing),
+        )
+        store = PlatformStore(mock_col)
+
+        result = await store.add_teams_known_team_id(
+            existing.id,
+            "85e9fb0c-6cf9-4e94-9cc4-eb81ea6cd9de",
+        )
+
+        # Inspect the call shape — filter by `id`, $addToSet operator.
+        mock_col.find_one_and_update.assert_awaited_once()
+        call_args, call_kwargs = mock_col.find_one_and_update.call_args
+        # First positional: filter; second: update document.
+        filter_doc, update_doc = call_args[0], call_args[1]
+        assert filter_doc == {"id": existing.id}
+        assert "$addToSet" in update_doc
+        assert update_doc["$addToSet"] == {
+            "teams_known_team_ids": "85e9fb0c-6cf9-4e94-9cc4-eb81ea6cd9de",
+        }
+        # `updated_at` must be touched so callers see a fresh timestamp.
+        assert "updated_at" in update_doc["$set"]
+        # Hands back the deserialised connection.
+        assert isinstance(result, PlatformConnection)
+        assert result.id == existing.id
+
+    @pytest.mark.asyncio
+    async def test_add_teams_known_team_id_returns_none_when_missing(self, monkeypatch):
+        _patch_key(monkeypatch)
+        from beever_atlas.stores.platform_store import PlatformStore
+
+        mock_col = MagicMock()
+        mock_col.find_one_and_update = AsyncMock(return_value=None)
+
+        result = await PlatformStore(mock_col).add_teams_known_team_id(
+            "missing-conn",
+            "85e9fb0c-6cf9-4e94-9cc4-eb81ea6cd9de",
+        )
+        assert result is None

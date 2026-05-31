@@ -168,6 +168,35 @@ class PlatformStore:
             return None
         return self._from_doc(result)
 
+    async def add_teams_known_team_id(
+        self,
+        connection_id: str,
+        aad_group_id: str,
+    ) -> PlatformConnection | None:
+        """Idempotently union ``aad_group_id`` into ``teams_known_team_ids``.
+
+        Uses Mongo's ``$addToSet`` so concurrent writes from multiple webhook
+        deliveries can't produce duplicate entries even without holding a
+        lock on the document. Returns the updated connection or ``None`` when
+        the connection id doesn't exist.
+
+        Callers must validate ``aad_group_id`` matches the Graph team-id
+        shape (AAD group GUID) before invoking — see
+        ``TEAMS_AAD_GROUP_ID_RE`` on the bot side and the matching guard
+        in the API endpoint.
+        """
+        result = await self._col.find_one_and_update(
+            {"id": connection_id},
+            {
+                "$addToSet": {"teams_known_team_ids": aad_group_id},
+                "$set": {"updated_at": datetime.now(tz=UTC)},
+            },
+            return_document=True,
+        )
+        if result is None:
+            return None
+        return self._from_doc(result)
+
     async def get_connection_by_platform(self, platform: str) -> PlatformConnection | None:
         """Return a PlatformConnection by platform name, or None."""
         doc = await self._col.find_one({"platform": platform})
