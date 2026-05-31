@@ -1663,7 +1663,17 @@ class TeamsBridge implements PlatformBridge {
                         teamSet = new Set();
                         teamsKnownTeamIds.set(this.connectionId, teamSet);
                       }
+                      const wasNew = !teamSet.has(tId);
                       teamSet.add(tId);
+                      // Persist any id we recover from the Redis-cache cold-start
+                      // path too — otherwise an EXISTING connection that was
+                      // already populated via a prior webhook never seeds Mongo
+                      // (the in-memory dedup in `recordTeamsConversation` would
+                      // suppress the write-through forever). Fire-and-forget;
+                      // backend `$addToSet` keeps it idempotent.
+                      if (wasNew) {
+                        void persistTeamsKnownTeamIdToBackend(this.connectionId, tId);
+                      }
                     }
                   }
                 } catch {
