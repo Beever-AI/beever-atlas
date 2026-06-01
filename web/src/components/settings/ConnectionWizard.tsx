@@ -100,9 +100,24 @@ interface CredentialField {
    *  step. Only honoured when `enum` is also set — keeps tokens/secrets
    *  empty by default. */
   default?: string;
-  /** Optional helper text rendered under the input. Used to explain
-   *  non-obvious choices (e.g. why we default to SingleTenant). */
+  /** Optional helper text rendered under the input. */
   hint?: string;
+  /** Synchronous client-side validator. Return null when OK, or a short
+   *  error string. Empty values are NOT passed in — the required-field
+   *  gate is handled separately by `credentialsFilled`. */
+  validate?: (value: string) => string | null;
+}
+
+/** AAD GUIDs are 8-4-4-4-12 hex. Without this check users routinely paste
+ *  a display name like "Teams" into the App ID field; the wizard's
+ *  validate step (which doesn't actually mint a Graph token) accepts it,
+ *  then the bot fails later with AADSTS700016. */
+const AAD_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function validateAadGuid(label: string) {
+  return (value: string): string | null =>
+    AAD_GUID_RE.test(value.trim())
+      ? null
+      : `${label} must look like xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`;
 }
 
 const CREDENTIAL_FIELDS: Record<Platform, CredentialField[]> = {
@@ -117,13 +132,19 @@ const CREDENTIAL_FIELDS: Record<Platform, CredentialField[]> = {
     { key: "mention_role_ids", label: "Mention Role IDs (optional)", placeholder: "Comma-separated role IDs, e.g. 1234567890,9876543210", optional: true },
   ],
   teams: [
-    { key: "app_id", label: "Microsoft App ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
+    {
+      key: "app_id",
+      label: "Microsoft App ID",
+      placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      validate: validateAadGuid("Microsoft App ID"),
+    },
     { key: "app_password", label: "App Password (Client Secret)", placeholder: "Your Azure app client secret", type: "password" },
     {
       key: "app_tenant_id",
       label: "Azure AD Tenant ID",
       placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
       hint: "Required. The adapter cannot fetch message history without this, and SingleTenant bots reject the client_credentials token without it.",
+      validate: validateAadGuid("Azure AD Tenant ID"),
     },
     {
       key: "app_type",
@@ -166,9 +187,11 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
   const instructions = INSTRUCTIONS_MAP[platform];
   const fields = CREDENTIAL_FIELDS[platform];
 
-  // Telegram and Teams bots are event-driven — they receive messages via webhook,
-  // so the bridge has no channel listing API for them.
-  const isWebhookOnly = platform === "telegram" || platform === "teams";
+  // Telegram has no channel listing API and stays webhook-only. Teams used
+  // to be in this bucket too, but PR #206 added Graph-based channel
+  // enumeration (TeamsBridge.listChannels → GET /teams/{id}/channels), so
+  // the Channels step now renders the real channel list for Teams.
+  const isWebhookOnly = platform === "telegram";
 
   function handleCredentialChange(key: string, value: string) {
     setCredentials((prev) => ({ ...prev, [key]: value }));
@@ -204,6 +227,12 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
   }
 
   const credentialsFilled = fields.every((f) => f.optional || (credentials[f.key] ?? "").trim().length > 0);
+  // Disable Validate when any FILLED field fails its own validator. Empty
+  // fields are handled by `credentialsFilled`; we don't double-report.
+  const credentialsValid = fields.every((f) => {
+    const v = (credentials[f.key] ?? "").trim();
+    return !v || !f.validate || f.validate(v) === null;
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -317,7 +346,7 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
               <button
                 type="button"
                 onClick={handleValidate}
-                disabled={!credentialsFilled}
+                disabled={!credentialsFilled || !credentialsValid}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 Validate
@@ -542,9 +571,17 @@ function StepCredentials({
               spellCheck={false}
             />
           )}
-          {field.hint && (
-            <p className="text-[11px] text-muted-foreground/85 mt-1 leading-snug">{field.hint}</p>
-          )}
+          {(() => {
+            const trimmed = (values[field.key] ?? "").trim();
+            const err = trimmed && field.validate ? field.validate(trimmed) : null;
+            if (err) {
+              return <p className="text-[11px] text-rose-500 mt-1 leading-snug">{err}</p>;
+            }
+            if (field.hint) {
+              return <p className="text-[11px] text-muted-foreground/85 mt-1 leading-snug">{field.hint}</p>;
+            }
+            return null;
+          })()}
         </div>
       ))}
     </div>
