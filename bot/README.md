@@ -40,7 +40,7 @@ See [`.env.example`](../.env.example) for the canonical list and descriptions. K
 |---|---|
 | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` | Slack Events API adapter |
 | `DISCORD_BOT_TOKEN`, `DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID` | Discord interactions adapter |
-| `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD` | Microsoft Teams / Azure Bot adapter |
+| `TEAMS_APP_ID`, `TEAMS_APP_PASSWORD`, `TEAMS_APP_TENANT_ID` | Microsoft Teams / Azure Bot adapter. The bot detects SingleTenant vs MultiTenant from the presence of `TEAMS_APP_TENANT_ID` (see `registerTeamsFromEnvIfPresent` in `src/index.ts`) — SingleTenant is the supported path; MultiTenant requires extra MSAL configuration. Tenant id is also required for any call into `fetchMessages`. |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot API adapter |
 | `MATTERMOST_BASE_URL`, `MATTERMOST_BOT_TOKEN` | Mattermost outgoing-webhook adapter |
 
