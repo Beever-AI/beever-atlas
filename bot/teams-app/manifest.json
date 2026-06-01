@@ -1,8 +1,8 @@
 {
-  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
-  "manifestVersion": "1.16",
-  "version": "1.0.1",
-  "id": "eefc03cb-3132-46a1-ac50-e200792849b6",
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.25",
+  "version": "1.0.3",
+  "id": "fb24e83f-52e6-40a4-bafb-764160e4ca7a",
   "packageName": "ai.beever.atlas",
   "developer": {
     "name": "Beever AI",
@@ -23,12 +23,43 @@
     "color": "color.png"
   },
   "accentColor": "#5B4ECC",
+  "staticTabs": [
+    {
+      "entityId": "conversations",
+      "scopes": ["personal"]
+    },
+    {
+      "entityId": "about",
+      "scopes": ["personal"]
+    }
+  ],
   "bots": [
     {
-      "botId": "eefc03cb-3132-46a1-ac50-e200792849b6",
-      "scopes": ["personal", "team", "groupchat"],
+      "botId": "fb24e83f-52e6-40a4-bafb-764160e4ca7a",
+      "scopes": ["personal", "team", "groupChat"],
       "supportsFiles": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
       "isNotificationOnly": false
     }
-  ]
+  ],
+  "validDomains": ["*.botframework.com"],
+  "webApplicationInfo": {
+    "id": "fb24e83f-52e6-40a4-bafb-764160e4ca7a"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        },
+        {
+          "name": "ChatMessage.Read.Chat",
+          "type": "Application"
+        }
+      ]
+    }
+  },
+  "supportsChannelFeatures": "tier1"
 }

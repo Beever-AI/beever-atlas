@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Builds beever-atlas-bot.zip from manifest.json + generated placeholder icons.
+// Builds beever-atlas-teams.zip from manifest.json + generated placeholder icons.
 // Replace outline.png / color.png with real artwork before production release.
 
 import { writeFileSync } from "node:fs";
@@ -67,10 +67,10 @@ writeFileSync(join(here, "outline.png"), solidPng(32, 32, 0xff, 0xff, 0xff));
 console.log("✓ generated color.png (192x192) and outline.png (32x32)");
 
 execSync(
-  `cd "${here}" && rm -f beever-atlas-bot.zip && zip -j beever-atlas-bot.zip manifest.json color.png outline.png`,
+  `cd "${here}" && rm -f beever-atlas-teams.zip && zip -j beever-atlas-teams.zip manifest.json color.png outline.png`,
   { stdio: "inherit" },
 );
-console.log(`\n✓ built ${join(here, "beever-atlas-bot.zip")}`);
+console.log(`\n✓ built ${join(here, "beever-atlas-teams.zip")}`);
 console.log(
   "\nSideload: Teams → Apps → Manage your apps → Upload a custom app → pick this zip",
 );
