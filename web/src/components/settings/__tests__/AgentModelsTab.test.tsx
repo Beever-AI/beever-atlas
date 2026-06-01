@@ -189,13 +189,14 @@ describe("AgentModelsTab", () => {
     fireEvent.click(screen.getByText("Gemini balanced"));
 
     // CI runners are slower than local — the toast lands after the POST
-    // returns + a setState flush. The inner waitFor needs 5000ms headroom,
-    // so the outer test budget must exceed it (default vitest is 5000ms).
+    // returns + a setState flush. 5000ms was not enough headroom (failed at
+    // 5082ms on a GitHub runner on 2026-06-01); give the inner waitFor 10s
+    // and keep the outer test budget above it.
     await waitFor(
       () => expect(screen.getByText(/Applied 'Gemini balanced' — 1 updated/)).toBeTruthy(),
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
-  }, 15000);
+  }, 20000);
 
   it("a vision-required consumer with a no-vision model shows the red capability badge", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
