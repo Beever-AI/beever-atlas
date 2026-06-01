@@ -7,6 +7,10 @@ description: Connect Beever Atlas to Microsoft Teams
 
 Connect Beever Atlas to Microsoft Teams to automatically ingest conversations and build a searchable knowledge base.
 
+<Callout type="info">
+**Preferred path: the UI wizard.** Beever Atlas Settings → Integrations → Connect Microsoft Teams walks through every step below with inline guidance, the right App Type default (SingleTenant), and a runnable ngrok / endpoint snippet. Use this doc for context and as a reference for `.env`-based provisioning.
+</Callout>
+
 <Callout type="warning">
 **Beta Status**: Teams integration is in beta. Features may change as we improve the integration. Requires Azure AD admin access.
 </Callout>
@@ -57,17 +61,18 @@ In the application overview:
 3. Select **Microsoft Graph**
 4. Select **Application permissions** (for background sync):
 
-Add the following permissions:
+Add at minimum:
 
 | Permission | Purpose |
 |------------|---------|
-| `ChannelMessage.Read.All` | Read all channel messages |
-| `Chat.Read` | Read chat messages |
-| `User.Read.All` | Read user information |
-| `Files.Read.All` | Access file attachments |
+| `Channel.ReadBasic.All` | **Required.** Channel enumeration via `GET /teams/{id}/channels` so workspaces and channels appear in the sidebar without an @mention. Beever Atlas falls back to a Redis-cached identity scan if this is missing, but loses the workspace whenever the cache is wiped. |
+| `User.Read.All` | Optional. Look up author display names + emails when receiving messages. |
+| `Chat.Read.All` | Optional. Fetch DM message history. |
+
+The historical permissions table (`ChannelMessage.Read.All`, `Chat.Read`, `Files.Read.All`) is **superseded** — the live bot uses RSC (Resource Specific Consent) declared in the Teams app manifest at `bot/teams-app/manifest.json` for per-message reads, so those tenant-wide Application permissions are no longer required.
 
 <Callout type="warning">
-**Application vs Delegated**: We use Application permissions for background sync (no user interaction required). This requires admin consent.
+**Application vs Delegated**: We use Application permissions for background sync (no user interaction required). This requires admin consent — **only a Global Administrator can grant consent for Microsoft Graph application permissions**. Application Administrator and Cloud Application Administrator both return `Authorization_RequestDenied`.
 </Callout>
 
 ### 2.2 Grant Admin Consent
@@ -120,11 +125,19 @@ ADAPTER_MOCK=false
 Add the following to your `.env`:
 
 ```bash
-# Microsoft Teams / Graph API
-TEAMS_TENANT_ID=your_tenant_id_here
-TEAMS_CLIENT_ID=your_client_id_here
-TEAMS_CLIENT_SECRET=your_client_secret_here
+# Microsoft Teams / Azure Bot adapter (env vars used by the bot's
+# `registerTeamsFromEnvIfPresent` startup path — see bot/src/index.ts).
+# These match the keys the UI wizard writes into the encrypted
+# `platform_connections` document, with snake_case here vs camelCase
+# inside the Chat SDK adapter.
+TEAMS_APP_ID=your_microsoft_app_id            # Azure AD Application (client) ID
+TEAMS_APP_PASSWORD=your_azure_client_secret   # Client secret value (NOT the secret id)
+TEAMS_APP_TENANT_ID=your_azure_tenant_id      # Directory (tenant) ID — required
 ```
+
+<Callout type="warning">
+**Historical names removed.** Earlier revisions of this doc referenced `TEAMS_TENANT_ID`, `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`. Those variables are **not read by the current bot** — the code uses the `TEAMS_APP_*` names above. If your `.env` still has the old names, rename them or you'll get a "no connections found" startup log even with correct values.
+</Callout>
 
 <Callout type="info">
 **Alternative**: Add credentials through the web UI (Settings → Connections) for encrypted storage.
