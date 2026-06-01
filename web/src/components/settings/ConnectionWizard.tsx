@@ -51,7 +51,14 @@ const TEAMS_INSTRUCTIONS = [
     text: "Create an Azure Bot resource",
     link: "https://portal.azure.com/#create/Microsoft.AzureBot",
     linkText: "in Azure Portal",
-    details: ["App type: SingleTenant"],
+    details: ["App type: SingleTenant (recommended) or MultiTenant"],
+  },
+  {
+    text: "Expose this bridge over HTTPS, then set the Bot's Messaging endpoint to your URL + /api/teams",
+    details: [
+      "Local dev: ngrok http 3001",
+      "https://<your-host>/api/teams",
+    ],
   },
   { text: "Copy the Microsoft App ID from Bot → Configuration" },
   { text: "On the linked App Registration → Manage Password, create a client secret and copy the VALUE (shown once)" },
@@ -124,7 +131,7 @@ const CREDENTIAL_FIELDS: Record<Platform, CredentialField[]> = {
       placeholder: "SingleTenant",
       enum: ["SingleTenant", "MultiTenant"],
       default: "SingleTenant",
-      hint: "Use SingleTenant for org-internal bots (recommended). MultiTenant is for ISV bots installed into many tenants and requires extra MSAL configuration.",
+      hint: "Both modes are supported. SingleTenant is recommended for org-internal bots and is the safer default. MultiTenant is for bots installed into multiple tenants (ISV / public scenarios).",
     },
   ],
   telegram: [
@@ -622,41 +629,30 @@ function StepWebhookMode({ platform }: { platform: Platform }) {
   );
 }
 
-/** Teams gets its own panel because the two remaining Azure-side steps —
- *  the messaging endpoint URL and the Teams app package upload — happen
- *  AFTER credentials validate, and skipping either silently breaks the
- *  integration. Admin-consent for Channel.ReadBasic.All is covered in the
- *  Setup step list, so it isn't repeated here. */
+/** Teams' post-validation step. Endpoint + Graph consent are covered in
+ *  the Setup step list (they happen in Azure before credentials), so this
+ *  panel is just the one remaining action that has to happen in TEAMS
+ *  itself — uploading the app package so the bot appears in channels. */
 function TeamsWebhookMode() {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-sm font-semibold text-foreground mb-1">Two steps left in Azure / Teams</h3>
+        <h3 className="text-sm font-semibold text-foreground mb-1">One step left in Teams</h3>
         <p className="text-xs text-muted-foreground">
-          Credentials are valid. Wire the endpoint and install the app to start receiving activity.
+          Credentials validated. To make the bot appear in channels, a Teams admin uploads the app package:
         </p>
       </div>
 
-      <div className="rounded-lg border border-border divide-y divide-border overflow-hidden">
-        <div className="px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">1. Set the Bot&apos;s messaging endpoint</p>
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            Azure Bot → Configuration → Messaging endpoint:
-          </p>
-          <code className="block mt-1 text-[11px] bg-muted px-2 py-1 rounded font-mono break-all">
-            https://&lt;your-bot-host&gt;/api/teams
-          </code>
-          <p className="text-[11px] text-muted-foreground/85 mt-1.5 leading-snug">
-            Local dev: <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">ngrok http 3001</code>, then paste the public HTTPS URL + <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">/api/teams</code>. Free ngrok URLs rotate — re-paste on each restart.
-          </p>
-        </div>
-
-        <div className="px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">2. Install the Teams app package</p>
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            A Teams admin uploads <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">bot/teams-app/beever-atlas-teams.zip</code> via Teams Admin Center → Manage apps → Upload.
-          </p>
-        </div>
+      <div className="rounded-lg border border-border px-3 py-2.5">
+        <p className="text-[11px] text-muted-foreground leading-snug">
+          Teams Admin Center → Manage apps → Upload custom app:
+        </p>
+        <code className="block mt-1 text-[11px] bg-muted px-2 py-1 rounded font-mono break-all">
+          bot/teams-app/beever-atlas-teams.zip
+        </code>
+        <p className="text-[11px] text-muted-foreground/85 mt-1.5 leading-snug">
+          Once uploaded, add the app to the team(s) and channels you want Beever Atlas to read.
+        </p>
       </div>
 
       <div className="flex items-start gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2.5">
