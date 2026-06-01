@@ -1370,8 +1370,13 @@ async function persistTeamsKnownTeamIdToBackend(
     );
     teamsWriteThroughInFlight.delete(dedupKey);
   } catch (err) {
+    // Constant format string + %s args (not template interpolation in the
+    // first arg) — console.warn treats arg[0] as printf-style when more args
+    // follow, so a connectionId containing %s/%j would hijack substitution
+    // (CodeQL js/tainted-format-string).
     console.warn(
-      `TeamsBridge: failed to persist aadGroupId for ${connectionId}:`,
+      "TeamsBridge: failed to persist aadGroupId for %s: %s",
+      connectionId,
       safeErrorMessage(err),
     );
     teamsWriteThroughInFlight.delete(dedupKey);

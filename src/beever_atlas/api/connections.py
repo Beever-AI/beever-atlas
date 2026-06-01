@@ -256,9 +256,7 @@ async def list_connections_with_credentials() -> list[_InternalConnectionItem]:
                     platform=conn.platform,
                     credentials=creds,
                     status=conn.status,
-                    teams_known_team_ids=list(
-                        getattr(conn, "teams_known_team_ids", None) or []
-                    ),
+                    teams_known_team_ids=list(getattr(conn, "teams_known_team_ids", None) or []),
                 )
             )
         except Exception as e:
