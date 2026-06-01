@@ -2913,8 +2913,42 @@ async function handleValidateAdapter(
         appTenantId: credentials.appTenantId,
         appType: credentials.appType || "MultiTenant",
       });
-      // Teams adapter creation validates credentials format; no simple ping API
-      jsonResponse(res, 200, { valid: true, message: "Adapter created successfully. Verify messaging endpoint is configured in Azure." });
+      // Real validation: actually mint a Graph token via MSAL. The previous
+      // construct-only check let users typo the App ID (e.g. paste a display
+      // name like "Teams" instead of the GUID) and only catch it later when
+      // channel enumeration silently returned []. We exercise the token mint
+      // by hitting a minimal Graph endpoint:
+      //   • 2xx                                   → credentials valid
+      //   • AADSTS / unauthorized_client          → credentials wrong (400)
+      //   • other (403/404/network)              → creds look valid; soft accept
+      try {
+        const graph = (tempAdapter as any).app?.graph;
+        if (!graph) {
+          jsonResponse(res, 200, {
+            valid: true,
+            message: "Adapter constructed. Token mint could not be exercised; verify the messaging endpoint and Graph admin consent in Azure.",
+          });
+          return;
+        }
+        await graph.http.get("/applications?$top=1");
+        jsonResponse(res, 200, { valid: true, message: "Credentials valid (Graph token minted successfully)." });
+      } catch (err) {
+        const msg = safeErrorMessage(err);
+        const lower = msg.toLowerCase();
+        const isAuthFailure =
+          /aadsts\d{4,6}/i.test(msg) ||
+          lower.includes("unauthorized_client") ||
+          lower.includes("invalid_client") ||
+          lower.includes("was not found in the directory");
+        if (isAuthFailure) {
+          jsonResponse(res, 200, { valid: false, error: `Microsoft rejected the credentials: ${msg}` });
+        } else {
+          jsonResponse(res, 200, {
+            valid: true,
+            message: `Credentials look valid but a Graph probe failed: ${msg}. Check Channel.ReadBasic.All admin consent if channel listing fails later.`,
+          });
+        }
+      }
     } else if (platform === "mattermost") {
       const baseUrl = (credentials.baseUrl || credentials.server_url || "").replace(/\/+$/, "");
       const botToken = credentials.botToken || credentials.bot_token || "";
