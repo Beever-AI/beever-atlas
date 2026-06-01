@@ -48,43 +48,18 @@ const DISCORD_INSTRUCTIONS = [
 
 const TEAMS_INSTRUCTIONS = [
   {
-    text: "Create a new Azure Bot resource in the",
+    text: "Create an Azure Bot resource",
     link: "https://portal.azure.com/#create/Microsoft.AzureBot",
-    linkText: "Azure Portal",
-    details: [
-      "Choose SingleTenant (required so MSAL client_credentials can mint the Graph token)",
-      "Enter your Azure AD Tenant ID as the App tenant",
-    ],
+    linkText: "in Azure Portal",
+    details: ["App type: SingleTenant"],
   },
+  { text: "Copy the Microsoft App ID from Bot → Configuration" },
+  { text: "On the linked App Registration → Manage Password, create a client secret and copy the VALUE (shown once)" },
+  { text: "Copy the Tenant ID from Azure Active Directory → Overview" },
+  { text: "On the Bot resource → Channels, add the Microsoft Teams channel" },
   {
-    text: "On the Bot resource → Configuration: copy the Microsoft App ID (this is the Azure AD App Registration's Application (client) ID)",
-  },
-  {
-    text: "Click Manage Password → New client secret on the linked App Registration; copy the secret VALUE (not the secret ID) — it's only shown once",
-  },
-  {
-    text: "From Azure Active Directory → Overview: copy the Tenant ID (Directory ID)",
-  },
-  {
-    text: "On the Bot resource → Channels: add the Microsoft Teams channel and save (without this the bot can't receive Teams activities)",
-  },
-  {
-    text: "On the App Registration → API permissions: add Microsoft Graph → Application permission Channel.ReadBasic.All, then Grant admin consent for <tenant> (required for channel enumeration via /teams/{id}/channels — without it Beever Atlas can't list your channels)",
-    details: [
-      "Note: only a Global Administrator can grant consent for Microsoft Graph application permissions",
-      "Application Administrator and Cloud Application Administrator both return Authorization_RequestDenied",
-    ],
-  },
-  {
-    text: "Set the Bot resource's messaging endpoint to https://<your-bot-host>/api/teams",
-    details: [
-      "Local dev: run ngrok http 3001 (the bot listens on 3001 by default), then paste the public HTTPS URL + /api/teams",
-      "Free ngrok URLs rotate on every restart — you'll need to update the endpoint in Azure each time",
-      "Production: point the endpoint at your reverse-proxied bot host, e.g. https://atlas.example.com/api/teams",
-    ],
-  },
-  {
-    text: "Install the Beever Atlas app to your Team via Teams Admin Center → Manage apps → Upload (a Teams admin must do this for the bot to appear in channels). The .zip package lives at bot/teams-app/beever-atlas-teams.zip in this repo",
+    text: "On API permissions, add Microsoft Graph application permission, then Grant admin consent — a Global Admin must do this",
+    details: ["Channel.ReadBasic.All"],
   },
 ];
 
@@ -647,55 +622,39 @@ function StepWebhookMode({ platform }: { platform: Platform }) {
   );
 }
 
-/** Teams gets its own panel because the Azure-side wiring is non-obvious:
- *  (1) the messaging endpoint must land at the bot's `/api/teams` path,
- *  (2) channel enumeration via Microsoft Graph requires a Global Admin to
- *      consent `Channel.ReadBasic.All`, and (3) the bot only appears in
- *      Teams once a Teams admin uploads the `.zip` package to Teams Admin
- *      Center. Each of those failed silently for early users until they
- *      were called out explicitly here. */
+/** Teams gets its own panel because the two remaining Azure-side steps —
+ *  the messaging endpoint URL and the Teams app package upload — happen
+ *  AFTER credentials validate, and skipping either silently breaks the
+ *  integration. Admin-consent for Channel.ReadBasic.All is covered in the
+ *  Setup step list, so it isn't repeated here. */
 function TeamsWebhookMode() {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-sm font-semibold text-foreground mb-1">Microsoft Teams — final wiring</h3>
+        <h3 className="text-sm font-semibold text-foreground mb-1">Two steps left in Azure / Teams</h3>
         <p className="text-xs text-muted-foreground">
-          The adapter is registered. Three Azure-side steps remain before messages flow.
+          Credentials are valid. Wire the endpoint and install the app to start receiving activity.
         </p>
       </div>
 
       <div className="rounded-lg border border-border divide-y divide-border overflow-hidden">
         <div className="px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">1. Messaging endpoint</p>
+          <p className="text-xs font-medium text-foreground mb-1">1. Set the Bot&apos;s messaging endpoint</p>
           <p className="text-[11px] text-muted-foreground leading-snug">
-            On your Azure Bot resource → Configuration, set the messaging endpoint to:
+            Azure Bot → Configuration → Messaging endpoint:
           </p>
           <code className="block mt-1 text-[11px] bg-muted px-2 py-1 rounded font-mono break-all">
             https://&lt;your-bot-host&gt;/api/teams
           </code>
           <p className="text-[11px] text-muted-foreground/85 mt-1.5 leading-snug">
-            <strong>Local dev:</strong> run <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">ngrok http 3001</code>{" "}
-            and paste the public HTTPS URL + <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">/api/teams</code>.
-            Free ngrok URLs rotate on every restart — re-paste each time.
+            Local dev: <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">ngrok http 3001</code>, then paste the public HTTPS URL + <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">/api/teams</code>. Free ngrok URLs rotate — re-paste on each restart.
           </p>
         </div>
 
         <div className="px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">2. Microsoft Graph permission</p>
+          <p className="text-xs font-medium text-foreground mb-1">2. Install the Teams app package</p>
           <p className="text-[11px] text-muted-foreground leading-snug">
-            On the App Registration → API permissions, add{" "}
-            <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">Channel.ReadBasic.All</code>{" "}
-            (Microsoft Graph, Application). A <strong>Global Administrator</strong> must click{" "}
-            <em>Grant admin consent for &lt;tenant&gt;</em>. Without it, Beever Atlas can&apos;t enumerate channels via{" "}
-            <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">GET /teams/{`{id}`}/channels</code>.
-          </p>
-        </div>
-
-        <div className="px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">3. Install the Teams app package</p>
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            A Teams admin uploads <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">bot/teams-app/beever-atlas-teams.zip</code>{" "}
-            via Teams Admin Center → Manage apps → Upload. The bot then appears in the team and channels you add it to.
+            A Teams admin uploads <code className="text-[10.5px] bg-muted px-1 py-0.5 rounded">bot/teams-app/beever-atlas-teams.zip</code> via Teams Admin Center → Manage apps → Upload.
           </p>
         </div>
       </div>
@@ -703,8 +662,7 @@ function TeamsWebhookMode() {
       <div className="flex items-start gap-2 rounded-lg bg-primary/5 border border-primary/20 px-3 py-2.5">
         <Zap className="w-4 h-4 text-primary shrink-0 mt-0.5" />
         <p className="text-xs text-muted-foreground">
-          Channels appear in Beever Atlas&apos;s sidebar once the bot has received any inbound activity (or as soon as channel
-          enumeration via Graph runs — whichever happens first). No @mention required.
+          Channels appear automatically — no @mention required.
         </p>
       </div>
     </div>
