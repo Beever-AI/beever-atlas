@@ -8,6 +8,24 @@ Beever Atlas exposes a Model Context Protocol (MCP) server at `/mcp` so external
 
 **Supported clients:** Claude Code (`.mcp.json` config), Cursor, or any MCP-compatible IDE assistant.
 
+## Standalone Introspection Mode (stdio)
+
+Running `python -m beever_atlas.api.mcp_server` (or the installed `beever-atlas-mcp` console script) serves the **same curated MCP surface over stdio** — no HTTP server, no `/mcp` mount, and no backing stores (MongoDB, Weaviate, Neo4j, Redis). The server starts instantly and answers protocol handshakes from a clean environment.
+
+**Who it's for:** MCP registries (Glama.ai), local launchers (`mcp-proxy`, Claude Desktop), and anyone who wants to inspect the tool catalog without deploying the full stack.
+
+**Key contract:** catalog introspection — `tools/list`, `prompts/list`, `resources/list`, and their `*/get` counterparts — needs **zero external dependencies** and works against a bare container. Tool *invocations* that read or write knowledge still require the backing stores; in this mode they return the same structured errors documented in the [Error Catalog](#error-catalog) rather than crashing.
+
+**Auth:** stdio is a local single-principal transport, so the HTTP `Authorization: Bearer` middleware does not apply (and there is no store data to protect). Production deployments should keep using the authenticated `/mcp` mount described below.
+
+```bash
+# From a built image (e.g. a registry sandbox)
+docker run -i --rm beever-atlas python -m beever_atlas.api.mcp_server
+
+# From a local checkout
+uv run beever-atlas-mcp
+```
+
 ## Enable the MCP Server
 
 ### 1. Set Environment Variables

@@ -52,6 +52,11 @@ test = [
     "tiktoken>=0.7",
 ]
 
+[project.scripts]
+# Standalone stdio MCP server (no HTTP, no backing stores) — used by MCP
+# registries (Glama) and local launchers; see api/mcp_server/__main__.py.
+beever-atlas-mcp = "beever_atlas.api.mcp_server.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

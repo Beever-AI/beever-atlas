@@ -321,6 +321,8 @@ See [docs/mcp-server.md](docs/mcp-server.md) for:
 - **Client configuration** — ready-to-use `.mcp.json` templates for Claude Code and Cursor
 - **Rate limits** — principal-keyed limits to prevent one agent from throttling others
 
+It also ships a **standalone stdio mode** (`python -m beever_atlas.api.mcp_server` / `beever-atlas-mcp`) that exposes the same tool catalog with no HTTP server or backing stores — handy for MCP registries (Glama.ai) and local introspection. See [docs/mcp-server.md](docs/mcp-server.md#standalone-introspection-mode-stdio).
+
 Quick example (Claude Code):
 ```json
 {
