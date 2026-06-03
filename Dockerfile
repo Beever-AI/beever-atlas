@@ -58,6 +58,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 # directory is root-owned and the runtime user can't write to it).
 USER app
 
+# MCP Registry ownership annotation — MUST byte-for-byte equal `name` in
+# server.json (io.github.beever-ai/beever-atlas). The registry validator pulls
+# the published manifest and reads this label to verify OCI artifact ownership.
+LABEL io.modelcontextprotocol.server.name="io.github.beever-ai/beever-atlas"
+
 EXPOSE 8000
 
 CMD ["uvicorn", "beever_atlas.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
