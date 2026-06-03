@@ -12,6 +12,7 @@ from beever_atlas.agents.query.prompts import (
     QA_QUICK_SUFFIX,
     QA_SUMMARIZE_SUFFIX,
 )
+from beever_atlas.agents.resilient_tool_resolver import make_tool_error_callback
 from beever_atlas.agents.tools import QA_TOOLS
 from beever_atlas.agents.tools.orchestration_tools import ORCHESTRATION_TOOLS
 from beever_atlas.infra.config import ConfigurationError
@@ -71,6 +72,29 @@ def _tool_name(tool) -> str:
         or getattr(tool, "name", None)
         or getattr(getattr(tool, "func", None), "__name__", "")
     )
+
+
+def _canonical_tool_names(tools_list: list) -> list[str]:
+    """Collect the names ADK registers in ``tools_dict`` for the given
+    tools (it keys on ``tool.name``).
+
+    ``BaseToolset`` instances (e.g. ``SkillToolset``) resolve their tools
+    asynchronously at runtime, so they cannot be expanded here — they are
+    skipped. The resulting list still covers every directly-registered
+    function tool, which is what the LLM hallucinates against in practice;
+    a missing toolset name only weakens the ``did_you_mean`` suggestion,
+    never the safety of the soft-error itself.
+    """
+    from google.adk.tools.base_toolset import BaseToolset
+
+    names: list[str] = []
+    for t in tools_list:
+        if isinstance(t, BaseToolset):
+            continue
+        name = _tool_name(t)
+        if name:
+            names.append(name)
+    return names
 
 
 def _maybe_wrap_with_skills(tools_list: list) -> list:
@@ -263,6 +287,7 @@ def create_qa_agent(
             model=model,
             instruction=prompt,
             tools=agent_tools,
+            on_tool_error_callback=make_tool_error_callback(_canonical_tool_names(agent_tools)),
         )
     elif mode == "summarize":
         # Summarize: 4 tools, thinking, structured output
@@ -282,6 +307,7 @@ def create_qa_agent(
             instruction=prompt,
             tools=agent_tools,
             planner=planner,
+            on_tool_error_callback=make_tool_error_callback(_canonical_tool_names(agent_tools)),
         )
     else:
         # Deep (default): all tools, thinking, full pipeline.
@@ -304,6 +330,7 @@ def create_qa_agent(
             instruction=prompt,
             tools=agent_tools,
             planner=planner,
+            on_tool_error_callback=make_tool_error_callback(_canonical_tool_names(agent_tools)),
         )
 
     logger.info(

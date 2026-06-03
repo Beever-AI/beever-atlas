@@ -16,26 +16,33 @@ the whole turn instead of giving the model a chance to retry.
 
 Fix
 ---
-Install a stub tool that ADK can dispatch through its normal flow. The
-stub's ``run_async`` returns a structured error containing the
-canonical tool list. ADK feeds that back to the LLM as a tool-result
-message; the LLM sees "your tool name was wrong, here are the real
-names" and tries again on the same turn.
+ADK 2.1.0 routes the unknown-tool ``ValueError`` through an agent-level
+``on_tool_error_callback``: it wraps ``_get_tool`` in ``try/except
+ValueError``, builds a placeholder ``BaseTool`` whose ``.name`` is the
+hallucinated name, and runs the registered error callbacks. If a
+callback returns a dict, ADK injects it as the ``function_response`` fed
+back to the LLM; if every callback returns ``None``, the original
+``ValueError`` is re-raised (the fail-fast contract is preserved).
 
-The default ADK behaviour stays opt-out — pass ``enabled=False`` (e.g.
-to investigate a genuine tool-registration bug) and the original
-fail-fast contract returns.
+:func:`make_tool_error_callback` builds such a callback. The returned
+dict carries the canonical tool list plus a ``did_you_mean`` suggestion;
+the LLM sees "your tool name was wrong, here are the real names" and
+retries on the same turn.
 
-Idempotent — re-installing in tests / hot reload is safe.
+This replaces the previous process-global monkey-patch of ADK's private
+``_get_tool``. The callback is per-agent, so every tool-dispatching
+``LlmAgent`` must attach it explicitly (see
+``beever_atlas.agents.query.qa_agent``).
 """
 
 from __future__ import annotations
 
 import difflib
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -98,103 +105,92 @@ def _closest_tool_match(requested: str, available: list[str]) -> str | None:
     return None
 
 
-class _UnknownToolStub(BaseTool):
-    """Echoes back a tool-error response when the LLM names a tool that
-    doesn't exist. Visible to the LLM as a normal tool-result, so it can
-    try again with one of the listed valid names on the same turn."""
+def build_unknown_tool_payload(requested_name: str, available_names: list[str]) -> dict[str, Any]:
+    """Build the structured tool-result the LLM gets back when it names a
+    tool that doesn't exist.
 
-    def __init__(self, requested_name: str, available_names: list[str]) -> None:
-        super().__init__(
-            name=requested_name,
-            description=(
-                f"Stub for the hallucinated tool name {requested_name!r}. "
-                "Returns a structured error so the LLM can retry with a valid "
-                "tool name."
-            ),
-        )
-        self._requested = requested_name
-        self._available = available_names
-
-    async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:  # noqa: ARG002
-        suggestion = _closest_tool_match(self._requested, self._available)
-        logger.warning(
-            "resilient_tool_resolver: model called unknown tool %r — "
-            "returning soft error (did_you_mean=%r). Available: %s",
-            self._requested,
-            suggestion,
-            ", ".join(self._available),
-        )
-        # Smaller open-source models (Gemma 2B/4B, Llama 3.2 3B, …) often
-        # drop or add a name suffix when the agent registers 15+ tools.
-        # Including an explicit ``did_you_mean`` field lets weak models
-        # recover in one extra turn instead of giving up.
-        payload: dict[str, Any] = {
-            "error": "tool_not_found",
-            "requested_tool": self._requested,
-            "available_tools": self._available,
-        }
-        if suggestion is not None:
-            payload["did_you_mean"] = suggestion
-            payload["hint"] = (
-                f"The tool {self._requested!r} does not exist. The closest "
-                f"available match is {suggestion!r} — retry the call with "
-                "EXACTLY that name."
-            )
-        else:
-            payload["hint"] = (
-                f"The tool {self._requested!r} does not exist. Pick exactly "
-                "one name from available_tools and retry. Tool names are "
-                "case-sensitive."
-            )
-        return payload
-
-
-def install_resilient_tool_resolver() -> None:
-    """Monkey-patch ADK's ``_get_tool`` to return a stub on unknown names.
-
-    Called once at server boot. Safe to call again — the patch tags the
-    function with a marker attribute so re-installation is a no-op.
-
-    Defensive: ``_get_tool`` is a private ADK symbol that could be
-    renamed or moved by a future ADK release. When it's missing, log a
-    clear warning and return — the operator will see the warning at
-    boot and can pin a known-good ADK version. The agent stream still
-    runs unpatched; behaviour reverts to ADK's hard ``ValueError`` on
-    unknown tool names (the original ADK contract).
+    The payload is JSON-serialisable and ADK injects it verbatim as the
+    ``function_response``. Smaller open-source models (Gemma 2B/4B, Llama
+    3.2 3B, …) often drop or add a name suffix when the agent registers
+    15+ tools, so an explicit ``did_you_mean`` field lets weak models
+    recover in one extra turn instead of giving up.
     """
-    from google.adk.flows.llm_flows import functions as adk_functions
-
-    if not hasattr(adk_functions, "_get_tool"):
-        logger.warning(
-            "resilient_tool_resolver: ADK's flows.llm_flows.functions._get_tool "
-            "is missing — likely an ADK version upgrade renamed it. Falling back "
-            "to the unpatched contract (hard ValueError on hallucinated tool "
-            "names). Pin the working ADK range in pyproject.toml or update this "
-            "patch."
-        )
-        return
-
-    if getattr(adk_functions._get_tool, "_beever_resilient", False):
-        return
-
-    def _resilient_get_tool(function_call: Any, tools_dict: dict[str, BaseTool]) -> BaseTool:
-        name = getattr(function_call, "name", None)
-        if name in tools_dict:
-            return tools_dict[name]
-        # Don't raise — return a stub that emits a tool-result back to the
-        # model with the canonical tool list, letting it recover on the
-        # same turn instead of killing the stream.
-        return _UnknownToolStub(
-            requested_name=str(name) if name is not None else "<unknown>",
-            available_names=sorted(tools_dict.keys()),
-        )
-
-    _resilient_get_tool._beever_resilient = True  # type: ignore[attr-defined]
-    adk_functions._get_tool = _resilient_get_tool
-    logger.info(
-        "resilient_tool_resolver: installed — unknown tool names now return "
-        "a soft error instead of crashing the agent stream"
+    suggestion = _closest_tool_match(requested_name, available_names)
+    logger.warning(
+        "resilient_tool_resolver: model called unknown tool %r — "
+        "returning soft error (did_you_mean=%r). Available: %s",
+        requested_name,
+        suggestion,
+        ", ".join(available_names),
     )
+    payload: dict[str, Any] = {
+        "error": "tool_not_found",
+        "requested_tool": requested_name,
+        "available_tools": available_names,
+    }
+    if suggestion is not None:
+        payload["did_you_mean"] = suggestion
+        payload["hint"] = (
+            f"The tool {requested_name!r} does not exist. The closest "
+            f"available match is {suggestion!r} — retry the call with "
+            "EXACTLY that name."
+        )
+    else:
+        payload["hint"] = (
+            f"The tool {requested_name!r} does not exist. Pick exactly "
+            "one name from available_tools and retry. Tool names are "
+            "case-sensitive."
+        )
+    return payload
 
 
-__all__ = ["install_resilient_tool_resolver", "_UnknownToolStub"]
+def make_tool_error_callback(
+    available_tool_names: list[str] | Callable[[], list[str]],
+) -> Callable[[BaseTool, dict, ToolContext, Exception], dict | None]:
+    """Build an agent-level ``on_tool_error_callback`` that turns ADK's
+    unknown-tool ``ValueError`` into a structured tool-result the LLM can
+    recover from on the same turn.
+
+    Args:
+        available_tool_names: the canonical tool names the agent exposes,
+            either as a static list bound at construction or a callable
+            returning the list lazily (e.g. when a SkillToolset resolves
+            its tools at runtime). Names must match what ADK registers in
+            ``tools_dict`` (which keys on ``tool.name``) for the
+            ``did_you_mean`` suggestions to land.
+
+    Returns:
+        A callback with ADK's positional agent-level signature
+        ``(tool, args, tool_context, error)``. It handles ONLY the
+        unknown-tool case (``ValueError`` whose message contains "not
+        found") and returns ``None`` for every other error so ADK
+        re-raises it — the fail-fast contract is preserved for real tool
+        failures.
+    """
+
+    # NOTE: the 2nd parameter MUST be named ``args`` — ADK invokes the
+    # agent-level callback with ``args=`` as a keyword (the plugin-level
+    # callback uses ``tool_args`` instead). See functions.py:507-513.
+    def on_tool_error(
+        tool: BaseTool,
+        args: dict,  # noqa: ARG001 — required by ADK's keyword invocation
+        tool_context: ToolContext,  # noqa: ARG001
+        error: Exception,
+    ) -> dict | None:
+        # Only soften the hallucinated-tool case. Other errors (real tool
+        # failures) propagate untouched so genuine bugs stay loud.
+        if not (isinstance(error, ValueError) and "not found" in str(error)):
+            return None
+        # The placeholder BaseTool carries the hallucinated name as .name.
+        requested_name = tool.name
+        names = available_tool_names() if callable(available_tool_names) else available_tool_names
+        return build_unknown_tool_payload(requested_name, sorted(names))
+
+    return on_tool_error
+
+
+__all__ = [
+    "_closest_tool_match",
+    "build_unknown_tool_payload",
+    "make_tool_error_callback",
+]

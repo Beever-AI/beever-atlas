@@ -240,21 +240,6 @@ async def lifespan(app: FastAPI):
             "lifespan: register_litellm_observer failed (non-fatal)", exc_info=True
         )
 
-    # Soften ADK's hard-fail behaviour on hallucinated tool names so non-
-    # Gemini models reached via LiteLLM (GLM, Llama, …) can recover on the
-    # same turn instead of killing the stream. See module docstring.
-    try:
-        from beever_atlas.agents.resilient_tool_resolver import (
-            install_resilient_tool_resolver,
-        )
-
-        install_resilient_tool_resolver()
-    except Exception:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "lifespan: install_resilient_tool_resolver failed (non-fatal)",
-            exc_info=True,
-        )
-
     # PR-E: hydrate the DB-stored encrypted API key into the runtime so the
     # embedding shim can use it without round-tripping to MongoDB on every
     # call. Runs BEFORE the dim-guard probe so the probe uses the same key
