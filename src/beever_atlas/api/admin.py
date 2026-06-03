@@ -819,4 +819,75 @@ async def classify_unresolved(
     return report.to_dict()
 
 
+# ---------------------------------------------------------------------------
+# Durable channel-media backfill (admin)
+# ---------------------------------------------------------------------------
+
+
+class BackfillMediaRequest(BaseModel):
+    """Body for ``POST /api/admin/channels/{channel_id}/backfill-media``."""
+
+    dry_run: bool = Field(
+        default=False,
+        description="Count fetch candidates without downloading or writing anything.",
+    )
+    max_messages: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        description=(
+            "Cap on attachment-bearing messages scanned per call. The backfill "
+            "is resumable, so an operator calls this repeatedly to walk a large "
+            "channel without blocking a worker for an unbounded duration. Use "
+            "the CLI script for a one-shot unbounded backfill."
+        ),
+    )
+
+
+@router.post("/channels/{channel_id}/backfill-media")
+async def backfill_channel_media_endpoint(
+    channel_id: str,
+    req: BackfillMediaRequest | None = None,
+) -> dict:
+    """Re-fetch and durably store media for one already-ingested channel.
+
+    Mirrors the ``classify-unresolved`` precedent: the work runs INLINE and the
+    report is returned. The scan is bounded per call by ``max_messages``
+    (default 500) so a worker is never blocked for an unbounded duration on a
+    channel with thousands of attachment-bearing messages. The backfill is
+    resumable — each call advances the saved cursor, so an operator repeats the
+    call to walk a large channel, or uses the CLI script for a one-shot
+    unbounded run. ``dry_run`` counts fetch candidates without downloading.
+
+    Auth: ``X-Admin-Token`` (router-level ``require_admin`` dependency).
+    """
+    from beever_atlas.services.media_backfill import backfill_channel_media
+
+    dry_run = req.dry_run if req is not None else False
+    max_messages = req.max_messages if req is not None else 500
+    report = await backfill_channel_media(
+        channel_id=channel_id, dry_run=dry_run, max_messages=max_messages
+    )
+    logger.warning(
+        "ADMIN BACKFILL-MEDIA channel=%s dry_run=%s stored=%d already=%d failed=%d",
+        channel_id,
+        dry_run,
+        report.stored,
+        report.already_stored,
+        report.download_failed,
+    )
+    return report.to_dict()
+
+
+@router.get("/media/stats")
+async def media_stats() -> dict:
+    """Return durable channel-media totals (blobs / bytes / refs).
+
+    Best-effort: the underlying ``MediaBlobStore.stats`` swallows store errors
+    and returns zeroed totals, so this endpoint never 500s on a Mongo hiccup.
+    """
+    stores = get_stores()
+    return await stores.media_blob_store.stats()
+
+
 __all__ = ["router"]

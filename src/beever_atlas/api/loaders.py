@@ -18,6 +18,7 @@ Issue #88 — narrow ``?access_token=`` auth surface to loader endpoints.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
@@ -34,10 +35,75 @@ from beever_atlas.api.media import (
 )
 from beever_atlas.infra.config import get_settings
 from beever_atlas.infra.http_safe import resolve_and_validate, validate_proxy_url
+from beever_atlas.stores import get_stores
+
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["loaders"])
+
+# GridFS read chunk size for the read-through path. Streaming in 256 KB
+# slices keeps a large blob (video/PDF) off the heap instead of buffering
+# the whole file with a single ``.read()``.
+_STORE_CHUNK_BYTES = 256 * 1024
+
+
+async def _iter_gridfs(stream) -> "AsyncIterator[bytes]":
+    """Yield a GridFS download stream in fixed-size chunks, closing it after.
+
+    The blob store hands us an open ``AsyncIOMotorGridOut``; we own closing
+    it. Reading in ``_STORE_CHUNK_BYTES`` slices avoids materializing a large
+    blob in memory.
+    """
+    try:
+        while True:
+            chunk = await stream.read(_STORE_CHUNK_BYTES)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        # GridOut.close is async on Motor; guard so a sync/fake stream in
+        # tests doesn't crash the response.
+        close = getattr(stream, "close", None)
+        if close is not None:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+
+
+async def _try_store_hit(url: str, *, cache_control: str, extra_headers: dict[str, str]):
+    """Return a ``StreamingResponse`` if the blob store has ``url``, else None.
+
+    Read-through is best-effort: any store error is logged at WARN and
+    swallowed so the caller falls through to the origin fetch — the proxy
+    must never 500 because the store hiccuped. The raw platform ``url`` is
+    used as the lookup key; a hit never fetches it, so passing the
+    pre-validation URL here is safe.
+    """
+    if not get_settings().channel_media_read_through:
+        return None
+    stores = get_stores()
+    blob_store = getattr(stores, "media_blob_store", None)
+    if blob_store is None:
+        return None
+    try:
+        hit = await blob_store.open_by_url(url)
+    except Exception:
+        # Resilience: a store outage must not break serving — fall through
+        # to the origin fetch path below.
+        logger.warning("media read-through: store lookup failed, falling back", exc_info=True)
+        return None
+    if hit is None:
+        return None
+    stream, ref = hit
+    headers = {"Cache-Control": cache_control, "X-Media-Source": "store", **extra_headers}
+    return StreamingResponse(
+        _iter_gridfs(stream),
+        media_type=ref.get("mime_type") or "application/octet-stream",
+        headers=headers,
+    )
 
 
 @router.get("/api/files/proxy")
@@ -62,6 +128,16 @@ async def proxy_file(
         logger.warning("file_proxy rejected url: host=%s reason=%s", host, type(exc).__name__)
         raise HTTPException(status_code=400, detail="Invalid file URL") from None
 
+    # Read-through: serve from the durable blob store before touching the
+    # bridge. Validation stays FIRST (above) — `validate_proxy_url` also
+    # guards SSRF-logging consistency and the url param shape — but a store
+    # hit never fetches the URL, so the lookup sits between validation and
+    # the origin fetch. We pass the RAW `url` (not the encoded bridge form)
+    # because the store keys on the platform URL's host+path.
+    stored = await _try_store_hit(url, cache_control="public, max-age=3600", extra_headers={})
+    if stored is not None:
+        return stored
+
     settings = get_settings()
     bridge_url = f"{settings.bridge_url}/bridge/files?url={encoded_url}"
     if connection_id:
@@ -78,7 +154,7 @@ async def proxy_file(
         return StreamingResponse(
             iter([resp.content]),
             media_type=resp.headers.get("content-type", "application/octet-stream"),
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": "public, max-age=3600", "X-Media-Source": "origin"},
         )
 
 
@@ -92,6 +168,23 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
 
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Only http(s) URLs allowed")
+
+    # Read-through BEFORE the host-allowlist check (deliberate ordering): the
+    # allowlist controls which hosts may be FETCHED, but a store hit never
+    # fetches. A self-hosted Mattermost host that has since dropped off the
+    # runtime allowlist must still serve its already-stored bytes, so the
+    # store lookup precedes the allowlist rejection. The basic scheme check
+    # above still runs first to reject non-http(s) garbage before any work.
+    stored = await _try_store_hit(
+        url,
+        cache_control="private, max-age=300",
+        extra_headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+        },
+    )
+    if stored is not None:
+        return stored
 
     host = (parsed.hostname or "").lower()
     allowed = effective_allowed_hosts()
@@ -158,7 +251,9 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
                 continue
             last_status = resp.status_code
             if resp.status_code == 200:
-                return build_response(resp)
+                origin = build_response(resp)
+                origin.headers["X-Media-Source"] = "origin"
+                return origin
             # Close on non-200 so the connection can be reused.
             await resp.aclose()
         raise HTTPException(
@@ -176,4 +271,6 @@ async def proxy_media(url: str = Query(..., min_length=10, max_length=2048)) -> 
         status = resp.status_code
         await resp.aclose()
         raise HTTPException(status_code=502, detail=f"Upstream returned {status}")
-    return build_response(resp)
+    origin = build_response(resp)
+    origin.headers["X-Media-Source"] = "origin"
+    return origin

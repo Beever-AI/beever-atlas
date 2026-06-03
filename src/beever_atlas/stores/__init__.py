@@ -29,6 +29,7 @@ from beever_atlas.stores.platform_store import PlatformStore
 from beever_atlas.stores.chat_history_store import ChatHistoryStore
 from beever_atlas.stores.qa_history_store import QAHistoryStore
 from beever_atlas.stores.file_store import FileStore
+from beever_atlas.stores.media_blob_store import MediaBlobStore
 from beever_atlas.services.share_store import ShareStore
 from beever_atlas.infra.config import Settings
 
@@ -46,6 +47,7 @@ class StoreClients:
         chat_history: ChatHistoryStore,
         qa_history: QAHistoryStore,
         file_store: FileStore,
+        media_blob_store: MediaBlobStore,
         share_store: ShareStore,
     ):
         self.mongodb = mongodb
@@ -56,6 +58,7 @@ class StoreClients:
         self.chat_history = chat_history
         self.qa_history = qa_history
         self.file_store = file_store
+        self.media_blob_store = media_blob_store
         self.share_store = share_store
 
     @classmethod
@@ -89,6 +92,10 @@ class StoreClients:
         entity_registry = EntityRegistry(graph)
         # Reuse the same MongoDB connection as MongoDBStore
         platform = PlatformStore(mongodb.db["platform_connections"])
+        # Durable channel-media blob store — reuses the MongoDBStore Motor
+        # client (like PlatformStore) so the GridFS bucket lives on the same
+        # pool instead of fragmenting it.
+        media_blob_store = MediaBlobStore(mongodb)
 
         # The 4 stores below currently each open their own connection pool —
         # the goal of issue #31 is to eliminate per-request store construction
@@ -110,6 +117,7 @@ class StoreClients:
             chat_history=chat_history,
             qa_history=qa_history,
             file_store=file_store,
+            media_blob_store=media_blob_store,
             share_store=share_store,
         )
 
@@ -121,6 +129,9 @@ class StoreClients:
         await self.chat_history.startup()
         await self.qa_history.startup()
         await self.file_store.startup()
+        # MediaBlobStore reuses the MongoDBStore client, so it must bind its
+        # bucket + indexes after mongodb.startup() has pinged the connection.
+        await self.media_blob_store.startup()
         await self.share_store.startup()
 
     async def shutdown(self) -> None:
@@ -129,6 +140,9 @@ class StoreClients:
         # ShareStore, FileStore, ChatHistoryStore use sync close(); QAHistoryStore
         # has async shutdown().
         self.share_store.close()
+        # MediaBlobStore borrows the MongoDBStore Motor client, so it has no
+        # own pool to close — mongodb.shutdown() below tears down the shared
+        # connection. Nothing to do here.
         self.file_store.close()
         await self.qa_history.shutdown()
         self.chat_history.close()

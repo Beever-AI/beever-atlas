@@ -12,13 +12,51 @@ import asyncio
 import io
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal, overload
 
 import httpx
 
 from beever_atlas.infra.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class _Oversize:
+    """Sentinel for a download rejected solely by the size cap.
+
+    ``_download_file`` normally collapses every failure (auth, expired URL,
+    HTML login page, network error, oversize) into ``None``. The durable
+    backfill needs to tell a genuine size-cap rejection apart from those so it
+    can report it under ``too_large`` instead of ``download_failed``. Callers
+    opt in via ``return_oversize_sentinel=True``; everyone else keeps the
+    ``None``-means-failure contract unchanged. Falsy on purpose so existing
+    ``if not data`` guards still treat it as "no bytes".
+    """
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return False
+
+
+# Module-level singleton — identity-compared by callers (``is OVERSIZE``).
+OVERSIZE = _Oversize()
+
+
+@dataclass(frozen=True, slots=True)
+class MediaContext:
+    """Per-message context threaded into durable media persistence.
+
+    Carries the channel/message/source identifiers that scope a stored blob
+    and its ref so the channel-purge fan-out can drop them later. The platform
+    URL remains the identifier used everywhere else; this is storage-only.
+    """
+
+    channel_id: str = ""
+    message_id: str = ""
+    source_id: str = ""
+
 
 # Patterns that suggest the user is referencing an attachment
 _ATTACHMENT_REF_PATTERNS = re.compile(
@@ -75,6 +113,16 @@ class MediaProcessor:
             return {"description": "", "media_urls": [], "media_type": ""}
 
         message_text = msg.get("text") or msg.get("content") or ""
+
+        # Message context for durable media persistence. The platform URL stays
+        # the identifier everywhere; these fields scope the stored blob/ref so
+        # the channel-purge fan-out can drop it later. message_id falls back
+        # through the platform-specific keys that may carry it.
+        media_ctx = MediaContext(
+            channel_id=msg.get("channel_id", ""),
+            message_id=(msg.get("message_id") or msg.get("msg_id") or msg.get("ts") or ""),
+            source_id=(msg.get("platform") or msg.get("source_id") or ""),
+        )
         descriptions: list[str] = []
         media_urls: list[str] = []
         media_type = ""
@@ -85,7 +133,7 @@ class MediaProcessor:
             """Process a single attachment with timeout and error handling."""
             try:
                 return await asyncio.wait_for(
-                    self._process_attachment(att, message_text),
+                    self._process_attachment(att, message_text, ctx=media_ctx),
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
@@ -134,7 +182,13 @@ class MediaProcessor:
 
     # ── Internal methods ────────────────────────────────────────────────
 
-    async def _process_attachment(self, att: dict[str, Any], message_text: str) -> dict[str, str]:
+    async def _process_attachment(
+        self,
+        att: dict[str, Any],
+        message_text: str,
+        *,
+        ctx: MediaContext | None = None,
+    ) -> dict[str, str]:
         """Route a single attachment to the appropriate extractor via registry."""
         url = att.get("url") or att.get("url_private") or ""
         name = att.get("name") or "file"
@@ -172,6 +226,16 @@ class MediaProcessor:
                 "media_type": att_type or ext,
             }
 
+        # Persist the raw bytes durably (best-effort) before extraction — the
+        # platform URL rots but the content-addressed blob survives.
+        await self._persist_blob_best_effort(
+            data=data,
+            mime_type=mimetype,
+            filename=name,
+            url=url,
+            ctx=ctx,
+        )
+
         # Extract content via registry
         content = await extractor.extract(data, name, metadata={"message_text": message_text})
 
@@ -185,13 +249,75 @@ class MediaProcessor:
             "media_type": content.media_type or att_type or ext,
         }
 
-    async def _handle_pdf(self, url: str, name: str) -> dict[str, str]:
+    async def _persist_blob_best_effort(
+        self,
+        *,
+        data: bytes,
+        mime_type: str,
+        filename: str,
+        url: str,
+        ctx: MediaContext | None,
+    ) -> None:
+        """Store the downloaded bytes in the durable blob store, best-effort.
+
+        Persistence is a side effect of ingestion that must NEVER block or
+        break extraction: any failure (disabled flag, missing store, Mongo
+        error) is swallowed so the caller continues to the extractor. The
+        platform ``url`` is passed through as the ref identity; the store
+        normalizes it to a stable host+path ``url_key`` (and skips the ref
+        entirely for Telegram / unparseable URLs).
+        """
+        settings = self._settings
+        if not settings.channel_media_persist:
+            return
+
+        # Imported lazily so unit tests that don't init stores (and module
+        # import) stay cheap — mirrors the registry/import-on-use convention.
+        from beever_atlas.stores import get_stores
+
+        try:
+            blob_store = getattr(get_stores(), "media_blob_store", None)
+        except Exception:
+            # Stores not initialized (CLI entry points, partial test setup).
+            blob_store = None
+        if blob_store is None:
+            return
+
+        media_ctx = ctx or MediaContext()
+        try:
+            await blob_store.save_blob(
+                content=data,
+                mime_type=mime_type,
+                filename=filename,
+                channel_id=media_ctx.channel_id,
+                source_id=media_ctx.source_id,
+                message_id=media_ctx.message_id,
+                platform_url=url,
+            )
+        except Exception:
+            logger.warning(
+                "MediaProcessor: durable media persist failed url=%s",
+                url,
+                exc_info=True,
+            )
+
+    async def _handle_pdf(
+        self, url: str, name: str, *, ctx: MediaContext | None = None
+    ) -> dict[str, str]:
         """Download and extract text from a PDF using chunked extraction."""
         async with self._sem:
             data = await self._download_file(url)
 
         if not data:
             return {"description": "", "media_url": url, "media_type": "pdf"}
+
+        await self._persist_blob_best_effort(
+            data=data,
+            mime_type="application/pdf",
+            filename=name,
+            url=url,
+            ctx=ctx,
+        )
 
         from beever_atlas.services.media_extractors import PdfExtractor
 
@@ -204,7 +330,9 @@ class MediaProcessor:
 
         return {"description": content.text, "media_url": url, "media_type": "pdf"}
 
-    async def _handle_image(self, url: str, name: str, message_text: str) -> dict[str, str]:
+    async def _handle_image(
+        self, url: str, name: str, message_text: str, *, ctx: MediaContext | None = None
+    ) -> dict[str, str]:
         """Download and optionally describe an image via vision LLM."""
         if not self.should_use_vision(message_text, {"name": name}):
             # Text is sufficient — metadata only
@@ -223,6 +351,14 @@ class MediaProcessor:
                 "media_url": url,
                 "media_type": "image",
             }
+
+        await self._persist_blob_best_effort(
+            data=data,
+            mime_type="image/png",
+            filename=name,
+            url=url,
+            ctx=ctx,
+        )
 
         description = await self._describe_image(data, message_text)
         size_kb = len(data) // 1024
@@ -245,15 +381,47 @@ class MediaProcessor:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
+    @overload
     async def _download_file(
-        self, url: str, _retries: int = 3, connection_id: str | None = None
-    ) -> bytes | None:
+        self,
+        url: str,
+        _retries: int = ...,
+        connection_id: str | None = ...,
+        *,
+        return_oversize_sentinel: Literal[False] = ...,
+    ) -> bytes | None: ...
+
+    @overload
+    async def _download_file(
+        self,
+        url: str,
+        _retries: int = ...,
+        connection_id: str | None = ...,
+        *,
+        return_oversize_sentinel: Literal[True],
+    ) -> "bytes | _Oversize | None": ...
+
+    async def _download_file(
+        self,
+        url: str,
+        _retries: int = 3,
+        connection_id: str | None = None,
+        *,
+        return_oversize_sentinel: bool = False,
+    ) -> "bytes | _Oversize | None":
         """Download a file via the bridge file proxy with retry on 429.
 
         The raw ``url`` originates from platform message attachments or
         file-import pipelines and is attacker-controllable. We therefore
         validate it against the platform allowlist and encode it before
         forwarding — mitigation for security finding H3.
+
+        Returns the raw bytes on success, ``None`` on any failure. When
+        ``return_oversize_sentinel`` is set, a download rejected *only* because
+        it exceeds the size cap returns the falsy :data:`OVERSIZE` sentinel
+        instead of ``None`` so the backfill can report it under ``too_large``;
+        the default keeps the ``None``-means-failure contract for every other
+        caller.
         """
         from urllib.parse import quote, urlparse
 
@@ -292,7 +460,12 @@ class MediaProcessor:
                     url[:80],
                 )
                 await asyncio.sleep(wait)
-                return await self._download_file(url, _retries - 1)
+                return await self._download_file(
+                    url,
+                    _retries - 1,
+                    connection_id=connection_id,
+                    return_oversize_sentinel=return_oversize_sentinel,
+                )
 
             if resp.status_code != 200:
                 logger.warning(
@@ -317,7 +490,7 @@ class MediaProcessor:
                     settings.media_max_file_size_mb,
                     url[:80],
                 )
-                return None
+                return OVERSIZE if return_oversize_sentinel else None
 
             return resp.content
         except Exception:

@@ -38,8 +38,9 @@ failure never aborts the rest of the purge:
     8. WikiPageStore.delete_all_for_channel_all_langs
     9. chat_history.delete_by_channel
    10. mongodb.purge_channel (messages/checkpoints/activity/intents + sync state)
-   11. audit (retained log)
-   12. release_purge on a clean run; retain the lock for the reaper on errors
+   11. media_blob_store.delete_by_channel (durable channel media blobs + refs)
+   12. audit (retained log)
+   13. release_purge on a clean run; retain the lock for the reaper on errors
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ async def purge_channel(channel_id: str, *, principal_id: str) -> dict:
     unlinked_from: list[str] = fanout["unlinked_from"]
     sync_cancelled: bool = fanout["sync_cancelled"]
 
-    # 11. Audit — retained record of the run, BEFORE the lock release so a
+    # 12. Audit — retained record of the run, BEFORE the lock release so a
     #     crash in between leaves the lock for the reaper. Audit failure itself
     #     is recorded into ``errors`` (and therefore retains the lock) but never
     #     raises out of the purge.
@@ -131,7 +132,7 @@ async def purge_channel(channel_id: str, *, principal_id: str) -> dict:
             exc,
         )
 
-    # 12. Release the lock ONLY on a fully clean run. Any error → retain the
+    # 13. Release the lock ONLY on a fully clean run. Any error → retain the
     #     lock so the reaper re-runs the purge to convergence.
     status = "completed" if not errors else "partial"
     if not errors:
@@ -513,6 +514,30 @@ async def _purge_fanout(channel_id: str, stores: Any, *, principal_id: str) -> d
             channel_id,
             exc,
         )
+
+    # 11. Durable channel media — drop the GridFS blobs + refs the read-through
+    #     proxy serves (purge-only). delete_by_channel NEVER raises (it returns
+    #     partial counts), but the call is still isolated so a missing store /
+    #     accessor never aborts the run. A None store (feature staged off /
+    #     pre-migration) is skipped without counting as an error.
+    media_store = getattr(stores, "media_blob_store", None)
+    if media_store is None:
+        logger.debug(
+            "purge fan-out: media_blob_store absent — skipping media purge channel=%s",
+            channel_id,
+        )
+    else:
+        try:
+            media_counts = await media_store.delete_by_channel(channel_id)
+            counts["channel_media_blobs"] = int(media_counts.get("blobs_deleted", 0) or 0)
+            counts["channel_media_refs"] = int(media_counts.get("refs_deleted", 0) or 0)
+        except Exception as exc:  # noqa: BLE001
+            errors["media_blob_store_delete_by_channel"] = str(exc)
+            logger.warning(
+                "purge fan-out: media_blob_store.delete_by_channel failed channel=%s: %s",
+                channel_id,
+                exc,
+            )
 
     return {
         "counts": counts,

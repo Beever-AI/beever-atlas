@@ -586,6 +586,37 @@ class Settings(BaseSettings):
     # rows (the stale-sweep recovers them in 5 min either way).
     decouple_extraction: bool = Field(default=True, alias="DECOUPLE_EXTRACTION")
 
+    # Durable channel-media persistence flag.
+    # When True, ``MediaProcessor`` persists the raw downloaded bytes of
+    # channel attachments to the durable ``channel_media`` GridFS bucket at
+    # extraction time (best-effort, never blocks extraction). Default ON —
+    # the stored copy is what the read-through proxy serves once the platform
+    # CDN URL rots (Discord signed URLs expire; Slack/Mattermost/Teams URLs
+    # need a live bot token forever). Flip OFF to revert to link-only media.
+    channel_media_persist: bool = Field(
+        default=True,
+        alias="CHANNEL_MEDIA_PERSIST",
+        description=(
+            "Persist channel media bytes to the durable channel_media GridFS "
+            "bucket at extraction time."
+        ),
+    )
+
+    # Read-through serving flag for channel media.
+    # When True, ``/api/files/proxy`` and ``/api/media/proxy`` check the
+    # durable blob store first (by url_key) and stream stored bytes on a hit,
+    # falling back to the platform CDN via the bridge on a miss. Default ON —
+    # turning it OFF serves every request straight from the platform CDN
+    # (the legacy behavior) regardless of what is stored.
+    channel_media_read_through: bool = Field(
+        default=True,
+        alias="CHANNEL_MEDIA_READ_THROUGH",
+        description=(
+            "Serve channel media from the durable blob store when available, "
+            "falling back to the platform CDN."
+        ),
+    )
+
     # Tuning knobs (worker tick interval, stale-recovery window, max
     # retries, breaker cooldown, LLM failover enablement, fallback
     # model map) intentionally NOT env-configurable. They live as
