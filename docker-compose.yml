@@ -1,6 +1,21 @@
 services:
   beever-atlas:
     build: .
+    # The ExtractionWorker runs in-process with the API (uvicorn). During
+    # multi-channel syncs its memory footprint scales with concurrent LLM
+    # batches + image OCR + embeddings, and on a small host (e.g. 4 GiB
+    # demo box) it can exhaust system RAM: first the kernel OOM-kills
+    # uvicorn (and with no restart policy the site stays down), and if the
+    # backlog resumes on a host without swap, total memory exhaustion can
+    # freeze the host OS outright. Same protection pattern as the bot's
+    # RES-286 block below: `mem_limit` caps the API in cgroup-land so the
+    # host and datastores are never at risk; `restart` self-heals after
+    # any exit. Limits are overridable per deployment via .env — see
+    # "3.8 Ingestion concurrency & rate limits" in .env.example for
+    # low-memory tuning.
+    restart: unless-stopped
+    mem_limit: ${ATLAS_API_MEM_LIMIT:-2048m}
+    memswap_limit: ${ATLAS_API_MEMSWAP_LIMIT:-3072m}
     ports: ["8000:8000"]
     depends_on:
       weaviate:
@@ -41,11 +56,17 @@ services:
     # 8080 (CIS Docker Benchmark — non-root). Host port 3000 unchanged so
     # existing dev URLs (http://localhost:3000/) keep working.
     ports: ["3000:8080"]
+    restart: unless-stopped
     depends_on:
       - beever-atlas
 
+  # Datastores + web get `restart: unless-stopped` so the whole stack
+  # comes back by itself after a host reboot or daemon restart — without
+  # it, only containers that happen to have a policy (previously just the
+  # bot) survive a reboot and everything else needs manual `docker start`.
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.28.0@sha256:58b576d36eace6a33f1a0866b9fd13fd58abfb9ce1eaaa419758c70b6a427e36
+    restart: unless-stopped
     ports: ["127.0.0.1:8080:8080", "127.0.0.1:50051:50051"]
     volumes: [weaviate_data:/var/lib/weaviate]
     environment:
@@ -64,6 +85,7 @@ services:
 
   neo4j:
     image: neo4j:5.26-community@sha256:f66304b9511c60d33555a2c451f88e03d82d1ebc893f32d84c98a6b326096435
+    restart: unless-stopped
     ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD must be set}
@@ -83,6 +105,7 @@ services:
   #   docker compose -f docker-compose.yml -f docker-compose.auth.yml up
   mongodb:
     image: mongo:7.0@sha256:43fddee7e532a920f3dfdee9e8f4834398c155c26bcb92d790cc1cd3c630fc40
+    restart: unless-stopped
     ports: ["127.0.0.1:27017:27017"]
     volumes: [mongo_data:/data/db]
     healthcheck:
@@ -93,6 +116,7 @@ services:
 
   redis:
     image: redis:7-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
+    restart: unless-stopped
     ports: ["127.0.0.1:6380:6379"]
     # AOF persistence + volume mount so cached state (Teams adapter's
     # `chat-sdk:cache:teams:channelContext:*` entries, in particular) survives
