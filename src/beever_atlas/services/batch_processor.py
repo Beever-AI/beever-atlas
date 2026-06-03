@@ -1,7 +1,7 @@
 """Batch processor — chunks messages and drives them through the ingestion pipeline.
 
 Splits a list of NormalizedMessage objects into fixed-size batches, runs each
-batch through the ADK ``ingestion_pipeline`` SequentialAgent, and accumulates
+batch through the ADK ``ingestion_pipeline`` Workflow, and accumulates
 per-batch results into a final ``BatchResult``.
 """
 
@@ -819,11 +819,11 @@ class BatchProcessor:
                                 # preprocessor/persister are local-only, no quota needed.
                                 #
                                 # memory-then-wiki-pipeline-realignment G6 audit:
-                                # ADK's ``ParallelAgent`` (``extraction_parallel`` wrapping
-                                # fact_extractor + entity_extractor, ``enrich_parallel``
-                                # wrapping embedder + validator) does NOT emit a single
-                                # event under its own name — each sub-agent emits its own
-                                # event with ``author = sub_agent.name``. The dispatch
+                                # The ADK Workflow's parallel fan-out (fact_extractor +
+                                # entity_extractor after the preprocessor; embedder +
+                                # validator after join_extract) does NOT emit a single
+                                # event under a container name — each sub-agent node emits
+                                # its own event with ``author = sub_agent.name``. The dispatch
                                 # below therefore acquires ONE token per concurrent Gemini
                                 # call. No double-counting fix needed; the previous design
                                 # hypothesis about under-counting was incorrect.

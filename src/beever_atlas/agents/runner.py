@@ -5,10 +5,12 @@ session-per-request pattern for use in API route handlers.
 """
 
 import uuid
+from typing import Any
 
 from google.adk.agents import BaseAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService, Session
+from google.adk.workflow import BaseNode
 
 # Module-level session service shared across the app
 _session_service = InMemorySessionService()
@@ -16,15 +18,41 @@ _session_service = InMemorySessionService()
 APP_NAME = "beever_atlas"
 
 
-def create_runner(agent: BaseAgent) -> Runner:
-    """Create an ADK Runner for the given root agent.
+def create_runner(agent: Any) -> Runner:
+    """Create an ADK Runner for the given root agent or workflow node.
 
     Args:
-        agent: The root ADK Agent (e.g., query_router_agent).
+        agent: The root ADK Agent (e.g., query_router_agent) for the
+            agent-tree path, or a ``Workflow``/``BaseNode`` for the
+            graph-based ingestion pipeline.
 
     Returns:
         A Runner instance configured with InMemorySessionService.
+
+    Note:
+        In ADK 2.x ``BaseAgent`` itself subclasses ``BaseNode``, so the
+        agent check must come first — otherwise every ``LlmAgent`` would be
+        routed through ``Runner(node=...)`` and silently change the QA
+        execution path. Only non-agent graph objects (``Workflow``,
+        ``JoinNode``) take the ``node=`` path.
+
+        ``Runner(node=...)`` defaults ``app_name`` to ``node.name``, which
+        would diverge from the ``APP_NAME`` used by ``create_session`` and
+        cause SessionNotFoundError. We pass ``app_name=APP_NAME`` explicitly
+        so both paths share one app namespace.
     """
+    if isinstance(agent, BaseAgent):
+        return Runner(
+            agent=agent,
+            app_name=APP_NAME,
+            session_service=_session_service,
+        )
+    if isinstance(agent, BaseNode):
+        return Runner(
+            node=agent,
+            app_name=APP_NAME,
+            session_service=_session_service,
+        )
     return Runner(
         agent=agent,
         app_name=APP_NAME,

@@ -1,6 +1,6 @@
 """Batch pipeline orchestrator using Gemini Batch API for extraction stages.
 
-Replaces the ADK SequentialAgent pipeline for batch mode. Runs stages manually:
+Replaces the ADK Workflow ingestion pipeline for batch mode. Runs stages manually:
   1. Preprocess   — PreprocessorAgent in-process via ADK runner
   2. Batch Extract — fact + entity extraction via parallel Gemini Batch API jobs
   3. Quality Gates — filter facts/entities by configured thresholds
@@ -19,7 +19,7 @@ import logging
 import time
 from typing import Any
 
-from google.adk.agents import ParallelAgent, SequentialAgent
+from google.adk.workflow import Workflow
 
 from beever_atlas.agents.ingestion.cross_batch_validator import (
     create_cross_batch_validator,
@@ -191,8 +191,8 @@ async def _run_adk_agent(
 class BatchPipelineRunner:
     """Orchestrates ingestion using Gemini Batch API for extraction stages.
 
-    Runs the six ingestion stages manually, replacing the ADK SequentialAgent
-    for batch mode. Extraction (stages 2 & 3) is submitted as parallel Gemini
+    Runs the six ingestion stages manually, replacing the ADK Workflow ingestion
+    pipeline for batch mode. Extraction (stages 2 & 3) is submitted as parallel Gemini
     Batch API jobs. All other stages run in-process via ADK runners.
     """
 
@@ -272,9 +272,9 @@ class BatchPipelineRunner:
 
         t0 = time.monotonic()
         preprocess_state = await _run_adk_agent(
-            SequentialAgent(
+            Workflow(
                 name="batch_preprocessor",
-                sub_agents=[PreprocessorAgent(name="preprocessor")],
+                edges=[("START", PreprocessorAgent(name="preprocessor"))],
             ),
             state={
                 "messages": messages,
@@ -661,12 +661,19 @@ class BatchPipelineRunner:
         await _update_progress(stage4_label)
 
         t_enrich = time.monotonic()
+        # INVARIANT: this joinless fan-out is safe ONLY because both nodes are
+        # terminal AND state_delta-only (neither yields Event(output=...)).
+        # ADK's Workflow._finalize raises "multiple terminal nodes produced
+        # output" if more than one terminal node sets ctx.output. If either
+        # agent ever gains an output_schema / output Event, or a downstream
+        # node is added (which would run once per predecessor), insert a
+        # JoinNode — see create_ingestion_pipeline() for the pattern.
         enrich_state = await _run_adk_agent(
-            ParallelAgent(
+            Workflow(
                 name="batch_enrich",
-                sub_agents=[
-                    EmbedderAgent(name="embedder"),
-                    create_cross_batch_validator(),
+                edges=[
+                    ("START", EmbedderAgent(name="embedder")),
+                    ("START", create_cross_batch_validator()),
                 ],
             ),
             state={
@@ -748,9 +755,9 @@ class BatchPipelineRunner:
 
         t_persist = time.monotonic()
         persist_state = await _run_adk_agent(
-            SequentialAgent(
+            Workflow(
                 name="batch_persister",
-                sub_agents=[PersisterAgent(name="persister")],
+                edges=[("START", PersisterAgent(name="persister"))],
             ),
             state={
                 "embedded_facts": embedded_facts,
