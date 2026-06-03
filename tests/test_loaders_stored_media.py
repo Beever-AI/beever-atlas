@@ -13,43 +13,34 @@ singleton via ``media_blob_store`` so no Mongo/GridFS is required.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from beever_atlas.stores.blob_backend import BlobRead
+
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import AsyncIterator
+
 
 # ── Fakes ──────────────────────────────────────────────────────────────────
 
 
-class _FakeGridOut:
-    """Minimal async GridFS-like stream over an in-memory buffer."""
-
-    def __init__(self, data: bytes) -> None:
-        self._data = data
-        self._pos = 0
-        self.closed = False
-
-    async def read(self, size: int = -1) -> bytes:
-        if size is None or size < 0:
-            chunk = self._data[self._pos :]
-            self._pos = len(self._data)
-            return chunk
-        chunk = self._data[self._pos : self._pos + size]
-        self._pos += len(chunk)
-        return chunk
-
-    async def close(self) -> None:
-        self.closed = True
+async def _aiter_bytes(data: bytes) -> "AsyncIterator[bytes]":
+    """Yield ``data`` as a single-chunk backend-neutral async byte stream."""
+    yield data
 
 
 class _FakeBlobStore:
     """Fake ``MediaBlobStore`` for the proxy read-through path.
 
-    ``open_by_url`` returns ``(stream, ref)`` on a configured hit, ``None``
-    on a miss, or raises if ``raise_on_lookup`` is set (resilience test).
+    ``open_by_url`` returns ``(BlobRead, ref)`` on a configured hit, ``None``
+    on a miss, or raises if ``raise_on_lookup`` is set (resilience test). The
+    backend split means the proxy consumes a backend-neutral ``BlobRead``
+    iterator now, not a GridFS-shaped ``read``/``close`` stream.
     """
 
     def __init__(
@@ -64,13 +55,18 @@ class _FakeBlobStore:
         self.raise_on_lookup = raise_on_lookup
         self.calls: list[str] = []
 
-    async def open_by_url(self, url: str) -> "tuple[Any, dict] | None":
+    async def open_by_url(self, url: str) -> "tuple[BlobRead, dict] | None":
         self.calls.append(url)
         if self.raise_on_lookup:
             raise RuntimeError("simulated store outage")
         if self.hit_bytes is None:
             return None
-        return _FakeGridOut(self.hit_bytes), {"mime_type": self.mime_type}
+        read = BlobRead(
+            iterator=_aiter_bytes(self.hit_bytes),
+            content_type=self.mime_type,
+            size=len(self.hit_bytes),
+        )
+        return read, {"mime_type": self.mime_type}
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────

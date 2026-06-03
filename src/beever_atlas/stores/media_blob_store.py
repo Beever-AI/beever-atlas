@@ -1,4 +1,4 @@
-"""Content-addressed durable blob store for channel media (GridFS).
+"""Content-addressed durable blob store for channel media.
 
 Channel media (Slack/Discord/Mattermost/Teams images, PDFs, videos) is
 referenced everywhere by its platform CDN URL, but those URLs rot — Discord
@@ -6,13 +6,23 @@ signed URLs expire (~24 h), and Slack/Mattermost/Teams URLs need a live bot
 token forever. This store keeps a durable copy of the raw bytes so the
 read-through proxy can serve them after the platform URL has died.
 
-Two backing collections:
+The store splits two jobs:
 
-  * GridFS bucket ``channel_media`` (``channel_media.files`` +
-    ``channel_media.chunks``) — the raw bytes. Files are keyed by the
-    sha256 of the RAW bytes (no version salt) and deduped per
-    ``(sha256, channel_id)`` so the same image shared in two channels is
-    stored once per channel (channel scoping keeps purge simple).
+  * The **refs / dedup / url_key / Telegram-guard metadata layer** — always in
+    Mongo, regardless of byte backend (this module). The ``channel_media_refs``
+    collection, ``normalize_url_key``, the Telegram guard, the sha256
+    computation, the size cap, ``has_ref``, and the ref upsert all live here.
+  * The **byte storage** — delegated to a pluggable :class:`BlobBackend`
+    (GridFS by default, MinIO/S3 when configured). The backend is addressed by
+    the neutral ``channels/{channel_id}/{sha256}`` key; it never sees a
+    ``url_key``, so the Telegram token-leak guard stays entirely Mongo-side.
+
+Two backing layers:
+
+  * A :class:`BlobBackend` — the raw bytes. Keyed by ``(channel_id, sha256)``
+    via :func:`blob_key`; the sha256 is of the RAW bytes (no version salt) and
+    blobs are deduped per ``(sha256, channel_id)`` so the same image shared in
+    two channels is stored once per channel (channel scoping keeps purge simple).
   * ``channel_media_refs`` — maps a normalized ``url_key`` (host+path,
     lowercase host, no scheme/query/fragment) to the stored blob:
         {
@@ -41,25 +51,23 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from beever_atlas.stores.blob_backend import blob_key, blob_prefix
+from beever_atlas.stores.gridfs_backend import GridFSBackend
 
 if TYPE_CHECKING:  # pragma: no cover
     from motor.motor_asyncio import (
         AsyncIOMotorCollection,
         AsyncIOMotorDatabase,
-        AsyncIOMotorGridOut,
     )
 
+    from beever_atlas.stores.blob_backend import BlobBackend, BlobRead
     from beever_atlas.stores.mongodb_store import MongoDBStore
 
 logger = logging.getLogger(__name__)
 
-# Bucket name groups the chunks + files collections so the channel-purge
-# fan-out and the admin metrics endpoint can target them cleanly.
-_BUCKET = "channel_media"
 # Telegram file URLs carry the bot token in the path — never index them.
 _TELEGRAM_HOST = "api.telegram.org"
 
@@ -68,27 +76,40 @@ class MediaBlobStore:
     """Durable, content-addressed store for channel media bytes.
 
     Reuses the shared Motor client from ``MongoDBStore`` (PlatformStore
-    pattern) instead of opening its own pool, so the GridFS bucket and the
-    ``channel_media_refs`` collection live on the same connection as the
-    rest of the app.
+    pattern) instead of opening its own pool, so the ``channel_media_refs``
+    collection lives on the same connection as the rest of the app. The raw
+    bytes are delegated to a :class:`BlobBackend` (GridFS by default), while
+    the refs / dedup / url_key / Telegram-guard metadata stays here in Mongo
+    for every backend.
     """
 
-    def __init__(self, mongodb: "MongoDBStore | AsyncIOMotorDatabase") -> None:
+    def __init__(
+        self,
+        mongodb: "MongoDBStore | AsyncIOMotorDatabase",
+        *,
+        backend: "BlobBackend | None" = None,
+    ) -> None:
         # Accept either the MongoDBStore (preferred — exposes ``.db``) or a
         # raw database handle so tests can inject a fake db directly.
         db = getattr(mongodb, "db", mongodb)
         self._db: "AsyncIOMotorDatabase" = db
-        self._bucket: AsyncIOMotorGridFSBucket | None = None
+        # Default to GridFS so the OSS/default path and direct-construction
+        # callers are unaffected; an injected backend (e.g. MinIO) overrides it.
+        self._backend: "BlobBackend" = (
+            backend if backend is not None else GridFSBackend(self._db)
+        )
         self._refs: "AsyncIOMotorCollection | None" = None
 
     async def startup(self) -> None:
-        """Bind the bucket + refs collection and create indexes.
+        """Create the refs indexes and start the byte backend.
 
-        Index creation is idempotent and failure-tolerant: a transient Mongo
-        hiccup at boot must not crash the lifespan, mirroring the other
-        stores' ensure-index conventions.
+        The store owns ONLY the 3 ``channel_media_refs`` indexes; the byte
+        backend owns its own bucket/indexes (the two ``channel_media.files``
+        metadata indexes moved into ``GridFSBackend``). Index creation is
+        idempotent and failure-tolerant: a transient Mongo hiccup at boot must
+        not crash the lifespan, mirroring the other stores' ensure-index
+        conventions.
         """
-        self._bucket = AsyncIOMotorGridFSBucket(self._db, bucket_name=_BUCKET)
         self._refs = self._db["channel_media_refs"]
         try:
             # Primary identity: one ref per (url_key, channel_id).
@@ -107,33 +128,21 @@ class MediaBlobStore:
                 [("sha256", 1), ("channel_id", 1)],
                 name="channel_media_refs_sha_channel",
             )
-            # GridFS files collection: the dedup probe (save_blob), the
-            # content-hash read (open_by_hash), and the channel purge scan
-            # (delete_by_channel) all query ``channel_media.files`` by
-            # ``metadata.{sha256,channel_id}`` — GridFS auto-indexes only
-            # filename/uploadDate, never metadata.*, so without these the
-            # dedup hot path degrades to a full collection scan as the store
-            # grows. The compound index covers the (sha256, channel_id)
-            # lookups; the single-field index covers the purge scan.
-            files_col = self._db[f"{_BUCKET}.files"]
-            await files_col.create_index(
-                [("metadata.sha256", 1), ("metadata.channel_id", 1)],
-                name="channel_media_files_sha_channel",
-            )
-            await files_col.create_index(
-                "metadata.channel_id",
-                name="channel_media_files_channel_id",
-            )
         except Exception as exc:  # pragma: no cover - defensive boot path
             logger.warning(
                 "MediaBlobStore: index creation failed (continuing) error=%s",
                 exc,
             )
+        await self._backend.startup()
 
-    def _ensure_ready(self) -> tuple[AsyncIOMotorGridFSBucket, "AsyncIOMotorCollection"]:
-        if self._bucket is None or self._refs is None:
+    def _ensure_ready(self) -> tuple["BlobBackend", "AsyncIOMotorCollection"]:
+        if self._refs is None:
             raise RuntimeError("MediaBlobStore.startup() was not called")
-        return self._bucket, self._refs
+        return self._backend, self._refs
+
+    async def aclose(self) -> None:
+        """Tear down the byte backend (no-op for the shared-client GridFS)."""
+        await self._backend.close()
 
     # ------------------------------------------------------------------
     # URL normalization
@@ -183,11 +192,11 @@ class MediaBlobStore:
         returned, even when the blob is rejected (oversized) or only the
         ref is skipped (empty ``url_key``), so callers have a stable handle.
 
-        Dedup: if a GridFS file already carries ``{sha256, channel_id}`` the
+        Dedup: if the backend already holds ``(sha256, channel_id)`` the
         upload is skipped. The ref is keyed ``(url_key, channel_id)`` and
         upserted regardless so a re-signed URL refreshes its mapping.
         """
-        bucket, refs = self._ensure_ready()
+        backend, refs = self._ensure_ready()
         sha256 = hashlib.sha256(content).hexdigest()
         size_bytes = len(content)
 
@@ -207,33 +216,19 @@ class MediaBlobStore:
 
         url_key = self.normalize_url_key(platform_url)
 
-        # Dedup: skip the GridFS upload if (sha256, channel_id) already exists.
-        try:
-            existing = await self._db[f"{_BUCKET}.files"].find_one(
-                {"metadata.sha256": sha256, "metadata.channel_id": channel_id},
-                projection={"_id": 1},
+        # Dedup: skip the byte upload if (sha256, channel_id) already exists.
+        # The backend owns the existence probe + the write; GridFS keys it by
+        # ``metadata.{sha256,channel_id}`` and MinIO by the object key, both
+        # derived from the same ``channels/{channel_id}/{sha256}`` key.
+        key = blob_key(channel_id, sha256)
+        if not await backend.exists(key):
+            await backend.put(
+                key,
+                content,
+                content_type=mime_type,
+                filename=filename,
+                source_id=source_id,
             )
-        except Exception as exc:
-            logger.warning(
-                "MediaBlobStore: dedup lookup failed sha256=%s channel=%s error=%s",
-                sha256,
-                channel_id,
-                exc,
-            )
-            existing = None
-
-        if existing is None:
-            metadata = {
-                "sha256": sha256,
-                "channel_id": channel_id,
-                "source_id": source_id,
-                "mime_type": mime_type,
-            }
-            stream = bucket.open_upload_stream(filename, metadata=metadata)
-            try:
-                await stream.write(content)
-            finally:
-                await stream.close()
             logger.info(
                 "MediaBlobStore: stored blob sha256=%s channel=%s size=%d mime=%s",
                 sha256,
@@ -273,15 +268,17 @@ class MediaBlobStore:
     # Read
     # ------------------------------------------------------------------
 
-    async def open_by_url(self, url: str) -> "tuple[Any, dict] | None":
-        """Open the stored stream for a platform URL, or ``None`` on miss.
+    async def open_by_url(self, url: str) -> "tuple[BlobRead, dict] | None":
+        """Open the stored blob for a platform URL, or ``None`` on miss.
 
         Channel-agnostic: the proxy doesn't know the channel, so we match
         ANY ref carrying the URL's ``url_key`` and open the blob for that
-        ref's ``(sha256, channel_id)``. Returns ``(stream, ref_doc)`` on
-        hit. A genuine miss and a store error both return ``None`` (the
-        proxy must stay resilient), but a store error is logged at WARN so
-        it's distinguishable from an empty/Telegram URL (which returns early).
+        ref's ``(sha256, channel_id)``. Returns ``(BlobRead, ref_doc)`` on
+        hit — a backend-neutral byte read, so the read-through proxy is the
+        same for GridFS and MinIO. A genuine miss and a store error both
+        return ``None`` (the proxy must stay resilient), but a store error is
+        logged at WARN so it's distinguishable from an empty/Telegram URL
+        (which returns early).
         """
         url_key = self.normalize_url_key(url)
         if not url_key:
@@ -294,30 +291,15 @@ class MediaBlobStore:
             return None
         if ref is None:
             return None
-        stream = await self.open_by_hash(ref["sha256"], ref["channel_id"])
-        if stream is None:
+        read = await self.open_by_hash(ref["sha256"], ref["channel_id"])
+        if read is None:
             return None
-        return stream, ref
+        return read, ref
 
-    async def open_by_hash(self, sha256: str, channel_id: str) -> "AsyncIOMotorGridOut | None":
-        """Open the GridFS download stream for ``(sha256, channel_id)``."""
-        bucket, _ = self._ensure_ready()
-        try:
-            file_doc = await self._db[f"{_BUCKET}.files"].find_one(
-                {"metadata.sha256": sha256, "metadata.channel_id": channel_id},
-                projection={"_id": 1},
-            )
-            if file_doc is None:
-                return None
-            return await bucket.open_download_stream(file_doc["_id"])
-        except Exception as exc:
-            logger.warning(
-                "MediaBlobStore: open_by_hash failed sha256=%s channel=%s error=%s",
-                sha256,
-                channel_id,
-                exc,
-            )
-            return None
+    async def open_by_hash(self, sha256: str, channel_id: str) -> "BlobRead | None":
+        """Open a backend-neutral byte read for ``(sha256, channel_id)``."""
+        backend, _ = self._ensure_ready()
+        return await backend.open(blob_key(channel_id, sha256))
 
     async def has_ref(self, url: str, channel_id: str) -> bool:
         """Cheap existence check for backfill idempotency."""
@@ -348,34 +330,19 @@ class MediaBlobStore:
         """Delete every blob + ref for ``channel_id``; return the counts.
 
         Runs inside the channel-purge fan-out, so it must NEVER raise — on a
-        partial failure it logs and returns the counts achieved so far.
-        Blobs are deleted one-by-one via ``bucket.delete(_id)`` (the only
-        way to drop both the file doc and its chunks) over the file docs
-        whose ``metadata.channel_id`` matches; refs are dropped in one
-        ``delete_many``.
+        partial failure it logs and returns the counts achieved so far. The
+        backend purges the bytes for the channel prefix (a GridFS metadata scan
+        or an S3 prefix sweep); refs are dropped in one ``delete_many``.
         """
-        bucket, refs = self._ensure_ready()
+        backend, refs = self._ensure_ready()
         blobs_deleted = 0
         refs_deleted = 0
 
         try:
-            files_col = self._db[f"{_BUCKET}.files"]
-            async for file_doc in files_col.find(
-                {"metadata.channel_id": channel_id}, projection={"_id": 1}
-            ):
-                try:
-                    await bucket.delete(file_doc["_id"])
-                    blobs_deleted += 1
-                except Exception as exc:
-                    logger.warning(
-                        "MediaBlobStore: blob delete failed channel=%s id=%s error=%s",
-                        channel_id,
-                        file_doc.get("_id"),
-                        exc,
-                    )
+            blobs_deleted = await backend.delete_prefix(blob_prefix(channel_id))
         except Exception as exc:
             logger.warning(
-                "MediaBlobStore: blob purge scan failed channel=%s error=%s",
+                "MediaBlobStore: blob purge failed channel=%s error=%s",
                 channel_id,
                 exc,
             )
@@ -399,17 +366,17 @@ class MediaBlobStore:
     # ------------------------------------------------------------------
 
     async def stats(self) -> dict[str, int]:
-        """Return cheap totals for the admin metrics endpoint."""
-        _, refs = self._ensure_ready()
-        files_col = self._db[f"{_BUCKET}.files"]
+        """Return cheap totals for the admin metrics endpoint.
+
+        ``total_refs`` is the Mongo ref count (always Mongo-side);
+        ``(total_blobs, total_bytes)`` come from the byte backend.
+        """
+        backend, refs = self._ensure_ready()
         total_blobs = 0
         total_bytes = 0
         total_refs = 0
         try:
-            total_blobs = await files_col.count_documents({})
-            cursor = files_col.aggregate([{"$group": {"_id": None, "bytes": {"$sum": "$length"}}}])
-            async for row in cursor:
-                total_bytes = int(row.get("bytes", 0) or 0)
+            total_blobs, total_bytes = await backend.stats()
             total_refs = await refs.count_documents({})
         except Exception as exc:
             logger.warning("MediaBlobStore: stats failed error=%s", exc)

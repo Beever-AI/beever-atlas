@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from beever_atlas.stores.gridfs_backend import GridFSBackend
 from beever_atlas.stores.media_blob_store import MediaBlobStore
 
 
@@ -120,8 +121,14 @@ def _make_store(
     bucket.open_download_stream = AsyncMock(return_value=MagicMock(name="gridout"))
     bucket.delete = AsyncMock(return_value=None)
 
-    store = MediaBlobStore(MagicMock(db=db))
-    store._bucket = bucket
+    # After the backend split, the bytes live behind a GridFSBackend. Wire one
+    # over the SAME fake db + bucket so the legacy assertions (upload-stream
+    # writes, dedup skip, download-stream id, per-channel delete loop) hold —
+    # GridFSBackend reproduces the exact metadata.{sha256,channel_id} queries
+    # against ``channel_media.files`` (the ``db`` dict's files_col).
+    backend = GridFSBackend(db)  # type: ignore[arg-type]  # fake db is a dict
+    backend._bucket = bucket
+    store = MediaBlobStore(MagicMock(db=db), backend=backend)
     store._refs = refs_col
     return store, files_col, refs_col, bucket, upload_stream
 
@@ -292,7 +299,11 @@ class TestStartup:
         The dedup probe (save_blob), content-hash read (open_by_hash), and
         purge scan (delete_by_channel) all query the GridFS files collection by
         ``metadata.{sha256,channel_id}``; GridFS never auto-indexes those, so
-        startup() has to create them or every probe is a collection scan.
+        the default GridFSBackend's startup has to create them or every probe
+        is a collection scan. After the backend split these two indexes are
+        owned by ``GridFSBackend.startup`` (the 3 refs indexes stay on the
+        store), but ``MediaBlobStore.startup`` drives the backend, so the
+        end-to-end ``store.startup()`` must still create them.
         """
         refs_col = MagicMock(name="refs_col")
         refs_col.create_index = AsyncMock(return_value="idx")
@@ -303,9 +314,10 @@ class TestStartup:
             "channel_media_refs": refs_col,
             "channel_media.files": files_col,
         }
-        # Avoid constructing a real GridFS bucket against the fake db.
+        # Avoid constructing a real GridFS bucket against the fake db — the
+        # bucket is now built inside GridFSBackend.startup.
         monkeypatch.setattr(
-            "beever_atlas.stores.media_blob_store.AsyncIOMotorGridFSBucket",
+            "beever_atlas.stores.gridfs_backend.AsyncIOMotorGridFSBucket",
             lambda *_a, **_k: MagicMock(name="bucket"),
         )
 
@@ -320,13 +332,18 @@ class TestStartup:
         # A transient Mongo hiccup at boot must not crash the lifespan.
         refs_col = MagicMock(name="refs_col")
         refs_col.create_index = AsyncMock(side_effect=RuntimeError("mongo down"))
-        db: dict[str, Any] = {"channel_media_refs": refs_col}
+        files_col = MagicMock(name="files_col")
+        files_col.create_index = AsyncMock(side_effect=RuntimeError("mongo down"))
+        db: dict[str, Any] = {
+            "channel_media_refs": refs_col,
+            "channel_media.files": files_col,
+        }
         monkeypatch.setattr(
-            "beever_atlas.stores.media_blob_store.AsyncIOMotorGridFSBucket",
+            "beever_atlas.stores.gridfs_backend.AsyncIOMotorGridFSBucket",
             lambda *_a, **_k: MagicMock(name="bucket"),
         )
         store = MediaBlobStore(MagicMock(db=db))
-        await store.startup()  # must not raise
+        await store.startup()  # must not raise (both refs + backend swallow)
 
 
 # ---------------------------------------------------------------------------
@@ -428,10 +445,13 @@ class TestMediaBlobStoreIntegration:
         assert sha == SAMPLE_SHA
 
         # Re-signed URL resolves to the same stored bytes (host+path identity).
+        # open_by_url now returns a backend-neutral (BlobRead, ref) pair.
         result = await store.open_by_url(DISCORD_URL_RESIGNED)
         assert result is not None
-        stream, ref = result
-        data = await stream.read()
+        read, ref = result
+        data = b""
+        async for chunk in read.iterator:
+            data += chunk
         assert data == SAMPLE
         assert ref["sha256"] == SAMPLE_SHA
         assert ref["channel_id"] == CHANNEL

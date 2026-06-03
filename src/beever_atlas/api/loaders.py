@@ -40,37 +40,24 @@ from beever_atlas.stores import get_stores
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import AsyncIterator
 
+    from beever_atlas.stores.blob_backend import BlobRead
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["loaders"])
 
-# GridFS read chunk size for the read-through path. Streaming in 256 KB
-# slices keeps a large blob (video/PDF) off the heap instead of buffering
-# the whole file with a single ``.read()``.
-_STORE_CHUNK_BYTES = 256 * 1024
 
+async def _iter_blob(read: "BlobRead") -> "AsyncIterator[bytes]":
+    """Yield a stored blob's bytes from its backend-neutral async iterator.
 
-async def _iter_gridfs(stream) -> "AsyncIterator[bytes]":
-    """Yield a GridFS download stream in fixed-size chunks, closing it after.
-
-    The blob store hands us an open ``AsyncIOMotorGridOut``; we own closing
-    it. Reading in ``_STORE_CHUNK_BYTES`` slices avoids materializing a large
-    blob in memory.
+    The :class:`BlobRead` the blob store hands us already owns chunking and
+    connection/handle release (the backend closes its GridOut or releases its
+    S3 connection in the iterator's ``finally`` / ``async with`` exit), so this
+    helper just relays the chunks — no backend-specific ``read``/``close``
+    duck-typing remains.
     """
-    try:
-        while True:
-            chunk = await stream.read(_STORE_CHUNK_BYTES)
-            if not chunk:
-                break
-            yield chunk
-    finally:
-        # GridOut.close is async on Motor; guard so a sync/fake stream in
-        # tests doesn't crash the response.
-        close = getattr(stream, "close", None)
-        if close is not None:
-            result = close()
-            if hasattr(result, "__await__"):
-                await result
+    async for chunk in read.iterator:
+        yield chunk
 
 
 async def _try_store_hit(url: str, *, cache_control: str, extra_headers: dict[str, str]):
@@ -97,11 +84,13 @@ async def _try_store_hit(url: str, *, cache_control: str, extra_headers: dict[st
         return None
     if hit is None:
         return None
-    stream, ref = hit
+    read, ref = hit
     headers = {"Cache-Control": cache_control, "X-Media-Source": "store", **extra_headers}
     return StreamingResponse(
-        _iter_gridfs(stream),
-        media_type=ref.get("mime_type") or "application/octet-stream",
+        _iter_blob(read),
+        media_type=getattr(read, "content_type", None)
+        or ref.get("mime_type")
+        or "application/octet-stream",
         headers=headers,
     )
 

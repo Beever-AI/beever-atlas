@@ -33,6 +33,11 @@ dependencies = [
     "slowapi>=0.1.9",
     "aiolimiter>=1.1.0",
     "python-multipart>=0.0.27,<1.0.0",
+    # S3-compatible byte backend for channel media (MinIO locally, AWS S3 for
+    # EE). aioboto3 transitively pins aiobotocore + a compatible botocore;
+    # do NOT also add boto3 or the sync minio SDK — aiobotocore pins a narrow
+    # botocore range and a stray boto3 can break it at import.
+    "aioboto3>=15.5.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +52,8 @@ dev = [
     "hypothesis>=6.100.0",
     "markdown-it-py>=3.0.0",
     "pyright>=1.1.395",
+    # Offline S3 mock for MinioBackend unit tests (no live MinIO needed).
+    "moto[s3]>=5.0.0",
 ]
 test = [
     "tiktoken>=0.7",

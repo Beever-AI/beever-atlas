@@ -617,6 +617,59 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Byte backend selector for channel media. The refs / dedup / url_key
+    # metadata ALWAYS stays in Mongo regardless of this setting; only the raw
+    # bytes move. 'gridfs' (default) keeps the zero-infra OSS path; 'minio'
+    # points bytes at an S3-compatible store (MinIO locally, real AWS S3 for
+    # the EE/AWS tier via the CHANNEL_MEDIA_MINIO_* fields below).
+    channel_media_backend: str = Field(
+        default="gridfs",
+        alias="CHANNEL_MEDIA_BACKEND",
+        description=(
+            "Byte backend for channel media: 'gridfs' (default, zero-infra OSS) "
+            "or 'minio' (S3-compatible, EE/AWS tier). Refs always stay in Mongo."
+        ),
+    )
+    channel_media_minio_endpoint: str = Field(
+        default="",
+        alias="CHANNEL_MEDIA_MINIO_ENDPOINT",
+        description=(
+            "MinIO S3 endpoint URL e.g. http://localhost:9000. Empty -> use the "
+            "real AWS S3 endpoint (EE on AWS)."
+        ),
+    )
+    channel_media_minio_access_key: str = Field(
+        default="",
+        alias="CHANNEL_MEDIA_MINIO_ACCESS_KEY",
+        description="MinIO/S3 access key (= AWS_ACCESS_KEY_ID on AWS).",
+    )
+    channel_media_minio_secret_key: str = Field(
+        default="",
+        alias="CHANNEL_MEDIA_MINIO_SECRET_KEY",
+        description="MinIO/S3 secret key (= AWS_SECRET_ACCESS_KEY on AWS).",
+    )
+    channel_media_minio_bucket: str = Field(
+        default="atlas-media",
+        alias="CHANNEL_MEDIA_MINIO_BUCKET",
+        description="Private bucket for channel media bytes; created on startup if absent.",
+    )
+    channel_media_minio_region: str = Field(
+        default="us-east-1",
+        alias="CHANNEL_MEDIA_MINIO_REGION",
+        description=(
+            "botocore requires a region even though MinIO ignores it; us-east-1 "
+            "avoids the CreateBucketConfiguration constraint."
+        ),
+    )
+    channel_media_minio_secure: bool = Field(
+        default=False,
+        alias="CHANNEL_MEDIA_MINIO_SECURE",
+        description=(
+            "https (True) vs http (False). MUST match the endpoint scheme; "
+            "default False for local MinIO, True for AWS."
+        ),
+    )
+
     # Tuning knobs (worker tick interval, stale-recovery window, max
     # retries, breaker cooldown, LLM failover enablement, fallback
     # model map) intentionally NOT env-configurable. They live as

@@ -181,8 +181,48 @@ services:
       retries: 3
       start_period: 45s
 
+  # Profile-gated: only starts with `docker compose --profile minio up`, so the
+  # OSS default (GridFS) needs zero extra infra. Select it with
+  # CHANNEL_MEDIA_BACKEND=minio + the CHANNEL_MEDIA_MINIO_* env vars.
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # web console
+    environment:
+      MINIO_ROOT_USER: ${CHANNEL_MEDIA_MINIO_ACCESS_KEY:-minioadmin}
+      # A default keeps the (profile-gated) service from blocking the OSS
+      # default `docker compose up` interpolation; override in `.env` for any
+      # real MinIO use — `minioadmin` is a dev-only credential.
+      MINIO_ROOT_PASSWORD: ${CHANNEL_MEDIA_MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # One-shot: create the PRIVATE bucket on first boot, then exit.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["minio"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${CHANNEL_MEDIA_MINIO_ACCESS_KEY:-minioadmin} ${CHANNEL_MEDIA_MINIO_SECRET_KEY} &&
+      mc mb --ignore-existing local/${CHANNEL_MEDIA_MINIO_BUCKET:-atlas-media} &&
+      mc anonymous set none local/${CHANNEL_MEDIA_MINIO_BUCKET:-atlas-media}
+      "
+
 volumes:
   weaviate_data:
   neo4j_data:
   mongo_data:
   redis_data:
+  minio_data:
