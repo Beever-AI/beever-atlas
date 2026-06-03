@@ -59,9 +59,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 USER app
 
 # MCP Registry ownership annotation — MUST byte-for-byte equal `name` in
-# server.json (io.github.beever-ai/beever-atlas). The registry validator pulls
-# the published manifest and reads this label to verify OCI artifact ownership.
-LABEL io.modelcontextprotocol.server.name="io.github.beever-ai/beever-atlas"
+# server.json (io.github.Beever-AI/beever-atlas — the GitHub org slug case is
+# significant; the registry's namespace authorization is case-sensitive). The
+# registry validator pulls the published manifest and reads this label to verify
+# OCI artifact ownership.
+LABEL io.modelcontextprotocol.server.name="io.github.Beever-AI/beever-atlas"
 
 EXPOSE 8000
 

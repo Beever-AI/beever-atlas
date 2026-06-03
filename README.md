@@ -23,6 +23,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Apache_2.0-7CB342?style=for-the-badge&labelColor=4A4A4A" alt="License Apache 2.0" /></a>
   <a href="https://beever.ai"><img src="https://img.shields.io/badge/BUILT_BY-BEEVER.AI-15404E?style=for-the-badge&labelColor=4A4A4A" alt="Built by Beever.ai" /></a>
   <a href="https://google.github.io/adk-docs/"><img src="https://img.shields.io/badge/BUILT_WITH-Google_ADK-FF6F00?style=for-the-badge&labelColor=4A4A4A" alt="Built with Google ADK" /></a>
+  <a href="https://glama.ai/mcp/servers/Beever-AI/beever-atlas"><img src="https://img.shields.io/badge/MCP-Listed_on_Glama-A855F7?style=for-the-badge&labelColor=4A4A4A" alt="MCP server on Glama" /></a>
 </p>
 
 <p align="center">
