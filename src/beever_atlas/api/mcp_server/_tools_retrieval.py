@@ -1,5 +1,8 @@
-"""Retrieval tools: ask_channel, search_channel_facts, get_wiki_page,
-get_recent_activity, search_media_references (Phase 3, tasks 3.4–3.5)."""
+"""Retrieval + wiki tools (17): ask_channel, search_channel_facts, get_wiki_page,
+get_recent_activity, search_media_references, search_memory, lint_wiki,
+get_extraction_status, read_wiki_page, list_wiki_pages, get_wiki_graph,
+read_wiki_module, find_decisions, get_tensions, find_facts, read_wiki_section,
+read_provenance."""
 
 from __future__ import annotations
 
@@ -20,38 +23,55 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="ask_channel", timeout=90.0)
     async def ask_channel(
-        channel_id: Annotated[str, "The channel id to query (from list_channels)"],
-        question: Annotated[str, "The natural-language question to answer"],
+        channel_id: Annotated[
+            str,
+            "Channel id to query. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
+        question: Annotated[
+            str,
+            "Natural-language question, 1-4000 chars (e.g. 'What database did we pick "
+            "and why?'). Longer questions return error 'invalid_parameter'. Required.",
+        ],
         ctx: Context,
         mode: Annotated[
             str,
-            "QA mode: 'quick' (fast BM25), 'deep' (full ADK pipeline), or 'summarize'",
+            "Retrieval depth. One of: 'quick' (BM25 only, no reasoning, ~3s), "
+            "'deep' (full pipeline with graph + multi-hop reasoning, ~20-60s), "
+            "'summarize' (structured summary, ~10-30s). Default 'deep'.",
         ] = "deep",
         session_id: Annotated[
             str | None,
-            "Session id for conversation continuity; defaults to a per-principal session",
+            "Optional session id for multi-turn continuity (e.g. 'sess-abc123' from "
+            "start_new_session). Omit for a per-principal default session. Default null.",
         ] = None,
     ) -> dict:
-        """Answer a natural-language question about a channel's knowledge base.
+        """Answer a natural-language QUESTION about one channel with synthesized,
+        cited reasoning. The flagship retrieval tool — call it when the user asks
+        anything that needs an ANSWER rather than raw rows.
 
-        This is the FLAGSHIP retrieval tool. It invokes the full ADK QA pipeline
-        (embeddings + BM25 hybrid search + graph context + optional multi-hop
-        reasoning) and returns a structured answer with citations.
+        When to use: any question about a channel's content where you want a
+        composed answer with citations and reasoning across multiple messages
+        ("what did we decide about X", "why did the project slip").
 
-        When to use: whenever the user asks a question about channel content,
-        wants cited facts, or needs reasoning across multiple messages.
-        Prefer ``search_channel_facts`` for exact keyword search without inference.
+        When NOT to use: exact keyword/semantic lookup of individual facts (use
+        search_channel_facts); cross-channel recall when you don't know which
+        channel holds the answer (use search_memory); a deterministic substring
+        scan (use find_facts). Those are faster and return raw rows, not prose.
 
-        mode options:
-        - ``"quick"``: fast BM25-only retrieval, no ADK reasoning, ~3s
-        - ``"deep"``: full ADK pipeline with graph context, ~20–60s (default)
-        - ``"summarize"``: structured summary with wiki pages, ~10–30s
+        Prerequisites: a channel_id from list_channels.
 
-        The tool enforces a 90-second hard cap. On timeout, returns
-        ``{error: "answer_timeout"}``. On channel access denial, returns
-        ``{error: "channel_access_denied"}``.
+        Returns (instant for 'quick', long-running up to a 90s hard cap for
+        'deep'/'summarize'): a dict
+        ``{answer: str, citations: [{fact_id, text, permalink, author, ts}],
+        follow_ups: [str], metadata: {mode, ...}}``. Read-only — no side effects,
+        triggers no jobs.
 
-        Returns: ``{answer, citations, follow_ups, metadata}``
+        Error modes (all returned as ``{error: ...}`` dicts, never exceptions):
+        'authentication_missing' (no principal); 'invalid_parameter' (empty/over-
+        4000-char question, or mode not in quick/deep/summarize);
+        'channel_access_denied' (token lacks access to channel_id);
+        'answer_timeout' (exceeded the 90s cap — retry with mode='quick');
+        'adk_error' (internal pipeline failure).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -130,26 +150,47 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="search_channel_facts")
     async def search_channel_facts(
-        channel_id: Annotated[str, "The channel id to search (from list_channels)"],
-        query: Annotated[str, "Search query — BM25+vector hybrid over atomic facts"],
+        channel_id: Annotated[
+            str,
+            "Channel id to search. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
+        query: Annotated[
+            str,
+            "Search query, keyword or natural phrase (e.g. 'postgres migration'). "
+            "Matched with BM25+vector hybrid retrieval. Required.",
+        ],
         ctx: Context,
-        time_scope: Annotated[str, "'any' (all time) or 'recent' (last 30 days)"] = "any",
-        limit: Annotated[int, "Maximum number of facts to return (1–50)"] = 10,
+        time_scope: Annotated[
+            str,
+            "Time window. 'any' = all facts (default), 'recent' = last 30 days only.",
+        ] = "any",
+        limit: Annotated[
+            int,
+            "Max facts to return, 1-50 (values outside the range are clamped). Default 10.",
+        ] = 10,
     ) -> dict:
-        """Search atomic facts stored from a channel using BM25+vector hybrid retrieval.
+        """Find SPECIFIC facts in ONE channel by hybrid (BM25 + vector) search and
+        return them as raw, ranked rows. Call it when you want the cited source
+        facts themselves, not a composed answer.
 
-        Each returned fact includes ``text``, ``author``, ``timestamp``,
-        ``permalink``, ``channel_id``, ``confidence``, and ``topic_tags``.
+        When to use: targeted lookup of facts in a known channel ("find facts
+        about the postgres migration"). Faster and more precise than ask_channel
+        for retrieval-only tasks.
 
-        When to use: for targeted keyword or semantic search when you need
-        specific facts with citations. Faster and more precise than ``ask_channel``
-        for lookup queries. Use ``ask_channel`` when you need synthesized answers
-        with reasoning across multiple facts.
+        When NOT to use: you need a synthesized answer with reasoning (use
+        ask_channel); you don't know which channel holds the facts (use
+        search_memory, which fans this same search across every accessible
+        channel); you want a deterministic substring match rather than ranked
+        relevance (use find_facts).
 
-        time_scope: ``"any"`` returns all facts; ``"recent"`` restricts to the
-        last 30 days. Default: ``"any"``.
+        Prerequisites: a channel_id from list_channels.
 
-        Returns: ``{facts: [...]}`` or ``{error: "channel_access_denied", ...}``
+        Returns (instant, read-only): ``{facts: [{text, author, timestamp,
+        permalink, channel_id, confidence, topic_tags}, ...]}``. No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id). On any other
+        internal failure it returns an empty ``{facts: []}`` rather than erroring.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -187,27 +228,43 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="get_wiki_page")
     async def get_wiki_page(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
         page_type: Annotated[
             str,
-            "Wiki page type: overview, faq, decisions, people, glossary, activity, topics",
+            "Which fixed page to fetch. One of exactly: 'overview', 'faq', "
+            "'decisions', 'people', 'glossary', 'activity', 'topics'. "
+            "Default 'overview'.",
         ] = "overview",
     ) -> dict:
-        """Retrieve a pre-compiled wiki page for a channel.
+        """Fetch one pre-compiled wiki page from the LEGACY fixed-page set (overview,
+        faq, decisions, people, glossary, activity, topics). Call it for a fast,
+        whole-channel summary keyed by a fixed page_type.
 
-        Wiki pages are generated offline during the sync pipeline and contain
-        summarised, structured knowledge: ``overview`` (channel purpose and key
-        topics), ``faq`` (common questions), ``decisions`` (key decisions made),
-        ``people`` (active contributors), ``glossary`` (domain terms), and more.
+        Disambiguation: this is the legacy fixed-page surface. For the redesigned
+        slug-keyed wiki — arbitrary topic/entity pages, structured kind payloads,
+        and the cross-link graph — use list_wiki_pages to discover pages then
+        read_wiki_page(slug=...). Prefer those for anything beyond the seven
+        fixed pages above.
 
-        When to use: for quick structured summaries without invoking the full QA
-        pipeline. Faster than ``ask_channel`` but less precise for specific
-        queries. Use ``ask_channel`` when the wiki page doesn't have the answer.
+        When to use: you want a quick structured summary of a known aspect of a
+        channel without running the QA pipeline. When NOT to use: you need a
+        specific answer (use ask_channel) or a non-fixed wiki topic (use
+        read_wiki_page).
 
-        Returns the page dict verbatim (``page_type``, ``channel_id``,
-        ``content``, ``summary``, ``text``), or ``null`` if the page has not
-        been generated yet, or ``{error: "channel_access_denied"}`` on denial.
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (instant, read-only): the page dict
+        ``{page_type, channel_id, content, summary, text}``. ``content`` is null
+        when that page has not been generated yet (run a sync / refresh_wiki
+        first). No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id). Other internal
+        failures return the page dict with ``content: null``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -244,26 +301,43 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="get_recent_activity")
     async def get_recent_activity(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
-        days: Annotated[int, "Look-back window in days (1–90)"] = 7,
+        days: Annotated[
+            int,
+            "Look-back window in days, 1-90 (out-of-range values are clamped). Default 7.",
+        ] = 7,
         topic: Annotated[
             str | None,
-            "Optional topic filter — narrows search to facts related to this topic",
+            "Optional topic filter (e.g. 'deployment'); keeps only facts tagged "
+            "with that topic. Omit for all topics. Default null.",
         ] = None,
-        limit: Annotated[int, "Maximum number of activity items to return (1–50)"] = 20,
+        limit: Annotated[
+            int,
+            "Max activity items, 1-50 (out-of-range values are clamped). Default 20.",
+        ] = 20,
     ) -> dict:
-        """Return the most recent activity from a channel, optionally filtered by topic.
+        """List the most RECENT facts from one channel, newest first, optionally
+        scoped to a topic. Call it for time-bounded "what happened lately"
+        questions.
 
-        Results are sorted by timestamp descending and include ``text``,
-        ``author``, ``timestamp``, ``channel_id``, ``topic_tags``, and ``fact_id``.
+        When to use: "what's been discussed in this channel this week", "what
+        happened with topic X in the last N days". When NOT to use: search not
+        bounded by recency (use search_channel_facts); a synthesized answer or
+        reasoning across the items (use ask_channel).
 
-        When to use: to answer "what has been discussed recently in #channel?"
-        or "what happened with topic X in the last N days?" Use ``ask_channel``
-        when you need reasoning or synthesis across multiple activity items.
-        Use ``search_channel_facts`` for non-time-bounded search.
+        Prerequisites: a channel_id from list_channels.
 
-        Returns: ``{activity: [...]}`` or ``{error: "channel_access_denied", ...}``
+        Returns (instant, read-only): ``{activity: [{text, author, timestamp,
+        channel_id, topic_tags, fact_id}, ...]}`` sorted by timestamp descending.
+        No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id). Other internal
+        failures return an empty ``{activity: []}``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -297,29 +371,44 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="search_media_references")
     async def search_media_references(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
-        query: Annotated[str, "Search query for finding media-containing messages"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
+        query: Annotated[
+            str,
+            "Search query describing the media you want (e.g. 'architecture "
+            "diagram' or 'pricing pdf'). Required.",
+        ],
         ctx: Context,
         media_type: Annotated[
             str | None,
-            "Filter by media type: 'image', 'pdf', 'link', or null for all",
+            "Optional media-type filter. One of: 'image' (photos/screenshots), "
+            "'pdf' (documents), 'link' (URLs), or null for all. Default null.",
         ] = None,
-        limit: Annotated[int, "Maximum number of results to return (1–20)"] = 5,
+        limit: Annotated[
+            int,
+            "Max results, 1-20 (out-of-range values are clamped). Default 5.",
+        ] = 5,
     ) -> dict:
-        """Search for messages containing images, PDFs, or links shared in a channel.
+        """Find messages that SHARED a file, image, PDF, or link in one channel.
+        Call it when the user is hunting for an attachment or URL ("where's the
+        design doc", "find the screenshot Alice posted") rather than for the
+        knowledge in the text.
 
-        Each result includes ``text``, ``media_urls``, ``link_urls``,
-        ``link_titles``, ``author``, ``timestamp``, ``media_type``, and
-        ``fact_id``.
+        When to use: locating shared documents, images, or links. When NOT to
+        use: general fact/knowledge search (use search_channel_facts or
+        ask_channel) — this tool only returns messages that carry media.
 
-        When to use: when the user asks about documents, images, or links shared
-        in a channel, or when you need to find a specific file or URL. Do NOT use
-        for general knowledge search — use ``search_channel_facts`` for that.
+        Prerequisites: a channel_id from list_channels.
 
-        media_type: ``"image"`` (photos/screenshots), ``"pdf"`` (documents),
-        ``"link"`` (URLs), or ``null`` (all types). Default: ``null``.
+        Returns (instant, read-only): ``{media: [{text, media_urls, link_urls,
+        link_titles, author, timestamp, media_type, fact_id}, ...]}``. No side
+        effects.
 
-        Returns: ``{media: [...]}`` or ``{error: "channel_access_denied", ...}``
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id). Other internal
+        failures return an empty ``{media: []}``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -357,35 +446,50 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
     # -- search_memory ------------------------------------------------------
     @mcp.tool(name="search_memory")
     async def search_memory(
-        query: Annotated[str, "Natural-language or keyword search query"],
+        query: Annotated[
+            str,
+            "Search query, keyword or natural phrase, 1-4000 chars (e.g. 'who owns "
+            "billing'). Longer queries return error 'invalid_parameter'. Required.",
+        ],
         ctx: Context,
         scope: Annotated[
             str,
-            "Either 'all' (default — search every channel the principal can access) "
-            "or 'channel:<channel_id>' (search a single channel)",
+            "Search scope. 'all' (default) = every channel the principal can "
+            "access; 'channel:<id>' = one channel only (e.g. 'channel:ch-eng').",
         ] = "all",
-        limit: Annotated[int, "Maximum hits across all channels (1–50)"] = 20,
+        limit: Annotated[
+            int,
+            "Max hits across the merged result set, 1-50 (out-of-range values are "
+            "clamped). Default 20.",
+        ] = 20,
     ) -> dict:
-        """Cross-channel agent recall via Weaviate hybrid search.
+        """Find facts ACROSS MANY channels by hybrid (BM25 + vector) search when you
+        do NOT know which channel holds the answer. Call it first for broad recall,
+        then drill into a specific channel with the tools below.
 
-        Use this when the agent does not yet know which channel holds the
-        relevant memory — it merges hybrid (BM25 + vector) results from
-        every channel the principal can access. Each hit carries
-        ``fact_id``, ``text``, ``score``, ``channel_id``, ``cluster_id``,
-        ``entity_tags``. Results are ranked by hybrid score across the
-        merged set.
+        Routing rule for the three search tools:
+        - search_memory(scope='all') — unknown channel; fans the search across
+          every channel the principal can access and merges/ranks the hits.
+        - search_channel_facts(channel_id) — known channel; same hybrid search,
+          scoped to one channel, returning the richer per-fact shape.
+        - search_memory(scope='channel:<id>') — single channel with the
+          search_memory hit shape (use search_channel_facts instead if you want
+          author/permalink/topic_tags on each row).
+        For a synthesized ANSWER rather than rows, use ask_channel.
 
-        scope:
-          - ``"all"``: enumerate the principal's accessible channels and
-            search each (auth-gated per channel). Use this when the agent
-            does not yet know which channel holds the relevant memory.
-          - ``"channel:<id>"``: single-channel search, equivalent to
-            ``search_channel_facts`` but with the standard search_memory
-            response shape.
+        Prerequisites: none for scope='all'; a channel_id (from list_channels)
+        for scope='channel:<id>'.
 
-        Returns: ``{hits: [...], query: <echo>}`` or
-        ``{error: "channel_access_denied", channel_id: ...}`` for an
-        explicit unreachable channel scope.
+        Returns (instant for one channel, longer when fanning across many;
+        read-only): ``{hits: [{fact_id, text, score, channel_id, cluster_id,
+        entity_tags}, ...], query: <echo of query>}`` ranked by hybrid score.
+        No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'invalid_parameter' (empty/over-4000-char query, or scope not 'all'/
+        'channel:<id>'); 'channel_access_denied' (only for an explicit
+        'channel:<id>' the token cannot reach — under scope='all' unreachable
+        channels are silently skipped).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -487,27 +591,42 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
     # -- lint_wiki ----------------------------------------------------------
     @mcp.tool(name="lint_wiki")
     async def lint_wiki(
-        channel_id: Annotated[str, "The channel id whose wiki should be linted"],
+        channel_id: Annotated[
+            str,
+            "Channel id whose wiki to lint. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
         target_lang: Annotated[
             str | None,
-            "Language tag to lint (defaults to the channel's primary)",
+            "Optional BCP-47 language tag to lint (e.g. 'en'). Omit to lint the "
+            "channel's primary language. Default null (treated as 'en').",
         ] = None,
         run_coherence_check: Annotated[
             bool,
-            "Run the bounded LLM coherence pass (one call per page)",
+            "If true, also run the LLM coherence pass (one model call per page — "
+            "slower and incurs token cost). Set false for a fast structural-only "
+            "lint. Default true.",
         ] = True,
     ) -> dict:
-        """Run the wiki lint checks for a channel and return findings.
+        """Audit a channel's wiki for health problems and return a list of findings.
+        Call it to check whether wiki pages are stale, orphaned, duplicated, or
+        internally inconsistent before relying on them or recommending a refresh.
 
-        Wraps the same ``POST /api/channels/{id}/wiki/lint`` HTTP endpoint
-        used by the WikiHealthToolbar UI. Surfaces orphan pages, stale
-        sections, duplicate sections, and intra-page coherence issues.
-        Each finding carries ``severity``, ``category``, ``page_id``,
-        ``section_id``, ``message``, and ``suggested_action``.
+        When to use: validating wiki quality, or diagnosing why an answer looked
+        wrong. When NOT to use: routine reading (use read_wiki_page /
+        list_wiki_pages) — linting is heavier. Set run_coherence_check=false to
+        avoid the per-page LLM cost when you only need structural checks.
 
-        Returns: ``{findings: [...], pages_scanned: N}`` or
-        ``{error: "channel_access_denied", ...}``.
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (long-running when run_coherence_check=true — one LLM call per
+        page; read-only, writes nothing): ``{findings: [{severity, category,
+        page_id, section_id, message, suggested_action}, ...], pages_scanned: N}``.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'lint_failed' (returned as ``{findings: [], error: 'lint_failed'}`` on an
+        internal lint error).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -569,16 +688,36 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
     # -- get_extraction_status ---------------------------------------------
     @mcp.tool(name="get_extraction_status")
     async def get_extraction_status(
-        channel_id: Annotated[str, "The channel id whose extraction queue depth to return"],
+        channel_id: Annotated[
+            str,
+            "Channel id whose extraction progress to report. Get it from "
+            "list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
     ) -> dict:
-        """Return per-status extraction counts for a channel.
+        """Report how far fact EXTRACTION has progressed for a channel's messages,
+        as a count per status. Call it to judge whether a channel's knowledge is
+        fully ingested before you trust retrieval results, or to track progress
+        after triggering a sync.
 
-        Backs operator + agent visibility into the background
-        ExtractionWorker queue. Wraps the same ``GET
-        /api/channels/{id}/extraction-status`` HTTP endpoint used by the
-        Sync Progress + WikiTab UIs. Returns
-        ``{channel_id, counts: {pending, extracting, done, failed}, total}``.
+        Distinguish from get_job_status: this counts MESSAGES by extraction state
+        (corpus readiness); get_job_status reports the lifecycle of one async JOB
+        by job_id. Use this for "is this channel done extracting?"; use
+        get_job_status for "did my trigger_sync/refresh_wiki job finish?".
+
+        When to use: gauge corpus completeness, or detect a backlog (high
+        ``pending``) or failures (non-zero ``failed``) before relying on
+        ask_channel/search_channel_facts.
+
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (instant, read-only): ``{channel_id, counts: {pending,
+        extracting, done, failed}, total}`` where each count is the number of
+        messages in that state and ``total`` is their sum. No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'extraction_status_failed' (internal error reading the queue).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -633,26 +772,47 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="read_wiki_page")
     async def read_wiki_page(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         slug: Annotated[
             str,
-            "The page slug — stable, human-readable identifier from the wiki",
+            "Page slug — the stable identifier of the page (e.g. "
+            "'auth-architecture'). Discover valid slugs with list_wiki_pages. "
+            "Required.",
         ],
         ctx: Context,
-        target_lang: Annotated[str, "Target language tag (BCP-47); defaults to 'en'"] = "en",
+        target_lang: Annotated[
+            str,
+            "BCP-47 language tag for the rendered page (e.g. 'en', 'fr'). Default 'en'.",
+        ] = "en",
     ) -> dict:
-        """Return the structured payload for one wiki page (slug-keyed).
+        """Read ONE full wiki page by its slug from the redesigned slug-keyed wiki.
+        Call it after list_wiki_pages tells you which slug you want, to get a
+        page's complete content and structured payload.
 
-        Returns the full WikiPage document including ``content_md`` (markdown
-        for human reading), ``kind`` + ``kind_schema`` (structured payload
-        agents can iterate without re-parsing markdown), ``cross_links``
-        (title→slug), ``cross_links_broken`` (titles with no destination
-        page yet), ``pin_state``, and ``last_updated``. Hidden pages are
-        excluded UNLESS the caller's MCP token carries the
-        ``read:hidden_pages`` scope (set in ``BEEVER_MCP_API_KEY_SCOPES``).
+        Disambiguation: this is the slug-keyed redesign surface (arbitrary
+        topic/entity pages). For the seven LEGACY fixed pages (overview, faq,
+        decisions, ...) use get_wiki_page(page_type). Typical sequence:
+        list_wiki_pages -> read_wiki_page(slug). To save tokens when you need
+        only a slice, use read_wiki_module (one module) or read_wiki_section
+        (one narrative section) instead of the whole page.
 
-        Returns ``{error: "wiki_page_not_found"}`` on missing slug,
-        ``{error: "channel_access_denied"}`` on ACL denial.
+        Prerequisites: a channel_id from list_channels and a slug from
+        list_wiki_pages.
+
+        Returns (instant, read-only): the full WikiPage document including
+        ``content_md`` (markdown body), ``kind`` + ``kind_schema`` (structured
+        payload agents can iterate without re-parsing markdown), ``cross_links``
+        (title->slug), ``cross_links_broken`` (linked titles with no page yet),
+        ``pin_state``, and ``last_updated``. Hidden pages are excluded unless the
+        token carries the ``read:hidden_pages`` scope. No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'wiki_page_not_found' (no such slug, or it is hidden and the token lacks
+        read:hidden_pages); 'wiki_read_failed' (internal error).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -697,30 +857,47 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="list_wiki_pages")
     async def list_wiki_pages(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
         kind: Annotated[
             str | None,
-            "Optional kind filter: topic / entity / decisions / faq / action_items",
+            "Optional kind filter. One of: 'topic', 'entity', 'decisions', 'faq', "
+            "'action_items'. Omit for all kinds. Default null.",
         ] = None,
         scope: Annotated[
             str,
-            "'human' (default) excludes hidden + merged pages; 'all' returns "
-            "everything when the caller has read:hidden_pages",
+            "Visibility scope. 'human' (default) excludes hidden + merged pages; "
+            "'all' returns everything but requires the read:hidden_pages token "
+            "scope (otherwise it silently downgrades to 'human').",
         ] = "human",
-        target_lang: Annotated[str, "Target language tag (BCP-47)"] = "en",
+        target_lang: Annotated[
+            str,
+            "BCP-47 language tag (e.g. 'en', 'fr'). Default 'en'.",
+        ] = "en",
     ) -> dict:
-        """Return a list of wiki pages for a channel, optionally filtered.
+        """List the wiki pages in one channel as lightweight summaries (no page
+        bodies). The RECOMMENDED first call when exploring the redesigned
+        slug-keyed wiki: use it to discover slugs, then fetch a page with
+        read_wiki_page(slug=...).
 
-        Returns ``{channel_id, target_lang, scope, pages: [<summary>...]}``
-        where each summary carries ``slug``, ``title``, ``kind``,
-        ``last_updated``, ``version``, and ``pin_state.pinned/hidden``. The
-        ``content_md`` body is intentionally NOT included — agents that
-        need the body should follow up with ``read_wiki_page(slug=...)``
-        to keep the per-call payload bounded.
+        When to use: browsing or discovering which pages exist, or finding a slug.
+        When NOT to use: you already know the slug and want the body (call
+        read_wiki_page directly).
 
-        ``scope="all"`` requires the ``read:hidden_pages`` token scope —
-        otherwise the caller silently downgrades to ``scope="human"``.
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (instant, read-only): ``{channel_id, target_lang, scope, pages:
+        [{slug, title, kind, version, last_updated, pinned, hidden}, ...]}``. The
+        ``content_md`` body is intentionally omitted to keep the payload bounded
+        — follow up with read_wiki_page(slug=...) for a page's content. No side
+        effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'wiki_list_failed' (internal error).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -779,16 +956,35 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="get_wiki_graph")
     async def get_wiki_graph(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
     ) -> dict:
-        """Return the channel's wiki cross-link graph in Cytoscape format.
+        """Return the map of how a channel's WIKI PAGES link to one another, as a
+        node/edge graph. Call it to understand the wiki's structure — which pages
+        reference which — or to plan a traversal across related pages.
 
-        Same payload as ``GET /api/channels/{cid}/wiki/graph``:
-        ``{channel_id, nodes: [{data:{id,label,kind,page_kind?,version?,last_updated?}}],
-        edges: [{data:{id,source,target,kind}}]}``. Empty arrays when
-        the graph backend is unavailable so the route remains
-        always-200 across deployments.
+        Disambiguation: this is the WIKI PAGE-LINK graph (nodes are wiki pages,
+        edges are cross-links between them). For the KNOWLEDGE graph of entities
+        and their relationships (people, systems, concepts), use
+        search_relationships instead.
+
+        When to use: visualizing or navigating wiki page structure, or finding
+        clusters of related pages. When NOT to use: reading a page's content (use
+        read_wiki_page) or querying entity relationships (search_relationships).
+
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (instant, read-only): Cytoscape-format
+        ``{channel_id, nodes: [{data: {id, label, kind, page_kind?, version?,
+        last_updated?}}], edges: [{data: {id, source, target, kind}}]}``. Returns
+        empty ``nodes``/``edges`` arrays (not an error) when the graph backend is
+        unavailable, so it is always safe to call. No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -840,31 +1036,51 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="read_wiki_module")
     async def read_wiki_module(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         page_slug: Annotated[
             str,
-            "The slug of the wiki page that hosts the module",
+            "Slug of the page hosting the module (e.g. 'auth-architecture'). "
+            "Discover slugs via list_wiki_pages. Required.",
         ],
         anchor: Annotated[
             str,
-            "The module anchor — stable in-page id, e.g. 'key-facts', "
-            "'decision-banner', 'tension-callout'",
+            "Module anchor — the stable in-page id of one structured module "
+            "(e.g. 'key-facts', 'decision-banner', 'tension-callout'). Discover "
+            "the available anchors by reading the page once with read_wiki_page. "
+            "Required.",
         ],
         ctx: Context,
-        target_lang: Annotated[str, "Target language tag (BCP-47)"] = "en",
+        target_lang: Annotated[
+            str,
+            "BCP-47 language tag (e.g. 'en', 'fr'). Default 'en'.",
+        ] = "en",
     ) -> dict:
-        """Fetch a single module's structured payload from a wiki page.
-
-        Returns the module's ``data`` dict (e.g. for ``key_facts``, the
-        items list; for ``decision_banner``, the rationale + alternatives
-        rejected). Use this when an agent only needs one slice of a page
-        and reading the entire page via ``read_wiki_page`` would waste
+        """Fetch ONE structured module from a wiki page without downloading the
+        whole page. Call it when you already know the page slug and the module
+        anchor you want, and reading the full page via read_wiki_page would waste
         tokens.
 
-        Returns ``{error: "wiki_page_not_found"}`` when the page does not
-        exist, ``{error: "module_not_found"}`` when the page exists but
-        does not contain the named anchor, or
-        ``{error: "channel_access_denied"}`` on ACL denial.
+        When to use: you need just one module's structured data (e.g. the
+        key_facts items, or a decision_banner's rationale + alternatives). When
+        NOT to use: you need a narrative prose section (use read_wiki_section) or
+        the whole page (use read_wiki_page). To learn a page's module anchors,
+        read it once with read_wiki_page first.
+
+        Prerequisites: a channel_id (list_channels), a page_slug
+        (list_wiki_pages), and an anchor (from the page's modules).
+
+        Returns (instant, read-only): ``{channel_id, page_slug, anchor,
+        module_id, data}`` where ``data`` is the module's structured payload.
+        No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'wiki_page_not_found' (no such slug); 'module_not_found' (page exists but
+        has no module with that anchor); 'wiki_module_read_failed' (internal
+        error).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -916,38 +1132,52 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="find_decisions")
     async def find_decisions(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
         since: Annotated[
             str | None,
-            "Optional ISO-8601 date prefix (e.g. '2026-04-01'); only "
-            "decisions on or after this date are returned",
+            "Optional ISO-8601 date prefix (e.g. '2026-04-01'); keeps only "
+            "decisions on or after this date. Omit for all dates. Default null.",
         ] = None,
         author: Annotated[
             str | None,
-            "Optional exact-match author_name filter",
+            "Optional exact-match author name (e.g. 'Alice Chen'). Omit for any "
+            "author. Default null.",
         ] = None,
-        limit: Annotated[int, "Maximum number of decisions to return (1–100)"] = 50,
+        limit: Annotated[
+            int,
+            "Max decisions to return, 1-100 (out-of-range values are clamped). Default 50.",
+        ] = 50,
     ) -> list[dict]:
-        """Find every decision recorded in a channel's wiki / fact store.
+        """List the DECISIONS recorded in one channel, each with its rationale and
+        rejected alternatives. Call it to answer "what did the team decide and
+        why" when you want the structured decision record, not free-text facts.
+        Returns a bare LIST and collapses missing-auth, access-denied, and
+        internal errors into an EMPTY LIST — so ``[]`` means either no decisions
+        OR no access; it never returns a structured error object and never raises.
 
-        Returns a list of decisions sorted by ``decided_at`` descending.
-        Each entry includes ``fact_id``, ``decision`` (first sentence of
-        the fact's memory_text), ``decided_by`` (author_name),
-        ``decided_at`` (YYYY-MM-DD prefix of message_ts), ``rationale``
-        (Phase 3 enrichment — null when not yet extracted),
-        ``alternatives_rejected``, and ``page_slug`` (the wiki page where
-        this decision lives, when known — empty string when no host page
-        has integrated this decision yet).
+        Disambiguation among the decision tools: use find_decisions for the
+        current decision RECORDS in one channel (with rationale +
+        alternatives_rejected). Use trace_decision_history to follow how one
+        decision SUPERSEDED earlier ones over time (a graph timeline). Prefer
+        find_decisions over find_facts(fact_type='decision') because only this
+        tool enriches each result with rationale and alternatives.
 
-        Filters:
-        - ``since="2026-04-01"`` returns decisions whose ``message_ts``
-          starts on or after that date.
-        - ``author="Alice Chen"`` returns decisions with exact-match
-          ``author_name``.
+        Prerequisites: a channel_id from list_channels.
 
-        Use this instead of ``find_facts(fact_type="decision")`` when you
-        also need rationale / alternatives_rejected on each result.
+        Returns (instant, read-only): a LIST (not a dict) of decisions sorted by
+        ``decided_at`` descending, each ``{fact_id, decision (first sentence),
+        decided_by, decided_at (YYYY-MM-DD), rationale (null if not yet
+        extracted), alternatives_rejected, page_slug (empty if no host page yet)}``.
+        No side effects.
+
+        Error handling: on missing auth, access denial, or internal error this
+        tool returns an EMPTY LIST ``[]`` rather than an error object (it never
+        raises). An empty list therefore means either no decisions or no access —
+        confirm access with list_channels if unexpected.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -1044,28 +1274,41 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="get_tensions")
     async def get_tensions(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         ctx: Context,
         status: Annotated[
             str | None,
-            "Optional status filter — 'open' | 'blocked' | 'deferred'",
+            "Optional status filter. One of: 'open', 'blocked', 'deferred' "
+            "(e.g. 'open'). Pass null (the default) to return tensions of ALL "
+            "statuses; omit for the same effect.",
         ] = None,
     ) -> list[dict]:
-        """List unresolved tensions across the channel's wiki.
+        """List unresolved TENSIONS in one channel — points of open disagreement or
+        conflicting positions surfaced across its wiki. Call it to find what is
+        still contested or undecided, as opposed to settled decisions
+        (find_decisions).
 
-        Walks every wiki page for the channel and surfaces ``tension_callout``
-        modules. Each result carries ``tension_id``, ``title``, ``status``,
-        ``since`` (YYYY-MM-DD), ``positions`` (list of ``{author, stance,
-        fact_id}``), and ``page_slug`` (the page where the tension lives).
+        When to use: surfacing open conflicts, blockers, or competing stances.
+        When NOT to use: settled decisions (find_decisions) or general fact
+        lookup (find_facts).
 
-        Forward-compatible: tension detection is not yet shipped on this
-        track, so this tool returns ``[]`` for most channels today. The
-        wiring is in place so the same call starts returning real data
-        once tension detection lands without an API change.
+        Prerequisites: a channel_id from list_channels.
 
-        Filters: ``status="open"`` keeps only tensions whose status field
-        equals the requested value. With no filter, every tension on
-        every page is returned.
+        Note: tension detection is currently empty for most channels — the wiring
+        is in place but few channels have tension data yet, so an empty result is
+        normal and does not indicate an error. The same call returns real data
+        automatically once tensions exist, with no signature change.
+
+        Returns (instant, read-only): a LIST (not a dict) of ``{tension_id, title,
+        status, since (YYYY-MM-DD), positions: [{author, stance, fact_id}],
+        page_slug}``. No side effects.
+
+        Error handling: on missing auth, access denial, or internal error this
+        tool returns an EMPTY LIST ``[]`` (it never raises) — indistinguishable
+        from "no tensions"; confirm access with list_channels if unexpected.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -1137,29 +1380,55 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="find_facts")
     async def find_facts(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
-        query: Annotated[str, "Case-insensitive substring to match in memory_text"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
+        query: Annotated[
+            str,
+            "Case-insensitive substring matched literally inside each fact's text "
+            "(e.g. 'rollback'). NOT semantic — exact substring only. Required.",
+        ],
         ctx: Context,
         fact_type: Annotated[
             str | None,
-            "Optional type filter — 'decision' | 'observation' | 'opinion' | "
-            "'question' | 'action_item'",
+            "Optional type filter. One of: 'decision', 'observation', 'opinion', "
+            "'question', 'action_item'. Omit for all types. Default null.",
         ] = None,
-        limit: Annotated[int, "Maximum number of facts to return (1–100)"] = 20,
+        limit: Annotated[
+            int,
+            "Max facts to return, 1-100 (out-of-range values are clamped). Default 20.",
+        ] = 20,
     ) -> list[dict]:
-        """Search facts by text query within a channel.
+        """Find facts in one channel whose text literally CONTAINS a substring
+        (deterministic, case-insensitive). Call it when you know an exact keyword
+        and want every matching raw fact row, not a ranked or synthesized result.
+        Returns a bare LIST and collapses missing-auth, access-denied,
+        empty-query, and internal errors into an EMPTY LIST — so ``[]`` means no
+        match OR no access; it never returns a structured error object.
 
-        Returns up to ``limit`` facts whose ``memory_text`` contains
-        ``query`` (case-insensitive substring), optionally filtered by
-        ``fact_type``. Each result carries ``fact_id``, ``memory_text``,
-        ``fact_type``, ``importance``, ``author_name``, ``message_ts``,
-        and ``page_slug`` (the wiki page where this fact lives, or empty
-        when not yet integrated).
+        Disambiguation: find_facts is a deterministic substring filter (predictable,
+        no relevance ranking). For meaning-based / fuzzy retrieval use
+        search_channel_facts (BM25+vector). For a synthesized answer use
+        ask_channel. For decisions with rationale use find_decisions.
 
-        Use this when ``ask_channel`` would over-synthesize and you just
-        want raw fact rows that mention a keyword. For semantic / vector
-        search use ``search_channel_facts`` instead — this tool is a
-        deterministic substring filter, not a ranked retriever.
+        When to use: exact-keyword scans ("every fact mentioning 'rollback'"),
+        optionally narrowed by fact_type. When NOT to use: you want semantically
+        related results for a phrase (use search_channel_facts).
+
+        Prerequisites: a channel_id from list_channels.
+
+        Returns (instant, read-only): a LIST (not a dict) of up to ``limit`` facts,
+        sorted by importance DESC then recency (message_ts) DESC. The importance
+        values that drive the sort rank, highest first, are 'critical' > 'high' >
+        'medium' > 'low' (any other/empty value sorts lowest). Each item is
+        ``{fact_id, memory_text, fact_type, importance, author_name, message_ts,
+        page_slug (empty if not yet on a page)}``. No side effects.
+
+        Error handling: on missing auth, access denial, empty query, or internal
+        error this tool returns an EMPTY LIST ``[]`` (it never raises) — an empty
+        list means no match OR no access; confirm with list_channels if
+        unexpected.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -1253,43 +1522,51 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="read_wiki_section")
     async def read_wiki_section(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Channel id. Get it from list_channels (e.g. 'ch-eng'). Required.",
+        ],
         page_slug: Annotated[
             str,
-            "The slug of the wiki page that hosts the narrative section",
+            "Slug of the page hosting the section (e.g. 'auth-architecture'). "
+            "Discover slugs via list_wiki_pages. Required.",
         ],
         anchor: Annotated[
             str,
-            "The narrative section anchor — kebab-case in-page id "
-            "(e.g. 'context', 'alternatives', 'implications')",
+            "Section anchor — kebab-case in-page id of one narrative section "
+            "(e.g. 'context', 'alternatives', 'implications'). If you don't know "
+            "it, a 'section_not_found' error lists the available anchors. Required.",
         ],
         ctx: Context,
-        target_lang: Annotated[str, "Target language tag (BCP-47)"] = "en",
+        target_lang: Annotated[
+            str,
+            "BCP-47 language tag (e.g. 'en', 'fr'). Default 'en'.",
+        ] = "en",
     ) -> dict:
-        """Fetch ONE narrative section's structured data without loading
-        the full page.
+        """Fetch ONE narrative (prose) section of a wiki page without loading the
+        whole page. Call it when you know the page slug and section anchor and
+        want just that article slice, to save tokens.
 
-        Saves tokens for agents that only need a slice of a wiki article.
-        Returns ``{anchor, heading, paragraphs, citations, visual,
-        page_slug, page_title, channel_id}`` on hit — ``page_title`` and
-        ``channel_id`` are included so the agent can render attribution
-        without a separate ``read_wiki_page`` call. Use this instead of
-        ``read_wiki_page`` when you know the section anchor; use
-        ``read_wiki_module`` for ONE module's structured payload
-        (key_facts, decision_log, etc.); use ``find_facts`` for
-        fact-text search across pages.
+        Disambiguation: read_wiki_section returns PROSE sections (paragraphs +
+        citations); read_wiki_module returns a STRUCTURED module payload
+        (key_facts, decision_banner, etc.); read_wiki_page returns the whole page.
+        Use find_facts for fact-text search across pages.
 
-        Returns ``{error: "page_not_found", channel_id, page_slug}`` when
-        the page does not exist; ``{error: "section_not_found",
-        page_slug, available_anchors: [...]}`` when the page exists but
-        the anchor is missing; ``{error: "narrative_not_available",
-        page_slug, has_modules: bool, suggestion: ...}`` when the page
-        predates narrative generation OR fell back due to validation
-        failure (callers can retry with ``read_wiki_page`` for module-
-        only data); ``{error: "channel_access_denied"}`` on ACL denial.
+        Prerequisites: a channel_id (list_channels), a page_slug
+        (list_wiki_pages), and an anchor (from the page's narrative sections).
 
-        Spec:
-        ``openspec/changes/wiki-narrative-articles/specs/mcp-redesign-tools/``.
+        Returns (instant, read-only): ``{anchor, heading, paragraphs, citations,
+        visual, page_slug, page_title, channel_id}`` — ``page_title`` and
+        ``channel_id`` are included so you can attribute the section without a
+        second call. No side effects.
+
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'channel_access_denied' (token lacks access to channel_id);
+        'page_not_found' (no such slug); 'section_not_found' (page exists but lacks
+        the anchor — the result lists ``available_anchors`` to retry with);
+        'narrative_not_available' (page has no narrative sections — includes
+        ``has_modules`` and a suggestion to use read_wiki_page for module data);
+        'internal_error'.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -1368,24 +1645,34 @@ def register_retrieval_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="read_provenance")
     async def read_provenance(
-        fact_id: Annotated[str, "The fact id whose source message to return"],
+        fact_id: Annotated[
+            str,
+            "Fact id to trace, as returned in the ``fact_id`` field of another "
+            "tool's result (e.g. 'fact_abc123' from find_facts, find_decisions, "
+            "search_channel_facts, or ask_channel citations). Required.",
+        ],
         ctx: Context,
     ) -> dict:
-        """Fetch the original source message for a fact.
+        """Trace ONE fact back to the original chat message it was extracted from.
+        Call it to verify or cite a fact — given a fact_id from another tool, it
+        returns where the fact came from (platform, message, author, timestamp,
+        and the raw message text when reachable).
 
-        Closes the audit loop — given a fact_id surfaced by another tool
-        (``find_decisions``, ``find_facts``, ``ask_channel``...), this
-        returns the platform / message_id / author / timestamp it was
-        extracted from, plus the raw chat message body when reachable.
+        When to use: confirming a fact's source, building a citation, or auditing
+        provenance. Prerequisites: a fact_id surfaced by find_facts,
+        find_decisions, search_channel_facts, search_memory, or an ask_channel
+        citation.
 
-        Returns:
-        ``{fact_id, memory_text, source: {platform, message_id, url,
-        author, ts}, raw_message}``.
+        Returns (instant, read-only): ``{fact_id, memory_text, source: {platform,
+        message_id, url, author, ts}, raw_message}``. ``raw_message`` is the
+        original chat body, or an empty string if the source message is no longer
+        reachable — every other field is still populated in that case. No side
+        effects.
 
-        Returns ``{error: "fact_not_found"}`` when the fact_id is unknown.
-        Does NOT fail hard if the source message itself is unreachable —
-        the ``raw_message`` field is empty in that case but every other
-        field is still populated.
+        Error modes (returned as dicts): 'authentication_missing' (no principal);
+        'fact_not_found' (unknown fact_id — also returned, deliberately, when the
+        caller lacks access to the fact's channel, so cross-tenant existence is
+        never leaked); 'provenance_read_failed' (internal error).
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:

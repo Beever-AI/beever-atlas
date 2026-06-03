@@ -4,31 +4,30 @@ This is the sole agent-facing MCP surface, introduced by openspec change
 ``atlas-mcp-server``. The legacy unauthenticated ``/mcp`` mount has been
 retired; all clients connect through this curated, auth-gated surface.
 
-Phase 2 shipped the factory skeleton with auth wiring; Phase 3 registers the
-full tool catalog:
+The catalog exposed via ``tools/list`` (28 tools total):
 
     Discovery      (3): whoami, list_connections, list_channels
-    Retrieval      (5): ask_channel, search_channel_facts, get_wiki_page,
-                        get_recent_activity, search_media_references
+    Retrieval     (17): ask_channel, search_channel_facts, get_wiki_page,
+                        get_recent_activity, search_media_references,
+                        search_memory, lint_wiki, get_extraction_status,
+                        read_wiki_page, list_wiki_pages, get_wiki_graph,
+                        read_wiki_module, find_decisions, get_tensions,
+                        find_facts, read_wiki_section, read_provenance
     Graph          (3): find_experts, search_relationships, trace_decision_history
     Session        (1): start_new_session
+    Orchestration  (3): trigger_sync, refresh_wiki, get_job_status
     Shim           (1): search_channel_knowledge  <- deprecation shim
 
-Phase 4 adds resources and prompts.
-Phase 5b adds the long-running-job tools:
+Plus resources (atlas:// URIs), prompts, principal-keyed rate limiting, and
+per-tool audit logging.
 
-    Orchestration  (3): trigger_sync, refresh_wiki, get_job_status
-
-Phase 7 adds principal-keyed rate limiting and per-tool audit logging.
-
-Tool-group submodules (split to keep each file under ~300 lines):
+Tool-group submodules:
     _helpers.py              shared helpers (_get_principal_id, _validate_id, …)
-    _tools_discovery.py      whoami, list_connections, list_channels
-    _tools_retrieval.py      ask_channel, search_channel_facts, get_wiki_page,
-                             get_recent_activity, search_media_references
-    _tools_graph.py          find_experts, search_relationships, trace_decision_history
-    _tools_session.py        start_new_session
-    _tools_orchestration.py  trigger_sync, refresh_wiki, get_job_status
+    _tools_discovery.py      discovery tools
+    _tools_retrieval.py      retrieval + wiki tools
+    _tools_graph.py          graph tools
+    _tools_session.py        session tools
+    _tools_orchestration.py  long-running-job orchestration tools
     _resources.py            atlas:// URI resources
     _prompts.py              summarize_channel, investigate_decision, onboard_new_channel
 """
@@ -260,10 +259,13 @@ def _register_deprecation_shim(mcp: FastMCP) -> None:
     @mcp.tool(
         name="search_channel_knowledge",
         description=(
-            "DEPRECATED. 'search_channel_knowledge' has been retired. Use "
-            "'ask_channel' for natural-language questions with citations, or "
-            "'search_channel_facts' for targeted BM25+vector fact search. "
-            "This tool returns a structured tool_renamed error."
+            "DEPRECATED — do not call. This is a compatibility shim for the "
+            "retired 'search_channel_knowledge' tool. Use 'ask_channel' for "
+            "natural-language questions answered with citations, or "
+            "'search_channel_facts' for targeted keyword+vector fact search "
+            "within one channel. Calling this always returns a structured "
+            '{"error": "tool_renamed", "replacement": [...]} payload and '
+            "performs no work (no backend call, exempt from rate limiting)."
         ),
     )
     async def search_channel_knowledge_deprecated(
@@ -302,13 +304,28 @@ def build_mcp() -> FastMCP:
     mcp = FastMCP(
         name="beever-atlas",
         instructions=(
-            "Beever Atlas MCP surface. Curated tools, resources, and prompts "
-            "for external AI agents (Claude Code, Cursor, IDE assistants) to "
-            "discover, query, and operate Atlas knowledge. Every tool that "
-            "takes a channel_id or connection_id applies a principal-scoped "
-            "ACL; unauthorized calls return structured error payloads with "
-            "codes from the mcp-auth error catalog (channel_access_denied, "
-            "connection_access_denied, job_not_found, rate_limited, etc.)."
+            "Beever Atlas is a team knowledge base that turns synced chat "
+            "platforms (Slack, Discord, Teams, etc.) into a searchable wiki, "
+            "fact store, and knowledge graph. This MCP surface lets an agent "
+            "discover, query, and operate that knowledge.\n\n"
+            "Recommended entry sequence: call whoami to confirm the principal, "
+            "list_connections to see linked platforms, then list_channels to "
+            "get the channel_id values that almost every other tool requires. "
+            "Pass those ids into the retrieval, graph, and orchestration tools.\n\n"
+            "Tool groups: DISCOVERY (whoami, list_connections, list_channels) "
+            "tells you what exists. RETRIEVAL answers questions and reads the "
+            "wiki/facts (ask_channel for cited natural-language answers, "
+            "search_channel_facts / search_memory / find_facts for targeted "
+            "lookups, read_wiki_page & list_wiki_pages for the current wiki). "
+            "GRAPH (find_experts, search_relationships, trace_decision_history) "
+            "navigates entity and decision relationships. ORCHESTRATION "
+            "(trigger_sync, refresh_wiki, get_job_status) starts long-running "
+            "jobs and polls them.\n\n"
+            "Every tool that takes a channel_id or connection_id enforces a "
+            "principal-scoped ACL. Errors are returned as structured payloads "
+            '(e.g. {"error": "channel_access_denied"}), never exceptions; '
+            "common codes include channel_access_denied, connection_access_denied, "
+            "job_not_found, invalid_parameter, and rate_limited."
         ),
         version=_atlas_version(),
     )

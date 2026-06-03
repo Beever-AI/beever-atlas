@@ -20,22 +20,49 @@ def register_graph_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="find_experts")
     async def find_experts(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
-        topic: Annotated[str, "Topic or keyword to find subject-matter experts for"],
+        channel_id: Annotated[
+            str,
+            "Required. The channel id to search within, obtained from "
+            "list_channels (e.g. 'ch-eng'). Not a human channel name.",
+        ],
+        topic: Annotated[
+            str,
+            "Required. Topic or keyword to rank experts on, e.g. 'kubernetes', "
+            "'billing', 'auth'. Matched against knowledge-graph edges, so use a "
+            "concept the channel actually discusses.",
+        ],
         ctx: Context,
-        limit: Annotated[int, "Maximum number of experts to return (1–20)"] = 5,
+        limit: Annotated[
+            int,
+            "Maximum number of experts to return. Range 1–20, default 5. Values "
+            "outside the range are silently clamped (e.g. 50 -> 20, 0 -> 1).",
+        ] = 5,
     ) -> dict:
-        """Identify the most knowledgeable people about a topic in a channel.
+        """Rank the PEOPLE most knowledgeable about a topic in one channel.
 
-        Scores channel members by graph-edge frequency for the topic and returns
-        a ranked list. Each entry includes ``handle``, ``expertise_score``,
-        ``fact_count``, and ``top_topics``.
+        Call this to answer "who should I ask about X in #channel?" or to
+        route a question to the right person. This is the only tool that
+        ranks PEOPLE; use ``search_channel_facts`` / ``find_facts`` to find
+        FACTS, and ``find_experts`` only when you specifically need a human.
 
-        When to use: to answer "who knows the most about X in #channel?" or
-        to find the right person to ask for a specific domain. Use
-        ``search_channel_facts`` to find facts, not people.
+        Prerequisite: a ``channel_id`` from ``list_channels``. Do NOT call
+        with a channel display name.
 
-        Returns: ``{experts: [...]}`` or ``{error: "channel_access_denied", ...}``
+        Returns (instant, read-only, no side effects):
+        ``{"experts": [...]}`` — a list ranked by ``expertise_score``
+        descending. Each entry has ``handle`` (e.g. '@dana'),
+        ``expertise_score`` (relative float, higher = more authoritative;
+        not a fixed 0–1 scale, only meaningful for ranking within this
+        result), ``fact_count`` (number of contributing facts), and
+        ``top_topics`` (list of related topics that person engages with).
+        An empty list means no graph signal for that topic — not an error.
+
+        Error modes: ``{"error": "authentication_missing"}`` if the caller
+        is unauthenticated; ``{"error": "channel_access_denied",
+        "channel_id": ...}`` if the principal cannot read the channel;
+        ``{"error": "invalid_parameter", ...}`` for a malformed
+        ``channel_id``. Other backend failures degrade gracefully to
+        ``{"experts": []}``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -67,25 +94,55 @@ def register_graph_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="search_relationships")
     async def search_relationships(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Required. The channel id to search within, obtained from "
+            "list_channels (e.g. 'ch-eng'). Not a human channel name.",
+        ],
         entities: Annotated[
             list[str],
-            "List of entity names to find relationships for",
+            "Required. One or more entity NAMES to connect, e.g. "
+            "['Postgres', 'billing-service'] or ['Dana']. These are knowledge-"
+            "graph node names (people, systems, concepts), not channel ids. "
+            "Provide at least one; provide two+ to find paths between them.",
         ],
         ctx: Context,
-        hops: Annotated[int, "Number of graph hops to traverse (1–4)"] = 2,
+        hops: Annotated[
+            int,
+            "How many graph edges to traverse out from the entities. Range 1–4, "
+            "default 2. Larger values return wider but noisier subgraphs and are "
+            "slower. Out-of-range values are silently clamped (e.g. 9 -> 4).",
+        ] = 2,
     ) -> dict:
-        """Traverse the knowledge graph to find relationships between entities.
+        """Find how named ENTITIES connect in a channel's knowledge graph.
 
-        Returns a subgraph of nodes and edges connecting the requested entities.
-        Each node has ``name`` and ``type``; each edge has ``source``, ``target``,
-        ``type``, ``confidence``, and ``context``.
+        Call this to answer "how is X related to Y?" or "what touches the
+        billing service?" by returning the subgraph of nodes and edges
+        around the given entities. This explores the KNOWLEDGE graph of
+        entities/relationships — distinct from ``get_wiki_graph``, which
+        returns the wiki PAGE-LINK graph (which wiki pages reference which).
+        Use ``find_experts`` to rank people and ``trace_decision_history``
+        to follow decision supersession.
 
-        When to use: to answer "how is X related to Y?" or to explore entity
-        connections in a channel's knowledge graph. Use ``find_experts`` to
-        find people, not relationships.
+        Prerequisite: a ``channel_id`` from ``list_channels`` and at least
+        one entity name. Names should match how the channel refers to the
+        entity; unknown names simply yield an empty subgraph.
 
-        Returns: ``{nodes, edges, text, entities_searched}`` or ``{error: ...}``
+        Returns (instant for small hop counts, read-only, no side effects):
+        ``{"nodes": [...], "edges": [...], "text": str,
+        "entities_searched": [...]}``. Each node has ``name`` and ``type``
+        (e.g. 'person', 'system', 'concept'); each edge has ``source``,
+        ``target``, ``type`` (relationship label), ``confidence`` (0–1,
+        extraction confidence), and ``context`` (snippet explaining the
+        edge). ``text`` is a human-readable summary. Empty ``nodes``/
+        ``edges`` means no connections were found — not an error.
+
+        Error modes: ``{"error": "authentication_missing"}`` if
+        unauthenticated; ``{"error": "channel_access_denied",
+        "channel_id": ...}`` if the channel is not readable; ``{"error":
+        "invalid_parameter", ...}`` for a malformed ``channel_id``. Other
+        backend failures degrade to ``{"nodes": [], "edges": [],
+        "channel_id": ...}``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
@@ -120,25 +177,49 @@ def register_graph_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="trace_decision_history")
     async def trace_decision_history(
-        channel_id: Annotated[str, "The channel id (from list_channels)"],
+        channel_id: Annotated[
+            str,
+            "Required. The channel id to trace within, obtained from "
+            "list_channels (e.g. 'ch-eng'). Not a human channel name.",
+        ],
         topic: Annotated[
             str,
-            "Topic or decision to trace (e.g. 'database choice', 'API versioning')",
+            "Required. The decision area to trace, e.g. 'database choice', "
+            "'API versioning', 'auth provider'. Matched against decision "
+            "entities in the knowledge graph; use the subject of the decision, "
+            "not a yes/no question.",
         ],
         ctx: Context,
     ) -> dict:
-        """Trace the history of decisions made about a topic in a channel.
+        """Reconstruct how a decision EVOLVED over time in a channel.
 
-        Follows ``SUPERSEDES`` edges in the knowledge graph to reconstruct
-        the decision timeline. Each item includes ``entity``, ``superseded_by``,
-        ``relationship``, ``confidence``, ``context``, and ``position``.
+        Call this to answer "how did the team arrive at the current approach
+        for X?" or "what earlier choices were overridden?" It walks
+        ``SUPERSEDES`` edges in the knowledge graph to build an ordered
+        timeline of superseded → current decisions. Distinct from
+        ``find_decisions`` (which lists current decision facts with no
+        history) and ``search_channel_facts`` (current state only, no
+        chronology); use this tool specifically when you need the
+        chronological "why we changed" trail.
 
-        When to use: to answer "how did the team arrive at the current approach
-        for X?" or "what earlier decisions were overridden?" Use
-        ``search_channel_facts`` to find facts about the current state without
-        historical context.
+        Prerequisite: a ``channel_id`` from ``list_channels``. Best results
+        on mature channels where decisions have been revised; new channels
+        often have no supersession chain yet (empty result, not an error).
 
-        Returns: ``{decisions: [...]}`` or ``{error: "channel_access_denied", ...}``
+        Returns (instant, read-only, no side effects):
+        ``{"decisions": [...]}`` ordered oldest → newest. Each item has
+        ``entity`` (the decision that was made), ``superseded_by`` (the
+        decision that replaced it, or empty for the current one),
+        ``relationship`` (edge label, typically 'SUPERSEDES'),
+        ``confidence`` (0–1 extraction confidence), ``context`` (snippet
+        explaining the change), and ``position`` (0-based index in the
+        timeline). An empty list means no recorded supersession chain.
+
+        Error modes: ``{"error": "authentication_missing"}`` if
+        unauthenticated; ``{"error": "channel_access_denied",
+        "channel_id": ...}`` if the channel is not readable; ``{"error":
+        "invalid_parameter", ...}`` for a malformed ``channel_id``. Other
+        backend failures degrade to ``{"decisions": []}``.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:

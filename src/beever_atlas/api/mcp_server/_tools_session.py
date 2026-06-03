@@ -1,4 +1,4 @@
-"""Session tools: start_new_session (Phase 3, task 3.7)."""
+"""Session tools: start_new_session."""
 
 from __future__ import annotations
 
@@ -16,21 +16,30 @@ def register_session_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(name="start_new_session")
     async def start_new_session(ctx: Context) -> dict:
-        """Reset the conversation session and obtain a new session id.
+        """Mint a fresh conversation session id that starts a new ``ask_channel`` thread.
 
-        Call this when you want to start a fresh conversation thread — for
-        example, after switching topics or to avoid carrying over context from
-        a previous ``ask_channel`` conversation. The returned ``session_id``
-        can be passed as the ``session_id`` parameter to ``ask_channel``.
+        Call this to begin a clean conversation that carries no memory of prior
+        ``ask_channel`` turns — e.g. when the user switches to an unrelated topic
+        or explicitly asks to "start over" / "forget previous context". Pass the
+        returned id as the ``session_id`` argument on subsequent ``ask_channel``
+        calls so they share one continuous thread; reuse the same id for
+        follow-ups, and mint a new one only when you want a clean break.
 
-        Note: this is a Phase 3 stub. Actual ADK session reset is wired in
-        Phase 6. The stub returns a new unique session id that ``ask_channel``
-        will accept as a conversation boundary marker.
+        When NOT to use: do not call this before every question. ``ask_channel``
+        auto-creates a session when ``session_id`` is omitted, so a new session
+        id is only needed to intentionally drop earlier conversation context.
 
-        When to use: explicitly, only when the user asks to "start over" or
-        "forget previous context". Do NOT call before every question.
+        Prerequisites: none. Requires an authenticated MCP principal (the caller's
+        connection token); no ``channel_id`` or other input is needed.
 
-        Returns: ``{session_id: "mcp:<principal>:<short_id>"}``
+        Returns: a dict ``{"session_id": "mcp:<principal>:<short>"}`` where the
+        value is a fresh opaque conversation handle scoped to the caller, e.g.
+        ``{"session_id": "mcp:conn_abc123:9f3c1a2b"}``. On a missing or invalid
+        principal it returns ``{"error": "authentication_missing"}`` instead.
+
+        Side effects: none — this allocates a new conversation boundary marker and
+        does not delete, persist, or mutate any stored data. Latency: instant
+        (no network or LLM call); safe to call synchronously inline.
         """
         principal_id = _get_principal_id(ctx)
         if not principal_id:
