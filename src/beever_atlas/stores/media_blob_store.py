@@ -95,9 +95,7 @@ class MediaBlobStore:
         self._db: "AsyncIOMotorDatabase" = db
         # Default to GridFS so the OSS/default path and direct-construction
         # callers are unaffected; an injected backend (e.g. MinIO) overrides it.
-        self._backend: "BlobBackend" = (
-            backend if backend is not None else GridFSBackend(self._db)
-        )
+        self._backend: "BlobBackend" = backend if backend is not None else GridFSBackend(self._db)
         self._refs: "AsyncIOMotorCollection | None" = None
 
     async def startup(self) -> None:
