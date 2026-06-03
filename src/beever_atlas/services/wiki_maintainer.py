@@ -8,7 +8,7 @@ specific pages they affect and rewrites only those pages' affected
 sections.
 
 Flow when WIKI_MAINTENANCE_MODE=auto:
-  1. ExtractionWorker emits on_extraction_done(channel_id, fact_ids).
+  1. ExtractionWorker emits memory_changed(channel_id, fact_ids).
   2. Maintainer's plan_updates() routes fact_ids → affected page_ids
      deterministically (cluster_id → topic page, entity_tags → entity
      pages, fact_type → role pages). NO LLM call here.
@@ -723,7 +723,7 @@ class WikiMaintainer:
     # Event handlers
     # ------------------------------------------------------------------
 
-    async def on_extraction_done(
+    async def on_memory_changed(
         self,
         channel_id: str,
         fact_ids: list[str],
@@ -732,6 +732,10 @@ class WikiMaintainer:
         mode: str = "manual",
     ) -> dict[str, Any]:
         """Hook invoked from ExtractionWorker after a successful batch.
+
+        Replaces the prior ``on_extraction_done`` name to align with the
+        ``memory_changed`` / ``memory_settled`` two-event contract: this
+        method fires for AT LEAST ONE change.
 
         ``mode`` toggles between ``auto`` (call apply_update on every
         affected page right now) and ``manual`` (mark pages dirty;
@@ -793,7 +797,7 @@ class WikiMaintainer:
             counters["marked_dirty"] = modified
             self._record_mark_dirty(modified)
             logger.info(
-                "wiki_maintainer.on_extraction_done channel=%s mode=manual "
+                "wiki_maintainer.on_memory_changed channel=%s mode=manual "
                 "affected=%d marked_dirty=%d",
                 channel_id,
                 counters["affected_pages"],
@@ -820,12 +824,34 @@ class WikiMaintainer:
                     len(page_fact_ids),
                 )
         logger.info(
-            "wiki_maintainer.on_extraction_done channel=%s mode=auto affected=%d rewritten=%d",
+            "wiki_maintainer.on_memory_changed channel=%s mode=auto affected=%d rewritten=%d",
             channel_id,
             counters["affected_pages"],
             counters["rewritten"],
         )
         return counters
+
+    async def on_memory_settled(
+        self,
+        channel_id: str,
+        fact_ids: list[str],  # noqa: ARG002 — settled events carry no fact_ids
+        *,
+        target_lang: str = "en",
+    ) -> dict[str, int]:
+        """Hook invoked from ExtractionWorker once a channel settles.
+
+        "Settled" = no pending or extracting rows remain for the channel.
+        This is the right moment to drain the dirty-page queue: under
+        manual mode every batch only marked pages dirty, so a debounced
+        flush at settle time renders the wiki in one pass instead of
+        once per batch.
+
+        Delegates to :meth:`maintain_now`, which drains the dirty queue
+        by re-running the LLM rewrite on each affected page. Returns the
+        same ``{rewritten, errors}`` counter shape so observability
+        wiring is unchanged.
+        """
+        return await self.maintain_now(channel_id, target_lang=target_lang)
 
     async def on_consolidation_complete(
         self,
@@ -840,13 +866,13 @@ class WikiMaintainer:
         Replaces the legacy ``WikiCache.mark_all_stale(channel_id)`` hammer:
         instead of marking the entire wiki stale, the maintainer routes the
         consolidation's touched fact ids to the specific pages they affect.
-        Behaviour mirrors :meth:`on_extraction_done` exactly — non-empty
+        Behaviour mirrors :meth:`on_memory_changed` exactly — non-empty
         ``fact_ids`` routes to affected pages (auto fires LLM rewrites,
         manual marks them dirty); empty ``fact_ids`` is a no-op (the worker
         path's per-batch fan-out already covered any new facts during
         consolidation).
         """
-        return await self.on_extraction_done(
+        return await self.on_memory_changed(
             channel_id, fact_ids, target_lang=target_lang, mode=mode
         )
 

@@ -30,13 +30,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-ExtractionDoneCallback = Callable[[str, list[str]], Awaitable[None] | None]
-"""Signature for ``on_extraction_done`` subscribers (channel_id, fact_ids).
+MemoryEventCallback = Callable[[str, list[str]], Awaitable[None] | None]
+"""Signature for ``memory_changed`` / ``memory_settled`` subscribers
+(channel_id, fact_ids).
 
-:class:`WikiMaintainer` subscribes to this event to route freshly-extracted
-facts to affected wiki pages. The worker fans out via ``asyncio.gather`` and
-tolerates per-callback failures so one buggy subscriber cannot block
-extraction progress.
+Two events replace the prior single ``on_extraction_done`` contract:
+
+- ``memory_changed`` fires after each successful batch. Subscribers that
+  react to AT LEAST ONE memory change (e.g. incremental wiki page touches)
+  use this. ``fact_ids`` is the freshly-extracted batch.
+- ``memory_settled`` fires once a channel has no more pending rows for
+  this tick — the channel's memory is at rest. Subscribers that need a
+  stable channel state (debounced wiki flush, consolidation cycle,
+  auto-overview) use this. ``fact_ids`` is the empty list (subscribers
+  read accumulated state from stores).
+
+The worker fans out via ``asyncio.gather`` and tolerates per-callback
+failures so one buggy subscriber cannot block extraction progress.
 """
 
 
@@ -161,7 +171,8 @@ class ExtractionWorker:
         self._semaphore: asyncio.Semaphore | None = None
         self._settle_seconds = settle_seconds
         self._stale_seconds = stale_seconds
-        self._on_extraction_done: list[ExtractionDoneCallback] = []
+        self._on_memory_changed: list[MemoryEventCallback] = []
+        self._on_memory_settled: list[MemoryEventCallback] = []
         # Rolling-window metrics for the admin observability endpoint
         # (production-wiring §20). Each entry is a per-tick record:
         # ``(monotonic_ts, claimed, succeeded, failed)``. Trimmed to the
@@ -175,31 +186,56 @@ class ExtractionWorker:
         self._recent_failures: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
-    # Event subscription (used by WikiMaintainer)
+    # Event subscription (memory_changed / memory_settled)
     # ------------------------------------------------------------------
 
-    def subscribe_extraction_done(self, callback: ExtractionDoneCallback) -> None:
-        """Register a coroutine called after each successful batch.
+    def subscribe_memory_changed(self, callback: MemoryEventCallback) -> None:
+        """Register a coroutine called after each successful extraction batch.
 
-        Subscribers receive ``(channel_id, fact_ids)``. Synchronous
-        callbacks are tolerated. :class:`WikiMaintainer` uses this to fire
-        :meth:`WikiMaintainer.on_extraction_done` so wiki pages refresh
+        Subscribers receive ``(channel_id, fact_ids)`` for the batch that
+        just landed. Synchronous callbacks are tolerated. :class:`WikiMaintainer`
+        uses this to mark affected wiki pages dirty so they refresh
         incrementally instead of waiting on full consolidation.
         """
-        self._on_extraction_done.append(callback)
+        self._on_memory_changed.append(callback)
 
-    async def _emit_extraction_done(self, channel_id: str, fact_ids: list[str]) -> None:
-        for cb in self._on_extraction_done:
+    def subscribe_memory_settled(self, callback: MemoryEventCallback) -> None:
+        """Register a coroutine called when a channel's memory settles.
+
+        "Settled" means a tick observed zero pending/extracting rows for the
+        channel after draining its claimed batches. Subscribers receive
+        ``(channel_id, [])``; they read accumulated state from the stores
+        rather than the (empty) fact_ids list. Use this for debounced wiki
+        flushes, consolidation cycles, and auto-overview rebuilds — work
+        that should fire once per "stable channel state", not per batch.
+        """
+        self._on_memory_settled.append(callback)
+
+    async def _emit_memory_changed(self, channel_id: str, fact_ids: list[str]) -> None:
+        for cb in self._on_memory_changed:
             try:
                 result = cb(channel_id, fact_ids)
                 if inspect.isawaitable(result):
                     await result
             except Exception:  # noqa: BLE001 — one bad subscriber must not stall extraction
                 logger.exception(
-                    "ExtractionWorker: on_extraction_done subscriber raised "
+                    "ExtractionWorker: memory_changed subscriber raised "
                     "for channel=%s fact_count=%d (continuing)",
                     channel_id,
                     len(fact_ids),
+                )
+
+    async def _emit_memory_settled(self, channel_id: str) -> None:
+        for cb in self._on_memory_settled:
+            try:
+                result = cb(channel_id, [])
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 — one bad subscriber must not stall extraction
+                logger.exception(
+                    "ExtractionWorker: memory_settled subscriber raised "
+                    "for channel=%s (continuing)",
+                    channel_id,
                 )
 
     # ------------------------------------------------------------------
@@ -497,7 +533,28 @@ class ExtractionWorker:
         # subscribers tolerate empty lists (they will route by channel_id
         # alone or run a deterministic re-scan).
         fact_ids: list[str] = list(getattr(result, "fact_ids", None) or [])
-        await self._emit_extraction_done(channel_id, fact_ids)
+        await self._emit_memory_changed(channel_id, fact_ids)
+
+        # Settle check: if no rows are still pending or actively extracting
+        # for this channel, the channel's memory is at rest. Emit
+        # ``memory_settled`` so debounced subscribers (wiki flush,
+        # consolidation, auto-overview) can fire exactly once per stable
+        # state. Best-effort — a count failure must not stall the success
+        # path, so we log + skip the emit and let the next tick try again.
+        try:
+            status_counts = await stores.mongodb.count_channel_messages_by_status(channel_id)
+            pending_left = int(status_counts.get("pending", 0)) + int(
+                status_counts.get("extracting", 0)
+            )
+            if pending_left == 0:
+                await self._emit_memory_settled(channel_id)
+        except Exception:  # noqa: BLE001 — settle check is best-effort
+            logger.exception(
+                "ExtractionWorker: settle check failed channel=%s — "
+                "memory_settled will fire on a subsequent tick",
+                channel_id,
+            )
+
         logger.info(
             "ExtractionWorker: extraction_batch_complete "
             "channel=%s rows=%d duration_ms=%d status=done modified=%d",

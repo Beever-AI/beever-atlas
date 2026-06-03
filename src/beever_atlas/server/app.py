@@ -194,10 +194,14 @@ async def lifespan(app: FastAPI):
     # Wire the WikiMaintainer singleton + subscribe it to ExtractionWorker
     # events. Must happen AFTER ``scheduler.startup()`` because the
     # ExtractionWorker singleton is registered by
-    # ``SyncScheduler._register_extraction_worker_jobs``. When auto mode is
-    # configured, every successful extraction batch fans out to
-    # ``WikiMaintainer.on_extraction_done`` so affected wiki pages refresh
-    # incrementally without waiting on a full consolidation pass.
+    # ``SyncScheduler._register_extraction_worker_jobs``.
+    #
+    # Two subscriptions per the memory_changed / memory_settled contract:
+    #   - memory_changed: every successful batch → mark dirty pages (or
+    #     fire incremental rewrites in auto mode).
+    #   - memory_settled: channel reached zero-pending → drain the dirty
+    #     queue once (debounced flush). In manual mode this is what
+    #     surfaces wiki refreshes without a manual button click.
     try:
         import asyncio as _asyncio
 
@@ -290,7 +294,7 @@ async def lifespan(app: FastAPI):
                             exc,
                         )
 
-                await maintainer.on_extraction_done(channel_id, fact_ids, mode=mode)
+                await maintainer.on_memory_changed(channel_id, fact_ids, mode=mode)
 
             def _on_done_log_exc(task: _asyncio.Task) -> None:
                 """Surface any unhandled exception from the fire-and-forget task.
@@ -312,35 +316,47 @@ async def lifespan(app: FastAPI):
                     exc_info=exc,
                 )
 
-            def _on_extraction_done(channel_id: str, fact_ids: list[str]):
+            def _on_memory_changed(channel_id: str, fact_ids: list[str]):
                 # Fire-and-forget so the worker's batch loop is never
                 # blocked by maintainer LLM calls. Per-page exceptions are
-                # already swallowed inside ``on_extraction_done``;
+                # already swallowed inside ``on_memory_changed``;
                 # ``_on_done_log_exc`` covers the rare top-level failure
                 # path (import errors, etc.).
                 task = _asyncio.create_task(_resolve_and_run(channel_id, fact_ids))
                 task.add_done_callback(_on_done_log_exc)
 
-            worker.subscribe_extraction_done(_on_extraction_done)
+            async def _drain_dirty_queue(channel_id: str) -> None:
+                await maintainer.on_memory_settled(channel_id, [])
+
+            def _on_memory_settled(channel_id: str, _fact_ids: list[str]):
+                # Settle event: drain the dirty page queue once per stable
+                # channel state. Fire-and-forget; per-page errors are
+                # swallowed inside ``maintain_now``.
+                task = _asyncio.create_task(_drain_dirty_queue(channel_id))
+                task.add_done_callback(_on_done_log_exc)
+
+            worker.subscribe_memory_changed(_on_memory_changed)
+            worker.subscribe_memory_settled(_on_memory_settled)
     except Exception as exc:
         logging.getLogger(__name__).warning("WikiMaintainer init failed (non-fatal): %s", exc)
 
-    # Wire consolidation to ExtractionWorker.on_extraction_done so that
-    # topic_clusters and channel_summary are built after actual facts land
-    # in Weaviate (not at sync-return time when facts=0).
+    # Wire consolidation to ExtractionWorker.memory_settled so that
+    # topic_clusters and channel_summary are built after the channel
+    # reaches a stable state (zero pending/extracting rows) — not at
+    # sync-return time when facts=0 and not per-batch where it would
+    # consolidate over partial state N times.
     #
-    # Two-flag debounce ("running" + "pending") instead of one.
-    # The old single-flag pattern dropped every event after the first,
-    # so a 7-batch fanout ran consolidation exactly once with only batch-1's
-    # facts.  The new pattern guarantees: at most 1 in-flight + at most 1
-    # queued follow-up.  After the in-flight finishes it drains the pending
-    # flag and runs once more, incorporating all facts from the remaining batches.
+    # Two-flag debounce ("running" + "pending") kept defensively:
+    # memory_settled can still fire multiple times if pending rows reopen
+    # (e.g. failed → retry-window-elapsed → pending) between settle
+    # observations. The two-flag pattern guarantees: at most 1 in-flight
+    # + at most 1 queued follow-up per channel.
     #
     # The subscriber calls consolidate_only() instead of on_ingestion_complete().
     # on_ingestion_complete() increments the AFTER_N_SYNCS counter — calling
-    # it once per batch would tick the counter N times per logical sync.
-    # consolidate_only() calls _spawn_consolidation directly without touching
-    # the counter.
+    # it from the subscriber path would tick the counter on settle events,
+    # which is not the contract. consolidate_only() calls _spawn_consolidation
+    # directly without touching the counter.
     try:
         import asyncio as _asyncio
 
@@ -416,11 +432,11 @@ async def lifespan(app: FastAPI):
                 finally:
                     _consolidation_running.pop(channel_id, None)
 
-            def _on_extraction_done_consolidation(channel_id: str, fact_ids: list[str]) -> None:
+            def _on_memory_settled_consolidation(channel_id: str, fact_ids: list[str]) -> None:
                 # Fire-and-forget, same pattern as WikiMaintainer subscriber.
-                # fact_ids is intentionally unused here: consolidate_only calls
-                # _spawn_consolidation which reads directly from Weaviate — the
-                # full accumulated fact set, not just this batch's ids.
+                # fact_ids is empty for memory_settled events; consolidate_only
+                # reads the accumulated fact set directly from Weaviate.
+                del fact_ids  # noqa: F841 — signature mandated by MemoryEventCallback
                 task = _asyncio.create_task(_run_with_debounce(channel_id))
 
                 def _log_exc(t: _asyncio.Task) -> None:
@@ -437,7 +453,7 @@ async def lifespan(app: FastAPI):
 
                 task.add_done_callback(_log_exc)
 
-            _consolidation_worker.subscribe_extraction_done(_on_extraction_done_consolidation)
+            _consolidation_worker.subscribe_memory_settled(_on_memory_settled_consolidation)
     except Exception as exc:
         logging.getLogger(__name__).warning(
             "Consolidation-after-extraction wiring failed (non-fatal): %s", exc

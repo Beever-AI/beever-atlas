@@ -250,7 +250,7 @@ async def test_tick_groups_by_channel_id(fake_stores, fake_settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_extraction_done_callback_invoked_after_success(fake_stores, fake_settings) -> None:
+async def test_memory_changed_callback_invoked_after_success(fake_stores, fake_settings) -> None:
     docs = [_make_doc()]
     fake_stores.mongodb.claim_pending_messages_for_extraction.return_value = docs
 
@@ -258,18 +258,18 @@ async def test_extraction_done_callback_invoked_after_success(fake_stores, fake_
     bp.process_messages = AsyncMock(return_value=MagicMock(errors=[], fact_ids=["fact-1"]))
     seen: list[tuple[str, list[str]]] = []
 
-    async def on_done(channel_id: str, fact_ids: list[str]) -> None:
+    async def on_changed(channel_id: str, fact_ids: list[str]) -> None:
         seen.append((channel_id, fact_ids))
 
     worker = ExtractionWorker(batch_processor=bp)
-    worker.subscribe_extraction_done(on_done)
+    worker.subscribe_memory_changed(on_changed)
     await worker.tick()
 
     assert seen == [("C1", ["fact-1"])]
 
 
 @pytest.mark.asyncio
-async def test_extraction_done_callback_failure_does_not_break_worker(
+async def test_memory_changed_callback_failure_does_not_break_worker(
     fake_stores, fake_settings
 ) -> None:
     """One buggy subscriber must not stall extraction."""
@@ -283,7 +283,7 @@ async def test_extraction_done_callback_failure_does_not_break_worker(
         raise RuntimeError("subscriber crashed")
 
     worker = ExtractionWorker(batch_processor=bp)
-    worker.subscribe_extraction_done(bad_subscriber)
+    worker.subscribe_memory_changed(bad_subscriber)
     counters = await worker.tick()  # must not raise
     assert counters["succeeded"] >= 0
 
