@@ -73,8 +73,12 @@ packages = ["src/beever_atlas"]
 #   alembic.
 # - python-multipart was bumped to >=0.0.27 directly in [project] above
 #   for CVE-2026-42561.
+# - aiohttp <3.14.0: two HIGH advisories (CVE-2026-34993, CVE-2026-47265).
+#   aiohttp reaches us transitively (e.g. via litellm); pin so the resolver
+#   takes the patched line without adding a direct runtime import.
 constraint-dependencies = [
     "mako>=1.3.12",
+    "aiohttp>=3.14.0",
 ]
 
 [tool.pytest.ini_options]
