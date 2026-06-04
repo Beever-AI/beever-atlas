@@ -9,6 +9,7 @@ and MUST still fetch legitimate platform URLs.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -39,22 +40,30 @@ def _make_client(monkeypatch):
 
     class _FakeResp:
         status_code = 200
-        content = b"ok"
         headers = {"content-type": "application/octet-stream"}
 
+        async def aiter_bytes(self):
+            yield b"ok"
+
+        async def aclose(self):
+            return None
+
     class _FakeClient:
+        """Stub matching the S3 streaming call shape: build_request +
+        send(stream=True) + aclose (no longer the buffering ``.get()``)."""
+
         def __init__(self, *a, **kw):
             pass
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url: str, headers=None):  # noqa: ARG002
+        def build_request(self, method, url, headers=None):  # noqa: ARG002
             recorded["url"] = url
+            return SimpleNamespace(method=method, url=url)
+
+        async def send(self, request, stream=False):  # noqa: ARG002
             return _FakeResp()
+
+        async def aclose(self):
+            return None
 
     monkeypatch.setattr(loaders_mod.httpx, "AsyncClient", _FakeClient)
 

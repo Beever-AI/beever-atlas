@@ -111,6 +111,21 @@ DISCORD_URL = "https://cdn.discordapp.com/attachments/1/2/shot.png?ex=abc&is=def
 DISCORD_URL_RESIGNED = "https://cdn.discordapp.com/attachments/1/2/shot.png?ex=999&is=888&hm=ffff"
 DISCORD_URL_KEY = "cdn.discordapp.com/attachments/1/2/shot.png"
 
+# Per-platform (url, resigned, expected url_key) shapes for the round-trip
+# matrix: a stored blob keyed on host+path survives token/signature rotation.
+SLACK_URL = "https://files.slack.com/files-pri/T1-F1/shot.png?t=AAA"
+SLACK_URL_RESIGNED = "https://files.slack.com/files-pri/T1-F1/shot.png?t=BBB"
+SLACK_URL_KEY = "files.slack.com/files-pri/T1-F1/shot.png"
+
+TEAMS_URL = "https://graph.microsoft.com/v1.0/drives/D1/items/I1/content?tempauth=AAA"
+TEAMS_URL_RESIGNED = "https://graph.microsoft.com/v1.0/drives/D1/items/I1/content?tempauth=ZZZ"
+TEAMS_URL_KEY = "graph.microsoft.com/v1.0/drives/D1/items/I1/content"
+
+# Mattermost is extensionless and carries no rotating query — the identity IS
+# host+path, so the "re-signed" URL is the same URL.
+MM_URL = "https://team.example.com/api/v4/files/fileid123"
+MM_URL_KEY = "team.example.com/api/v4/files/fileid123"
+
 
 @_skip_without_minio
 class TestMediaBlobStoreMinioLive:
@@ -181,6 +196,34 @@ class TestMediaBlobStoreMinioLive:
             data += chunk
         assert data == SAMPLE
         assert ref["sha256"] == SAMPLE_SHA
+
+    @pytest.mark.parametrize(
+        ("url", "resigned", "expected_key"),
+        [
+            (SLACK_URL, SLACK_URL_RESIGNED, SLACK_URL_KEY),
+            (DISCORD_URL, DISCORD_URL_RESIGNED, DISCORD_URL_KEY),
+            (TEAMS_URL, TEAMS_URL_RESIGNED, TEAMS_URL_KEY),
+            (MM_URL, MM_URL, MM_URL_KEY),  # extensionless, same-url round-trip
+        ],
+        ids=["slack", "discord", "teams", "mattermost"],
+    )
+    async def test_save_then_open_by_resigned_url_per_platform(
+        self, store, url, resigned, expected_key
+    ):
+        """Every platform's real URL shape: save → open_by_url(re-signed) →
+        same bytes, and the ref keys on the stable host+path identity."""
+        sha = await self._save(store, url=url)
+        assert sha == SAMPLE_SHA
+
+        result = await store.open_by_url(resigned)
+        assert result is not None
+        read, ref = result
+        data = b""
+        async for chunk in read.iterator:
+            data += chunk
+        assert data == SAMPLE
+        assert ref["sha256"] == SAMPLE_SHA
+        assert ref["url_key"] == expected_key
 
     async def test_dedup_single_object_per_sha_channel(self, store):
         for url in (DISCORD_URL, DISCORD_URL_RESIGNED):

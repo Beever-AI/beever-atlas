@@ -18,11 +18,31 @@ This module is a pure contract: no I/O, no GridFS/S3 imports.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import AsyncIterator
+
+
+# Strict charset for the components that compose a blob key. Allows the shapes
+# every platform's channel id / source id and the sha256 hex actually use
+# (Slack ``C...``, Discord snowflakes, Teams GUIDs with ``-``, Mattermost
+# 26-char ids, ``:``-joined composite ids) while forbidding ``/`` and ``..``
+# so a crafted ``channel_id`` cannot escape the ``channels/{id}/`` prefix on
+# S3/MinIO (path traversal into another channel's objects).
+_KEY_COMPONENT_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+
+def _validate_component(name: str, value: str) -> None:
+    """Raise ``ValueError`` if ``value`` is not a safe blob-key component.
+
+    ``..`` is excluded implicitly (a bare ``..`` matches the charset, so we
+    reject it explicitly) along with anything containing ``/`` or whitespace.
+    """
+    if not value or value == ".." or not _KEY_COMPONENT_RE.match(value):
+        raise ValueError(f"invalid {name}: {value!r}")
 
 
 @dataclass(frozen=True)
@@ -65,11 +85,14 @@ class BlobBackend(Protocol):
         filename: str = "blob",
         source_id: str = "",
     ) -> None:
-        """Store ``data`` under ``key`` (no-op if the key already exists).
+        """Store ``data`` under ``key``.
 
-        ``filename``/``source_id`` are descriptive hints the GridFS backend
-        stamps onto its file doc to preserve the legacy on-disk shape; the
-        MinIO backend ignores them (an S3 object is keyed purely by ``key``).
+        The caller (``MediaBlobStore.save_blob``) owns the dedup probe — it
+        calls :meth:`exists` and skips ``put`` on a hit — so implementations do
+        NOT re-probe (one write = one round-trip). ``filename``/``source_id``
+        are descriptive hints the GridFS backend stamps onto its file doc to
+        preserve the legacy on-disk shape; the MinIO backend ignores them (an
+        S3 object is keyed purely by ``key``).
         """
         ...
 
@@ -101,7 +124,13 @@ def blob_key(channel_id: str, sha256: str) -> str:
     two keys (two stored copies, deliberately) so a channel purge is a clean
     prefix delete and the existing ``(sha256, channel_id)`` dedup identity is
     preserved.
+
+    Both components are validated against a strict charset (S4): a crafted
+    ``channel_id`` containing ``/`` or ``..`` would otherwise escape the
+    ``channels/{id}/`` prefix on S3/MinIO and reach another channel's objects.
     """
+    _validate_component("channel_id", channel_id)
+    _validate_component("sha256", sha256)
     return f"channels/{channel_id}/{sha256}"
 
 
@@ -110,5 +139,9 @@ def blob_prefix(channel_id: str) -> str:
 
     The trailing slash is load-bearing: without it, prefix ``channels/1``
     would also match ``channels/12``'s objects on an S3 ``list_objects_v2``.
+
+    ``channel_id`` is validated against the same strict charset as
+    :func:`blob_key` (S4) so a crafted id cannot widen the purge prefix.
     """
+    _validate_component("channel_id", channel_id)
     return f"channels/{channel_id}/"

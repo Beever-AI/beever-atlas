@@ -61,6 +61,46 @@ def effective_allowed_hosts() -> frozenset[str]:
     return frozenset(ALLOWED_HOSTS) | _RUNTIME_HOSTS
 
 
+# Content types we are willing to render inline in the browser. Anything
+# outside this allowlist (notably ``image/svg+xml`` and ``text/html``, which
+# can execute same-origin script) is served ``Content-Disposition: attachment``
+# so a malicious uploaded "image" can never run as a same-origin document.
+_INLINE_SAFE_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/avif",
+        "application/pdf",
+    }
+)
+
+
+def safe_media_headers(content_type: str | None) -> dict[str, str]:
+    """Return anti-XSS response headers for a proxied media byte-stream.
+
+    Centralizes the hardening both proxies (``/api/files/proxy`` and
+    ``/api/media/proxy``) and ``build_response`` apply:
+
+    - ``X-Content-Type-Options: nosniff`` — stop the browser MIME-sniffing a
+      served blob into an executable type.
+    - ``Content-Security-Policy: default-src 'none'; sandbox`` — even if the
+      response is interpreted as a document, it can load nothing and runs in a
+      sandbox with no script/origin privileges.
+    - ``Content-Disposition`` — ``inline`` only for the known-safe image/PDF
+      allowlist; ``attachment`` for everything else (so an SVG/HTML "image"
+      downloads instead of executing in the page's origin).
+    """
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    disposition = "inline" if mime in _INLINE_SAFE_TYPES else "attachment"
+    return {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Content-Disposition": disposition,
+    }
+
+
 # httpx client lifetime: one per process. Connection pooling + HTTP/2.
 _client: httpx.AsyncClient | None = None
 
@@ -111,17 +151,19 @@ async def slack_bot_tokens() -> list[str]:
 def build_response(upstream: httpx.Response) -> StreamingResponse:
     """Wrap an httpx response as a streaming FastAPI response.
 
-    - Forces `Content-Disposition: inline` so browsers display images
-      instead of triggering a download.
+    - Applies the centralized anti-XSS headers (``safe_media_headers``):
+      ``nosniff`` + a CSP sandbox + a content-type-aware
+      ``Content-Disposition`` (``inline`` only for the known-safe image/PDF
+      allowlist, ``attachment`` otherwise — so an SVG/HTML "image" downloads
+      instead of executing same-origin).
     - Preserves `Content-Type` and `Content-Length` from upstream.
     - Adds a short private cache to reduce re-fetches during a session.
     """
     content_type = upstream.headers.get("content-type", "application/octet-stream")
     headers: dict[str, str] = {
         "Content-Type": content_type,
-        "Content-Disposition": "inline",
         "Cache-Control": "private, max-age=300",
-        "X-Content-Type-Options": "nosniff",
+        **safe_media_headers(content_type),
     }
     if "content-length" in upstream.headers:
         headers["Content-Length"] = upstream.headers["content-length"]

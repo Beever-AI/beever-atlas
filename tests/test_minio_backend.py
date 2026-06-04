@@ -20,6 +20,7 @@ Convention: no ``@pytest.mark.asyncio`` decorators; pyproject sets
 
 from __future__ import annotations
 
+import logging
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, cast
 
@@ -108,6 +109,12 @@ class _FakeS3Client:
         self.buckets: set[str] = set()
         self.objects: dict[str, tuple[bytes, str]] = {}
         self.last_bodies: list[_FakeBody] = []
+        # Keys for which delete_objects should report an Errors entry (and
+        # NOT actually delete) — drives the C1 partial-failure test.
+        self.delete_error_keys: set[str] = set()
+        # When set, put_public_access_block raises this (drives S5 swallow).
+        self.pab_error: Exception | None = None
+        self.pab_calls: list[str] = []
 
     async def head_bucket(self, *, Bucket: str) -> dict[str, Any]:  # noqa: N803
         if Bucket not in self.buckets:
@@ -140,8 +147,22 @@ class _FakeS3Client:
         return {}
 
     async def delete_objects(self, *, Bucket: str, Delete: dict[str, Any]) -> dict[str, Any]:  # noqa: N803
+        errors: list[dict[str, str]] = []
         for obj in Delete.get("Objects", []):
-            self.objects.pop(obj["Key"], None)
+            key = obj["Key"]
+            if key in self.delete_error_keys:
+                # Report the failure and DON'T delete (S3 partial-failure shape).
+                errors.append({"Key": key, "Code": "AccessDenied", "Message": "nope"})
+                continue
+            self.objects.pop(key, None)
+        return {"Errors": errors} if errors else {}
+
+    async def put_public_access_block(  # noqa: N803
+        self, *, Bucket: str, PublicAccessBlockConfiguration: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.pab_calls.append(Bucket)
+        if self.pab_error is not None:
+            raise self.pab_error
         return {}
 
     def get_paginator(self, _name: str) -> _FakePaginator:
@@ -275,3 +296,131 @@ class TestStats:
     async def test_stats_empty_bucket(self):
         backend, _fake = await _make_backend()
         assert await backend.stats() == (0, 0)
+
+
+class TestDeletePrefixPartialFailure:
+    async def test_partial_delete_failure_excluded_from_count(self):
+        """C1: delete_objects reporting Errors for one key → count excludes it,
+        the failed key survives, and the never-raises contract holds."""
+        backend, fake = await _make_backend()
+        await backend.put(blob_key("C1", "a"), b"a1", content_type="image/png")
+        await backend.put(blob_key("C1", "b"), b"b1", content_type="image/png")
+        await backend.put(blob_key("C1", "c"), b"c1", content_type="image/png")
+        # Fail the delete of one specific object.
+        fail_key = blob_key("C1", "b")
+        fake.delete_error_keys = {fail_key}
+
+        deleted = await backend.delete_prefix(blob_prefix("C1"))
+
+        # 3 listed, 1 failed → 2 counted (NOT 3 — the old bug counted blind).
+        assert deleted == 2
+        # The failed key is still present (not silently reported as deleted).
+        assert await backend.exists(fail_key) is True
+        assert await backend.exists(blob_key("C1", "a")) is False
+        assert await backend.exists(blob_key("C1", "c")) is False
+
+    async def test_delete_prefix_never_raises_on_partial_failure(self):
+        backend, fake = await _make_backend()
+        await backend.put(blob_key("C1", "a"), b"a1", content_type="image/png")
+        fake.delete_error_keys = {blob_key("C1", "a")}
+        # Must not raise even though every delete in the page errored.
+        deleted = await backend.delete_prefix(blob_prefix("C1"))
+        assert deleted == 0
+
+
+class TestPublicAccessBlock:
+    async def test_block_public_access_applied_on_create(self):
+        """S5: a freshly-created bucket gets a PublicAccessBlock."""
+        backend, fake = await _make_backend(bucket_exists=False)
+        assert fake.pab_calls == ["atlas-media-test"]
+
+    async def test_block_public_access_unsupported_is_swallowed(self):
+        """S5: a store that doesn't support the API must not crash startup."""
+        backend = MinioBackend(
+            endpoint_url="http://localhost:9000",
+            access_key="key",
+            secret_key="secret",
+            bucket="atlas-media-test",
+            secure=False,
+            region="us-east-1",
+        )
+        fake = _FakeS3Client()
+        fake.pab_error = _client_error("NotImplemented", 501, "PutPublicAccessBlock")
+        backend._client = fake
+        backend._stack = AsyncExitStack()
+        # Must not raise — the unsupported API is best-effort.
+        await backend._ensure_bucket()
+        assert "atlas-media-test" in fake.buckets
+
+    async def test_block_public_access_not_applied_when_bucket_exists(self):
+        """S5: an already-present bucket is NOT re-locked (create branch only)."""
+        backend, fake = await _make_backend(bucket_exists=True)
+        assert fake.pab_calls == []
+
+
+class TestInsecureBootWarning:
+    """Capture the boot WARNING by attaching a handler directly to the module
+    logger — the app's JSON logging config doesn't propagate to the root, so
+    ``caplog``'s root-handler capture sees nothing."""
+
+    @staticmethod
+    async def _startup_capture(endpoint: str) -> list[str]:
+        backend = MinioBackend(
+            endpoint_url=endpoint,
+            access_key="key",
+            secret_key="secret",
+            bucket="atlas-media-test",
+            secure=False,
+            region="us-east-1",
+        )
+        fake = _FakeS3Client()
+        backend._session = cast(Any, _FakeSession(fake))
+
+        records: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        from beever_atlas.stores import minio_backend as mb_mod
+
+        handler = _Capture(level=logging.WARNING)
+        mb_mod.logger.addHandler(handler)
+        try:
+            await backend.startup()
+        finally:
+            mb_mod.logger.removeHandler(handler)
+        return records
+
+    async def test_warns_on_plaintext_nonlocal_endpoint(self):
+        records = await self._startup_capture("http://minio.internal.example:9000")
+        assert any("plaintext HTTP" in msg for msg in records)
+
+    async def test_no_warning_for_localhost(self):
+        records = await self._startup_capture("http://localhost:9000")
+        assert not any("plaintext HTTP" in msg for msg in records)
+
+
+class _FakeSession:
+    """Minimal ``aioboto3.Session`` stub whose ``client(...)`` yields the fake.
+
+    Lets ``MinioBackend.startup()`` run end-to-end (exercising the boot
+    WARNING + ensure_bucket) without aioboto3 / a live endpoint.
+    """
+
+    def __init__(self, fake: _FakeS3Client) -> None:
+        self._fake = fake
+
+    def client(self, *_a: Any, **_kw: Any) -> "_FakeClientCM":
+        return _FakeClientCM(self._fake)
+
+
+class _FakeClientCM:
+    def __init__(self, fake: _FakeS3Client) -> None:
+        self._fake = fake
+
+    async def __aenter__(self) -> _FakeS3Client:
+        return self._fake
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False

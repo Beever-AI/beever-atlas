@@ -107,17 +107,18 @@ class GridFSBackend:
         filename: str = "blob",
         source_id: str = "",
     ) -> None:
-        """Store ``data`` under ``key`` if absent, stamping the legacy metadata.
+        """Store ``data`` under ``key``, stamping the legacy metadata.
 
         The file doc keeps the exact ``metadata.{sha256, channel_id, source_id,
         mime_type}`` shape so existing on-disk docs and integration tests still
-        resolve. Dedup-probes ``(sha256, channel_id)`` first and skips the
-        upload on a hit (idempotent re-saves).
+        resolve. No internal dedup probe (C3): ``MediaBlobStore.save_blob``
+        already calls ``exists(key)`` and skips ``put`` on a hit, so a second
+        probe here is a redundant Mongo round-trip — this matches
+        ``MinioBackend.put`` (which has none) and makes a write a single
+        round-trip.
         """
         bucket = self._ensure_ready()
         channel_id, sha256 = _parse_key(key)
-        if await self.exists(key):
-            return
         metadata = {
             "sha256": sha256,
             "channel_id": channel_id,

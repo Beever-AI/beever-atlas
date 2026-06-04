@@ -161,6 +161,24 @@ class TestNormalizeUrlKey:
     def test_telegram_host_yields_empty(self):
         assert MediaBlobStore.normalize_url_key(TELEGRAM_URL) == ""
 
+    def test_slack_stable_across_token_rotation(self):
+        url = "https://files.slack.com/files-pri/T1-F1/shot.png?t=AAA"
+        resigned = "https://files.slack.com/files-pri/T1-F1/shot.png?t=BBB"
+        key = MediaBlobStore.normalize_url_key(url)
+        assert key == "files.slack.com/files-pri/T1-F1/shot.png"
+        assert MediaBlobStore.normalize_url_key(resigned) == key
+
+    def test_teams_graph_stable_across_tempauth_rotation(self):
+        url = "https://graph.microsoft.com/v1.0/drives/D1/items/I1/content?tempauth=AAA"
+        resigned = "https://graph.microsoft.com/v1.0/drives/D1/items/I1/content?tempauth=ZZZ"
+        key = MediaBlobStore.normalize_url_key(url)
+        assert key == "graph.microsoft.com/v1.0/drives/D1/items/I1/content"
+        assert MediaBlobStore.normalize_url_key(resigned) == key
+
+    def test_mattermost_extensionless_identity_is_host_path(self):
+        url = "https://team.example.com/api/v4/files/fileid123"
+        assert MediaBlobStore.normalize_url_key(url) == "team.example.com/api/v4/files/fileid123"
+
     def test_empty_and_invalid_yield_empty(self):
         assert MediaBlobStore.normalize_url_key("") == ""
         assert MediaBlobStore.normalize_url_key("not a url") == ""
@@ -225,6 +243,29 @@ class TestSaveBlob:
         assert sha == hashlib.sha256(big).hexdigest()  # sha still returned
         bucket.open_upload_stream.assert_not_called()  # not stored
         refs.update_one.assert_not_awaited()
+
+    async def test_empty_content_persists_nothing(self):
+        """C2: empty bytes → canonical empty sha, no byte write, no ref upsert."""
+        store, files, refs, bucket, stream = _make_store(files_existing=None)
+        sha = await self._save(store, content=b"")
+
+        assert sha == hashlib.sha256(b"").hexdigest()
+        bucket.open_upload_stream.assert_not_called()  # nothing stored
+        assert stream.written == b""
+        refs.update_one.assert_not_awaited()  # no ref indexed
+        # The empty guard returns BEFORE the dedup probe — no Mongo touch at all.
+        files.find_one.assert_not_awaited()
+
+    async def test_gridfs_single_probe_on_fresh_key(self):
+        """C3: a fresh save dedup-probes ONCE (the store's exists()) then writes.
+
+        The GridFSBackend.put no longer re-probes, so ``channel_media.files``'s
+        ``find_one`` (the only probe surface) is awaited exactly once.
+        """
+        store, files, _refs, _bucket, stream = _make_store(files_existing=None)
+        await self._save(store)
+        assert stream.written == SAMPLE
+        assert files.find_one.await_count == 1, "exactly one dedup probe (no second exists())"
 
 
 # ---------------------------------------------------------------------------

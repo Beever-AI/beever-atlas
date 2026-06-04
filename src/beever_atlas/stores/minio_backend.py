@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 import aioboto3
 from aiobotocore.config import AioConfig
@@ -37,6 +38,10 @@ _CHUNK_BYTES = 256 * 1024
 # delete_objects accepts up to 1000 keys per call; list_objects_v2 returns up
 # to 1000 keys per page, so one delete per page is always within bounds.
 _PAGE_SIZE = 1000
+
+# Hosts for which plaintext HTTP is acceptable (loopback dev/CI). Anything else
+# on ``secure=false`` is a misconfiguration worth a boot-time WARNING.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _is_not_found(exc: ClientError) -> bool:
@@ -72,6 +77,17 @@ class MinioBackend:
 
     async def startup(self) -> None:
         """Open the long-lived S3 client and ensure the bucket exists."""
+        # S5 boot hardening: warn when serving over plaintext HTTP against a
+        # non-local endpoint — channel media (potential PII) would transit the
+        # wire unencrypted. Loopback dev/CI endpoints are exempt.
+        if not self._secure and self._endpoint_url:
+            host = (urlparse(self._endpoint_url).hostname or "").lower()
+            if host and host not in _LOCAL_HOSTS:
+                logger.warning(
+                    "MinIO channel-media backend is using plaintext HTTP against a "
+                    "non-local endpoint=%s; set CHANNEL_MEDIA_MINIO_SECURE=true",
+                    self._endpoint_url,
+                )
         # Path-style addressing is required for MinIO (virtual-host style needs
         # wildcard DNS the local endpoint doesn't have); harmless on AWS.
         config = AioConfig(s3={"addressing_style": "path"})
@@ -123,6 +139,31 @@ class MinioBackend:
             if code in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                 return
             raise
+
+        # S5: lock the freshly-created bucket down to private-only — block any
+        # public ACL / policy. Best-effort: many MinIO builds don't implement
+        # the PublicAccessBlock API, so a failure is logged and swallowed (AWS
+        # S3 supports it; the channel-media bucket is never meant to be public).
+        await self._block_public_access(client)
+
+    async def _block_public_access(self, client: Any) -> None:
+        """Best-effort: apply an all-block PublicAccessBlock to the bucket."""
+        try:
+            await client.put_public_access_block(
+                Bucket=self._bucket,
+                PublicAccessBlockConfiguration={
+                    "BlockPublicAcls": True,
+                    "IgnorePublicAcls": True,
+                    "BlockPublicPolicy": True,
+                    "RestrictPublicBuckets": True,
+                },
+            )
+        except Exception as exc:
+            logger.info(
+                "MinioBackend: put_public_access_block unsupported/failed bucket=%s error=%s",
+                self._bucket,
+                exc,
+            )
 
     async def put(
         self,
@@ -192,10 +233,22 @@ class MinioBackend:
                 keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
                 if not keys:
                     continue
-                await client.delete_objects(
+                # ``Quiet=True`` still returns ``Errors`` for keys that failed to
+                # delete — count only the successes so a partial purge failure is
+                # NOT silently reported as a full success (orphaned PII bytes
+                # would otherwise survive while the refs are dropped).
+                resp = await client.delete_objects(
                     Bucket=self._bucket, Delete={"Objects": keys, "Quiet": True}
                 )
-                deleted += len(keys)
+                errors = resp.get("Errors", []) if isinstance(resp, dict) else []
+                for err in errors:
+                    logger.warning(
+                        "MinioBackend: delete_objects failed key=%s code=%s message=%s",
+                        err.get("Key"),
+                        err.get("Code"),
+                        err.get("Message"),
+                    )
+                deleted += len(keys) - len(errors)
         except ClientError as exc:
             logger.warning(
                 "MinioBackend: delete_prefix failed prefix=%s deleted=%d error=%s",

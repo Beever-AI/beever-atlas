@@ -46,15 +46,20 @@ def _fake_getaddrinfo(ip: str):
 
 @pytest.fixture
 def client_with_loaders(monkeypatch):
-    """FastAPI test client with the loaders router mounted, no auth required.
+    """FastAPI test client with the loaders router mounted.
 
     ``proxy_media`` checks ``adapter`` etc. via FastAPI dependencies. We mount
-    the router onto a bare app so a TestClient can call it directly.
+    the router onto a bare app so a TestClient can call it directly. The S1
+    fix added ``Depends(require_user_loader)`` to the proxy endpoints, so we
+    override that dependency with a static single-tenant user principal — these
+    tests exercise the SSRF/allowlist behavior, not auth.
     """
     from beever_atlas.api import loaders
+    from beever_atlas.infra.auth import Principal, require_user_loader
 
     app = FastAPI()
     app.include_router(loaders.router)
+    app.dependency_overrides[require_user_loader] = lambda: Principal("user:test", kind="user")
     return TestClient(app)
 
 

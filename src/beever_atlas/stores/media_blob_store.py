@@ -195,6 +195,15 @@ class MediaBlobStore:
         upserted regardless so a re-signed URL refreshes its mapping.
         """
         backend, refs = self._ensure_ready()
+
+        # C2: empty content (an empty/failed download) must persist nothing and
+        # index no ref — otherwise a working origin fallback is shadowed by an
+        # empty 200. Return the canonical empty-bytes sha so callers keep a
+        # stable handle. The ingest path (media_processor._persist_media) has no
+        # empty guard, so this store-level guard is the single chokepoint.
+        if not content:
+            return hashlib.sha256(b"").hexdigest()
+
         sha256 = hashlib.sha256(content).hexdigest()
         size_bytes = len(content)
 
