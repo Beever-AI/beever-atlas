@@ -32,6 +32,12 @@
   <a href="https://beever.ai/"><img src="https://img.shields.io/badge/WEBSITE-beever.ai-15404E?style=for-the-badge&labelColor=4A4A4A" alt="beever.ai" /></a>
 </p>
 
+<div align="center">
+  <a href="https://glama.ai/mcp/servers/Beever-AI/beever-atlas">
+    <img width="380" height="200" src="https://glama.ai/mcp/servers/Beever-AI/beever-atlas/badge" alt="Beever Atlas MCP server on Glama" />
+  </a>
+</div>
+
 ---
 
 Beever Atlas pulls the conversations your team already has on Slack, Discord, Microsoft Teams, and Mattermost, extracts atomic facts, deduplicates them, and clusters them into topic pages with citations. A graph store links the people, decisions, and projects mentioned across channels. Ask questions in natural language and get answers cited back to the source messages — through the dashboard, or through MCP into Claude Code and Cursor.
