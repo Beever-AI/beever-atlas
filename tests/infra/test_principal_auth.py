@@ -313,14 +313,21 @@ def test_loader_endpoint_audit_guard():
                     if isinstance(arg, ast.Name) and arg.id in targets:
                         call_sites.append(f"{f.name}:{node.lineno}:Depends:{arg.id}")
 
-    # Expected sites:
-    #   loaders.py: NO inline Depends — it's mounted via app.py's _loader_auth.
-    #   ask.py:    1 direct call to `require_user_loader_optional(...)` in
-    #              the public shared-link endpoint.
-    # If a developer adds a new loader endpoint, this fails LOUDLY with the
-    # full list so the contributor must update the allow-list deliberately.
-    assert len(call_sites) <= 1, (
-        f"Audit guard: found {len(call_sites)} loader-dep call sites: {call_sites}. "
+    # Approved loader-dep call sites (the ?access_token= surface), keyed by file
+    # so the guard tolerates line moves but fails loudly on any NEW site:
+    #   ask.py:     1 direct `require_user_loader_optional(...)` — public shared-link endpoint.
+    #   loaders.py: 2 `Depends(require_user_loader)` — proxy_file + proxy_media obtain the
+    #               authenticated principal to enforce `assert_channel_access` on store hits
+    #               (PR #226, S1 IDOR fix). These routes are ALREADY loader-mounted via
+    #               app.py's `_loader_auth`, so reading the principal here does NOT widen the
+    #               ?access_token= surface — it only closes a cross-channel media read.
+    # If a developer adds a new loader endpoint / site, this fails LOUDLY so the
+    # contributor must update this allow-list deliberately.
+    from collections import Counter
+
+    by_file = Counter(cs.split(":")[0] for cs in call_sites)
+    assert by_file == {"ask.py": 1, "loaders.py": 2}, (
+        f"Audit guard: loader-dep call sites changed: {dict(by_file)} :: {call_sites}. "
         "Issue #88: every new use of require_user_loader[_optional] expands the "
         "?access_token= surface. Update this allow-list deliberately if intended."
     )
