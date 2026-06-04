@@ -11,11 +11,20 @@ def register_prompts(mcp: FastMCP) -> None:
     # 4.6 summarize_channel
     @mcp.prompt(name="summarize_channel")
     def summarize_channel(channel_id: str, since_days: int = 7) -> list[dict]:
-        """Produce a user-role instruction to summarize recent channel discussion.
+        """Recap recent activity in one channel.
+
+        Use this prompt when a user asks "what happened in #channel lately?" or
+        wants a standup-style digest. It returns a single user-role message that
+        instructs the agent to summarize decisions, open questions, and key
+        participants over the look-back window, grounded with get_recent_activity
+        and the activity wiki page. It performs no retrieval itself — the caller's
+        agent runs the named tools.
 
         Parameters:
-            channel_id: The channel id to summarize (from list_channels).
-            since_days: Look-back window in days (default 7).
+            channel_id: Channel to summarize. Get a valid id from list_channels
+                (e.g. "C12345").
+            since_days: Look-back window in days. Default 7; use a larger value
+                for a broader recap.
         """
         return [
             {
@@ -32,11 +41,20 @@ def register_prompts(mcp: FastMCP) -> None:
     # 4.7 investigate_decision
     @mcp.prompt(name="investigate_decision")
     def investigate_decision(channel_id: str, topic: str) -> list[dict]:
-        """Produce a decision-trace-style instruction for investigating a topic.
+        """Trace how a decision was made in one channel.
+
+        Use this prompt when a user asks "why did we decide X?" or "what's the
+        history behind X?". It returns a single user-role message that directs
+        the agent to reconstruct the decision's SUPERSEDES chain with
+        trace_decision_history, identify who drove it with find_experts, and
+        ground each claim with search_channel_facts. The prompt itself does no
+        retrieval — the caller's agent runs the named tools.
 
         Parameters:
-            channel_id: The channel id to investigate (from list_channels).
-            topic: The decision or topic to trace (e.g. 'database choice').
+            channel_id: Channel to investigate. Get a valid id from list_channels
+                (e.g. "C12345").
+            topic: The decision or subject to trace, in natural language
+                (e.g. "database choice", "auth provider migration").
         """
         return [
             {
@@ -53,10 +71,18 @@ def register_prompts(mcp: FastMCP) -> None:
     # 4.8 onboard_new_channel
     @mcp.prompt(name="onboard_new_channel")
     def onboard_new_channel(channel_id: str) -> list[dict]:
-        """Produce an onboarding-overview instruction for a new channel.
+        """Orient someone joining a channel for the first time.
+
+        Use this prompt when a user asks "get me up to speed on #channel" or
+        "what is this channel about?". It returns a single user-role message that
+        walks the agent through the overview, people, and topics wiki pages and
+        asks it to summarize the channel's scope, key people, active topics, and
+        recent decisions. The prompt itself does no retrieval — the caller's
+        agent runs the named tools.
 
         Parameters:
-            channel_id: The channel id to onboard (from list_channels).
+            channel_id: Channel to onboard into. Get a valid id from
+                list_channels (e.g. "C12345").
         """
         return [
             {

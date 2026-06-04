@@ -1,0 +1,6 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["alan5543"],
+  "command": "python",
+  "args": ["-m", "beever_atlas.api.mcp_server"]
+}

@@ -21,7 +21,14 @@ def register_resources(mcp: FastMCP) -> None:
     @mcp.resource(
         "atlas://connection/{connection_id}",
         name="connection",
-        description="Metadata for a single platform connection owned by the calling MCP principal.",
+        description=(
+            "Read metadata for one platform connection (e.g. a linked Slack or "
+            "Discord workspace) owned by the calling principal. connection_id "
+            "comes from list_connections (e.g. 'conn_abc123'). Returns the "
+            "connection's JSON record, or a structured error: "
+            "connection_not_found if the id is unknown, connection_access_denied "
+            "if it belongs to another principal. Instant read, no side effects."
+        ),
         mime_type="application/json",
     )
     async def get_connection(connection_id: str) -> dict:
@@ -56,7 +63,14 @@ def register_resources(mcp: FastMCP) -> None:
     @mcp.resource(
         "atlas://connection/{connection_id}/channels",
         name="connection-channels",
-        description="All channels selected for sync under a connection owned by the calling principal.",
+        description=(
+            "List the channels selected for sync under one connection owned by "
+            "the calling principal. connection_id comes from list_connections "
+            "(e.g. 'conn_abc123'). Returns {channels: [...], connection_id}, or "
+            "connection_access_denied if the connection belongs to another "
+            "principal. Equivalent to the list_channels tool scoped to a single "
+            "connection. Instant read, no side effects."
+        ),
         mime_type="application/json",
     )
     async def get_connection_channels(connection_id: str) -> dict:
@@ -89,8 +103,14 @@ def register_resources(mcp: FastMCP) -> None:
         "atlas://channel/{channel_id}/wiki",
         name="channel-wiki-index",
         description=(
-            "Wiki structure index for a channel: overview summary and available page types. "
-            "Returns a stub if the wiki cache has not been populated yet."
+            "Read the wiki table of contents for a channel: the list of pages "
+            "(or page types) and a short overview. Use this to discover what "
+            "wiki content exists before fetching a specific page. channel_id "
+            "comes from list_channels (e.g. 'C12345'). Returns {channel_id, "
+            "pages|page_types, overview, stub}; stub is true when the wiki has "
+            "not been generated yet (run refresh_wiki to populate it). Returns "
+            "channel_access_denied if the channel belongs to another principal. "
+            "Instant read, no side effects."
         ),
         mime_type="application/json",
     )
@@ -191,8 +211,13 @@ def register_resources(mcp: FastMCP) -> None:
         "atlas://channel/{channel_id}/wiki/page/{page_id}",
         name="channel-wiki-page",
         description=(
-            "Pre-compiled wiki page content for a channel. page_id is one of: "
-            "overview, faq, decisions, people, glossary, activity, topics."
+            "Read one pre-compiled wiki page for a channel. channel_id comes "
+            "from list_channels (e.g. 'C12345'); page_id is one of: overview, "
+            "faq, decisions, people, glossary, activity, topics. Returns "
+            "{channel_id, page_type, content, generated_at, citations}; content "
+            "is null when that page has not been generated yet (run refresh_wiki "
+            "to populate it). Returns channel_access_denied if the channel "
+            "belongs to another principal. Instant read, no side effects."
         ),
         mime_type="application/json",
     )
@@ -243,8 +268,13 @@ def register_resources(mcp: FastMCP) -> None:
         "atlas://job/{job_id}",
         name="job-status",
         description=(
-            "Status of a long-running sync or wiki-refresh job. Returns job_not_found "
-            "for jobs not owned by the calling principal (no information leak)."
+            "Read the status of a long-running sync or wiki-refresh job started "
+            "by trigger_sync or refresh_wiki. job_id is the value those tools "
+            "return (e.g. 'job_789'). Returns the job status record (state, "
+            "progress, timestamps). Returns job_not_found both for unknown ids "
+            "and for jobs owned by another principal, so it never leaks the "
+            "existence of others' jobs. This is the resource form of the "
+            "get_job_status tool. Instant read, no side effects."
         ),
         mime_type="application/json",
     )

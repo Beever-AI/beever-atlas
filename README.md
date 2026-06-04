@@ -23,6 +23,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Apache_2.0-7CB342?style=for-the-badge&labelColor=4A4A4A" alt="License Apache 2.0" /></a>
   <a href="https://beever.ai"><img src="https://img.shields.io/badge/BUILT_BY-BEEVER.AI-15404E?style=for-the-badge&labelColor=4A4A4A" alt="Built by Beever.ai" /></a>
   <a href="https://google.github.io/adk-docs/"><img src="https://img.shields.io/badge/BUILT_WITH-Google_ADK-FF6F00?style=for-the-badge&labelColor=4A4A4A" alt="Built with Google ADK" /></a>
+  <a href="https://glama.ai/mcp/servers/Beever-AI/beever-atlas"><img src="https://img.shields.io/badge/MCP-Listed_on_Glama-A855F7?style=for-the-badge&labelColor=4A4A4A" alt="MCP server on Glama" /></a>
 </p>
 
 <p align="center">
@@ -75,7 +76,7 @@ Six short clips — connect a workspace, sync history, watch memory build, brows
     <td width="33%" align="center" valign="top">
       <strong>MCP Server</strong><br><br>
       <img src="assets/clips/mcp.gif" alt="MCP server querying from Claude Code demo" width="100%"><br>
-      Plug Claude Code / Cursor into your knowledge base — 16 tools, per-agent auth.
+      Plug Claude Code / Cursor into your knowledge base — 28 tools, per-agent auth.
     </td>
   </tr>
 </table>
@@ -316,10 +317,12 @@ curl -X POST http://localhost:8000/api/channels/C12345/sync \
 Beever Atlas exposes a curated MCP (Model Context Protocol) server at `/mcp` for AI agents like Claude Code and Cursor. This allows external code assistants to query your team's knowledge base without using the dashboard.
 
 See [docs/mcp-server.md](docs/mcp-server.md) for:
-- **Tool catalog** — 16 tools for discovery, retrieval, graph traversal, and long-running operations
+- **Tool catalog** — 28 tools for discovery, retrieval, wiki reading, graph traversal, and long-running operations
 - **Auth setup** — generating and managing `BEEVER_MCP_API_KEYS`
 - **Client configuration** — ready-to-use `.mcp.json` templates for Claude Code and Cursor
 - **Rate limits** — principal-keyed limits to prevent one agent from throttling others
+
+It also ships a **standalone stdio mode** (`python -m beever_atlas.api.mcp_server` / `beever-atlas-mcp`) that exposes the same tool catalog with no HTTP server or backing stores — handy for MCP registries (Glama.ai) and local introspection. See [docs/mcp-server.md](docs/mcp-server.md#standalone-introspection-mode-stdio).
 
 Quick example (Claude Code):
 ```json

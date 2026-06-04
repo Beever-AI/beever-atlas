@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "beever-atlas": {
+      "command": "python",
+      "args": ["-m", "beever_atlas.api.mcp_server"]
+    }
+  }
+}

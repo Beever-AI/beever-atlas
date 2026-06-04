@@ -8,7 +8,10 @@ resolution-markers = [
 ]
 
 [manifest]
-constraints = [{ name = "mako", specifier = ">=1.3.12" }]
+constraints = [
+    { name = "aiohttp", specifier = ">=3.14.0" },
+    { name = "mako", specifier = ">=1.3.12" },
+]
 
 [[package]]
 name = "aioboto3"
