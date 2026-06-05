@@ -260,6 +260,11 @@ describe("resolveIsEmpty", () => {
   it("does NOT hide a substantive answer even if backend flags empty", () => {
     assert.strictEqual(resolveIsEmpty("x".repeat(600), noCites, true), false);
   });
+  it("treats the 600-char threshold as the substantive boundary", () => {
+    // 599 chars is still collapsible when flagged empty; 600 is protected.
+    assert.strictEqual(resolveIsEmpty("x".repeat(599), noCites, true), true);
+    assert.strictEqual(resolveIsEmpty("x".repeat(600), noCites, true), false);
+  });
   it("is never empty when citations exist", () => {
     assert.strictEqual(resolveIsEmpty("could not find any indexed", [{ type: "f", text: "t" }], true), false);
   });

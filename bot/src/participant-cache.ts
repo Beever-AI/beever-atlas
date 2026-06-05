@@ -11,11 +11,13 @@
 export class ParticipantCache {
   private readonly ttlMs: number;
   private readonly now: () => number;
+  private readonly maxEntries: number;
   private readonly entries = new Map<string, { count: number; expires: number }>();
 
-  constructor(ttlMs: number, now: () => number = Date.now) {
+  constructor(ttlMs: number, now: () => number = Date.now, maxEntries = 5000) {
     this.ttlMs = ttlMs;
     this.now = now;
+    this.maxEntries = Math.max(1, maxEntries);
   }
 
   /** Cached human count for a thread, or undefined if absent/expired/disabled. */
@@ -33,5 +35,19 @@ export class ParticipantCache {
   set(threadId: string, count: number): void {
     if (this.ttlMs <= 0) return;
     this.entries.set(threadId, { count, expires: this.now() + this.ttlMs });
+    if (this.entries.size > this.maxEntries) this.evict();
+  }
+
+  /** Bound memory: drop expired entries first, then oldest, until within cap. */
+  private evict(): void {
+    const now = this.now();
+    for (const [key, value] of this.entries) {
+      if (value.expires <= now) this.entries.delete(key);
+    }
+    while (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
   }
 }

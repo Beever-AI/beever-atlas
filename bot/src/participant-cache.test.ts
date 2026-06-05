@@ -33,4 +33,12 @@ describe("ParticipantCache", () => {
     c.set("t1", 9);
     assert.strictEqual(c.get("t1"), undefined);
   });
+
+  it("bounds memory: never exceeds maxEntries", () => {
+    const c = new ParticipantCache(10_000, () => 0, 3);
+    for (let i = 0; i < 50; i++) c.set(`t${i}`, i);
+    let live = 0;
+    for (let i = 0; i < 50; i++) if (c.get(`t${i}`) !== undefined) live += 1;
+    assert.ok(live <= 3, `expected <=3 live entries, got ${live}`);
+  });
 });

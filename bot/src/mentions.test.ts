@@ -31,6 +31,10 @@ describe("stripMention", () => {
     assert.strictEqual(stripMention("please ping @bob about it", "mattermost"), "please ping @bob about it");
   });
 
+  it("strips only the leading bot @handle, keeping a following @user", () => {
+    assert.strictEqual(stripMention("@beever @bob what happened", "mattermost"), "@bob what happened");
+  });
+
   it("returns empty string for a mention-only message", () => {
     assert.strictEqual(stripMention("<@U123>", "slack"), "");
     assert.strictEqual(stripMention("   ", "slack"), "");

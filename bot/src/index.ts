@@ -53,7 +53,8 @@ const participantCache = new ParticipantCache(PARTICIPANT_CACHE_TTL_MS);
 function registerHandlers(bot: Chat): void {
   // Handler: user @mentions the bot in a not-yet-subscribed thread.
   bot.onNewMention(async (thread, message) => {
-    console.log(`[@mention] ${message.text} (from ${thread.id})`);
+    // Log length, not content — message text can carry PII/secrets.
+    console.log(`[@mention] (${(message.text || "").length} chars) from ${thread.id}`);
     // Never answer our own message or another bot — the latter prevents
     // bot-to-bot @mention loops (e.g. a workflow bot pinging Beever).
     if (message.author?.isMe === true || message.author?.isBot === true) return;
@@ -73,7 +74,8 @@ function registerHandlers(bot: Chat): void {
   // message here (including the bot's own replies and non-mention chatter), so
   // we gate before answering — see trigger.ts for the rules.
   bot.onSubscribedMessage(async (thread, message) => {
-    console.log(`[subscribed] ${message.text} (in ${thread.id})`);
+    // Log length, not content — message text can carry PII/secrets.
+    console.log(`[subscribed] (${(message.text || "").length} chars) in ${thread.id}`);
 
     // Always skip self/other-bots, even when the redesign flag is off — this is
     // the minimum guard that prevents the reply-storm, so the legacy fallback
