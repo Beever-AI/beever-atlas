@@ -235,11 +235,13 @@ export function renderResponse(result: AskResult, platform: string): string {
   const { sources, related } = partitionCitations(result.citations || []);
   const body =
     (result.answer || "").trimEnd() +
+    // A low-confidence warning sits right under the answer so truncation can
+    // never drop this trust signal.
+    renderConfidence(result.confidence, result.isEmpty) +
     renderCitationBlock("📎 *Sources*", sources) +
     renderCitationBlock("🧠 *Related*", related) +
     renderTensions(result.tensions) +
     renderFreshness(result.lastSyncTs) +
-    renderConfidence(result.confidence, result.isEmpty) +
     renderFollowUps(result.followUps) +
     renderRoute(result.route || "qa_agent");
 

@@ -105,7 +105,10 @@ export function normalizeTensions(data: Record<string, unknown>): Tension[] {
     const t = asRecord(item);
     const title = asString(t.title) ?? asString(t.topic) ?? asString(t.summary);
     if (!title) continue;
-    out.push({ title, detail: asString(t.detail) ?? asString(t.description) ?? asString(t.summary) });
+    // Avoid "X — X": only use summary as detail when it wasn't promoted to title.
+    let detail = asString(t.detail) ?? asString(t.description);
+    if (!detail && asString(t.summary) !== title) detail = asString(t.summary);
+    out.push({ title, detail });
     if (out.length >= 3) break;
   }
   return out;

@@ -69,3 +69,22 @@ def test_keywords_drops_short_and_stopwords():
     kw = _keywords("The budget allocation is disputed")
     assert {"budget", "allocation", "disputed"} <= kw
     assert "the" not in kw and "is" not in kw
+
+
+from unittest.mock import AsyncMock, patch  # noqa: E402
+
+from beever_atlas.capabilities.proactive import get_relevant_tensions  # noqa: E402
+
+
+async def test_get_relevant_tensions_rejects_empty_args():
+    assert await get_relevant_tensions("", "principal", "text") == []
+    assert await get_relevant_tensions("channel", "", "text") == []
+
+
+async def test_get_relevant_tensions_returns_empty_on_access_denied():
+    with patch(
+        "beever_atlas.infra.channel_access.assert_channel_access",
+        new=AsyncMock(side_effect=PermissionError("denied")),
+    ):
+        out = await get_relevant_tensions("ch-eng", "user:abc", "the budget is disputed")
+    assert out == []
