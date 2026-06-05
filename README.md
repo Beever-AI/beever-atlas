@@ -312,6 +312,13 @@ curl -X POST http://localhost:8000/api/channels/C12345/sync \
   -H "Authorization: Bearer $(grep -E '^BEEVER_API_KEYS=' .env | cut -d= -f2 | cut -d, -f1)"
 ```
 
+Media shared in synced channels (images, PDFs, video) is persisted durably so it
+keeps rendering after the platform CDN link expires. It defaults to in-database
+storage with zero extra infra, and can use MinIO/S3 at scale. See
+[docs/media-persistence.md](docs/media-persistence.md) for the mechanism,
+`CHANNEL_MEDIA_*` configuration, the MinIO/S3 backend, and backfilling existing
+channels.
+
 ### MCP server (for external AI agents)
 
 Beever Atlas exposes a curated MCP (Model Context Protocol) server at `/mcp` for AI agents like Claude Code and Cursor. This allows external code assistants to query your team's knowledge base without using the dashboard.
