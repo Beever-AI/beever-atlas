@@ -303,6 +303,28 @@ def _compute_confidence(registry) -> float:
     return round(max(0.1, min(0.95, blended)), 2)
 
 
+async def _related_context_payload(
+    channel_id: str, principal_id: str, answer_text: str
+) -> dict | None:
+    """Best-effort inline proactive context (tensions relevant to the answer).
+
+    Computed AFTER the answer has finished streaming, so it never delays the
+    visible reply, and time-bounded to 0.8s so a slow wiki scan can't stall the
+    trailing events. Returns ``None`` (emit nothing) when there's nothing
+    relevant or on any error.
+    """
+    try:
+        from beever_atlas.capabilities.proactive import get_relevant_tensions
+
+        tensions = await asyncio.wait_for(
+            get_relevant_tensions(channel_id, principal_id, answer_text, limit=2),
+            timeout=0.8,
+        )
+    except Exception:  # pragma: no cover - defensive; proactive context is best-effort
+        return None
+    return {"tensions": tensions} if tensions else None
+
+
 async def _build_metadata_event(
     *,
     channel_id: str,
@@ -858,6 +880,9 @@ async def _run_agent_stream(
                         registry=_registry,
                     ),
                 )
+                _rc = await _related_context_payload(channel_id, user_id, accumulated_text)
+                if _rc:
+                    yield _sse_event("related_context", _rc)
                 await _persist_qa_history(
                     question=question,
                     answer=accumulated_text,
@@ -987,6 +1012,9 @@ async def _run_agent_stream(
                         registry=_registry,
                     ),
                 )
+                _rc = await _related_context_payload(channel_id, user_id, accumulated_text)
+                if _rc:
+                    yield _sse_event("related_context", _rc)
                 await _persist_qa_history(
                     question=question,
                     answer=accumulated_text,
