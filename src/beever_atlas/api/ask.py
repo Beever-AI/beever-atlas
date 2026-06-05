@@ -341,9 +341,14 @@ async def _build_metadata_event(
       the client can render an honest "nothing indexed" state instead of
       guessing from the answer text. Falls back to ``False`` when the citation
       registry is off (legacy path), leaving the client heuristic in charge.
-    - ``last_sync_ts``: the channel's last sync time (ISO-8601) for a freshness
-      hint. A store hiccup degrades it to ``None`` rather than breaking the
-      stream — freshness is best-effort.
+    - ``last_sync_ts``: the timestamp of the last synced MESSAGE in this
+      channel (ISO-8601), NOT the wall-clock time of the last sync RUN. It
+      answers "how recent is the newest message I've indexed", which is the
+      honest freshness signal the bot surfaces. The accompanying
+      ``freshness_kind: "last_message"`` key names this semantics explicitly so
+      clients never mistake it for a sync-run time. A store hiccup degrades the
+      value to ``None`` rather than breaking the stream — freshness is
+      best-effort.
     """
     from beever_atlas.stores import get_stores
 
@@ -364,6 +369,9 @@ async def _build_metadata_event(
         "mode": mode,
         "is_empty_retrieval": registry is not None and registry.registered_count == 0,
         "last_sync_ts": last_sync_ts,
+        # Names the semantics of ``last_sync_ts`` so the bot can label it
+        # honestly ("last message seen", not "last synced"). Additive.
+        "freshness_kind": "last_message",
     }
 
 

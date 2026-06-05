@@ -206,6 +206,9 @@ async def search_channel_facts(
                     "message_ts": fact.message_ts,
                     "timestamp": _format_timestamp(fact.message_ts),
                     "permalink": fact.source_message_id,
+                    # Platform-native message id (Discord/Teams permalink key).
+                    # Slack ignores it and keys off message_ts instead.
+                    "source_message_id": fact.source_message_id,
                     "importance": fact.importance,
                     "confidence": round(fact.quality_score / 10.0, 2)
                     if fact.quality_score
@@ -382,6 +385,9 @@ async def get_recent_activity(
                                 "platform": getattr(fact, "platform", "slack"),
                                 "message_ts": fact.message_ts,
                                 "timestamp": _format_timestamp(fact.message_ts),
+                                # Platform-native message id (Discord/Teams
+                                # permalink key); Slack keys off message_ts.
+                                "source_message_id": getattr(fact, "source_message_id", ""),
                                 "importance": fact.importance,
                                 "topic_tags": fact.topic_tags,
                                 "fact_id": fact.id,

@@ -163,6 +163,105 @@ async def test_link_previews_from_channel_link_urls():
     assert titles == ["A", "B"]
 
 
+# ---- native extraction for permalink resolution -----------------------
+
+
+@pytest.mark.asyncio
+async def test_native_defaults_platform_to_slack_when_missing():
+    """A channel_message item without `platform` but with `channel_id` defaults
+    to slack so the live Slack reply path still resolves."""
+
+    @cite_tool_output(kind="channel_message")
+    async def fake_tool() -> list[dict]:
+        return [
+            {
+                "text": "no platform field here",
+                "author": "a",
+                "channel_id": "C1",
+                "message_ts": "1712500000.001100",
+            }
+        ]
+
+    r, tok = bind()
+    try:
+        await fake_tool()
+    finally:
+        reset(tok)
+
+    source = list(r._sources.values())[0]
+    assert source.native["platform"] == "slack"
+
+
+@pytest.mark.asyncio
+async def test_native_maps_source_message_id_to_message_id():
+    """`source_message_id` from the fact store is surfaced as `message_id`
+    (the Discord/Teams permalink key) when no explicit message_id is set."""
+
+    @cite_tool_output(kind="channel_message")
+    async def fake_tool() -> list[dict]:
+        return [
+            {
+                "text": "discord msg",
+                "author": "a",
+                "platform": "discord",
+                "channel_id": "111",
+                "guild_id": "222",
+                "source_message_id": "333",
+                "message_ts": "1712500000.001100",
+            }
+        ]
+
+    r, tok = bind()
+    try:
+        await fake_tool()
+    finally:
+        reset(tok)
+
+    source = list(r._sources.values())[0]
+    assert source.native["message_id"] == "333"
+
+
+@pytest.mark.asyncio
+async def test_full_slack_native_resolves_to_permalink_end_to_end():
+    """A channel_message with full Slack native resolves to an archives URL
+    once the resolver is attached at finalize()."""
+    from beever_atlas.agents.citations.permalink_resolver import default_resolver
+
+    @cite_tool_output(kind="channel_message")
+    async def fake_tool() -> list[dict]:
+        return [
+            {
+                "text": "the decision",
+                "author": "alice",
+                "channel_id": "C08TX",
+                "channel_name": "eng",
+                "platform": "slack",
+                "message_ts": "1712500000.001100",
+                "workspace_domain": "beever",
+            }
+        ]
+
+    r, tok = bind()
+    try:
+        r.set_permalink_resolver(default_resolver)
+        results = await fake_tool()
+        cite = results[0]["_cite"]
+        from beever_atlas.agents.query.stream_rewriter import StreamRewriter
+
+        rewriter = StreamRewriter(r)
+        rewriter.feed(f"Per {cite}, it's settled.")
+        rewriter.flush()
+        env = r.finalize()
+    finally:
+        reset(tok)
+
+    assert env.sources[0].permalink == ("https://beever.slack.com/archives/C08TX/p1712500000001100")
+    # Legacy flat items must also carry the resolved permalink.
+    assert env.items[0]["permalink"] == (
+        "https://beever.slack.com/archives/C08TX/p1712500000001100"
+    )
+
+
 # ---- score normalization ----------------------------------------------
 
 

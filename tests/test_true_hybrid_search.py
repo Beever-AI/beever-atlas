@@ -215,9 +215,12 @@ async def test_search_channel_facts_calls_true_hybrid_search():
 
     # Result shape preserved
     assert isinstance(results, list)
-    if results:
-        assert "text" in results[0]
-        assert "author" in results[0]
+    assert results, "expected at least one result for the seeded fact"
+    assert "text" in results[0]
+    assert "author" in results[0]
+    # source_message_id is projected through so the citation decorator can build
+    # a platform-native permalink (Discord/Teams key off it).
+    assert results[0]["source_message_id"] == "msg-1"
 
 
 # ---------------------------------------------------------------------------

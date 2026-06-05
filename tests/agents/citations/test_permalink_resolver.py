@@ -6,6 +6,8 @@ graceful-null fallbacks for missing metadata.
 
 from __future__ import annotations
 
+import pytest
+
 from beever_atlas.agents.citations.permalink_resolver import (
     PermalinkResolver,
     reset_warn_cache,
@@ -165,3 +167,56 @@ def test_resolver_never_throws_on_bad_data():
     s = _source("channel_message", {"platform": "slack", "channel_id": None, "message_ts": None})
     # Should not raise
     assert r.resolve(s) is None
+
+
+# ---- table-driven channel_message coverage ----------------------------
+
+
+@pytest.mark.parametrize(
+    "native,expected",
+    [
+        # Slack: full native → archives permalink
+        (
+            {
+                "platform": "slack",
+                "channel_id": "C08TX",
+                "message_ts": "1712500000.001100",
+                "workspace_domain": "beever",
+            },
+            "https://beever.slack.com/archives/C08TX/p1712500000001100",
+        ),
+        # Discord: full native → discord deep link
+        (
+            {
+                "platform": "discord",
+                "channel_id": "111",
+                "guild_id": "222",
+                "message_id": "333",
+            },
+            "https://discord.com/channels/222/111/333",
+        ),
+        # Teams: channel + message id → teams deep link
+        (
+            {"platform": "teams", "channel_id": "C1", "message_id": "M1"},
+            "https://teams.microsoft.com/l/message/C1/M1",
+        ),
+        # Missing native (no platform) → None
+        ({"channel_id": "C1", "message_ts": "1.1"}, None),
+        # Slack missing workspace_domain → None (never a broken URL)
+        (
+            {"platform": "slack", "channel_id": "C1", "message_ts": "1712500000.001100"},
+            None,
+        ),
+        # Discord missing message_id → None
+        ({"platform": "discord", "channel_id": "111", "guild_id": "222"}, None),
+        # Teams missing message_id → None
+        ({"platform": "teams", "channel_id": "C1"}, None),
+        # Empty native → None
+        ({}, None),
+    ],
+)
+def test_channel_message_table(native, expected):
+    reset_warn_cache()
+    r = PermalinkResolver()
+    s = _source("channel_message", native)
+    assert r.resolve(s) == expected

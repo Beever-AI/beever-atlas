@@ -247,14 +247,27 @@ def _extract_title(kind: str, item: dict) -> str:
 def _extract_native(kind: str, item: dict) -> dict[str, Any]:
     """Pick the subset of fields kept on `Source.native` for rendering/resolve."""
     if kind == "channel_message":
+        # Defensive platform default: the permalink resolver needs a platform
+        # to pick a URL template, and the live Slack reply path occasionally
+        # surfaces facts whose `platform` field is absent (older docs, partial
+        # projections). When a caller injected a `channel_id`-bearing context
+        # without a platform we fall back to "slack" — the dominant live
+        # platform — so the Slack permalink path still resolves. A genuinely
+        # unknown platform stays unresolvable: the resolver only emits a URL
+        # when the per-platform native fields (workspace/ts) are also present,
+        # so this default can never fabricate a broken link for non-Slack data.
+        platform = item.get("platform") or ("slack" if item.get("channel_id") else None)
         return {
-            "platform": item.get("platform"),
+            "platform": platform,
             "channel_id": item.get("channel_id"),
             "channel_name": item.get("channel_name"),
             "author": item.get("author"),
             "author_id": item.get("author_id"),
             "message_ts": item.get("message_ts") or item.get("timestamp"),
-            "message_id": item.get("message_id"),
+            # `source_message_id` is the platform-native message identifier the
+            # fact store actually carries; Discord/Teams URL templates key off
+            # it. Slack ignores message_id and uses message_ts instead.
+            "message_id": item.get("message_id") or item.get("source_message_id"),
             "fact_id": item.get("fact_id"),
             "workspace_domain": item.get("workspace_domain"),
             "guild_id": item.get("guild_id"),

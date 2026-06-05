@@ -72,6 +72,54 @@ def test_new_prompt_cached_independently():
     assert agent1 is not agent2
 
 
+def test_new_prompt_contains_greeting_response():
+    """Flag on: the greeting/identity directive must be present and name Beever Atlas."""
+    settings = _make_settings(new_prompt=True)
+    with patch("beever_atlas.infra.config.get_settings", return_value=settings):
+        from beever_atlas.agents.query.prompts import GREETING_RESPONSE, build_qa_system_prompt
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
+    assert GREETING_RESPONSE in prompt
+    assert "Beever Atlas" in GREETING_RESPONSE
+    # A concrete capability and example-question nudge are part of the contract.
+    assert "greeting" in GREETING_RESPONSE.lower()
+    assert "example questions" in GREETING_RESPONSE.lower()
+    # Load-bearing clause: a greeting must NOT trigger retrieval/tool calls.
+    assert "do not call any tools" in GREETING_RESPONSE.lower()
+
+
+def test_new_prompt_contains_channel_context_privacy():
+    """Flag on: the channel-id privacy directive must be present in the new branch."""
+    settings = _make_settings(new_prompt=True)
+    with patch("beever_atlas.infra.config.get_settings", return_value=settings):
+        from beever_atlas.agents.query.prompts import (
+            CHANNEL_CONTEXT_PRIVACY,
+            build_qa_system_prompt,
+        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
+    assert CHANNEL_CONTEXT_PRIVACY in prompt
+    assert "[Channel: <id>]" in CHANNEL_CONTEXT_PRIVACY
+    assert "channel_name" in CHANNEL_CONTEXT_PRIVACY
+    # Load-bearing clause: the raw channel id must never be echoed back.
+    assert "never echo" in CHANNEL_CONTEXT_PRIVACY.lower()
+
+
+def test_greeting_and_privacy_absent_when_flag_off():
+    """Legacy branch must not include the new additive blocks."""
+    settings = _make_settings(new_prompt=False)
+    with patch("beever_atlas.infra.config.get_settings", return_value=settings):
+        from beever_atlas.agents.query.prompts import (
+            CHANNEL_CONTEXT_PRIVACY,
+            GREETING_RESPONSE,
+            build_qa_system_prompt,
+        )
+
+        prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
+    assert GREETING_RESPONSE not in prompt
+    assert CHANNEL_CONTEXT_PRIVACY not in prompt
+
+
 def test_deep_mode_skips_length_hint_both_paths():
     """Deep mode never includes the onboarding length hint — on either prompt path."""
     from beever_atlas.agents.query.prompts import ONBOARDING_LENGTH_HINT, build_qa_system_prompt

@@ -459,3 +459,49 @@ class TestReplyContractV2V3:
         # reads these keys; value may be null/false depending on data).
         assert "is_empty_retrieval" in meta
         assert "last_sync_ts" in meta
+        # P1-2: freshness_kind names the semantics of last_sync_ts honestly —
+        # it is the last MESSAGE seen, not the last sync RUN.
+        assert meta.get("freshness_kind") == "last_message"
+
+    @pytest.mark.asyncio
+    async def test_channel_message_full_slack_native_resolves_permalink(self):
+        """A channel_message source carrying full Slack native resolves to an
+        archives permalink, and the legacy flat `items[].permalink` is populated.
+
+        Exercised at the citation layer (registry + decorator + resolver) because
+        the SSE mock runner emits no real tool calls. This is the same pipeline
+        the live `/ask` path drives once the registry flag is on.
+        """
+        from beever_atlas.agents.citations.permalink_resolver import default_resolver
+        from beever_atlas.agents.citations.registry import bind, reset
+        from beever_atlas.agents.query.stream_rewriter import StreamRewriter
+        from beever_atlas.agents.tools._citation_decorator import cite_tool_output
+
+        @cite_tool_output(kind="channel_message")
+        async def _search() -> list[dict]:
+            return [
+                {
+                    "text": "we shipped durable media",
+                    "author": "alan",
+                    "channel_id": "C08TX",
+                    "channel_name": "beever",
+                    "platform": "slack",
+                    "message_ts": "1712500000.001100",
+                    "workspace_domain": "beever",
+                }
+            ]
+
+        r, tok = bind()
+        try:
+            r.set_permalink_resolver(default_resolver)
+            results = await _search()
+            rewriter = StreamRewriter(r)
+            rewriter.feed(f"Yes {results[0]['_cite']}.")
+            rewriter.flush()
+            env = r.finalize()
+        finally:
+            reset(tok)
+
+        expected = "https://beever.slack.com/archives/C08TX/p1712500000001100"
+        assert env.sources[0].permalink == expected
+        assert env.items[0]["permalink"] == expected
