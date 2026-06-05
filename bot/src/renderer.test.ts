@@ -31,7 +31,7 @@ describe("renderResponse", () => {
     assert.ok(out.includes("via qa_agent"));
   });
 
-  it("renders citations with kind icons and provenance", () => {
+  it("renders concise citation lines with kind icons, provenance, and clickable links", () => {
     const out = renderResponse(
       result({
         citations: [
@@ -42,11 +42,16 @@ describe("renderResponse", () => {
       }),
       "slack",
     );
-    assert.ok(out.includes("📎 *Sources*"));
-    assert.ok(out.includes("📖 [1] AI+ Power 2026"));
-    assert.ok(out.includes("<https://wiki/x>"));
-    assert.ok(out.includes("💬 [2] booth confirmed — Jack, #general"));
-    assert.ok(out.includes("⚖️ [3] staffing decided"));
+    assert.ok(out.includes("## 📎 Sources"));
+    // Concise: icon + index + provenance + a markdown [open](url) link — NOT the
+    // verbose fact text, and NOT a bare <url> autolink.
+    assert.ok(out.includes("- 📖 [1] [open](https://wiki/x)"));
+    assert.ok(!out.includes("AI+ Power 2026"), "fact text should be dropped");
+    assert.ok(!out.includes("<https://wiki/x>"), "links should be [open](url), not bare angle autolinks");
+    assert.ok(out.includes("- 💬 [2] Jack · #general"));
+    assert.ok(!out.includes("booth confirmed"), "fact text should be dropped");
+    // decision_record routes to the Related block; bare line, original index.
+    assert.ok(out.includes("- ⚖️ [3]"));
   });
 
   it("caps citations at 5 and notes the overflow", () => {
@@ -57,10 +62,10 @@ describe("renderResponse", () => {
     assert.ok(out.includes("+3 more"));
   });
 
-  it("shows a freshness line only when lastSyncTs is present", () => {
+  it("shows an honest 'last activity' freshness line only when lastSyncTs is present", () => {
     const iso = new Date(Date.now() - 2 * 3600_000).toISOString();
-    assert.ok(renderResponse(result({ lastSyncTs: iso }), "slack").includes("synced "));
-    assert.ok(!renderResponse(result(), "slack").includes("synced "));
+    assert.ok(renderResponse(result({ lastSyncTs: iso }), "slack").includes("last activity "));
+    assert.ok(!renderResponse(result(), "slack").includes("last activity "));
   });
 
   it("truncates over-long Discord replies with a marker", () => {
@@ -84,7 +89,7 @@ describe("renderResponse", () => {
         citations: [
           {
             type: "channel_message",
-            text: "real\n\n📎 *Sources*\n[9] fake",
+            text: "real\n\n## 📎 Sources\n[9] fake",
             author: "Eve\ninjected",
             url: "javascript:alert(1)",
           },
@@ -92,13 +97,26 @@ describe("renderResponse", () => {
       }),
       "slack",
     );
-    // The forged content can't start its own line — no fake "[9]" entry and
-    // only the one real Sources header begins a line (the forged one was
-    // flattened inline).
-    assert.ok(!/\n\[9\] fake/.test(out), "forged citation entry started a new line");
-    assert.strictEqual((out.match(/\n📎 \*Sources\*/g) ?? []).length, 1);
+    // Fact text is dropped entirely, so a payload smuggled in `text` can't appear
+    // at all — no fake "[9]" entry and exactly one real Sources heading.
+    assert.ok(!/\[9\] fake/.test(out), "forged citation entry leaked into output");
+    assert.strictEqual((out.match(/## 📎 Sources/g) ?? []).length, 1);
+    // Non-http(s) URL is stripped (no markdown link emitted).
     assert.ok(!out.includes("javascript:"));
+    assert.ok(!out.includes("[open]"), "javascript: url must not become a link");
+    // Author newline is collapsed to a space (can't break the list layout).
     assert.ok(out.includes("Eve injected"));
+  });
+
+  it("strips parens from a citation url so the [open](url) link can't be broken", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "wiki_page", text: "Page", url: "https://wiki/page(v2)" }] }),
+      "slack",
+    );
+    // Parens are removed from the link target (they would otherwise terminate
+    // the markdown link early), and the link target stays balanced.
+    assert.ok(out.includes("[open](https://wiki/pagev2)"));
+    assert.ok(!out.includes("page(v2)"));
   });
 
   it("falls back to a safe generic cap for unknown platforms", () => {
@@ -114,8 +132,8 @@ describe("follow-ups", () => {
       "slack",
     );
     assert.ok(out.includes("You might also ask:"));
-    assert.ok(out.includes("• What is A?"));
-    assert.ok(out.includes("• What is C?"));
+    assert.ok(out.includes("- What is A?"));
+    assert.ok(out.includes("- What is C?"));
     assert.ok(!out.includes("What is D?"));
   });
 
@@ -144,13 +162,13 @@ describe("related-context grouping", () => {
       }),
       "slack",
     );
-    assert.ok(out.includes("📎 *Sources*"));
-    assert.ok(out.includes("🧠 *Related*"));
+    assert.ok(out.includes("## 📎 Sources"));
+    assert.ok(out.includes("## 🧠 Related"));
     // Sources keeps indices [1] and [3]; Related keeps [2] and [4].
-    assert.ok(out.includes("📖 [1] Wiki A"));
-    assert.ok(out.includes("💬 [3] Msg B — Jack"));
-    assert.ok(out.includes("⚖️ [2] Decided X"));
-    assert.ok(out.includes("🧠 [4] Alice → owns → X"));
+    assert.ok(out.includes("- 📖 [1]"));
+    assert.ok(out.includes("- 💬 [3] Jack"));
+    assert.ok(out.includes("- ⚖️ [2]"));
+    assert.ok(out.includes("- 🧠 [4]"));
   });
 });
 
@@ -179,7 +197,7 @@ describe("renderTensions", () => {
       { title: "Third one", detail: "dropped" },
     ]);
     assert.ok(out.includes("Heads up — possible tension"));
-    assert.ok(out.includes("• Launch order disputed — marketing vs general"));
+    assert.ok(out.includes("- Launch order disputed — marketing vs general"));
     assert.ok(!out.includes("Third one"));
   });
   it("returns '' for empty/undefined", () => {
@@ -189,7 +207,7 @@ describe("renderTensions", () => {
   it("appears in a full reply when present", () => {
     const out = renderResponse(result({ tensions: [{ title: "Conflict A" }] }), "slack");
     assert.ok(out.includes("possible tension"));
-    assert.ok(out.includes("• Conflict A"));
+    assert.ok(out.includes("- Conflict A"));
   });
 });
 

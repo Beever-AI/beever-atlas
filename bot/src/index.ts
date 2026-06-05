@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 
 // Load .env from project root (one level up from bot/)
@@ -77,7 +78,7 @@ function registerHandlers(bot: Chat): void {
     }
 
     if (!(await passesRateLimit(thread, message))) return;
-    await answerInThread(thread, question, "mention");
+    await answerInThread(thread, question, "mention", message.author);
   });
 
   // Handler: follow-up messages in subscribed threads. The SDK routes EVERY
@@ -111,7 +112,7 @@ function registerHandlers(bot: Chat): void {
     }
 
     if (!(await passesRateLimit(thread, message))) return;
-    await answerInThread(thread, question, "follow-up");
+    await answerInThread(thread, question, "follow-up", message.author);
   });
 
   // Handler: direct messages — a private 1:1 Q&A surface. DMs route through the
@@ -128,9 +129,45 @@ function registerHandlers(bot: Chat): void {
         return;
       }
       if (!(await passesRateLimit(thread, message))) return;
-      await answerInThread(thread, question, "dm");
+      await answerInThread(thread, question, "dm", message.author);
     });
   }
+}
+
+/**
+ * Minimal thread surface the reply path needs. Structural (not the full SDK
+ * `Thread`) so unit tests can pass a stub. `post` accepts `{ markdown }` so the
+ * SDK converts canonical CommonMark to each platform's native format;
+ * `postEphemeral` / `startTyping` are optional and feature-detected at runtime.
+ */
+export type PostableThread = {
+  id: string;
+  post(message: string | { markdown: string }): Promise<unknown>;
+  postEphemeral?(
+    user: unknown,
+    message: string | { markdown: string },
+    options: { fallbackToDM?: boolean },
+  ): Promise<unknown>;
+  startTyping?(status?: string): Promise<void>;
+};
+
+/**
+ * Post a transient notice (error / rate-limit). Prefers an EPHEMERAL message so
+ * it isn't a permanent channel artifact for everyone — Slack/Google Chat show
+ * it only to `author`; Discord/Teams fall back to a DM. Any platform without
+ * ephemeral support (or a failing ephemeral call) degrades to a normal thread
+ * post so the user still sees it. Best-effort: never throws.
+ */
+export async function postNotice(thread: PostableThread, author: unknown, text: string): Promise<void> {
+  if (author != null && typeof thread.postEphemeral === "function") {
+    try {
+      await thread.postEphemeral(author, text, { fallbackToDM: true });
+      return;
+    } catch (err) {
+      console.error("Ephemeral notice failed; falling back to post:", safeErrorMessage(err));
+    }
+  }
+  await thread.post(text);
 }
 
 /**
@@ -140,7 +177,7 @@ function registerHandlers(bot: Chat): void {
  * silently. Returns true when the request may proceed.
  */
 async function passesRateLimit(
-  thread: { id: string; post(message: string): Promise<unknown> },
+  thread: PostableThread,
   message: { author?: { userId?: string } },
 ): Promise<boolean> {
   const key = `${extractPlatform(thread.id)}:${extractChannelId(thread.id)}:${message.author?.userId || "unknown"}`;
@@ -149,7 +186,11 @@ async function passesRateLimit(
   if (noticeLimiter.check(key).allowed) {
     const secs = Math.max(1, Math.ceil(decision.retryAfterMs / 1000));
     try {
-      await thread.post(`You're asking a lot — give me a moment 🙂 (try again in ~${secs}s)`);
+      await postNotice(
+        thread,
+        message.author,
+        `You're asking a lot — give me a moment 🙂 (try again in ~${secs}s)`,
+      );
     } catch (err) {
       console.error("Failed to post rate-limit notice:", safeErrorMessage(err));
     }
@@ -200,14 +241,22 @@ async function getHumanCount(thread: ThreadForParticipants): Promise<number | un
 }
 
 /** Ask the backend and post the rendered reply, swallowing errors into a friendly notice. */
-async function answerInThread(
-  thread: { id: string; post(message: string): Promise<unknown> },
+export async function answerInThread(
+  thread: PostableThread,
   question: string,
   surface: ReplySurface,
+  author?: unknown,
 ): Promise<void> {
   const platform = extractPlatform(thread.id);
   const startedAt = Date.now();
   try {
+    // Show a typing/thinking indicator while the backend streams so a
+    // multi-second answer doesn't feel unresponsive. Feature-detected and
+    // fire-and-forget — a no-op on adapters that don't support it, and posting
+    // the reply clears it. Never let a failing indicator break the reply.
+    if (typeof thread.startTyping === "function") {
+      thread.startTyping().catch(() => {});
+    }
     // Stable per-thread session id → backend resumes the thread's history so
     // follow-ups remember the prior exchange. See session-id.ts for the
     // thread-scoped (not channel/user) security rationale.
@@ -216,7 +265,11 @@ async function answerInThread(
       question,
       deriveSessionId(thread.id),
     );
-    await thread.post(renderResponse(result, platform));
+    // Post as `{ markdown }`: the renderer emits canonical CommonMark and the
+    // chat SDK converts it to each platform's native format (Slack Block Kit,
+    // Teams Adaptive Card, …). Posting a raw string instead made `##`/`**`
+    // render literally on Slack/Teams/Telegram.
+    await thread.post({ markdown: renderResponse(result, platform) });
     logReplySent({
       surface,
       platform,
@@ -230,9 +283,14 @@ async function answerInThread(
     console.error(`Error processing ${surface}:`, safeErrorMessage(err));
     // A failed reply must not throw out of the handler: that would make the
     // webhook return 5xx and skip conversation recording (serviceUrl), which
-    // breaks later message fetches even though the activity was valid.
+    // breaks later message fetches even though the activity was valid. The
+    // error goes out ephemeral (DM fallback) so it doesn't clutter the channel.
     try {
-      await thread.post("Sorry, I encountered an error processing your question. Please try again.");
+      await postNotice(
+        thread,
+        author,
+        "Sorry, I encountered an error processing your question. Please try again.",
+      );
     } catch (postErr) {
       console.error("Failed to deliver error reply:", safeErrorMessage(postErr));
     }
@@ -973,7 +1031,14 @@ async function main(): Promise<void> {
   console.log("Bot service ready");
 }
 
-main().catch((err: unknown) => {
-  console.error("Fatal error:", safeErrorMessage(err));
-  process.exit(1);
-});
+// Only bootstrap the server when this module is run as the process entrypoint.
+// Importing it (e.g. from a unit test that exercises answerInThread/postNotice)
+// must NOT start the HTTP server or connect adapters.
+const invokedDirectly =
+  !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err: unknown) => {
+    console.error("Fatal error:", safeErrorMessage(err));
+    process.exit(1);
+  });
+}

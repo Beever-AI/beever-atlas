@@ -46,6 +46,18 @@ const SUBSTANTIVE_ANSWER_CHARS = 600;
 const EMPTY_PATTERN =
   /no indexed (memories|facts|wiki)|hasn'?t been synced|not been synced|could not find any indexed|don'?t have (any )?(indexed )?(memories|facts|wiki)|no record of/i;
 
+/**
+ * Phrases that mark a coherent CONVERSATIONAL reply (greeting / identity /
+ * "here's how to get started") that the agent returns WITHOUT retrieving
+ * anything — so it carries no citations and `is_empty_retrieval=true`, yet must
+ * NOT be replaced by the generic empty state. (Live-test bug: a friendly
+ * "Hi! I'm Beever Atlas…" answer to "hi" was being swallowed.) Kept tight and
+ * only consulted when EMPTY_PATTERN does NOT also match, so a genuinely empty
+ * "I have no indexed memories, but I can help" can't slip through.
+ */
+export const GUIDANCE_PATTERN =
+  /beever atlas|i'?m (your|a|the) .*(assistant|agent)|here'?s how|you can (sync|index|ask|invite)|try asking|i can (search|help|find|answer)|what would you like|ask me/i;
+
 function asString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
@@ -122,11 +134,17 @@ export function detectEmptyRetrieval(answer: string, citations: Citation[]): boo
 
 /**
  * Decide the final empty-state, combining the backend signal with the client
- * heuristic safely. Requirements to render the empty state:
- *  - no citations (a cited answer is never "empty"), AND
- *  - the backend flagged empty retrieval OR the text matches the empty pattern, AND
- *  - the answer is not substantive (so a long real answer is never hidden even
- *    if the backend flag misfires).
+ * heuristic safely. Render the empty state only when ALL hold:
+ *  - no citations (a cited answer is never "empty"),
+ *  - the answer is not substantive (a long real answer is never hidden), AND
+ *  - the answer is either a definitive empty-retrieval phrase OR the backend
+ *    flagged empty retrieval and the answer is NOT a coherent conversational
+ *    reply.
+ *
+ * The guidance guard fixes a live-test bug: a friendly "Hi! I'm Beever Atlas…"
+ * greeting (no retrieval → no citations → `is_empty_retrieval=true`) was being
+ * swallowed into the generic empty state. EMPTY_PATTERN keeps priority so a
+ * genuinely empty answer that also offers help can't slip through the guard.
  */
 export function resolveIsEmpty(
   answer: string,
@@ -135,7 +153,12 @@ export function resolveIsEmpty(
 ): boolean {
   if (citations.length > 0) return false;
   if (answer.trim().length >= SUBSTANTIVE_ANSWER_CHARS) return false;
-  return backendEmpty === true || EMPTY_PATTERN.test(answer);
+  // A definitive "nothing found" phrase is empty even if it also offers help.
+  if (EMPTY_PATTERN.test(answer)) return true;
+  // A coherent greeting / identity / how-to reply is a valid answer — show it
+  // verbatim instead of collapsing it just because retrieval returned nothing.
+  if (GUIDANCE_PATTERN.test(answer)) return false;
+  return backendEmpty === true;
 }
 
 function finalizeResult(state: StreamState): AskResult {

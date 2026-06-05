@@ -330,6 +330,27 @@ describe("resolveIsEmpty", () => {
     assert.strictEqual(resolveIsEmpty("I could not find any indexed memories", noCites, undefined), true);
     assert.strictEqual(resolveIsEmpty("The booth is H25.", noCites, undefined), false);
   });
+  it("does NOT swallow a friendly greeting/identity reply flagged empty", () => {
+    // No retrieval → no citations → backend flags empty, but this is a valid
+    // conversational answer and must be shown verbatim (live-test bug fix).
+    assert.strictEqual(
+      resolveIsEmpty("Hi! I'm Beever Atlas, your team knowledge assistant. Ask me about your channels.", noCites, true),
+      false,
+    );
+    assert.strictEqual(
+      resolveIsEmpty("I don't have that indexed yet, but here's how to sync your workspace.", noCites, true),
+      false,
+    );
+  });
+  it("still collapses a definitive empty phrase even when it offers help", () => {
+    // EMPTY_PATTERN keeps priority over the guidance guard, so a genuinely empty
+    // answer can't slip through just because it also says "I can help".
+    assert.strictEqual(
+      resolveIsEmpty("I have no indexed memories yet, but I can help once it's synced.", noCites, true),
+      true,
+    );
+    assert.strictEqual(resolveIsEmpty("This channel hasn't been synced yet.", noCites, true), true);
+  });
 });
 
 describe("detectEmptyRetrieval", () => {

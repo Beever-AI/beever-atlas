@@ -60,21 +60,23 @@ describe("integration: SSE stream → rendered reply", () => {
     const out = renderResponse(result, "slack");
     // Answer first.
     assert.ok(out.startsWith("We chose GridFS"));
-    // Sources block has the direct sources with provenance.
-    assert.ok(out.includes("📎 *Sources*"));
-    assert.ok(out.includes("📖 [1] Media storage <https://wiki/media>"));
-    assert.ok(out.includes("💬 [2] no object store on OSS — Alan, #tech"));
+    // Sources block: canonical markdown heading, concise list items with a
+    // clickable [open](url) link, and NO verbose fact text.
+    assert.ok(out.includes("## 📎 Sources"));
+    assert.ok(out.includes("- 📖 [1] [open](https://wiki/media)"));
+    assert.ok(out.includes("- 💬 [2] Alan · #tech"));
+    assert.ok(!out.includes("no object store on OSS"), "fact text should be dropped");
     // Related block has the graph/decision citations, with ORIGINAL indices.
-    assert.ok(out.includes("🧠 *Related*"));
-    assert.ok(out.includes("⚖️ [3] GridFS default decision"));
-    assert.ok(out.includes("🧠 [4] Alan owns media-storage"));
-    // Proactive tension heads-up.
-    assert.ok(out.includes("⚠️ *Heads up — possible tension*"));
-    assert.ok(out.includes("GridFS scalability disputed — Alan: fine vs Thomas: risky"));
-    // Freshness + follow-ups + route.
-    assert.ok(out.includes("🕐 _synced 2h ago_"));
+    assert.ok(out.includes("## 🧠 Related"));
+    assert.ok(out.includes("- ⚖️ [3]"));
+    assert.ok(out.includes("- 🧠 [4]"));
+    // Proactive tension heads-up (bold line, markdown bullet).
+    assert.ok(out.includes("**⚠️ Heads up — possible tension**"));
+    assert.ok(out.includes("- GridFS scalability disputed — Alan: fine vs Thomas: risky"));
+    // Freshness (honest "last activity" label) + follow-ups + route.
+    assert.ok(out.includes("🕐 _last activity 2h ago_"));
     assert.ok(out.includes("_You might also ask:_"));
-    assert.ok(out.includes("• How do I switch to MinIO?"));
+    assert.ok(out.includes("- How do I switch to MinIO?"));
     assert.ok(out.includes("_via qa_agent_"));
     // High confidence → NO warning.
     assert.ok(!out.includes("low confidence"));
@@ -99,7 +101,7 @@ describe("integration: SSE stream → rendered reply", () => {
     assert.strictEqual(result.isEmpty, true);
     const out = renderResponse(result, "discord");
     assert.ok(/don't have anything indexed/i.test(out));
-    assert.ok(!out.includes("📎 *Sources*"));
+    assert.ok(!out.includes("## 📎 Sources"));
   });
 
   it("shows a low-confidence warning (right under the answer) when retrieval is thin", async () => {
@@ -121,6 +123,6 @@ describe("integration: SSE stream → rendered reply", () => {
     const out = renderResponse(result, "slack");
     assert.ok(out.includes("⚠️ _low confidence"));
     // Warning precedes the Sources block (truncation-safe placement).
-    assert.ok(out.indexOf("low confidence") < out.indexOf("📎 *Sources*"));
+    assert.ok(out.indexOf("low confidence") < out.indexOf("## 📎 Sources"));
   });
 });
