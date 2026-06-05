@@ -424,6 +424,28 @@ class Settings(BaseSettings):
     # DEFAULT OFF. Flip QA_ADK_STREAMING_SSE=1 to enable.
     qa_adk_streaming_sse: bool = Field(default=False, alias="QA_ADK_STREAMING_SSE")
 
+    # Ingestion/extraction ADK SSE streaming mode (Issue #223).
+    # When ON, the BatchProcessor's runner.run_async() receives
+    # RunConfig(streaming_mode=StreamingMode.SSE) so ADK dispatches the
+    # native google-genai generate_content_stream for the extraction stages
+    # (fact/entity/coref/contradiction/validator/summarizer). Streaming keeps
+    # the socket warm with incremental chunks so a long (>120s) gemini-2.5-pro
+    # call no longer idles past the ~127-131s edge-proxy disconnect threshold
+    # that surfaced as aiohttp.ServerDisconnectedError → rows succeeded=0
+    # total_facts=0. ADK aggregates the streamed JSON chunks into one assembled
+    # LlmResponse BEFORE the after_agent_callback, so the existing partial-JSON
+    # recovery + retry ladder runs unchanged on the same assembled text. Safe
+    # here because these agents use only response_mime_type=application/json
+    # (no output_schema, no tools) and therefore do NOT trigger ADK bug #3599.
+    # DEFAULT ON — this is the actual Issue #223 fix; with it OFF the long
+    # extraction call still idle-disconnects and yields 0 facts. Verified safe:
+    # the same SSE path runs in QA prod, ADK aggregates the streamed JSON before
+    # the recovery callback, and an end-to-end re-extraction confirmed facts>0.
+    # Set INGEST_ADK_STREAMING_SSE=0 to revert. No-streaming fallback knob:
+    # lower BATCH_MAX_MESSAGES (see batch_max_messages above) to ~12-16 and/or
+    # cap BATCH_MAX_OUTPUT_TOKENS so each call finishes under the idle ceiling.
+    ingest_adk_streaming_sse: bool = Field(default=True, alias="INGEST_ADK_STREAMING_SSE")
+
     # Multilingual memory & wiki/QA rendering (change: multilingual-native-memory).
     # When ON, ingestion detects BCP-47 source_lang per channel/message,
     # facts/entities are stored in source language, wiki/QA render in requested
@@ -461,6 +483,12 @@ class Settings(BaseSettings):
     wiki_token_budget_v2: bool = Field(default=True, alias="BEEVER_WIKI_TOKEN_BUDGET_V2")
     # Phase 4+5: deterministic Key Facts table + delimited response parser. Default OFF.
     wiki_compiler_v2: bool = Field(default=False, alias="BEEVER_WIKI_COMPILER_V2")
+    # Issue #223 — stream the wiki page-compile LLM call (up to 32k output
+    # tokens) so a long generation does not idle past the ~127-131s edge-proxy
+    # disconnect (aiohttp.ServerDisconnectedError → degenerate/fallback wiki
+    # content). The streamed chunks are reassembled into the same response shape,
+    # so parsing is unchanged. Default ON (the fix). Set 0 to revert.
+    wiki_llm_streaming: bool = Field(default=True, alias="WIKI_LLM_STREAMING")
 
     # Credential encryption
     credential_master_key: str = Field(default="")

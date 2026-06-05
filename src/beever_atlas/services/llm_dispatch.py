@@ -295,6 +295,26 @@ def _split_model_for_litellm(provider: str, model: str) -> tuple[str, str]:
     return model, provider
 
 
+async def _acompletion_assembled_stream(litellm: Any, *, messages: Any, **kwargs: Any) -> Any:
+    """Run a STREAMED completion and reassemble it into one ``ModelResponse``.
+
+    Issue #223: a long, non-streaming completion (e.g. a 32k-token wiki page
+    compile) sits idle past the ~130s edge-proxy ceiling and the peer closes the
+    socket → ``aiohttp.ServerDisconnectedError``. Streaming keeps the socket warm
+    with incremental chunks. We collect the chunks and rebuild them via
+    ``litellm.stream_chunk_builder`` so the return value is the SAME response
+    shape (``.choices[0].message.content`` + ``.usage``) that non-streaming
+    callers already consume — every call site stays unchanged.
+    """
+    kwargs.pop("stream", None)  # this helper owns the stream flag
+    stream = await litellm.acompletion(messages=messages, stream=True, **kwargs)
+    chunks = [chunk async for chunk in stream]
+    assembled = litellm.stream_chunk_builder(chunks, messages=messages)
+    if assembled is None:
+        raise RuntimeError("dispatch_completion(stream=True): stream produced no chunks")
+    return assembled
+
+
 async def dispatch_completion(
     *,
     provider: str,
@@ -302,6 +322,7 @@ async def dispatch_completion(
     messages: list[Any],
     endpoint_id: str | None = None,
     timeout: float | None = None,
+    stream: bool = False,
     **kwargs: Any,
 ) -> Any:
     """Throttle-gated wrapper around ``litellm.acompletion``.
@@ -352,12 +373,24 @@ async def dispatch_completion(
     try:
         async with throttle.acquire(provider, est_tokens, endpoint_id=endpoint_id):
             try:
-                response = await litellm.acompletion(
-                    model=litellm_model,
-                    messages=messages,
-                    custom_llm_provider=litellm_provider,
-                    **kwargs,
-                )
+                if stream:
+                    # Issue #223 — stream long completions (e.g. 32k-token wiki
+                    # page compiles) so the socket never idles into the ~130s
+                    # edge-proxy disconnect. Reassembled to the normal shape.
+                    response = await _acompletion_assembled_stream(
+                        litellm,
+                        model=litellm_model,
+                        messages=messages,
+                        custom_llm_provider=litellm_provider,
+                        **kwargs,
+                    )
+                else:
+                    response = await litellm.acompletion(
+                        model=litellm_model,
+                        messages=messages,
+                        custom_llm_provider=litellm_provider,
+                        **kwargs,
+                    )
             except BaseException as exc:
                 record_call(
                     started_at=started_at,

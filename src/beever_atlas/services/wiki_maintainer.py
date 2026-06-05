@@ -2094,6 +2094,7 @@ class WikiMaintainer:
         ``dispatch_completion`` (which gates on the per-provider throttle).
         Returns the raw JSON text (parsed by the caller).
         """
+        from beever_atlas.infra.config import get_settings
         from beever_atlas.llm.provider import get_llm_provider
         from beever_atlas.services.llm_dispatch import (
             dispatch_completion,
@@ -2111,6 +2112,8 @@ class WikiMaintainer:
             response_format={"type": "json_object"},
             max_tokens=4096,
             temperature=0.2,
+            # Issue #223: stream so a slow generation can't idle-disconnect.
+            stream=get_settings().wiki_llm_streaming,
         )
         return response.choices[0].message.content or "{}"  # type: ignore[index, union-attr]
 
