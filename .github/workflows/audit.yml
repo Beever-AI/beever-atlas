@@ -50,7 +50,17 @@ jobs:
         # google-adk (even latest 2.1.0) pins `starlette<1.0.0`. We can't reach
         # 1.0.1 without google-adk catching up. Revisit when google-adk relaxes
         # its starlette pin.
-        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-161
+        #
+        # CVE-2026-31072 (apscheduler, GHSA-9cfw-f3f9-7mm7): RCE via insecure
+        # deserialization in APScheduler's JSONSerializer / CBORSerializer, used
+        # only by *persistent* data stores (MongoDB / SQLAlchemy). NOT EXPOSED:
+        # we use the in-process MemoryDataStore (services/scheduler.py) with
+        # schedules defined in code via Cron/Interval triggers — the vulnerable
+        # deserialization path is never reached and no untrusted serialized job
+        # data is ever loaded. No fixed release exists (4.0.0a6 is the latest
+        # alpha). Revisit when APScheduler ships a patched version, or if we ever
+        # switch to a persistent data store.
+        run: uv run --with pip-audit pip-audit --requirement /tmp/requirements-audit.txt --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-161 --ignore-vuln CVE-2026-31072
 
       - name: Set up Node
         uses: actions/setup-node@v6
