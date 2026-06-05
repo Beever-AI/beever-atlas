@@ -212,6 +212,19 @@ class SourceRegistry:
                 out[s.kind] = out.get(s.kind, 0) + 1
         return out
 
+    def retrieval_scores(self) -> list[float]:
+        """Non-null retrieval scores across registered sources.
+
+        Used to compute an honest answer confidence; empty when no source
+        carried a numeric score.
+        """
+        out: list[float] = []
+        for s in self._sources.values():
+            score = s.retrieved_by.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                out.append(float(score))
+        return out
+
 
 # ----- ContextVar management -------------------------------------------
 

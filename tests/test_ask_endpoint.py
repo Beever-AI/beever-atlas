@@ -367,3 +367,54 @@ class TestDoneEventGuarantee:
                 assert data["code"] == "AGENT_ERROR"
                 assert "Unexpected agent crash" in data["message"]
                 break
+
+
+class _FakeRegistry:
+    """Minimal stand-in for SourceRegistry for confidence-scoring tests."""
+
+    def __init__(self, registered: int, referenced: int, scores: list[float]):
+        self._registered = registered
+        self._referenced = referenced
+        self._scores = scores
+
+    @property
+    def registered_count(self) -> int:
+        return self._registered
+
+    @property
+    def referenced_count(self) -> int:
+        return self._referenced
+
+    def retrieval_scores(self) -> list[float]:
+        return self._scores
+
+
+class TestComputeConfidence:
+    """Honest confidence replaces the old hardcoded 0.85."""
+
+    def test_none_or_empty_registry_is_low(self):
+        from beever_atlas.api.ask import _compute_confidence
+
+        assert _compute_confidence(None) == 0.15
+        assert _compute_confidence(_FakeRegistry(0, 0, [])) == 0.15
+
+    def test_rich_retrieval_is_high_but_computed(self):
+        from beever_atlas.api.ask import _compute_confidence
+
+        val = _compute_confidence(_FakeRegistry(6, 6, [0.9, 0.9, 0.8]))
+        assert 0.85 <= val <= 0.95
+
+    def test_thin_retrieval_is_low_enough_to_warn(self):
+        from beever_atlas.api.ask import _compute_confidence
+
+        # one source, not cited inline, mediocre score
+        assert _compute_confidence(_FakeRegistry(1, 0, [0.4])) <= 0.35
+
+    def test_increases_with_breadth(self):
+        from beever_atlas.api.ask import _compute_confidence
+
+        few = _compute_confidence(_FakeRegistry(1, 1, [0.7]))
+        many = _compute_confidence(_FakeRegistry(6, 6, [0.7]))
+        assert many > few
+        assert 0.1 <= few <= 0.95
+        assert 0.1 <= many <= 0.95
