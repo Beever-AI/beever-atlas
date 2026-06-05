@@ -34,6 +34,18 @@ See [`.env.example`](../.env.example) for the canonical list and descriptions. K
 | `BOT_PORT` | Port the bot HTTP server listens on (default: `3001`) |
 | `BACKEND_URL` | URL of the Python backend the bot forwards requests to |
 
+### Reply-feature tuning (all optional; safe defaults)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BOT_SESSION_SECRET` | _(dev default)_ | **Set in production.** HMAC key for per-thread conversation-memory session ids; when unset they are predictable to anyone who knows a thread id. |
+| `BOT_TRIGGER_REDESIGN` | `on` | Master switch for the gated triggers (mention / 1:1 / quiet-when-humans-join). `off` reverts to legacy behavior but still skips self/other-bots. |
+| `BOT_HUMAN_QUIET_THRESHOLD` | `2` | Humans in a thread at/above which the bot withdraws from non-mention follow-ups. |
+| `BOT_DM_ENABLED` | `on` | Answer direct messages (private 1:1 Q&A). |
+| `BOT_RATELIMIT_PER_MIN` | `12` | Max questions per (platform, channel, user) per minute before a one-time notice, then silent drop. |
+| `BOT_ASK_TIMEOUT_MS` | `45000` | Total budget for one `/ask` call (shared across retries). |
+| `BOT_PARTICIPANT_CACHE_TTL_MS` | `30000` | TTL cache for a thread's human count (avoids a `getParticipants()` call per non-mention message). `0` disables. |
+
 ### Platform Credentials (in `.env.example` section 5a)
 
 | Variable | Platform |
