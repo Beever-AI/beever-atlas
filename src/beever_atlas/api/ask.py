@@ -40,6 +40,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+
+# Process-local cache of channel_id -> Slack workspace subdomain (e.g.
+# "beever"). Resolved once per channel from the bridge adapter's channel-info
+# and reused for the life of the process; keyed by channel_id so it can never
+# bleed a domain across channels. Non-Slack channels cache None.
+# INVARIANT: one channel_id maps to exactly one Slack workspace for the process
+# lifetime (a deployment is workspace-scoped; channel_id→workspace is fixed). If
+# multi-workspace-per-deployment is ever introduced, this key — and the
+# per-request contextvar stamping — must incorporate the workspace.
+_WORKSPACE_DOMAIN_CACHE: dict[str, str | None] = {}
+
+
+async def _resolve_workspace_domain(channel_id: str) -> str | None:
+    """Resolve the Slack workspace subdomain for *channel_id*, cached.
+
+    Returns the cached value when present. Otherwise resolves the channel's
+    adapter and reads ``ChannelInfo.workspace_domain``. NEVER raises: any
+    error (including a resolution timeout) caches and returns ``None`` — a
+    missing domain just means no clickable permalink, never a failed answer.
+    The ``get_channel_info`` call is bounded by a short timeout so it can never
+    block the answer.
+    """
+    if channel_id in _WORKSPACE_DOMAIN_CACHE:
+        return _WORKSPACE_DOMAIN_CACHE[channel_id]
+    try:
+        from beever_atlas.api.channels import _resolve_adapter_for_channel
+
+        adapter = await _resolve_adapter_for_channel(channel_id)
+        try:
+            info = await asyncio.wait_for(adapter.get_channel_info(channel_id), timeout=1.5)
+            domain = getattr(info, "workspace_domain", None)
+        finally:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+        _WORKSPACE_DOMAIN_CACHE[channel_id] = domain
+        return domain
+    except Exception:
+        _WORKSPACE_DOMAIN_CACHE[channel_id] = None
+        return None
+
+
 SUPPORTED_MIME_TYPES = {
     "application/pdf",
     "image/png",
@@ -466,6 +509,11 @@ async def _run_agent_stream(
     # this contextvar. Set just before the runner runs and reset in the
     # finally below so tool invocations resolve to a live principal.
     _principal_token = None
+    # Per-request Slack workspace subdomain bound into the citation decorator's
+    # contextvar so tool outputs get clickable permalinks. Bound just before
+    # the runner runs and reset in the finally below to avoid cross-channel
+    # leakage between concurrent asks.
+    _ws_token = None
     if _registry_enabled:
         from beever_atlas.agents.citations import registry as _citation_registry_mod
         from beever_atlas.agents.citations.permalink_resolver import default_resolver
@@ -577,6 +625,19 @@ async def _run_agent_stream(
         except Exception:
             logger.warning(
                 "failed to bind principal for orchestration tools",
+                exc_info=True,
+            )
+        # Bind the Slack workspace subdomain BEFORE runner.run_async so tool
+        # invocations (which run inside the runner) see it via the contextvar.
+        try:
+            from beever_atlas.agents.tools._citation_decorator import (
+                bind_workspace_domain,
+            )
+
+            _ws_token = bind_workspace_domain(await _resolve_workspace_domain(channel_id))
+        except Exception:
+            logger.warning(
+                "failed to bind workspace domain for citations",
                 exc_info=True,
             )
         if sse_streaming:
@@ -951,6 +1012,17 @@ async def _run_agent_stream(
                 reset_principal(_principal_token)
             except Exception:
                 logger.warning("failed to reset principal", exc_info=True)
+        # Reset the workspace-domain contextvar so a domain never leaks across
+        # concurrent asks for different channels (correctness/security).
+        if _ws_token is not None:
+            try:
+                from beever_atlas.agents.tools._citation_decorator import (
+                    reset_workspace_domain,
+                )
+
+                reset_workspace_domain(_ws_token)
+            except Exception:
+                logger.warning("failed to reset workspace domain", exc_info=True)
 
         if not done_sent:
             # In SSE streaming mode (StreamingMode.SSE), ADK may deliver the

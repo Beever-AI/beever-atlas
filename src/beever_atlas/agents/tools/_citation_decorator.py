@@ -22,6 +22,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+from contextvars import ContextVar, Token
 from typing import Any, Awaitable, Callable, Iterable
 
 from beever_atlas.agents.citations.registry import current_registry
@@ -31,6 +32,49 @@ from beever_atlas.agents.citations.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Workspace-domain contextvar (set per QA turn by the ask runner)
+# ---------------------------------------------------------------------------
+#
+# The Slack permalink resolver needs the workspace subdomain (e.g. "beever"
+# from beever.slack.com) to build clickable archives URLs. The fact store does
+# not carry it, so the ask runner resolves it once per request (from the
+# channel's bridge adapter) and binds it here before the agent turn. `_annotate`
+# then stamps it onto channel_message items that lack one. Mirrors the
+# `bind_principal` / `reset_principal` pair in `orchestration_tools`.
+
+_workspace_domain_ctx: ContextVar[str | None] = ContextVar(
+    "citation_workspace_domain", default=None
+)
+
+
+def bind_workspace_domain(domain: str | None) -> Token:
+    """Bind *domain* for the current async task.
+
+    Call before running the agent turn; reset the returned token when the turn
+    finishes::
+
+        token = bind_workspace_domain(domain)
+        try:
+            ...run agent...
+        finally:
+            reset_workspace_domain(token)
+    """
+    return _workspace_domain_ctx.set(domain)
+
+
+def reset_workspace_domain(token: Token) -> None:
+    """Reset the contextvar to its previous value.
+
+    Swallows ``ValueError`` / ``LookupError`` / ``RuntimeError`` so a
+    cross-task reset or a double-reset does not crash the request handler.
+    """
+    try:
+        _workspace_domain_ctx.reset(token)
+    except (ValueError, LookupError, RuntimeError):
+        logger.warning("reset_workspace_domain: token invalid (cross-task or double-reset)")
 
 
 def cite_tool_output(
@@ -144,6 +188,14 @@ def _annotate(
         for k in ("channel_id", "page_type", "topic", "topic_name"):
             if k in ctx and k not in item:
                 item[k] = ctx[k]
+        # Inject the per-request Slack workspace subdomain so the permalink
+        # resolver can build clickable archives URLs. Only set it when the
+        # ctxvar is bound AND the item doesn't already carry a non-null one
+        # (never overwrite an explicit value). Harmless for non-Slack kinds:
+        # the resolver only emits a URL when platform + ts are also present.
+        _ws_domain = _workspace_domain_ctx.get()
+        if _ws_domain and not item.get("workspace_domain"):
+            item["workspace_domain"] = _ws_domain
         native_identity = _derive_native_identity(kind, item)
         if not native_identity:
             return

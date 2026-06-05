@@ -40,6 +40,10 @@ class ChannelInfo:
     topic: str | None = None
     purpose: str | None = None
     connection_id: str | None = None
+    # Slack workspace subdomain (e.g. "beever" from beever.slack.com), used to
+    # build clickable archives permalinks. Optional; absent/None for other
+    # platforms. Populated by the bridge adapter from the channel-info JSON.
+    workspace_domain: str | None = None
 
 
 class ConfigurationError(Exception):

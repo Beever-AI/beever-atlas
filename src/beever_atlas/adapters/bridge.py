@@ -244,6 +244,9 @@ class ChatBridgeAdapter(BaseAdapter):
             topic=data.get("topic"),
             purpose=data.get("purpose"),
             connection_id=data.get("connection_id") or self._connection_id,
+            # Slack-only subdomain for clickable permalinks; absent/None for
+            # other platforms (the contract with the Node bridge's getChannel).
+            workspace_domain=data.get("workspace_domain"),
         )
 
     async def list_channels(self) -> list[ChannelInfo]:

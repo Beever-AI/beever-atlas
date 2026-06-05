@@ -17,7 +17,11 @@ from beever_atlas.agents.citations.registry import (
 )
 from beever_atlas.agents.tools._citation_decorator import (
     cite_tool_output,
+    _annotate,
+    _extract_native,
     _normalize_score,
+    bind_workspace_domain,
+    reset_workspace_domain,
 )
 
 
@@ -323,6 +327,95 @@ async def test_decorator_end_to_end_with_rewriter():
     assert len(env.sources) == 1
     assert env.sources[0].permalink is None  # no resolver attached here
     assert env.refs[0].marker == 1
+
+
+# ---- workspace-domain contextvar injection ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_workspace_domain_ctxvar_injects_into_annotate():
+    """With bind_workspace_domain set, _annotate stamps workspace_domain onto a
+    channel_message item lacking one, and _extract_native then surfaces it."""
+    item = {
+        "text": "the decision",
+        "author": "alice",
+        "channel_id": "C1",
+        "channel_name": "eng",
+        "platform": "slack",
+        "message_ts": "1712500000.001100",
+    }
+    r, reg_tok = bind()
+    ws_tok = bind_workspace_domain("beever")
+    try:
+        _annotate(item, "channel_message", "fake_tool", "q", r)
+    finally:
+        reset_workspace_domain(ws_tok)
+        reset(reg_tok)
+
+    assert item["workspace_domain"] == "beever"
+    native = _extract_native("channel_message", item)
+    assert native["workspace_domain"] == "beever"
+
+
+@pytest.mark.asyncio
+async def test_workspace_domain_ctxvar_does_not_overwrite_existing():
+    """An item already carrying a non-null workspace_domain is NOT overwritten."""
+    item = {
+        "text": "the decision",
+        "author": "alice",
+        "channel_id": "C1",
+        "platform": "slack",
+        "message_ts": "1712500000.001100",
+        "workspace_domain": "explicit-ws",
+    }
+    r, reg_tok = bind()
+    ws_tok = bind_workspace_domain("beever")
+    try:
+        _annotate(item, "channel_message", "fake_tool", "q", r)
+    finally:
+        reset_workspace_domain(ws_tok)
+        reset(reg_tok)
+
+    assert item["workspace_domain"] == "explicit-ws"
+
+
+@pytest.mark.asyncio
+async def test_workspace_domain_ctxvar_resolves_permalink_end_to_end():
+    """A Slack channel_message lacking workspace_domain resolves to an archives
+    permalink once the ctxvar supplies the subdomain (no live bridge)."""
+    from beever_atlas.agents.citations.permalink_resolver import default_resolver
+
+    @cite_tool_output(kind="channel_message")
+    async def fake_tool() -> list[dict]:
+        # Note: no workspace_domain here — the ctxvar must supply it.
+        return [
+            {
+                "text": "the decision",
+                "author": "alice",
+                "channel_id": "C08TX",
+                "channel_name": "eng",
+                "platform": "slack",
+                "message_ts": "1712500000.001100",
+            }
+        ]
+
+    r, reg_tok = bind()
+    ws_tok = bind_workspace_domain("beever")
+    try:
+        r.set_permalink_resolver(default_resolver)
+        results = await fake_tool()
+        cite = results[0]["_cite"]
+        from beever_atlas.agents.query.stream_rewriter import StreamRewriter
+
+        rewriter = StreamRewriter(r)
+        rewriter.feed(f"Per {cite}, it's settled.")
+        rewriter.flush()
+        env = r.finalize()
+    finally:
+        reset_workspace_domain(ws_tok)
+        reset(reg_tok)
+
+    assert env.sources[0].permalink == ("https://beever.slack.com/archives/C08TX/p1712500000001100")
 
 
 # ---- async fixture helpers --------------------------------------------
