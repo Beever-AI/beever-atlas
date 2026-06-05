@@ -39,4 +39,6 @@ export interface AskResult {
   isEmpty: boolean;
   /** ISO-8601 timestamp of the channel's last sync, when the backend supplies it. */
   lastSyncTs?: string;
+  /** Suggested related questions surfaced as chips at the reply tail. */
+  followUps?: string[];
 }

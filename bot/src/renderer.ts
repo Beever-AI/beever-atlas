@@ -142,6 +142,21 @@ function renderRoute(route: string): string {
 }
 
 /**
+ * Suggested related questions as a short "You might also ask" list (max 3).
+ * Rendered before the route footer so that, under truncation, the chips are the
+ * sacrificial tail and the answer is always preserved.
+ */
+export function renderFollowUps(followUps?: string[]): string {
+  if (!followUps || followUps.length === 0) return "";
+  const items = followUps
+    .map((q) => cleanField(q, 120))
+    .filter((q) => q.length > 0)
+    .slice(0, 3);
+  if (items.length === 0) return "";
+  return `\n\n_You might also ask:_\n${items.map((q) => `• ${q}`).join("\n")}`;
+}
+
+/**
  * Honest, actionable empty state — replaces the old wall of
  * "I could not find any indexed memories…" text. Short, and points to the
  * next step instead of dead-ending.
@@ -167,6 +182,7 @@ export function renderResponse(result: AskResult, platform: string): string {
     (result.answer || "").trimEnd() +
     renderCitations(result.citations || []) +
     renderFreshness(result.lastSyncTs) +
+    renderFollowUps(result.followUps) +
     renderRoute(result.route || "qa_agent");
 
   return enforceCap(body, capFor(plat));

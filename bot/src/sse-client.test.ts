@@ -6,6 +6,7 @@ import {
   fetchSSEWithRetry,
   normalizeCitations,
   detectEmptyRetrieval,
+  resolveIsEmpty,
 } from "./sse-client.js";
 
 function mockResponse(body: string): Response {
@@ -211,6 +212,60 @@ describe("normalizeCitations", () => {
   });
   it("returns [] for empty payloads", () => {
     assert.deepStrictEqual(normalizeCitations({}), []);
+  });
+});
+
+describe("consumeSSEStream — follow_ups", () => {
+  it("captures up to 3 non-empty string suggestions", async () => {
+    const body = [
+      "event: response_delta",
+      'data: {"delta": "answer"}',
+      "",
+      "event: follow_ups",
+      'data: {"suggestions": ["What is X?", "  ", "How about Y?", 42, "Z?", "W?"]}',
+      "",
+      "event: metadata",
+      'data: {"route": "qa_agent"}',
+      "",
+      "event: done",
+      "data: {}",
+      "",
+    ].join("\n");
+    const result = await consumeSSEStream(mockResponse(body));
+    assert.deepStrictEqual(result.followUps, ["What is X?", "How about Y?", "Z?"]);
+  });
+
+  it("defaults followUps to [] when the event is absent", async () => {
+    const body = [
+      "event: response_delta",
+      'data: {"delta": "answer"}',
+      "",
+      "event: metadata",
+      'data: {"route": "qa_agent"}',
+      "",
+      "event: done",
+      "data: {}",
+      "",
+    ].join("\n");
+    const result = await consumeSSEStream(mockResponse(body));
+    assert.deepStrictEqual(result.followUps, []);
+  });
+});
+
+describe("resolveIsEmpty", () => {
+  const noCites: never[] = [];
+  it("trusts the backend empty flag for a short, uncited answer", () => {
+    assert.strictEqual(resolveIsEmpty("nothing here", noCites, true), true);
+  });
+  it("does NOT hide a substantive answer even if backend flags empty", () => {
+    assert.strictEqual(resolveIsEmpty("x".repeat(600), noCites, true), false);
+  });
+  it("is never empty when citations exist", () => {
+    assert.strictEqual(resolveIsEmpty("could not find any indexed", [{ type: "f", text: "t" }], true), false);
+  });
+  it("falls back to the text heuristic with no backend signal", () => {
+    assert.strictEqual(resolveIsEmpty("I could not find any indexed memories", noCites, undefined), true);
+    assert.strictEqual(resolveIsEmpty("The booth is H25.", noCites, undefined), false);
   });
 });
 

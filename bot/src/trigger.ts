@@ -47,3 +47,28 @@ export function decideSubscribedAction(input: SubscribedDecisionInput): Subscrib
   }
   return "answer";
 }
+
+export interface SubscribedThreadInput {
+  isMe?: boolean;
+  isBot?: boolean | "unknown";
+  isMention?: boolean;
+  quietThreshold: number;
+}
+
+/**
+ * Orchestrate the subscribed-thread decision, fetching the human count ONLY
+ * when it can change the outcome (not self/bot, not a mention). `getHumanCount`
+ * is injected — so this stays unit-testable without a live SDK — and may return
+ * `undefined` for "unknown", in which case we never go silent.
+ */
+export async function decideSubscribedThreadActionWithLookup(
+  input: SubscribedThreadInput,
+  getHumanCount: () => Promise<number | undefined>,
+): Promise<SubscribedAction> {
+  const { isMe, isBot, isMention, quietThreshold } = input;
+  if (isMe === true || isBot === true || isMention === true) {
+    return decideSubscribedAction({ isMe, isBot, isMention, quietThreshold });
+  }
+  const humanCount = await getHumanCount();
+  return decideSubscribedAction({ isMe, isBot, isMention, humanCount, quietThreshold });
+}

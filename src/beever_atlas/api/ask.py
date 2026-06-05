@@ -277,6 +277,48 @@ async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]
         return []
 
 
+async def _build_metadata_event(
+    *,
+    channel_id: str,
+    session_id: str,
+    mode: str,
+    registry,
+) -> dict:
+    """Assemble the SSE ``metadata`` payload.
+
+    Centralized so the non-deep and deep emit paths cannot drift. Adds two
+    additive, backward-compatible signals consumed by the chat bot:
+
+    - ``is_empty_retrieval``: ``True`` when retrieval registered no sources, so
+      the client can render an honest "nothing indexed" state instead of
+      guessing from the answer text. Falls back to ``False`` when the citation
+      registry is off (legacy path), leaving the client heuristic in charge.
+    - ``last_sync_ts``: the channel's last sync time (ISO-8601) for a freshness
+      hint. A store hiccup degrades it to ``None`` rather than breaking the
+      stream — freshness is best-effort.
+    """
+    from beever_atlas.stores import get_stores
+
+    last_sync_ts: str | None = None
+    try:
+        _state = await get_stores().mongodb.get_channel_sync_state(channel_id)
+        if _state is not None:
+            last_sync_ts = _state.last_sync_ts
+    except Exception:  # pragma: no cover - defensive; freshness is best-effort
+        last_sync_ts = None
+
+    return {
+        "route": "qa_agent",
+        "confidence": 0.85,
+        "cost_usd": 0.0,
+        "channel_id": channel_id,
+        "session_id": session_id,
+        "mode": mode,
+        "is_empty_retrieval": registry is not None and registry.registered_count == 0,
+        "last_sync_ts": last_sync_ts,
+    }
+
+
 async def _run_agent_stream(
     question: str,
     channel_id: str,
@@ -783,14 +825,12 @@ async def _run_agent_stream(
 
                 yield _sse_event(
                     "metadata",
-                    {
-                        "route": "qa_agent",
-                        "confidence": 0.85,
-                        "cost_usd": 0.0,
-                        "channel_id": channel_id,
-                        "session_id": session_id,
-                        "mode": mode,
-                    },
+                    await _build_metadata_event(
+                        channel_id=channel_id,
+                        session_id=session_id,
+                        mode=mode,
+                        registry=_registry,
+                    ),
                 )
                 await _persist_qa_history(
                     question=question,
@@ -914,14 +954,12 @@ async def _run_agent_stream(
 
                 yield _sse_event(
                     "metadata",
-                    {
-                        "route": "qa_agent",
-                        "confidence": 0.85,
-                        "cost_usd": 0.0,
-                        "channel_id": channel_id,
-                        "session_id": session_id,
-                        "mode": mode,
-                    },
+                    await _build_metadata_event(
+                        channel_id=channel_id,
+                        session_id=session_id,
+                        mode=mode,
+                        registry=_registry,
+                    ),
                 )
                 await _persist_qa_history(
                     question=question,

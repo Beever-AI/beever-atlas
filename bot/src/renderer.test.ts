@@ -3,6 +3,7 @@ import assert from "node:assert";
 import {
   renderResponse,
   renderEmptyState,
+  renderFollowUps,
   enforceCap,
   relativeTime,
   CHAR_CAP,
@@ -101,6 +102,30 @@ describe("renderResponse", () => {
   it("falls back to a safe generic cap for unknown platforms", () => {
     const out = renderResponse(result({ answer: "y".repeat(5000) }), "weirdplatform");
     assert.ok(out.length <= CHAR_CAP.unknown);
+  });
+});
+
+describe("follow-ups", () => {
+  it("renders a 'You might also ask' block, capped at 3", () => {
+    const out = renderResponse(
+      result({ followUps: ["What is A?", "What is B?", "What is C?", "What is D?"] }),
+      "slack",
+    );
+    assert.ok(out.includes("You might also ask:"));
+    assert.ok(out.includes("• What is A?"));
+    assert.ok(out.includes("• What is C?"));
+    assert.ok(!out.includes("What is D?"));
+  });
+
+  it("omits the block on the empty state", () => {
+    const out = renderResponse(result({ isEmpty: true, followUps: ["X?"] }), "slack");
+    assert.ok(!out.includes("You might also ask:"));
+  });
+
+  it("renderFollowUps returns '' for empty/undefined", () => {
+    assert.strictEqual(renderFollowUps(undefined), "");
+    assert.strictEqual(renderFollowUps([]), "");
+    assert.strictEqual(renderFollowUps(["   "]), "");
   });
 });
 

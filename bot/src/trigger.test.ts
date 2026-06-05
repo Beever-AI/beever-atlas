@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { decideSubscribedAction } from "./trigger.js";
+import { decideSubscribedAction, decideSubscribedThreadActionWithLookup } from "./trigger.js";
 
 const T = 2; // quiet threshold used across cases
 
@@ -63,5 +63,45 @@ describe("decideSubscribedAction", () => {
       decideSubscribedAction({ isMe: true, isBot: true, isMention: true, quietThreshold: T }),
       "skip",
     );
+  });
+});
+
+describe("decideSubscribedThreadActionWithLookup", () => {
+  it("answers a mention WITHOUT calling the participant lookup", async () => {
+    let calls = 0;
+    const action = await decideSubscribedThreadActionWithLookup(
+      { isMention: true, quietThreshold: T },
+      async () => { calls += 1; return 9; },
+    );
+    assert.strictEqual(action, "answer");
+    assert.strictEqual(calls, 0);
+  });
+
+  it("skips self/bot without calling the lookup", async () => {
+    let calls = 0;
+    const a = await decideSubscribedThreadActionWithLookup(
+      { isMe: true, quietThreshold: T },
+      async () => { calls += 1; return 0; },
+    );
+    assert.strictEqual(a, "skip");
+    assert.strictEqual(calls, 0);
+  });
+
+  it("unsubscribes a multi-human non-mention thread (one lookup call)", async () => {
+    let calls = 0;
+    const action = await decideSubscribedThreadActionWithLookup(
+      { isMention: false, quietThreshold: T },
+      async () => { calls += 1; return 2; },
+    );
+    assert.strictEqual(action, "unsubscribe");
+    assert.strictEqual(calls, 1);
+  });
+
+  it("answers when the lookup returns undefined (never silent on unknown)", async () => {
+    const action = await decideSubscribedThreadActionWithLookup(
+      { isMention: false, quietThreshold: T },
+      async () => undefined,
+    );
+    assert.strictEqual(action, "answer");
   });
 });

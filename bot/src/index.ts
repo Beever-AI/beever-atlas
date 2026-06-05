@@ -8,7 +8,10 @@ import { Chat } from "chat";
 import { renderResponse } from "./renderer.js";
 import { fetchSSEWithRetry } from "./sse-client.js";
 import { extractChannelId, extractPlatform } from "./thread-id.js";
-import { decideSubscribedAction } from "./trigger.js";
+import { decideSubscribedThreadActionWithLookup } from "./trigger.js";
+import { stripMention } from "./mentions.js";
+import { ParticipantCache } from "./participant-cache.js";
+import { logReplySent, type ReplySurface } from "./reply-metrics.js";
 import type { AskResult } from "./types.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
@@ -33,6 +36,13 @@ const PORT = parseInt(process.env.BOT_PORT || "3001", 10);
 const ASK_TIMEOUT_MS = parseInt(process.env.BOT_ASK_TIMEOUT_MS || "45000", 10);
 const HUMAN_QUIET_THRESHOLD = parseInt(process.env.BOT_HUMAN_QUIET_THRESHOLD || "2", 10);
 const TRIGGER_REDESIGN = (process.env.BOT_TRIGGER_REDESIGN || "on").toLowerCase() !== "off";
+//  - DM_ENABLED: answer direct messages (1:1 Q&A). Set BOT_DM_ENABLED=off to disable.
+//  - PARTICIPANT_CACHE_TTL_MS: cache a thread's human count to avoid a
+//    getParticipants() round-trip per non-mention message. 0 disables the cache.
+const DM_ENABLED = (process.env.BOT_DM_ENABLED || "on").toLowerCase() !== "off";
+const PARTICIPANT_CACHE_TTL_MS = parseInt(process.env.BOT_PARTICIPANT_CACHE_TTL_MS || "30000", 10);
+
+const participantCache = new ParticipantCache(PARTICIPANT_CACHE_TTL_MS);
 
 // Issue #53 — validateEnv lives in ./validate-env.ts; it's WARN-only and
 // never gates startup (platform-specific creds are loaded from the backend
@@ -49,7 +59,8 @@ function registerHandlers(bot: Chat): void {
     if (message.author?.isMe === true || message.author?.isBot === true) return;
     await thread.subscribe();
 
-    const question = stripMention(message.text || "");
+    const platform = extractPlatform(thread.id);
+    const question = stripMention(message.text || "", platform);
     if (!question.trim()) {
       await thread.post("Please ask me a question! For example: @beever what is our tech stack?");
       return;
@@ -69,7 +80,8 @@ function registerHandlers(bot: Chat): void {
     // path stays safe to roll back to.
     if (message.author?.isMe === true || message.author?.isBot === true) return;
 
-    const question = stripMention(message.text || "");
+    const platform = extractPlatform(thread.id);
+    const question = stripMention(message.text || "", platform);
     if (!question.trim()) return;
 
     if (TRIGGER_REDESIGN) {
@@ -88,50 +100,89 @@ function registerHandlers(bot: Chat): void {
 
     await answerInThread(thread, question, "follow-up");
   });
+
+  // Handler: direct messages — a private 1:1 Q&A surface. DMs route through the
+  // same webhook dispatch, so no manifest config or new endpoint is needed.
+  if (DM_ENABLED) {
+    bot.onDirectMessage(async (thread, message) => {
+      console.log(`[dm] (from ${thread.id})`);
+      if (message.author?.isMe === true || message.author?.isBot === true) return;
+
+      const platform = extractPlatform(thread.id);
+      const question = stripMention(message.text || "", platform);
+      if (!question.trim()) {
+        await thread.post("Ask me anything about this workspace's knowledge.");
+        return;
+      }
+      await answerInThread(thread, question, "dm");
+    });
+  }
 }
 
+type ThreadForParticipants = {
+  id: string;
+  getParticipants(): Promise<Array<{ isMe: boolean; isBot?: boolean | "unknown" }>>;
+};
+
 /**
- * Decide what to do with a subscribed-thread message. Only pays the
- * `getParticipants()` cost when the participant count can actually change the
- * outcome (i.e. not self/bot and not an explicit mention). A lookup failure
- * errs toward answering, never toward going silent.
+ * Decide what to do with a subscribed-thread message. Delegates the rules to the
+ * pure `decideSubscribedThreadActionWithLookup`, injecting a cached human-count
+ * lookup so a busy thread doesn't trigger a getParticipants() call per message.
  */
 async function decideSubscribedThreadAction(
-  thread: { getParticipants(): Promise<Array<{ isMe: boolean; isBot?: boolean | "unknown" }>> },
+  thread: ThreadForParticipants,
   message: { isMention?: boolean; author?: { isMe?: boolean; isBot?: boolean | "unknown" } },
 ): Promise<"answer" | "skip" | "unsubscribe"> {
-  const isMe = message.author?.isMe === true;
-  const isBot = message.author?.isBot;
-  const isMention = message.isMention === true;
+  return decideSubscribedThreadActionWithLookup(
+    {
+      isMe: message.author?.isMe === true,
+      isBot: message.author?.isBot,
+      isMention: message.isMention === true,
+      quietThreshold: HUMAN_QUIET_THRESHOLD,
+    },
+    () => getHumanCount(thread),
+  );
+}
 
-  if (isMe || isBot === true || isMention) {
-    return decideSubscribedAction({ isMe, isBot, isMention, quietThreshold: HUMAN_QUIET_THRESHOLD });
-  }
-
-  let humanCount: number | undefined;
+/** Human participant count for a thread, served from a short TTL cache. */
+async function getHumanCount(thread: ThreadForParticipants): Promise<number | undefined> {
+  const cached = participantCache.get(thread.id);
+  if (cached !== undefined) return cached;
   try {
     const participants = await thread.getParticipants();
     // Count only humans — exclude self and other bots so a single human + a
     // helper bot doesn't trip the multi-human "go quiet" threshold.
-    humanCount = participants.filter((p) => p.isMe !== true && p.isBot !== true).length;
+    const humanCount = participants.filter((p) => p.isMe !== true && p.isBot !== true).length;
+    participantCache.set(thread.id, humanCount);
+    return humanCount;
   } catch (err) {
     console.error("getParticipants failed; defaulting to answer:", safeErrorMessage(err));
-    humanCount = undefined;
+    return undefined;
   }
-  return decideSubscribedAction({ isMe, isBot, isMention, humanCount, quietThreshold: HUMAN_QUIET_THRESHOLD });
 }
 
 /** Ask the backend and post the rendered reply, swallowing errors into a friendly notice. */
 async function answerInThread(
   thread: { id: string; post(message: string): Promise<unknown> },
   question: string,
-  kind: "mention" | "follow-up",
+  surface: ReplySurface,
 ): Promise<void> {
+  const platform = extractPlatform(thread.id);
+  const startedAt = Date.now();
   try {
     const result = await askBackend(extractChannelId(thread.id), question);
-    await thread.post(renderResponse(result, extractPlatform(thread.id)));
+    await thread.post(renderResponse(result, platform));
+    logReplySent({
+      surface,
+      platform,
+      route: result.route,
+      latencyMs: Date.now() - startedAt,
+      isEmpty: result.isEmpty,
+      citationCount: result.citations.length,
+      followUpCount: result.followUps?.length ?? 0,
+    });
   } catch (err) {
-    console.error(`Error processing ${kind}:`, safeErrorMessage(err));
+    console.error(`Error processing ${surface}:`, safeErrorMessage(err));
     // A failed reply must not throw out of the handler: that would make the
     // webhook return 5xx and skip conversation recording (serviceUrl), which
     // breaks later message fetches even though the activity was valid.
@@ -148,11 +199,6 @@ async function answerInThread(
 // consumers (sse-client, renderer, tests) don't import the server bootstrap.
 
 export type { AskResult } from "./types.js";
-
-function stripMention(text: string): string {
-  // Remove Slack @mention format: <@U12345> or <@U12345|username>
-  return text.replace(/<@[A-Z0-9]+(\|[^>]+)?>/g, "").trim();
-}
 
 function backendApiKey(): string {
   const raw = process.env.BEEVER_API_KEYS || "";

@@ -29,7 +29,16 @@ interface StreamState {
   lastSyncTs?: string;
   /** Backend-provided empty-retrieval signal, if the metadata event carried it. */
   backendEmpty?: boolean;
+  /** Suggested related questions from the backend `follow_ups` event. */
+  followUps: string[];
 }
+
+/**
+ * Answers at/above this length are treated as substantive and never collapsed
+ * into the empty state, even if the backend flags empty retrieval — guards
+ * against hiding a real (if uncited) answer.
+ */
+const SUBSTANTIVE_ANSWER_CHARS = 600;
 
 /** Phrases the QA agent emits when retrieval found nothing (see backend prompt). */
 const EMPTY_PATTERN =
@@ -89,16 +98,34 @@ export function detectEmptyRetrieval(answer: string, citations: Citation[]): boo
   return EMPTY_PATTERN.test(answer);
 }
 
+/**
+ * Decide the final empty-state, combining the backend signal with the client
+ * heuristic safely. Requirements to render the empty state:
+ *  - no citations (a cited answer is never "empty"), AND
+ *  - the backend flagged empty retrieval OR the text matches the empty pattern, AND
+ *  - the answer is not substantive (so a long real answer is never hidden even
+ *    if the backend flag misfires).
+ */
+export function resolveIsEmpty(
+  answer: string,
+  citations: Citation[],
+  backendEmpty: boolean | undefined,
+): boolean {
+  if (citations.length > 0) return false;
+  if (answer.trim().length >= SUBSTANTIVE_ANSWER_CHARS) return false;
+  return backendEmpty === true || EMPTY_PATTERN.test(answer);
+}
+
 function finalizeResult(state: StreamState): AskResult {
-  const isEmpty = state.backendEmpty ?? detectEmptyRetrieval(state.answer, state.citations);
   return {
     answer: state.answer,
     citations: state.citations,
     route: state.route,
     confidence: state.confidence,
     costUsd: state.costUsd,
-    isEmpty,
+    isEmpty: resolveIsEmpty(state.answer, state.citations, state.backendEmpty),
     lastSyncTs: state.lastSyncTs,
+    followUps: state.followUps,
   };
 }
 
@@ -147,6 +174,15 @@ function applyEvent(
         state.lastSyncTs = event.data.last_sync_ts;
       }
       break;
+    case "follow_ups": {
+      const suggestions = event.data.suggestions;
+      if (Array.isArray(suggestions)) {
+        state.followUps = suggestions
+          .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          .slice(0, 3);
+      }
+      break;
+    }
     case "error":
       throw new Error((event.data.message as string) || "Unknown backend error");
   }
@@ -162,6 +198,7 @@ export async function consumeSSEStream(
     route: "echo",
     confidence: 0,
     costUsd: 0,
+    followUps: [],
   };
 
   if (!response.body) {
