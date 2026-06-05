@@ -82,6 +82,7 @@ async def _try_store_hit(
     principal: Principal,
     cache_control: str,
     extra_headers: dict[str, str] | None = None,
+    channel_id: str | None = None,
 ):
     """Return a ``StreamingResponse`` if the blob store has ``url``, else None.
 
@@ -91,15 +92,19 @@ async def _try_store_hit(
     used as the lookup key; a hit never fetches it, so passing the
     pre-validation URL here is safe.
 
-    Channel ACL (S1): ``open_by_url`` matches ANY ref by ``url_key`` with no
-    channel filter, so on a hit we MUST authorize the authenticated
-    ``principal`` against the ref's ``channel_id`` — this is the single
-    channel-access chokepoint that the rest of the app funnels through. The
-    check runs OUTSIDE the ``open_by_url`` try/except so a 403 is never
-    swallowed by the store-resilience handler and re-leaked via an origin
-    fetch; it raises ``HTTPException(403)`` which propagates unwrapped. The
-    store-MISS / store-ERROR / flag-OFF paths all return ``None`` before the
-    ACL is evaluated, preserving the resilience contract.
+    Channel ACL (S1), per-candidate: a ``url_key`` (host+path) can legitimately
+    exist in more than one channel, so we fetch ALL candidate refs (deterministic,
+    oldest first) and authorize each against the authenticated ``principal``,
+    serving the FIRST channel it may access. This both closes the IDOR (a caller
+    must own a channel that holds the URL) and avoids a spurious 403 when an
+    arbitrary ``find_one`` would have picked a channel the caller can't see while
+    another holds the same URL. Pass ``channel_id`` (when the caller knows it) for
+    an exact single-channel lookup. ``assert_channel_access`` raises
+    ``HTTPException(403)``; that deny is the deliberate path and must NOT be
+    swallowed into an origin re-fetch — so only an ALL-denied candidate set raises
+    403, while refs-exist-but-bytes-gone falls through to ``None`` (origin). The
+    store-MISS / store-ERROR / flag-OFF paths all return ``None`` first, preserving
+    the resilience contract.
     """
     if not get_settings().channel_media_read_through:
         return None
@@ -108,34 +113,62 @@ async def _try_store_hit(
     if blob_store is None:
         return None
     try:
-        hit = await blob_store.open_by_url(url)
+        candidates = await blob_store.find_refs_for_url(url, channel_id=channel_id)
     except Exception:
         # Resilience: a store outage must not break serving — fall through
         # to the origin fetch path below.
         logger.warning("media read-through: store lookup failed, falling back", exc_info=True)
         return None
-    if hit is None:
+    if not candidates:
         return None
-    read, ref = hit
 
-    # Channel-ACL chokepoint — OUTSIDE the try/except above so a deny (403)
-    # propagates instead of being swallowed into an origin re-fetch.
-    # ``channel_id`` is always present (open_by_hash dereferences it).
-    await assert_channel_access(principal, ref["channel_id"])
+    denied = False
+    for ref in candidates:
+        try:
+            await assert_channel_access(principal, ref["channel_id"])
+        except HTTPException as exc:
+            # A 403 on one candidate must not hide media the caller can reach
+            # via another channel holding the same URL — try the next. Non-403
+            # HTTPExceptions propagate unchanged.
+            if exc.status_code == 403:
+                denied = True
+                continue
+            raise
+        try:
+            read = await blob_store.open_ref(ref)
+        except Exception:
+            # Resilience: a backend hiccup on one candidate → skip it.
+            logger.warning(
+                "media read-through: open failed channel=%s, skipping",
+                ref.get("channel_id"),
+                exc_info=True,
+            )
+            continue
+        if read is None:
+            # Bytes purged after the ref was read — try the next candidate.
+            continue
 
-    media_type = (
-        getattr(read, "content_type", None) or ref.get("mime_type") or "application/octet-stream"
-    )
-    # S2 anti-XSS hardening, keyed on the RESOLVED media type — nosniff + CSP
-    # sandbox + a content-type-aware Content-Disposition (inline only for the
-    # known-safe image/PDF allowlist, attachment for SVG/HTML and friends).
-    headers = {
-        "Cache-Control": cache_control,
-        "X-Media-Source": "store",
-        **safe_media_headers(media_type),
-        **(extra_headers or {}),
-    }
-    return StreamingResponse(_iter_blob(read), media_type=media_type, headers=headers)
+        media_type = (
+            getattr(read, "content_type", None)
+            or ref.get("mime_type")
+            or "application/octet-stream"
+        )
+        # S2 anti-XSS hardening, keyed on the RESOLVED media type — nosniff + CSP
+        # sandbox + a content-type-aware Content-Disposition (inline only for the
+        # known-safe image/PDF allowlist, attachment for SVG/HTML and friends).
+        headers = {
+            "Cache-Control": cache_control,
+            "X-Media-Source": "store",
+            **safe_media_headers(media_type),
+            **(extra_headers or {}),
+        }
+        return StreamingResponse(_iter_blob(read), media_type=media_type, headers=headers)
+
+    if denied:
+        # The media exists but the caller can access NO channel that holds it.
+        raise HTTPException(status_code=403, detail="Channel access denied")
+    # Candidates existed but their bytes are gone → behave as a miss (origin).
+    return None
 
 
 @router.get("/api/files/proxy")
@@ -143,6 +176,9 @@ async def proxy_file(
     url: str = Query(..., description="File URL to proxy"),
     connection_id: str | None = Query(
         None, description="Connection ID for multi-workspace routing"
+    ),
+    channel_id: str | None = Query(
+        None, description="Channel the media is being viewed in (exact store lookup + ACL)"
     ),
     principal: Principal = Depends(require_user_loader),
 ):
@@ -173,7 +209,12 @@ async def proxy_file(
     # hit never fetches the URL, so the lookup sits between validation and
     # the origin fetch. We pass the RAW `url` (not the encoded bridge form)
     # because the store keys on the platform URL's host+path.
-    stored = await _try_store_hit(url, principal=principal, cache_control="public, max-age=3600")
+    stored = await _try_store_hit(
+        url,
+        principal=principal,
+        cache_control="public, max-age=3600",
+        channel_id=channel_id,
+    )
     if stored is not None:
         return stored
 
@@ -251,6 +292,9 @@ async def proxy_file(
 @router.get("/api/media/proxy")
 async def proxy_media(
     url: str = Query(..., min_length=10, max_length=2048),
+    channel_id: str | None = Query(
+        None, description="Channel the media is being viewed in (exact store lookup + ACL)"
+    ),
     principal: Principal = Depends(require_user_loader),
 ) -> Response:
     """Fetch an allow-listed media URL with server-side auth and stream it back.
@@ -286,6 +330,7 @@ async def proxy_media(
         url,
         principal=principal,
         cache_control="private, max-age=300",
+        channel_id=channel_id,
     )
     if stored is not None:
         return stored

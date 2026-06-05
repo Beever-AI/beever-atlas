@@ -275,33 +275,63 @@ class MediaBlobStore:
     # Read
     # ------------------------------------------------------------------
 
-    async def open_by_url(self, url: str) -> "tuple[BlobRead, dict] | None":
-        """Open the stored blob for a platform URL, or ``None`` on miss.
+    async def find_refs_for_url(self, url: str, *, channel_id: str | None = None) -> "list[dict]":
+        """Return every ref whose ``url_key`` matches ``url``, oldest first.
 
-        Channel-agnostic: the proxy doesn't know the channel, so we match
-        ANY ref carrying the URL's ``url_key`` and open the blob for that
-        ref's ``(sha256, channel_id)``. Returns ``(BlobRead, ref_doc)`` on
-        hit — a backend-neutral byte read, so the read-through proxy is the
-        same for GridFS and MinIO. A genuine miss and a store error both
-        return ``None`` (the proxy must stay resilient), but a store error is
-        logged at WARN so it's distinguishable from an empty/Telegram URL
-        (which returns early).
+        The proxy doesn't know which channel a requested URL belongs to, and the
+        same ``url_key`` (host+path) can legitimately exist in more than one
+        channel (e.g. the same link shared in two channels). Returning ALL
+        candidates — deterministically ordered by ``(created_at, channel_id)`` —
+        lets the caller authorize each against the principal and serve the first
+        one it may access, instead of an arbitrary ``find_one`` that could pick a
+        channel the caller can't see (a spurious 403) or a since-purged blob.
+
+        Pass ``channel_id`` to restrict to an exact ``(url_key, channel_id)``
+        point lookup when the caller already knows the channel.
+
+        Resilient by contract: an empty/Telegram ``url_key``, a genuine miss, or
+        a store error all yield ``[]`` so the read-through proxy can fall through
+        to the origin fetch.
         """
         url_key = self.normalize_url_key(url)
         if not url_key:
-            return None
+            return []
         _, refs = self._ensure_ready()
+        query = {"url_key": url_key}
+        if channel_id is not None:
+            query["channel_id"] = channel_id
         try:
-            ref = await refs.find_one({"url_key": url_key})
+            cursor = refs.find(query).sort([("created_at", 1), ("channel_id", 1)])
+            return [doc async for doc in cursor]
         except Exception as exc:
             logger.warning("MediaBlobStore: ref lookup failed url_key=%s error=%s", url_key, exc)
-            return None
-        if ref is None:
-            return None
-        read = await self.open_by_hash(ref["sha256"], ref["channel_id"])
-        if read is None:
-            return None
-        return read, ref
+            return []
+
+    async def open_ref(self, ref: "dict") -> "BlobRead | None":
+        """Open the backend-neutral byte read for a specific ref doc.
+
+        ``None`` when the bytes are gone (e.g. the channel was purged after the
+        ref was read), so a caller iterating candidates can skip to the next.
+        """
+        return await self.open_by_hash(ref["sha256"], ref["channel_id"])
+
+    async def open_by_url(
+        self, url: str, *, channel_id: str | None = None
+    ) -> "tuple[BlobRead, dict] | None":
+        """First openable ``(BlobRead, ref_doc)`` for ``url``, or ``None`` on miss.
+
+        Deterministic (oldest ref first) and purge-safe (skips refs whose blob is
+        gone). Channel-agnostic by default; pass ``channel_id`` for an exact
+        lookup. NOTE: this does NOT enforce channel access — the read-through
+        proxy authorizes per-candidate via :meth:`find_refs_for_url` +
+        :meth:`open_ref`; this convenience wrapper is for store-level callers
+        (tests, backfill) that already operate within a trusted channel scope.
+        """
+        for ref in await self.find_refs_for_url(url, channel_id=channel_id):
+            read = await self.open_ref(ref)
+            if read is not None:
+                return read, ref
+        return None
 
     async def open_by_hash(self, sha256: str, channel_id: str) -> "BlobRead | None":
         """Open a backend-neutral byte read for ``(sha256, channel_id)``."""

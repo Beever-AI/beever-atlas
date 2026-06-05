@@ -80,6 +80,23 @@ class _FakeUploadStream:
         return None
 
 
+class _AsyncCursor:
+    """Chainable async cursor stub: ``find(q).sort(...)`` then ``async for``."""
+
+    def __init__(self, docs: "list[dict]", *, raises: bool = False) -> None:
+        self._docs = list(docs)
+        self._raises = raises
+
+    def sort(self, *_a, **_kw) -> "_AsyncCursor":
+        return self
+
+    async def __aiter__(self):
+        if self._raises:
+            raise RuntimeError("mongo down")
+        for doc in self._docs:
+            yield doc
+
+
 def _make_store(
     *,
     files_existing: dict | None = None,
@@ -106,6 +123,15 @@ def _make_store(
         refs_col.find_one = AsyncMock(side_effect=RuntimeError("mongo down"))
     else:
         refs_col.find_one = AsyncMock(return_value=ref_existing)
+    # ``find(query).sort(...)`` async cursor (the read path). Yields the single
+    # configured ref (or nothing on a miss); raises mid-iteration to exercise
+    # the resilience path.
+    refs_col.find = MagicMock(
+        side_effect=lambda *_a, **_kw: _AsyncCursor(
+            [ref_existing] if ref_existing is not None else [],
+            raises=ref_find_one_raises,
+        )
+    )
     refs_col.update_one = AsyncMock(return_value=None)
     refs_col.delete_many = AsyncMock(return_value=MagicMock(deleted_count=3))
     refs_col.count_documents = AsyncMock(return_value=0)
@@ -292,7 +318,7 @@ class TestOpenByUrl:
         )
         await store.open_by_url(DISCORD_URL_RESIGNED)
         # The expired/re-signed URL still queried by the stable host+path key.
-        assert refs.find_one.call_args[0][0] == {"url_key": DISCORD_URL_KEY}
+        assert refs.find.call_args[0][0] == {"url_key": DISCORD_URL_KEY}
 
     async def test_miss_returns_none(self):
         store, _files, _refs, _bucket, _stream = _make_store(ref_existing=None)

@@ -75,9 +75,12 @@ class _RecordingIterator:
 class _FakeBlobStore:
     """Fake ``MediaBlobStore`` for the proxy read-through path.
 
-    ``open_by_url`` returns ``(BlobRead, ref)`` on a configured hit, ``None``
-    on a miss, or raises if ``raise_on_lookup`` is set (resilience test). The
-    ref ALWAYS carries ``channel_id`` (the S1 ACL dereferences it).
+    The proxy resolves via ``find_refs_for_url`` (ALL candidate refs for a
+    url_key, oldest first) + ``open_ref`` (open one ref's blob, ``None`` when
+    its bytes are gone). Configure one channel (``channel_id``) or several
+    (``channel_ids``) to exercise the per-candidate ACL. ``raise_on_lookup``
+    triggers a store outage; ``missing_channels`` marks channels whose ref
+    exists but whose blob was purged (``open_ref`` → ``None``).
     """
 
     def __init__(
@@ -86,38 +89,63 @@ class _FakeBlobStore:
         hit_bytes: bytes | None = None,
         mime_type: str = "image/png",
         channel_id: str = "C-store",
+        channel_ids: "list[str] | None" = None,
         raise_on_lookup: bool = False,
         iterator: "AsyncIterator[bytes] | None" = None,
+        missing_channels: "set[str] | None" = None,
     ) -> None:
         self.hit_bytes = hit_bytes
         self.mime_type = mime_type
-        self.channel_id = channel_id
+        # Ordered candidate channels (the real store sorts oldest-first).
+        self.channel_ids = channel_ids if channel_ids is not None else [channel_id]
         self.raise_on_lookup = raise_on_lookup
         self._iterator = iterator
+        self.missing_channels = missing_channels or set()
         self.calls: list[str] = []
 
-    async def open_by_url(self, url: str) -> "tuple[BlobRead, dict] | None":
+    def _ref(self, url: str, channel_id: str) -> dict:
+        return {
+            "mime_type": self.mime_type,
+            "channel_id": channel_id,
+            "sha256": "deadbeef",
+            "url_key": MediaBlobStore.normalize_url_key(url),
+        }
+
+    async def find_refs_for_url(self, url: str, *, channel_id: str | None = None) -> "list[dict]":
         self.calls.append(url)
         if self.raise_on_lookup:
             raise RuntimeError("simulated store outage")
         if self.hit_bytes is None and self._iterator is None:
+            return []
+        chans = (
+            self.channel_ids
+            if channel_id is None
+            else [c for c in self.channel_ids if c == channel_id]
+        )
+        return [self._ref(url, c) for c in chans]
+
+    async def open_ref(self, ref: dict) -> "BlobRead | None":
+        if ref["channel_id"] in self.missing_channels:
             return None
         if self._iterator is not None:
             iterator: "AsyncIterator[bytes]" = self._iterator
         else:
             assert self.hit_bytes is not None
             iterator = _aiter_bytes(self.hit_bytes)
-        read = BlobRead(
+        return BlobRead(
             iterator=iterator,
             content_type=self.mime_type,
             size=len(self.hit_bytes) if self.hit_bytes is not None else None,
         )
-        ref = {
-            "mime_type": self.mime_type,
-            "channel_id": self.channel_id,
-            "url_key": MediaBlobStore.normalize_url_key(url),
-        }
-        return read, ref
+
+    async def open_by_url(
+        self, url: str, *, channel_id: str | None = None
+    ) -> "tuple[BlobRead, dict] | None":
+        for ref in await self.find_refs_for_url(url, channel_id=channel_id):
+            read = await self.open_ref(ref)
+            if read is not None:
+                return read, ref
+        return None
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
@@ -426,6 +454,85 @@ def test_files_proxy_store_hit_cross_tenant_denied_403(
     assert r.json()["detail"] == "Channel access denied"
     # The 403 must NOT have been swallowed into an origin fetch.
     assert "url" not in recorded, "denied store hit must not fall through to the bridge"
+
+
+def test_files_proxy_multichannel_serves_via_owned_channel_200(
+    files_client, install_blob_store, patch_channel_access, auth_headers
+):
+    """Latent-risk fix: a url_key in TWO channels, caller owns only the SECOND.
+
+    The per-candidate ACL denies the first channel and serves via the owned
+    second — where the old arbitrary ``find_one`` could have picked the first
+    and 403'd media the caller can legitimately see.
+    """
+    client, _recorded, *_ = files_client
+    patch_channel_access([_conn("user:test", ["C-B"])], single_tenant=False)
+    blob = _FakeBlobStore(hit_bytes=b"owned-bytes", channel_ids=["C-A", "C-B"])
+    install_blob_store(blob)
+
+    r = client.get("/api/files/proxy", params={"url": _SLACK_URL}, headers=auth_headers)
+    assert r.status_code == 200
+    assert r.content == b"owned-bytes"
+    assert r.headers["X-Media-Source"] == "store"
+
+
+def test_files_proxy_multichannel_all_denied_403(
+    files_client, install_blob_store, patch_channel_access, auth_headers
+):
+    """url_key in two channels, caller owns NEITHER → 403 (security preserved)."""
+    client, recorded, *_ = files_client
+    patch_channel_access([_conn("user:someone-else", ["C-A", "C-B"])], single_tenant=False)
+    blob = _FakeBlobStore(hit_bytes=b"secret", channel_ids=["C-A", "C-B"])
+    install_blob_store(blob)
+
+    r = client.get("/api/files/proxy", params={"url": _SLACK_URL}, headers=auth_headers)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Channel access denied"
+    assert "url" not in recorded, "all-denied store hit must not fall through to the bridge"
+
+
+def test_files_proxy_purged_blob_skips_to_next_candidate_200(
+    files_client, install_blob_store, patch_channel_access, auth_headers
+):
+    """An authorized candidate whose bytes are gone (purged) is skipped; the
+    next authorized+present candidate serves — no false miss, no leak."""
+    client, _recorded, *_ = files_client
+    patch_channel_access([_conn("user:test", ["C-A", "C-B"])], single_tenant=False)
+    blob = _FakeBlobStore(
+        hit_bytes=b"present", channel_ids=["C-A", "C-B"], missing_channels={"C-A"}
+    )
+    install_blob_store(blob)
+
+    r = client.get("/api/files/proxy", params={"url": _SLACK_URL}, headers=auth_headers)
+    assert r.status_code == 200
+    assert r.content == b"present"
+    assert r.headers["X-Media-Source"] == "store"
+
+
+def test_files_proxy_channel_id_hint_scopes_lookup(
+    files_client, install_blob_store, patch_channel_access, auth_headers
+):
+    """The optional ``channel_id`` restricts the lookup to that exact channel.
+
+    Caller owns C-A but not C-B. Without the hint the URL serves via C-A; with
+    ``channel_id=C-B`` the lookup is scoped to C-B (not owned) → 403, proving
+    the hint narrows candidates instead of falling back to the owned C-A.
+    """
+    client, _recorded, *_ = files_client
+    patch_channel_access([_conn("user:test", ["C-A"])], single_tenant=False)
+    blob = _FakeBlobStore(hit_bytes=b"ab", channel_ids=["C-A", "C-B"])
+    install_blob_store(blob)
+
+    r_open = client.get("/api/files/proxy", params={"url": _SLACK_URL}, headers=auth_headers)
+    assert r_open.status_code == 200, "no hint → served via the owned C-A"
+
+    r_scoped = client.get(
+        "/api/files/proxy",
+        params={"url": _SLACK_URL, "channel_id": "C-B"},
+        headers=auth_headers,
+    )
+    assert r_scoped.status_code == 403, "channel_id=C-B scopes to C-B only (not owned)"
+    assert r_scoped.json()["detail"] == "Channel access denied"
 
 
 # ── /api/media/proxy ───────────────────────────────────────────────────────
