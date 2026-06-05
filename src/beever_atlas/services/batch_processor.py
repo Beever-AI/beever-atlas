@@ -15,9 +15,11 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 import httpx
 import json
 from aiolimiter import AsyncLimiter
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import ValidationError as PydanticValidationError
@@ -257,6 +259,49 @@ def _is_resumable(exc: Exception) -> bool:
     return False
 
 
+def _is_transient_net_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` is a transient connection-level network drop.
+
+    Issue #223: a long, non-streaming ``gemini-2.5-pro`` ``generate_content``
+    call sits idle past the ~127-131s edge-proxy ceiling and the peer closes
+    the idle socket → ``aiohttp.ServerDisconnectedError``. This is NONE of the
+    four types caught at the resumable-retry site (``ServerError`` / 5xx
+    ``httpx.HTTPStatusError`` / ``PydanticValidationError`` / ``JSONDecodeError``)
+    and ``_is_truncation_error`` returns False for it, so without this predicate
+    it would hit the terminal ``else: raise`` on the very FIRST attempt with no
+    backoff. Worse, concurrent batches' disconnects feed the circuit breaker and
+    open it, fast-failing every remaining sub-batch into ``total_facts=0``.
+
+    Matches: aiohttp ServerDisconnectedError / ClientConnectionError /
+    ClientOSError, the stdlib ConnectionResetError, httpx RemoteProtocolError /
+    ReadError, and asyncio/builtin TimeoutError. ADK/anyio TaskGroups wrap the
+    real cause in an ``ExceptionGroup`` (``BaseExceptionGroup``), so we recurse
+    into ``.exceptions`` and report True if ANY leaf is a transient net error.
+
+    NOTE: ``httpx.RemoteProtocolError`` / ``ReadError`` are deliberately NOT
+    matched here — they are ambiguous (a mid-stream truncation surfaces the same
+    way) and are already handled by ``_is_truncation_error``'s reduce→halve
+    ladder. The genuine Issue #223 drop is the aiohttp ``ServerDisconnectedError``
+    on the google-genai aio path, so keeping the httpx truncation routing
+    unchanged avoids replaying an oversized request without shrinking it.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_transient_net_error(sub) for sub in exc.exceptions)
+    if isinstance(
+        exc,
+        (
+            aiohttp.ServerDisconnectedError,
+            aiohttp.ClientConnectionError,
+            aiohttp.ClientOSError,
+            ConnectionResetError,
+            asyncio.TimeoutError,
+            TimeoutError,
+        ),
+    ):
+        return True
+    return False
+
+
 @dataclass
 class BatchBreakdown:
     """Per-batch extraction breakdown with sample data."""
@@ -451,6 +496,25 @@ class BatchProcessor:
         )
 
         runner = create_runner(create_ingestion_pipeline())
+
+        # Issue #223 / Layer 1 (ROOT) — make the long extraction call stream.
+        # When INGEST_ADK_STREAMING_SSE is on, hand ADK a RunConfig with
+        # StreamingMode.SSE so base_llm_flow dispatches the native google-genai
+        # generate_content_stream instead of the blocking generate_content. The
+        # incremental chunks keep the socket warm so a >120s gemini-2.5-pro call
+        # never idles to the edge-proxy disconnect threshold. Built once per job
+        # and reused for every sub-batch runner.run_async() below; left None when
+        # the flag is off so ADK keeps its current non-streaming default.
+        # ``is True`` (not mere truthiness) so an incomplete MagicMock settings
+        # in older tests — whose auto-created attribute is truthy but not a real
+        # bool — keeps ADK's non-streaming default instead of spuriously
+        # streaming. Real Settings stores a genuine ``bool`` so production is
+        # unaffected; the streaming test sets the attribute to ``True`` explicitly.
+        _ingest_run_config = (
+            RunConfig(streaming_mode=StreamingMode.SSE)
+            if getattr(settings, "ingest_adk_streaming_sse", False) is True
+            else None
+        )
 
         known_entities: list[dict[str, Any]] = await stores.entity_registry.get_all_canonical()
         cumulative_timings: dict[str, float] = {}
@@ -799,14 +863,20 @@ class BatchProcessor:
                         _limiter_wait_gemini = 0.0
                         _limiter_wait_embedding = 0.0
                         _evt_count = 0
-                        async for _event in runner.run_async(
-                            user_id="system",
-                            session_id=session.id,
-                            new_message=types.Content(
+                        # Issue #223 / Layer 1 — only pass run_config when SSE
+                        # streaming is enabled so ADK keeps its own default
+                        # RunConfig (non-streaming) when the flag is off.
+                        _run_async_kwargs: dict[str, Any] = {
+                            "user_id": "system",
+                            "session_id": session.id,
+                            "new_message": types.Content(
                                 role="user",
                                 parts=[types.Part(text="process batch")],
                             ),
-                        ):
+                        }
+                        if _ingest_run_config is not None:
+                            _run_async_kwargs["run_config"] = _ingest_run_config
+                        async for _event in runner.run_async(**_run_async_kwargs):
                             author = getattr(_event, "author", "") or ""
                             label = _STAGE_LABELS.get(author)
                             if label and author != _last_stage:
@@ -1550,6 +1620,46 @@ class BatchProcessor:
                         await self._breaker.record_failure(exc)
                         raise
                 except Exception as exc:
+                    # Issue #223 / Layer 2 (ROBUSTNESS) — transient connection
+                    # drops MUST be handled BEFORE the truncation ladder and MUST
+                    # NOT feed the breaker. A long extraction call whose idle
+                    # socket is closed by an edge proxy raises
+                    # aiohttp.ServerDisconnectedError, which is neither a
+                    # resumable type nor a truncation marker, so it would
+                    # otherwise hit the terminal ``raise`` below on attempt 0 with
+                    # zero backoff — and concurrent batches' drops would open the
+                    # breaker and fast-fail the rest of the job into total_facts=0.
+                    if _is_transient_net_error(exc):
+                        if attempt < _LLM_MAX_RETRIES:
+                            logger.warning(
+                                "BatchProcessor: transient network drop job_id=%s "
+                                "batch=%d/%d attempt=%d/%d — retrying with backoff "
+                                "(not counted toward outage breaker): %s",
+                                sync_job_id,
+                                batch_index,
+                                max_batches,
+                                attempt + 1,
+                                _LLM_MAX_RETRIES + 1,
+                                _summarize_exception(exc),
+                            )
+                            # Loop top sleeps (backoff ladder) and reloads the
+                            # checkpoint, so the streamed retry resumes cheaply.
+                            continue
+                        # Terminal: exhausted retries on a transient drop. Raise so
+                        # THIS row fails, but DO NOT call record_failure — an
+                        # idle-proxy disconnect storm must never advance the
+                        # breaker toward its threshold and wipe the whole batch.
+                        logger.error(
+                            "BatchProcessor: transient network drop job_id=%s "
+                            "batch=%d/%d — exhausted %d retries; failing this row "
+                            "WITHOUT tripping the outage breaker: %s",
+                            sync_job_id,
+                            batch_index,
+                            max_batches,
+                            _LLM_MAX_RETRIES + 1,
+                            _summarize_exception(exc),
+                        )
+                        raise
                     # Catch ValidationError (truncated LLM JSON) and similar parse failures.
                     # Strategy: attempt 1 → reduce max_facts to 1, attempt 2 → halve batch.
                     is_validation = _is_truncation_error(exc)
