@@ -418,3 +418,44 @@ class TestComputeConfidence:
         assert many > few
         assert 0.1 <= few <= 0.95
         assert 0.1 <= many <= 0.95
+
+
+class TestReplyContractV2V3:
+    """Guards the SSE metadata fields the chat bot renders.
+
+    These are the v2/v3 additions the bot depends on; a regression here (e.g.
+    reverting confidence to a constant, or dropping a field) would silently
+    degrade the bot with no other test catching it.
+    """
+
+    @staticmethod
+    def _metadata(body: str) -> dict:
+        for block in body.split("\n\n"):
+            if "event: metadata" in block:
+                for line in block.split("\n"):
+                    if line.startswith("data:"):
+                        return json.loads(line[5:].strip())
+        raise AssertionError("no metadata event in stream")
+
+    @pytest.mark.asyncio
+    async def test_metadata_carries_computed_confidence_and_signals(
+        self, client: AsyncClient, mock_runner
+    ):
+        response = await client.post(
+            "/api/channels/C123/ask",
+            json={"question": "what is our stack?"},
+        )
+        assert response.status_code == 200
+        meta = self._metadata(response.text)
+
+        # Confidence is COMPUTED, never the old hardcoded 0.85 constant. The
+        # mock runner produces no citations, so the honest value is the 0.15
+        # floor (same whether the registry is empty or disabled).
+        assert isinstance(meta["confidence"], (int, float))
+        assert meta["confidence"] != 0.85
+        assert meta["confidence"] == 0.15
+
+        # Honest-empty-state and freshness signals are always present (the bot
+        # reads these keys; value may be null/false depending on data).
+        assert "is_empty_retrieval" in meta
+        assert "last_sync_ts" in meta
