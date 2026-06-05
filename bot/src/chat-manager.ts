@@ -56,6 +56,10 @@ export class ChatManager {
   /** Maps workspace identifiers to connectionId for URL-based routing.
    *  e.g. Slack team_id "T0APJ2FNUKZ" → connectionId "abc-123" */
   private workspaceIdMap: Map<string, string> = new Map();
+  /** Maps connectionId → Slack workspace domain (the subdomain of *.slack.com,
+   *  e.g. "beever"). Captured from auth.test's `url` at registration; used to
+   *  build clickable message permalinks for citations. Slack only. */
+  private workspaceDomainMap: Map<string, string> = new Map();
   /** RES-286 — scheduled adapter recycle timer.
    *  Tears down + rebuilds every adapter periodically to drop accumulated
    *  state (notably the chat-adapter-mattermost ws closures and bridge.ts
@@ -205,6 +209,15 @@ export class ChatManager {
               if (authResult?.team_id) {
                 this.workspaceIdMap.set(authResult.team_id, entry.connectionId);
                 console.log(`ChatManager: cached Slack team_id=${authResult.team_id} → connection=${entry.connectionId}`);
+              }
+              // auth.test also returns `url` (e.g. "https://beever.slack.com/");
+              // its subdomain is the workspace domain needed to build clickable
+              // message permalinks for citations. Best-effort — a missing/odd
+              // url just means citations stay unlinked, never an error.
+              const workspaceDomain = parseSlackWorkspaceDomain(authResult?.url);
+              if (workspaceDomain) {
+                this.workspaceDomainMap.set(entry.connectionId, workspaceDomain);
+                console.log(`ChatManager: cached Slack workspace_domain=${workspaceDomain} → connection=${entry.connectionId}`);
               }
             } catch (err) {
               console.warn(`ChatManager: auth.test failed for "${key}", file routing may be degraded:`, safeErrorMessage(err));
@@ -475,5 +488,46 @@ export class ChatManager {
    */
   getConnectionForWorkspaceId(workspaceId: string): string | null {
     return this.workspaceIdMap.get(workspaceId) ?? null;
+  }
+
+  /** Slack workspace domain for a specific connection, or null if unknown. */
+  getWorkspaceDomain(connectionId: string): string | null {
+    return this.workspaceDomainMap.get(connectionId) ?? null;
+  }
+
+  /**
+   * Slack workspace domain for the FIRST adapter of `platform` — mirrors how
+   * `getAdapter(platform)` selects an adapter, so a channel resolved via the
+   * platform-level bridge gets a consistent domain. Returns null when unknown
+   * (non-Slack, auth.test failed, or multi-workspace where the first adapter's
+   * domain doesn't apply — callers degrade to an unlinked citation).
+   */
+  getWorkspaceDomainForPlatform(platform: string): string | null {
+    for (const { platform: p, connectionId } of this.listAdapters()) {
+      if (p === platform) {
+        const domain = this.workspaceDomainMap.get(connectionId);
+        if (domain) return domain;
+      }
+    }
+    return null;
+  }
+}
+
+/**
+ * Parse the Slack workspace domain (the *.slack.com subdomain, e.g. "beever")
+ * from an auth.test `url` like "https://beever.slack.com/". Returns null on a
+ * missing/odd value rather than throwing — a missing domain just leaves
+ * citations unlinked.
+ */
+export function parseSlackWorkspaceDomain(url: unknown): string | null {
+  if (typeof url !== "string" || url.length === 0) return null;
+  try {
+    const host = new URL(url).hostname; // e.g. "beever.slack.com"
+    if (!host.endsWith(".slack.com")) return null;
+    const sub = host.slice(0, host.length - ".slack.com".length);
+    // Reject empty / multi-label subdomains we can't turn into a permalink host.
+    return /^[a-z0-9-]+$/i.test(sub) ? sub : null;
+  } catch {
+    return null;
   }
 }

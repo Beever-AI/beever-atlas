@@ -85,6 +85,7 @@ export function normalizeCitations(data: Record<string, unknown>): Citation[] {
       author: asString(it.author),
       url: asString(it.permalink) ?? asString(it.url),
       source: asString(it.channel) ?? asString(it.source),
+      timestamp: asString(it.message_ts) ?? asString(it.timestamp),
     });
   }
   if (out.length > 0) return out;
@@ -101,6 +102,7 @@ export function normalizeCitations(data: Record<string, unknown>): Citation[] {
       author: asString(native.author),
       url: asString(s.permalink) ?? asString(native.permalink),
       source: asString(native.channel_name) ?? asString(native.channel),
+      timestamp: asString(native.message_ts) ?? asString(native.timestamp),
     });
   }
   return out;

@@ -43,11 +43,13 @@ describe("renderResponse", () => {
       "slack",
     );
     assert.ok(out.includes("## 📎 Sources"));
-    // Concise: icon + index + provenance + a markdown [open](url) link — NOT the
-    // verbose fact text, and NOT a bare <url> autolink.
-    assert.ok(out.includes("- 📖 [1] [open](https://wiki/x)"));
+    // Concise: the numbered marker itself is the clickable link — `[N](url)` —
+    // NOT the verbose fact text, and NOT a bare <url> autolink or [open] segment.
+    assert.ok(out.includes("- 📖 [1](https://wiki/x)"));
+    assert.ok(!out.includes("[open]"), "marker is the link; no separate [open] segment");
     assert.ok(!out.includes("AI+ Power 2026"), "fact text should be dropped");
-    assert.ok(!out.includes("<https://wiki/x>"), "links should be [open](url), not bare angle autolinks");
+    assert.ok(!out.includes("<https://wiki/x>"), "links should be [N](url), not bare angle autolinks");
+    // No url → plain marker.
     assert.ok(out.includes("- 💬 [2] Jack · #general"));
     assert.ok(!out.includes("booth confirmed"), "fact text should be dropped");
     // decision_record routes to the Related block; bare line, original index.
@@ -108,15 +110,47 @@ describe("renderResponse", () => {
     assert.ok(out.includes("Eve injected"));
   });
 
-  it("strips parens from a citation url so the [open](url) link can't be broken", () => {
+  it("strips parens from a citation url so the [N](url) link can't be broken", () => {
     const out = renderResponse(
       result({ citations: [{ type: "wiki_page", text: "Page", url: "https://wiki/page(v2)" }] }),
       "slack",
     );
     // Parens are removed from the link target (they would otherwise terminate
     // the markdown link early), and the link target stays balanced.
-    assert.ok(out.includes("[open](https://wiki/pagev2)"));
+    assert.ok(out.includes("[1](https://wiki/pagev2)"));
     assert.ok(!out.includes("page(v2)"));
+  });
+
+  it("renders a plain numbered marker when a citation has no url", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "Jack", source: "#general" }] }),
+      "slack",
+    );
+    assert.ok(out.includes("- 💬 [1] Jack · #general"));
+    assert.ok(!out.includes("[1]("), "no link when there's no url");
+  });
+
+  it("appends a relative recency stamp when a citation carries a timestamp", () => {
+    const iso = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
+    const out = renderResponse(
+      result({
+        citations: [
+          { type: "channel_message", text: "x", author: "Mei", source: "#basketball", url: "https://x.slack.com/archives/C/p1", timestamp: iso },
+        ],
+      }),
+      "slack",
+    );
+    // Clickable marker + provenance + age, dot-separated.
+    assert.ok(out.includes("- 💬 [1](https://x.slack.com/archives/C/p1) Mei · #basketball · 3d ago"));
+  });
+
+  it("omits recency when the timestamp is unparseable", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "A", timestamp: "(unavailable)" }] }),
+      "slack",
+    );
+    assert.ok(out.includes("- 💬 [1] A"));
+    assert.ok(!out.includes("(unavailable)"));
   });
 
   it("falls back to a safe generic cap for unknown platforms", () => {
@@ -173,10 +207,15 @@ describe("related-context grouping", () => {
 });
 
 describe("renderConfidence", () => {
-  it("warns only on a real low score", () => {
+  it("warns on a low score and softly nudges on a medium score", () => {
     assert.ok(renderConfidence(0.2, false).includes("low confidence"));
     assert.strictEqual(renderConfidence(0.35, false).includes("low confidence"), true);
-    assert.strictEqual(renderConfidence(0.36, false), "");
+    // Medium band (0.35 < c ≤ 0.60): softer "limited sources" nudge, not the warning.
+    assert.ok(renderConfidence(0.36, false).includes("limited sources"));
+    assert.ok(!renderConfidence(0.36, false).includes("low confidence"));
+    assert.ok(renderConfidence(0.6, false).includes("limited sources"));
+    // High band (> 0.60): silent.
+    assert.strictEqual(renderConfidence(0.61, false), "");
     assert.strictEqual(renderConfidence(0.85, false), "");
   });
   it("stays silent for no-signal (0) and on the empty state", () => {
@@ -259,6 +298,16 @@ describe("relativeTime", () => {
     assert.strictEqual(relativeTime("2026-06-04T09:00:00Z", now), "3h ago");
     assert.strictEqual(relativeTime("2026-06-01T12:00:00Z", now), "3d ago");
     assert.strictEqual(relativeTime("2026-06-04T11:59:30Z", now), "just now");
+  });
+  it("pins the exclusive 60m / 24h thresholds (off-by-one guard)", () => {
+    assert.strictEqual(relativeTime("2026-06-04T11:00:00Z", now), "1h ago"); // exactly 60m
+    assert.strictEqual(relativeTime("2026-06-04T11:01:00Z", now), "59m ago"); // just under 60m
+    assert.strictEqual(relativeTime("2026-06-03T12:00:00Z", now), "1d ago"); // exactly 24h
+    assert.strictEqual(relativeTime("2026-06-03T13:00:00Z", now), "23h ago"); // just under 24h
+    assert.strictEqual(relativeTime("2026-06-03T11:00:00Z", now), "1d ago"); // 25h still 1d
+  });
+  it("collapses a future timestamp (clock skew) to 'just now' instead of 'in N hours'", () => {
+    assert.strictEqual(relativeTime("2026-06-04T13:00:00Z", now), "just now");
   });
   it("returns null for unparseable input", () => {
     assert.strictEqual(relativeTime("not-a-date", now), null);

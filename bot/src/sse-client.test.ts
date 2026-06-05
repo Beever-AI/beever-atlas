@@ -197,10 +197,12 @@ describe("consumeSSEStream — enrichment", () => {
 describe("normalizeCitations", () => {
   it("maps legacy flat items", () => {
     const out = normalizeCitations({
-      items: [{ type: "fact", text: "sky is blue", author: "A", permalink: "u", channel: "#c" }],
+      items: [
+        { type: "fact", text: "sky is blue", author: "A", permalink: "u", channel: "#c", message_ts: "2026-05-21T19:14:37Z" },
+      ],
     });
     assert.deepStrictEqual(out, [
-      { type: "fact", text: "sky is blue", author: "A", url: "u", source: "#c" },
+      { type: "fact", text: "sky is blue", author: "A", url: "u", source: "#c", timestamp: "2026-05-21T19:14:37Z" },
     ]);
   });
   it("skips items without text and prefers items over sources", () => {

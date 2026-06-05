@@ -58,6 +58,9 @@ export interface NormalizedChannel {
   member_count: number | null;
   topic: string | null;
   purpose: string | null;
+  /** Slack workspace domain (subdomain of *.slack.com), used by the backend to
+   *  build clickable citation permalinks. Set only for Slack; omitted otherwise. */
+  workspace_domain?: string | null;
 }
 
 // ── Platform Bridge interface ────────────────────────────────────────────────
@@ -2736,6 +2739,14 @@ async function handleGetChannel(
     }
 
     const channel = await bridge.getChannel(channelId);
+    // Attach the Slack workspace domain (per-connection, cached from auth.test)
+    // so the backend can build clickable citation permalinks. The per-platform
+    // bridges don't know it; chatManager does. Slack-only and best-effort — a
+    // missing domain just leaves citations unlinked.
+    if (!channel.workspace_domain && (channel.platform === "slack" || resolvedPlatform === "slack")) {
+      const domain = chatManager.getWorkspaceDomainForPlatform("slack");
+      if (domain) channel.workspace_domain = domain;
+    }
     jsonResponse(res, 200, channel);
   } catch (err) {
     console.error("Bridge: getChannel error:", safeErrorMessage(err));

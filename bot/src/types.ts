@@ -21,6 +21,9 @@ export interface Citation {
   author?: string;
   url?: string;
   source?: string;
+  /** ISO-8601 timestamp of the source message, when known — rendered as a
+   *  relative "Nd ago" recency signal on the citation line. */
+  timestamp?: string;
 }
 
 /** A documented tension/contradiction relevant to the answer (proactive nudge). */

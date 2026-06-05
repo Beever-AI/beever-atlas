@@ -111,23 +111,28 @@ const RELATED_KINDS = new Set(["decision_record", "graph_relationship"]);
 
 /**
  * One concise citation line as a canonical markdown list item:
- *   `- {icon} [N] {author} · {#channel} · [open](url)`
+ *   `- {icon} [N](url) {author} · {#channel} · {age}`
  *
- * The full fact text is intentionally dropped — the inline `[N]` marker in the
- * answer already references it, and repeating the whole fact here buried the
- * answer under a wall of sources (live-test finding: "sources too verbose").
- * Segments are omitted when absent, so a bare citation still renders
- * `- {icon} [N]`. `[open](url)` is a real markdown link the SDK converts to
- * each platform's native link syntax.
+ * The numbered marker `[N]` is itself the clickable link to the source when a
+ * permalink is present (`[N](url)`) — matching the inline `[N]` markers in the
+ * answer — so there's no separate "open" segment. When there's no url it renders
+ * as plain `[N]`. The full fact text is intentionally dropped (the inline marker
+ * already references it; repeating it buried the answer). A relative age is
+ * appended when the source carries a timestamp, as a recency/trust signal.
+ * Segments are omitted when absent, so a bare citation still renders `- {icon} [N]`.
  */
 function renderCitationLine(c: Citation, num: number): string {
+  const url = c.url ? cleanUrl(c.url) : "";
+  const marker = url ? `[${num}](${url})` : `[${num}]`;
   const segments: string[] = [];
   if (c.author) segments.push(cleanField(c.author, 80));
   if (c.source) segments.push(cleanField(c.source, 80));
-  const url = c.url ? cleanUrl(c.url) : "";
-  if (url) segments.push(`[open](${url})`);
+  if (c.timestamp) {
+    const age = relativeTime(c.timestamp);
+    if (age) segments.push(age);
+  }
   const tail = segments.filter((s) => s.length > 0).join(" · ");
-  const head = `- ${iconFor(c.type)} [${num}]`;
+  const head = `- ${iconFor(c.type)} ${marker}`;
   return tail ? `${head} ${tail}` : head;
 }
 
@@ -164,16 +169,22 @@ export function partitionCitations(citations: Citation[]): {
 }
 
 const LOW_CONFIDENCE = 0.35;
+const MEDIUM_CONFIDENCE = 0.6;
 
 /**
- * A subtle low-confidence warning — shown ONLY when the backend reports a real
- * score at/below the threshold. `0` means "no signal" (older backend) → silent;
- * a high score → silent. Never fabricates a number.
+ * A subtle, banded confidence signal shown ONLY when the backend reports a real
+ * score (`0` = "no signal" / older backend → silent; never fabricates a number):
+ *   - ≤0.35 → a "low confidence, please verify" warning,
+ *   - ≤0.60 → a softer "based on limited sources" nudge (so a medium answer
+ *             doesn't read as authoritative),
+ *   - >0.60 → silent (a confident answer needs no caveat).
  */
 export function renderConfidence(confidence: number, isEmpty: boolean): string {
   if (isEmpty) return "";
-  if (typeof confidence !== "number" || confidence <= 0 || confidence > LOW_CONFIDENCE) return "";
-  return `\n⚠️ _low confidence — please verify against the sources_`;
+  if (typeof confidence !== "number" || confidence <= 0) return "";
+  if (confidence <= LOW_CONFIDENCE) return `\n⚠️ _low confidence — please verify against the sources_`;
+  if (confidence <= MEDIUM_CONFIDENCE) return `\nℹ️ _based on limited sources — worth a double-check_`;
+  return "";
 }
 
 /** Proactive "heads up" when the answer touches a documented tension (max 2). */

@@ -1,6 +1,57 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { ChatManager } from "./chat-manager.js";
+import { ChatManager, parseSlackWorkspaceDomain } from "./chat-manager.js";
+
+describe("parseSlackWorkspaceDomain", () => {
+  it("extracts the subdomain from a Slack auth.test url", () => {
+    assert.strictEqual(parseSlackWorkspaceDomain("https://beever.slack.com/"), "beever");
+    assert.strictEqual(parseSlackWorkspaceDomain("https://my-team.slack.com"), "my-team");
+  });
+  it("returns null for non-Slack, malformed, or missing urls", () => {
+    assert.strictEqual(parseSlackWorkspaceDomain("https://evil.com/"), null);
+    assert.strictEqual(parseSlackWorkspaceDomain("https://slack.com/"), null); // no subdomain
+    assert.strictEqual(parseSlackWorkspaceDomain("not a url"), null);
+    assert.strictEqual(parseSlackWorkspaceDomain(undefined), null);
+    assert.strictEqual(parseSlackWorkspaceDomain(""), null);
+    assert.strictEqual(parseSlackWorkspaceDomain(42), null);
+  });
+  it("rejects a multi-label subdomain it can't turn into a permalink host", () => {
+    assert.strictEqual(parseSlackWorkspaceDomain("https://a.b.slack.com/"), null);
+  });
+  it("normalizes case + IDN and rejects injection-shaped hosts", () => {
+    const cases: Array<[unknown, string | null]> = [
+      ["https://BEEVER.slack.com/", "beever"], // .hostname lowercases
+      ["https://BeEvEr.slack.com/", "beever"],
+      ["https://a.slack.com/", "a"], // single-char subdomain accepted
+      ["https://evil.com#.slack.com/", null], // fragment stripped before host check
+      ["https://evil.com?x=.slack.com/", null], // query stripped
+      ["https://evil.com.slack.com/", null], // nested-looking, multi-label
+      ["https://xn--bcher-kva.slack.com/", "xn--bcher-kva"], // punycode accepted (Slack's own encoding)
+      ["https://bücher.slack.com/", "xn--bcher-kva"], // Unicode IDN → punycode
+    ];
+    for (const [input, expected] of cases) {
+      assert.strictEqual(parseSlackWorkspaceDomain(input), expected, String(input));
+    }
+  });
+});
+
+describe("workspace domain lookup", () => {
+  it("returns the cached domain by connection and by platform, null when unknown", () => {
+    const cm = makeChatManager();
+    (cm as any).workspaceDomainMap = new Map([["c1", "beever"]]);
+    // listAdapters() drives getWorkspaceDomainForPlatform's selection.
+    (cm as any).listAdapters = () => [{ platform: "slack", connectionId: "c1" }];
+    assert.strictEqual(cm.getWorkspaceDomain("c1"), "beever");
+    assert.strictEqual(cm.getWorkspaceDomain("nope"), null);
+    assert.strictEqual(cm.getWorkspaceDomainForPlatform("slack"), "beever");
+    assert.strictEqual(cm.getWorkspaceDomainForPlatform("discord"), null);
+  });
+  it("returns null for a platform with no cached domain", () => {
+    const cm = makeChatManager();
+    (cm as any).listAdapters = () => [{ platform: "slack", connectionId: "c1" }];
+    assert.strictEqual(cm.getWorkspaceDomainForPlatform("slack"), null);
+  });
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

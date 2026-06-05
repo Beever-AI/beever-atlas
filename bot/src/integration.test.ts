@@ -18,6 +18,7 @@ function streamFrom(lines: string[]): Response {
 describe("integration: SSE stream → rendered reply", () => {
   it("renders a full rich reply with every section in order", async () => {
     const syncTs = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const msgTs = new Date(Date.now() - 3 * 3600_000).toISOString();
     const body = [
       "event: response_delta",
       'data: {"delta": "We chose GridFS as the OSS default. "}',
@@ -28,7 +29,7 @@ describe("integration: SSE stream → rendered reply", () => {
       "event: citations",
       'data: {"sources": [' +
         '{"kind": "wiki_page", "title": "Media storage", "permalink": "https://wiki/media"},' +
-        '{"kind": "channel_message", "title": "no object store on OSS", "native": {"author": "Alan", "channel_name": "#tech"}},' +
+        `{"kind": "channel_message", "title": "no object store on OSS", "native": {"author": "Alan", "channel_name": "#tech", "message_ts": "${msgTs}"}},` +
         '{"kind": "decision_record", "title": "GridFS default decision"},' +
         '{"kind": "graph_relationship", "title": "Alan owns media-storage"}' +
         "]}",
@@ -61,10 +62,11 @@ describe("integration: SSE stream → rendered reply", () => {
     // Answer first.
     assert.ok(out.startsWith("We chose GridFS"));
     // Sources block: canonical markdown heading, concise list items with a
-    // clickable [open](url) link, and NO verbose fact text.
+    // clickable numbered marker `[N](url)`, and NO verbose fact text.
     assert.ok(out.includes("## 📎 Sources"));
-    assert.ok(out.includes("- 📖 [1] [open](https://wiki/media)"));
-    assert.ok(out.includes("- 💬 [2] Alan · #tech"));
+    assert.ok(out.includes("- 📖 [1](https://wiki/media)"));
+    // Full seam: wire `message_ts` → normalized `timestamp` → rendered age stamp.
+    assert.ok(out.includes("- 💬 [2] Alan · #tech · 3h ago"));
     assert.ok(!out.includes("no object store on OSS"), "fact text should be dropped");
     // Related block has the graph/decision citations, with ORIGINAL indices.
     assert.ok(out.includes("## 🧠 Related"));
