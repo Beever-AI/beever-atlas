@@ -3550,6 +3550,9 @@ class WikiCompiler:
                 messages=[{"role": "user", "content": content}],
                 max_tokens=max_tokens,
                 temperature=temperature,
+                # Issue #223: stream this (up to 32k-token) page compile so a long
+                # generation never idles into the ~130s edge-proxy disconnect.
+                stream=settings.wiki_llm_streaming,
                 **kwargs,
             )
             return response.choices[0].message.content or "{}"  # type: ignore[index, union-attr]

@@ -461,6 +461,12 @@ class Settings(BaseSettings):
     wiki_token_budget_v2: bool = Field(default=True, alias="BEEVER_WIKI_TOKEN_BUDGET_V2")
     # Phase 4+5: deterministic Key Facts table + delimited response parser. Default OFF.
     wiki_compiler_v2: bool = Field(default=False, alias="BEEVER_WIKI_COMPILER_V2")
+    # Issue #223 — stream the wiki page-compile LLM call (up to 32k output
+    # tokens) so a long generation does not idle past the ~127-131s edge-proxy
+    # disconnect (aiohttp.ServerDisconnectedError → degenerate/fallback wiki
+    # content). The streamed chunks are reassembled into the same response shape,
+    # so parsing is unchanged. Default ON (the fix). Set 0 to revert.
+    wiki_llm_streaming: bool = Field(default=True, alias="WIKI_LLM_STREAMING")
 
     # Credential encryption
     credential_master_key: str = Field(default="")
