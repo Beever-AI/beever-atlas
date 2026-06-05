@@ -7,7 +7,7 @@
  * backoff for retryable failures at the fetch layer.
  */
 
-import type { AskResult, Citation } from "./types.js";
+import type { AskResult, Citation, Tension } from "./types.js";
 
 export interface SSEConsumeOptions {
   onDelta?: (delta: string) => void;
@@ -31,6 +31,8 @@ interface StreamState {
   backendEmpty?: boolean;
   /** Suggested related questions from the backend `follow_ups` event. */
   followUps: string[];
+  /** Documented tensions from the backend `related_context` event. */
+  tensions: Tension[];
 }
 
 /**
@@ -92,6 +94,23 @@ export function normalizeCitations(data: Record<string, unknown>): Citation[] {
   return out;
 }
 
+/**
+ * Normalize the `related_context` event's `tensions` into {@link Tension}[].
+ * Tolerant of backend field naming (title/topic/summary, detail/description).
+ */
+export function normalizeTensions(data: Record<string, unknown>): Tension[] {
+  const raw = Array.isArray(data.tensions) ? data.tensions : [];
+  const out: Tension[] = [];
+  for (const item of raw) {
+    const t = asRecord(item);
+    const title = asString(t.title) ?? asString(t.topic) ?? asString(t.summary);
+    if (!title) continue;
+    out.push({ title, detail: asString(t.detail) ?? asString(t.description) ?? asString(t.summary) });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 /** True when retrieval clearly found nothing: no citations AND empty-pattern text. */
 export function detectEmptyRetrieval(answer: string, citations: Citation[]): boolean {
   if (citations.length > 0) return false;
@@ -126,6 +145,7 @@ function finalizeResult(state: StreamState): AskResult {
     isEmpty: resolveIsEmpty(state.answer, state.citations, state.backendEmpty),
     lastSyncTs: state.lastSyncTs,
     followUps: state.followUps,
+    tensions: state.tensions,
   };
 }
 
@@ -183,6 +203,9 @@ function applyEvent(
       }
       break;
     }
+    case "related_context":
+      state.tensions = normalizeTensions(event.data);
+      break;
     case "error":
       throw new Error((event.data.message as string) || "Unknown backend error");
   }
@@ -199,6 +222,7 @@ export async function consumeSSEStream(
     confidence: 0,
     costUsd: 0,
     followUps: [],
+    tensions: [],
   };
 
   if (!response.body) {

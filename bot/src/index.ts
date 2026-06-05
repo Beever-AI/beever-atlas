@@ -12,6 +12,8 @@ import { decideSubscribedThreadActionWithLookup } from "./trigger.js";
 import { stripMention } from "./mentions.js";
 import { ParticipantCache } from "./participant-cache.js";
 import { logReplySent, type ReplySurface } from "./reply-metrics.js";
+import { deriveSessionId } from "./session-id.js";
+import { RateLimiter } from "./rate-limiter.js";
 import type { AskResult } from "./types.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
@@ -41,8 +43,15 @@ const TRIGGER_REDESIGN = (process.env.BOT_TRIGGER_REDESIGN || "on").toLowerCase(
 //    getParticipants() round-trip per non-mention message. 0 disables the cache.
 const DM_ENABLED = (process.env.BOT_DM_ENABLED || "on").toLowerCase() !== "off";
 const PARTICIPANT_CACHE_TTL_MS = parseInt(process.env.BOT_PARTICIPANT_CACHE_TTL_MS || "30000", 10);
+//  - RATELIMIT_PER_MIN: max questions answered per (platform,channel,user) per
+//    minute before a one-time "give me a moment" notice and silent drop.
+const RATE_LIMIT_PER_MIN = parseInt(process.env.BOT_RATELIMIT_PER_MIN || "12", 10);
+const RATE_WINDOW_MS = 60_000;
 
 const participantCache = new ParticipantCache(PARTICIPANT_CACHE_TTL_MS);
+const rateLimiter = new RateLimiter(RATE_LIMIT_PER_MIN, RATE_WINDOW_MS);
+// A second 1-per-window limiter so the throttle notice itself can't spam.
+const noticeLimiter = new RateLimiter(1, RATE_WINDOW_MS);
 
 // Issue #53 — validateEnv lives in ./validate-env.ts; it's WARN-only and
 // never gates startup (platform-specific creds are loaded from the backend
@@ -67,6 +76,7 @@ function registerHandlers(bot: Chat): void {
       return;
     }
 
+    if (!(await passesRateLimit(thread, message))) return;
     await answerInThread(thread, question, "mention");
   });
 
@@ -100,6 +110,7 @@ function registerHandlers(bot: Chat): void {
       }
     }
 
+    if (!(await passesRateLimit(thread, message))) return;
     await answerInThread(thread, question, "follow-up");
   });
 
@@ -116,9 +127,34 @@ function registerHandlers(bot: Chat): void {
         await thread.post("Ask me anything about this workspace's knowledge.");
         return;
       }
+      if (!(await passesRateLimit(thread, message))) return;
       await answerInThread(thread, question, "dm");
     });
   }
+}
+
+/**
+ * Inbound rate gate, keyed per (platform, channel, user) so one user can't
+ * exhaust a shared channel's budget. On the first block within a window it posts
+ * a single friendly notice (the notice itself is rate-limited), then drops
+ * silently. Returns true when the request may proceed.
+ */
+async function passesRateLimit(
+  thread: { id: string; post(message: string): Promise<unknown> },
+  message: { author?: { userId?: string } },
+): Promise<boolean> {
+  const key = `${extractPlatform(thread.id)}:${extractChannelId(thread.id)}:${message.author?.userId || "unknown"}`;
+  const decision = rateLimiter.check(key);
+  if (decision.allowed) return true;
+  if (noticeLimiter.check(key).allowed) {
+    const secs = Math.max(1, Math.ceil(decision.retryAfterMs / 1000));
+    try {
+      await thread.post(`You're asking a lot — give me a moment 🙂 (try again in ~${secs}s)`);
+    } catch (err) {
+      console.error("Failed to post rate-limit notice:", safeErrorMessage(err));
+    }
+  }
+  return false;
 }
 
 type ThreadForParticipants = {
@@ -172,7 +208,14 @@ async function answerInThread(
   const platform = extractPlatform(thread.id);
   const startedAt = Date.now();
   try {
-    const result = await askBackend(extractChannelId(thread.id), question);
+    // Stable per-thread session id → backend resumes the thread's history so
+    // follow-ups remember the prior exchange. See session-id.ts for the
+    // thread-scoped (not channel/user) security rationale.
+    const result = await askBackend(
+      extractChannelId(thread.id),
+      question,
+      deriveSessionId(thread.id),
+    );
     await thread.post(renderResponse(result, platform));
     logReplySent({
       surface,
@@ -207,7 +250,11 @@ function backendApiKey(): string {
   return raw.split(",").map((k) => k.trim()).find(Boolean) || "";
 }
 
-async function askBackend(channelId: string, question: string): Promise<AskResult> {
+async function askBackend(
+  channelId: string,
+  question: string,
+  sessionId: string,
+): Promise<AskResult> {
   // Encode the channel id so a value with slashes/`..` can't escape the route
   // path and reach an unintended backend endpoint.
   const url = `${BACKEND_URL}/api/channels/${encodeURIComponent(channelId)}/ask`;
@@ -221,7 +268,7 @@ async function askBackend(channelId: string, question: string): Promise<AskResul
   // slow or flapping backend doesn't surface a hard error to the user.
   return fetchSSEWithRetry(
     url,
-    { method: "POST", headers, body: JSON.stringify({ question }) },
+    { method: "POST", headers, body: JSON.stringify({ question, session_id: sessionId }) },
     { maxAttempts: 3, signal: AbortSignal.timeout(ASK_TIMEOUT_MS) },
   );
 }

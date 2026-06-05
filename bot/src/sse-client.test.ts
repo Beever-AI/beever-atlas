@@ -7,6 +7,7 @@ import {
   normalizeCitations,
   detectEmptyRetrieval,
   resolveIsEmpty,
+  normalizeTensions,
 } from "./sse-client.js";
 
 function mockResponse(body: string): Response {
@@ -249,6 +250,63 @@ describe("consumeSSEStream — follow_ups", () => {
     ].join("\n");
     const result = await consumeSSEStream(mockResponse(body));
     assert.deepStrictEqual(result.followUps, []);
+  });
+});
+
+describe("consumeSSEStream — related_context", () => {
+  it("captures tensions from the related_context event", async () => {
+    const body = [
+      "event: response_delta",
+      'data: {"delta": "answer"}',
+      "",
+      "event: related_context",
+      'data: {"tensions": [{"title": "Launch order", "detail": "marketing vs general"}], "extracted_entities": ["launch"]}',
+      "",
+      "event: metadata",
+      'data: {"route": "qa_agent"}',
+      "",
+      "event: done",
+      "data: {}",
+      "",
+    ].join("\n");
+    const result = await consumeSSEStream(mockResponse(body));
+    assert.strictEqual(result.tensions?.length, 1);
+    assert.strictEqual(result.tensions?.[0].title, "Launch order");
+    assert.strictEqual(result.tensions?.[0].detail, "marketing vs general");
+  });
+
+  it("defaults tensions to [] when the event is absent", async () => {
+    const body = [
+      "event: metadata",
+      'data: {"route": "qa_agent"}',
+      "",
+      "event: done",
+      "data: {}",
+      "",
+    ].join("\n");
+    const result = await consumeSSEStream(mockResponse(body));
+    assert.deepStrictEqual(result.tensions, []);
+  });
+});
+
+describe("normalizeTensions", () => {
+  it("maps alt field names and caps at 3", () => {
+    const out = normalizeTensions({
+      tensions: [
+        { topic: "A", description: "da" },
+        { title: "B" },
+        { summary: "C" },
+        { title: "D" },
+      ],
+    });
+    assert.strictEqual(out.length, 3);
+    assert.strictEqual(out[0].title, "A");
+    assert.strictEqual(out[0].detail, "da");
+    assert.strictEqual(out[1].title, "B");
+  });
+  it("skips entries with no title and tolerates junk", () => {
+    assert.deepStrictEqual(normalizeTensions({ tensions: [{ detail: "x" }, 42, null] }), []);
+    assert.deepStrictEqual(normalizeTensions({}), []);
   });
 });
 

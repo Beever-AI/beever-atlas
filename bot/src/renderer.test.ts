@@ -4,6 +4,8 @@ import {
   renderResponse,
   renderEmptyState,
   renderFollowUps,
+  renderConfidence,
+  renderTensions,
   enforceCap,
   relativeTime,
   CHAR_CAP,
@@ -126,6 +128,68 @@ describe("follow-ups", () => {
     assert.strictEqual(renderFollowUps(undefined), "");
     assert.strictEqual(renderFollowUps([]), "");
     assert.strictEqual(renderFollowUps(["   "]), "");
+  });
+});
+
+describe("related-context grouping", () => {
+  it("splits decision/graph citations into a Related block, keeping original indices", () => {
+    const out = renderResponse(
+      result({
+        citations: [
+          { type: "wiki_page", text: "Wiki A" },
+          { type: "decision_record", text: "Decided X" },
+          { type: "channel_message", text: "Msg B", author: "Jack" },
+          { type: "graph_relationship", text: "Alice → owns → X" },
+        ],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("📎 *Sources*"));
+    assert.ok(out.includes("🧠 *Related*"));
+    // Sources keeps indices [1] and [3]; Related keeps [2] and [4].
+    assert.ok(out.includes("📖 [1] Wiki A"));
+    assert.ok(out.includes("💬 [3] Msg B — Jack"));
+    assert.ok(out.includes("⚖️ [2] Decided X"));
+    assert.ok(out.includes("🧠 [4] Alice → owns → X"));
+  });
+});
+
+describe("renderConfidence", () => {
+  it("warns only on a real low score", () => {
+    assert.ok(renderConfidence(0.2, false).includes("low confidence"));
+    assert.strictEqual(renderConfidence(0.35, false).includes("low confidence"), true);
+    assert.strictEqual(renderConfidence(0.36, false), "");
+    assert.strictEqual(renderConfidence(0.85, false), "");
+  });
+  it("stays silent for no-signal (0) and on the empty state", () => {
+    assert.strictEqual(renderConfidence(0, false), "");
+    assert.strictEqual(renderConfidence(0.1, true), "");
+  });
+  it("appears in a full reply only when low", () => {
+    assert.ok(renderResponse(result({ confidence: 0.2 }), "slack").includes("low confidence"));
+    assert.ok(!renderResponse(result({ confidence: 0.9 }), "slack").includes("low confidence"));
+  });
+});
+
+describe("renderTensions", () => {
+  it("renders a heads-up block (max 2) with detail", () => {
+    const out = renderTensions([
+      { title: "Launch order disputed", detail: "marketing vs general" },
+      { title: "Booth staffing", detail: "unresolved" },
+      { title: "Third one", detail: "dropped" },
+    ]);
+    assert.ok(out.includes("Heads up — possible tension"));
+    assert.ok(out.includes("• Launch order disputed — marketing vs general"));
+    assert.ok(!out.includes("Third one"));
+  });
+  it("returns '' for empty/undefined", () => {
+    assert.strictEqual(renderTensions(undefined), "");
+    assert.strictEqual(renderTensions([]), "");
+  });
+  it("appears in a full reply when present", () => {
+    const out = renderResponse(result({ tensions: [{ title: "Conflict A" }] }), "slack");
+    assert.ok(out.includes("possible tension"));
+    assert.ok(out.includes("• Conflict A"));
   });
 });
 
