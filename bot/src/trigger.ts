@@ -103,7 +103,7 @@ const PLEASANTRY_RE =
 const QUESTION_START_RE =
   /^(what'?s?|whats|who'?s?|whom|whose|which|when|where|why|how|is|are|am|was|were|do|does|did|can|could|would|should|will|won'?t|shall|may|might|has|have|had|any|anyone|anybody)\b/i;
 const REQUEST_START_RE =
-  /^(tell|explain|summari\w*|find|search|show|list|give|describe|compare|recap|remind|help|define|walk me|catch me up|fill me in|let me know|please|pls|can you|could you|i want|i need|i'?d like|need|looking for|how about|what about)\b/i;
+  /^(tell|explain|summar\w*|find|search|show|list|give|describe|compare|recap|remind|help|define|walk me|catch me up|fill me in|let me know|please|pls|can you|could you|i want|i need|i'?d like|need|looking for|how about|what about)\b/i;
 
 export function classifyIntent(text: string): MessageIntent {
   const t = (text || "").trim();

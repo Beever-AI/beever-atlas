@@ -128,7 +128,7 @@ describe("isBroadcast", () => {
 
 describe("classifyIntent", () => {
   it("flags questions and requests", () => {
-    for (const t of ["what is our stack?", "who won?", "how does this work", "is the deploy done", "summarize the thread", "tell me about X", "can you find the decision", "remind me what we said"]) {
+    for (const t of ["what is our stack?", "who won?", "how does this work", "is the deploy done", "summarize the thread", "summary of the thread", "tell me about X", "can you find the decision", "remind me what we said"]) {
       assert.strictEqual(classifyIntent(t), "question", t);
     }
   });
@@ -180,6 +180,9 @@ describe("decideShouldRespond", () => {
   });
   it("answers a non-mention question in a joined thread", () => {
     assert.strictEqual(d({ text: "what about Friday?", surface: "follow-up" }), "respond");
+  });
+  it("answers a request-verb message in a joined thread", () => {
+    assert.strictEqual(d({ text: "find the Q3 decision", surface: "follow-up" }), "respond");
   });
   it("skips an empty follow-up (no nudge spam in threads)", () => {
     assert.strictEqual(d({ text: "", surface: "follow-up" }), "skip");

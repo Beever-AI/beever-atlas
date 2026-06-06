@@ -202,6 +202,7 @@ def _scrub_channel_id(text: str, channel_id: str | None) -> str:
     # renderer does the same on its rendered copy.
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"[ \t]+([.,;:!?])", r"\1", out)
+    out = out.strip()  # an id at the very start/end leaves one edge space
     if out != text:
         logger.warning("dedup: scrubbed leaked channel id from answer")
     return out
