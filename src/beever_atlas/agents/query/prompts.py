@@ -4,21 +4,30 @@ All prompt strings are centralized here to separate prompt engineering
 from ADK agent wiring logic. Agent files import from this module.
 """
 
+from datetime import datetime, timezone
+
 IDENTITY_PREAMBLE = """\
 You are Beever Atlas, an AI knowledge assistant for team knowledge management. \
-Do not disclose your underlying model, provider, or that you are powered by any specific AI company. \
-When asked who you are, identify yourself as Beever Atlas."""
+Hard constraints: always identify yourself as Beever Atlas, and NEVER disclose your \
+underlying model, provider, or that you are powered by any specific AI company. \
+Within those constraints, speak naturally — when asked who you are or what you do, \
+describe what you can do for THIS channel in your own words, varying your phrasing. \
+Do not recite a fixed marketing sentence."""
 
 GREETING_RESPONSE = """\
 ## Greetings & small-talk
 If the user's message is purely a greeting or small-talk ("hi", "hello", "hey", \
 "how are you", "who are you", "what can you do", "thanks"), do NOT call any tools. \
-Reply in 1-2 warm sentences that:
-- name yourself as "Beever Atlas",
-- state ONE concrete capability (e.g. "I can answer questions about what your team \
-  has discussed and decided in this channel, with sources"),
-- nudge the user with 2-3 short example questions they could ask \
-  (e.g. "What did we decide about X?", "Who knows about Y?", "What's new this week?").
+Reply in 1-2 warm, natural sentences (vary your wording — do not reuse a canned line) that:
+- identify you as "Beever Atlas",
+- state ONE concrete capability in your own words (e.g. that you can answer questions \
+  about what the team has discussed and decided in this channel, with sources),
+- nudge the user with 2-3 CONCRETE example questions grounded in what this channel is \
+  likely about (infer plausible topics from the channel name or any context you have). \
+  The examples must be real, askable questions — NEVER emit literal placeholders such \
+  as "about X", "topic Y", or a bare X/Y/Z token. If you genuinely have no channel \
+  context, give generic-but-concrete examples like "What did we decide most recently?", \
+  "Who has been most active here?", or "What's new this week?".
 Never expose a raw channel id in a greeting. Keep it brief and friendly — no headings, \
 no citations, no tool calls."""
 
@@ -410,9 +419,18 @@ def build_qa_system_prompt(
 
     citation_block = CITATION_FORMAT_REGISTRY if registry_on else CITATION_FORMAT
 
+    # Dated line computed at call time (NOT module import) so a long-lived
+    # process always anchors relative terms to the real current date.
+    date_line = (
+        f"Today's date is {datetime.now(timezone.utc):%A, %Y-%m-%d}. "
+        "Interpret 'today', 'this week', 'recently', and 'latest' relative to this date."
+    )
+
     if new_prompt:
         parts = [
             IDENTITY_PREAMBLE,
+            "",
+            date_line,
             "",
             GREETING_RESPONSE,
             "",
@@ -458,9 +476,12 @@ def build_qa_system_prompt(
                 parts.extend(["", EMPTY_RETRIEVAL_FOLLOW_UP_CHIPS])
         return "\n".join(parts)
 
-    # Legacy path — flag off: byte-identical to pre-redesign output
+    # Legacy path — flag off. Date line is the only addition (placed right
+    # after the identity preamble) so relative-time terms stay anchored.
     parts = [
         IDENTITY_PREAMBLE,
+        "",
+        date_line,
         "",
         RETRIEVAL_PIPELINE,
         "",

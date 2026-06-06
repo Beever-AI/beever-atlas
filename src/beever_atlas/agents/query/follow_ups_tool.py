@@ -79,6 +79,17 @@ _BULLET_PREFIX_RE = re.compile(r"^[-*\d.\s]+")
 # circular import with the citation registry module; kept in lock-step.
 _SRC_LITERAL_RE = re.compile(r"\[\s*(?:src:[^\[\]]*?|External:[^\[\]]*?)\]", re.IGNORECASE)
 
+# Drop templated/placeholder suggestions the LLM may emit when it ignores the
+# "use concrete examples" prompt instruction. The reliable, low-false-positive
+# signal is a bare uppercase X/Y/Z that ENDS the question (optionally before
+# ?/./!) — the unmistakable "What did we decide about X?" / "Who knows about Y?"
+# template shape. Anchoring to the trailing position deliberately KEEPS
+# legitimate named concepts where a capital X/Y/Z sits mid-sentence ("Y
+# Combinator", "Series X launch", "the Z-score model"). This filter is a safety
+# net; the prompt reword is the primary defense, so under-matching a rare
+# "...Series X?" is preferable to dropping real suggestions.
+_PLACEHOLDER_RE = re.compile(r"(?<![A-Za-z-])[XYZ](?=[?.!]?\s*$)")
+
 
 def _clean(questions: list[str]) -> list[str]:
     if not isinstance(questions, list):
@@ -94,6 +105,12 @@ def _clean(questions: list[str]) -> list[str]:
         # Collapse runs of whitespace left behind by the scrub.
         stripped = re.sub(r"\s{2,}", " ", stripped)
         if len(stripped) < _MIN_QUESTION_LEN:
+            continue
+        # Drop templated placeholder chips (e.g. "...about X?", "...about Y?")
+        # so a non-grounded suggestion never reaches the renderer even when the
+        # model ignores the "use concrete examples" prompt instruction.
+        if _PLACEHOLDER_RE.search(stripped):
+            logger.warning("follow_ups: dropped placeholder suggestion %r", stripped)
             continue
         out.append(stripped)
         if len(out) >= _MAX_QUESTIONS:

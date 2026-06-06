@@ -118,6 +118,64 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
+# Inline citation markers, normalized away before comparing two copies of an
+# answer — the stateful citation rewriter renumbers the second copy ([1][2] →
+# [3][4]) and rewrites [src:xxx] tags, so a byte-identity check would miss a
+# real doubling.
+_CITE_MARKER_RE = re.compile(r"\[\d+\]|\[src:[^\]]+\]")
+
+
+def _dedup_exact_double(text: str, session_id: str) -> str:
+    """Conservative finalization safety net for verbatim-doubled answers.
+
+    Some streaming paths deliver the full answer twice (a final aggregate that
+    repeats the partial stream, or two ADK events). Collapse only when the text
+    is a clean doubling — first half equal to second. Citation markers are
+    normalized before comparison so a second copy whose ``[N]``/``[src:xxx]``
+    tags were renumbered still matches. Requires ≥80 chars; legitimate answers
+    are never self-repeats at this length, so this net cannot corrupt a real
+    answer.
+    """
+    n = len(text)
+    if n < 80:
+        return text
+    # Fast path: exact byte doubling (no markers, or identical ones).
+    if n % 2 == 0 and text[: n // 2] == text[n // 2 :]:
+        logger.warning(
+            "dedup: halved exact-duplicate answer (len=%d, session=%s)",
+            n,
+            session_id,
+        )
+        return text[: n // 2]
+    # Renumbering-aware path: compare with citation markers collapsed so a copy
+    # whose [N] tags were renumbered still matches.
+    norm = _CITE_MARKER_RE.sub("[#]", text)
+    m = len(norm)
+    if m >= 80 and m % 2 == 0 and norm[: m // 2] == norm[m // 2 :]:
+        # The normalized halves match → the original is firstCopy + renumbered
+        # secondCopy. Walk the ORIGINAL, tracking normalized length, to find
+        # where the first copy ends (normalized index m // 2), and keep that
+        # prefix (with its original — correctly numbered — markers).
+        target = m // 2
+        norm_len = 0
+        i = 0
+        while i < n and norm_len < target:
+            mt = _CITE_MARKER_RE.match(text, i)
+            if mt:
+                norm_len += 3  # len("[#]")
+                i = mt.end()
+            else:
+                norm_len += 1
+                i += 1
+        logger.warning(
+            "dedup: halved citation-renumbered duplicate answer (len=%d, session=%s)",
+            n,
+            session_id,
+        )
+        return text[:i]
+    return text
+
+
 class _HeartbeatSentinel:
     """Yielded by ``_stream_with_heartbeats`` whenever the underlying
     agent stream has been silent for the heartbeat interval. The QA
@@ -789,6 +847,14 @@ async def _run_agent_stream(
             _skip_text_emit = sse_streaming and not _event_is_partial
 
             if event.content and event.content.parts:
+                # Event-scoped dedup guard: a single NON-partial (aggregate)
+                # event must not emit two verbatim-equivalent text parts. The
+                # cross-event _last_emitted_chunk guard misses this because the
+                # stateful StreamRewriter renumbers citations, so the 2nd copy
+                # is no longer byte-identical to the 1st. This flag is reset per
+                # event and never throttles the legitimate multi-chunk partial
+                # streaming path (partial events are exempt below).
+                _emitted_text_this_event = False
                 for part in event.content.parts:
                     part_is_thought = getattr(part, "thought", False)
                     if part_is_thought:
@@ -801,6 +867,20 @@ async def _run_agent_stream(
                             if not _skip_text_emit:
                                 yield _sse_event("thinking", {"text": part.text})
                     elif part.text:
+                        # Event-scoped dedup: on a NON-partial aggregate event,
+                        # only the first text part is the answer; any further
+                        # text part in the SAME event is a verbatim repeat
+                        # (citation-renumbered, so byte-compare guards miss it).
+                        # Partial events are exempt — multiple token chunks per
+                        # turn are legitimate there.
+                        if not _event_is_partial and _emitted_text_this_event:
+                            logger.warning(
+                                "dedup: suppressed extra text part in same event "
+                                "(len=%d, session=%s)",
+                                len(part.text),
+                                session_id,
+                            )
+                            continue
                         # Belt-and-suspenders: if thought flag somehow leaks here, drop it.
                         if getattr(part, "thought", False):
                             logger.warning(
@@ -849,6 +929,7 @@ async def _run_agent_stream(
                                     yield _sse_event("response_delta", {"delta": rewritten})
                                     accumulated_text += rewritten
                                     _last_emitted_chunk = rewritten
+                                    _emitted_text_this_event = True
                         else:
                             if part.text == _last_emitted_chunk or (
                                 len(part.text) >= 40 and accumulated_text.endswith(part.text)
@@ -862,6 +943,7 @@ async def _run_agent_stream(
                                 yield _sse_event("response_delta", {"delta": part.text})
                                 accumulated_text += part.text
                                 _last_emitted_chunk = part.text
+                                _emitted_text_this_event = True
 
             # Turn complete
             if event.turn_complete:
@@ -871,6 +953,11 @@ async def _run_agent_stream(
                     if tail:
                         yield _sse_event("response_delta", {"delta": tail})
                         accumulated_text += tail
+
+                # Finalization safety net: collapse a verbatim-doubled answer
+                # before citations/persistence. Conservative (exact halves
+                # ≥80 chars only). Runs on the answer body before gallery append.
+                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
 
                 # Safety net: if retrieval found media but the LLM skipped the
                 # `## Media` section, build and append one from the registry.
@@ -1042,6 +1129,9 @@ async def _run_agent_stream(
                 if _tail:
                     yield _sse_event("response_delta", {"delta": _tail})
                     accumulated_text += _tail
+                # Finalization safety net (mirror of the turn_complete path):
+                # collapse a verbatim-doubled answer before gallery/citations.
+                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
                 from beever_atlas.agents.query.gallery_fallback import (
                     maybe_build_gallery,
                 )
@@ -1051,6 +1141,10 @@ async def _run_agent_stream(
                     yield _sse_event("response_delta", {"delta": _gallery2})
                     accumulated_text += _gallery2
             if accumulated_text.strip():
+                # Finalization safety net for the registry-off sub-path (the
+                # registry-on body was already deduped above; re-running on a
+                # single copy is a no-op).
+                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
                 # Flush rewriter + emit envelope when registry is active.
                 if _rewriter is not None and _registry is not None:
                     tail = _rewriter.flush()

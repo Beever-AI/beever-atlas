@@ -132,3 +132,45 @@ def test_deep_mode_skips_length_hint_both_paths():
         assert hint_text not in prompt, (
             f"Length hint found in deep-mode prompt (new_prompt={new_prompt})"
         )
+
+
+def test_prompt_contains_todays_date_both_paths():
+    """A dated line (computed at call time) must be injected on both prompt paths."""
+    from datetime import datetime, timezone
+
+    fixed = datetime(2026, 6, 6, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz is None else fixed.astimezone(tz)
+
+    expected = f"{fixed:%A, %Y-%m-%d}"
+    for new_prompt in (False, True):
+        settings = _make_settings(new_prompt=new_prompt)
+        with patch("beever_atlas.infra.config.get_settings", return_value=settings):
+            with patch("beever_atlas.agents.query.prompts.datetime", _FixedDatetime):
+                from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
+                prompt = build_qa_system_prompt(
+                    max_tool_calls=8, include_follow_ups=False, mode="deep"
+                )
+        assert f"Today's date is {expected}" in prompt, (
+            f"Date line missing (new_prompt={new_prompt})"
+        )
+        # Relative-time anchoring clause must accompany the date.
+        assert "relative to this date" in prompt
+
+
+def test_prompt_identifies_as_beever_atlas_no_model_leak_both_paths():
+    """Invariants: identifies as Beever Atlas; never leaks model/provider identity."""
+    for new_prompt in (False, True):
+        settings = _make_settings(new_prompt=new_prompt)
+        with patch("beever_atlas.infra.config.get_settings", return_value=settings):
+            from beever_atlas.agents.query.prompts import build_qa_system_prompt
+
+            prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=False, mode="deep")
+        assert "Beever Atlas" in prompt
+        lowered = prompt.lower()
+        for leak in ("gemini", "google", "openai", "anthropic", "claude"):
+            assert leak not in lowered, f"model/provider leak '{leak}' (new_prompt={new_prompt})"

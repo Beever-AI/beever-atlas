@@ -2,6 +2,7 @@
 
 from beever_atlas.agents.query.follow_ups_tool import (
     FollowUpsCollector,
+    _clean,
     _current_collector,
     suggest_follow_ups,
 )
@@ -30,13 +31,25 @@ def test_bullets_stripped():
 def test_returns_three_strings():
     results = []
 
+    # Use concrete questions (no X/Y/Z placeholders) so they survive the
+    # placeholder filter — this test asserts plain-string passthrough.
     def run(collector):
-        suggest_follow_ups(["What is X?", "Who owns Y?", "When did Z happen?"])
+        suggest_follow_ups(
+            [
+                "What did the team decide about authentication?",
+                "Who owns the Slack integration?",
+                "When did the migration ship?",
+            ]
+        )
         results.extend(collector.questions)
 
     _with_collector(run)
     assert len(results) == 3
-    assert results == ["What is X?", "Who owns Y?", "When did Z happen?"]
+    assert results == [
+        "What did the team decide about authentication?",
+        "Who owns the Slack integration?",
+        "When did the migration ship?",
+    ]
 
 
 def test_empty_after_strip_dropped():
@@ -48,3 +61,15 @@ def test_empty_after_strip_dropped():
 
     _with_collector(run)
     assert results == ["valid?"]
+
+
+def test_placeholder_suggestions_dropped():
+    # Templated chips with X/Y placeholders must never reach the renderer.
+    assert _clean(["What did we decide about X?", "Who knows about Y?"]) == []
+
+
+def test_real_question_kept_alongside_placeholder():
+    # A concrete question survives while the placeholder chip is dropped.
+    assert _clean(["What did we decide about X?", "Who owns the deployment pipeline?"]) == [
+        "Who owns the deployment pipeline?"
+    ]
