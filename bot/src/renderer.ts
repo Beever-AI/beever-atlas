@@ -167,6 +167,14 @@ function renderCitationLine(c: Citation, num: number, platform: string): string 
       if (srcPlatform && srcPlatform !== platform) chan += ` (${srcPlatform})`;
       segments.push(chan);
     }
+    // Fallback so an author-less message source (a qa_history past Q&A, or a
+    // fact with no stored author/channel) never renders as a naked "[N]". Prefer
+    // the title (the prior question for qa_history); else a short excerpt.
+    if (segments.length === 0) {
+      const fb = c.title ? cleanField(c.title, 60) : label ? cleanField(label, 50) : "";
+      if (c.type === "qa_history") segments.push(fb ? `earlier Q&A: ${fb}` : "earlier Q&A");
+      else if (fb) segments.push(fb);
+    }
   } else if (c.type === "web_result") {
     // The 🌐 icon already signals "web"; the domain is the label. Only fall back
     // to a "(web)" suffix on the title when neither icon-implied domain exists.

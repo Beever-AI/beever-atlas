@@ -531,6 +531,23 @@ _META_RECALL_PATTERNS = (
     "what did you tell me",
 )
 
+# Catches the "what did I <first/last/originally> ask" family and other recall
+# phrasings the fixed-string list misses (a word like "first" between "i" and
+# "ask" breaks substring matching — that gap is exactly what dropped
+# "what did I first ask you?" into the empty-retrieval state).
+_META_RECALL_RE = re.compile(
+    r"what (?:did|was|were) (?:i|we|you|my)\b[^?]*\b"
+    r"(?:ask|asked|say|said|question|questions|discuss|discussed|talk|talked|"
+    r"tell|told|mention|mentioned|wonder)"
+    r"|\bmy (?:first|last|previous|earlier|original|initial|prior) "
+    r"(?:question|message|ask)"
+    r"|(?:summari[sz]e|recap|sum up) (?:our|this|the) "
+    r"(?:conversation|chat|discussion|thread|exchange)"
+    r"|\bdo you (?:remember|recall)\b"
+    r"|\bremind me what (?:i|we|you)\b",
+    re.IGNORECASE,
+)
+
 
 _ACTING_USER_ID_RE = re.compile(r"^[\w.:@|=-]{1,128}$")
 
@@ -570,7 +587,9 @@ def _is_meta_recall_question(question: str) -> bool:
     if not question:
         return False
     lowered = question.lower()
-    return any(p in lowered for p in _META_RECALL_PATTERNS)
+    if any(p in lowered for p in _META_RECALL_PATTERNS):
+        return True
+    return bool(_META_RECALL_RE.search(lowered))
 
 
 # A #channel token in the question (Slack/Discord/Mattermost channel reference).
@@ -670,6 +689,7 @@ async def _build_metadata_event(
     session_id: str,
     mode: str,
     registry,
+    suppress_empty: bool = False,
 ) -> dict:
     """Assemble the SSE ``metadata`` payload.
 
@@ -706,7 +726,13 @@ async def _build_metadata_event(
         "channel_id": channel_id,
         "session_id": session_id,
         "mode": mode,
-        "is_empty_retrieval": registry is not None and registry.registered_count == 0,
+        # A meta/recall question ("what did I first ask?") legitimately retrieves
+        # no CHANNEL sources — that is not an empty-retrieval failure, it is
+        # answered from <prior_conversation>. Suppress the flag so the bot renders
+        # the agent's recall answer instead of the "nothing indexed" empty state.
+        "is_empty_retrieval": (
+            registry is not None and registry.registered_count == 0 and not suppress_empty
+        ),
         "last_sync_ts": last_sync_ts,
         # Names the semantics of ``last_sync_ts`` so the bot can label it
         # honestly ("last message seen", not "last synced"). Additive.
@@ -870,6 +896,11 @@ async def _run_agent_stream(
     # Task 4.8: Load prior conversation turns so agent has continuity.
     # ACL-scoped to (user, channel) so memory never crosses users/channels.
     history_parts = await _load_chat_history_parts(session_id, user_id, channel_id)
+    # A recall question ("what did I first ask?") is answered from the prior
+    # conversation, not channel retrieval. Compute once: drives both the prompt
+    # hint and the metadata ``is_empty_retrieval`` suppression so the bot renders
+    # the recall answer instead of the "nothing indexed" empty state.
+    _is_meta = bool(history_parts) and _is_meta_recall_question(question)
 
     # Task 4.3: Decompose question and annotate prompt for complex questions
     prompt_text, _decomposition_plan = await _build_decomposed_prompt(question, channel_id)
@@ -914,7 +945,7 @@ async def _run_agent_stream(
         # not from channel retrieval (which dead-ends on an empty state). Prime
         # the agent so it reads <prior_conversation> instead of calling tools.
         intent_hint = ""
-        if _is_meta_recall_question(question):
+        if _is_meta:
             intent_hint = (
                 "\n\n[NOTE: This question is about our conversation itself. Answer "
                 "directly from <prior_conversation> above — do NOT call channel "
@@ -1352,6 +1383,7 @@ async def _run_agent_stream(
                         session_id=session_id,
                         mode=mode,
                         registry=_registry,
+                        suppress_empty=_is_meta,
                     ),
                 )
                 _rc = await _related_context_payload(channel_id, user_id, accumulated_text)
@@ -1513,6 +1545,7 @@ async def _run_agent_stream(
                         session_id=session_id,
                         mode=mode,
                         registry=_registry,
+                        suppress_empty=_is_meta,
                     ),
                 )
                 _rc = await _related_context_payload(channel_id, user_id, accumulated_text)

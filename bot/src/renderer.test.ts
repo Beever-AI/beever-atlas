@@ -84,6 +84,30 @@ describe("renderResponse", () => {
     assert.ok(out.includes("- 🌐 [1](https://www.espn.com/nba/x) espn.com"), "domain (no www) is the label");
   });
 
+  it("never renders a bare [N]: qa_history with no author falls back to its title", () => {
+    const out = renderResponse(
+      result({
+        citations: [
+          {
+            type: "qa_history",
+            title: "tell me about Victor Wembanyama",
+            text: "an earlier answer excerpt",
+          },
+        ],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("earlier Q&A: tell me about Victor Wembanyama"), out);
+  });
+
+  it("channel_message with no author/channel falls back to an excerpt (not bare [N])", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "a fact with no stored author here" }] }),
+      "slack",
+    );
+    assert.ok(out.includes("a fact with no stored author"), out);
+  });
+
   it("caps citations at 5 and notes the overflow", () => {
     const many = Array.from({ length: 8 }, (_, i) => ({ type: "channel_message", text: `c${i}` }));
     const out = renderResponse(result({ citations: many }), "teams");

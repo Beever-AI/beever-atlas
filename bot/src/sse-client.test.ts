@@ -46,6 +46,30 @@ describe("dedupDoubledAnswer", () => {
     const result = await consumeSSEStream(mockResponse(body));
     assert.strictEqual(result.answer, a, "the rendered answer must not be doubled");
   });
+  it("collapses a PARAPHRASE-double (re-worded second copy)", () => {
+    const copy1 =
+      "In this channel, Wembanyama has been highlighted for his unique skillset and impact on the NBA. " +
+      "Sam Cheung considers him to have the rarest skillset available, ideal to build a franchise around [1]. " +
+      "Ken Lau noted him among international MVPs like Doncic and Jokic, signifying global expansion [2].";
+    const copy2 =
+      "In this channel, Wembanyama is recognized for his unique skillset and his role in the NBA's global influence. " +
+      "Sam Cheung suggested building a franchise around him due to his never-seen-before rarest skillset [1]. " +
+      "Ken Lau included him among international players like Doncic and Jokic who won MVP awards [2].";
+    const out = dedupRepeats(copy1 + copy2);
+    assert.ok(out.length < (copy1 + copy2).length * 0.7, "paraphrase double should collapse");
+    assert.strictEqual(
+      (out.match(/In this channel, Wembanyama/g) || []).length,
+      1,
+      "only one copy of the opening should remain",
+    );
+  });
+  it("does NOT collapse a legit two-part answer that shares vocabulary", () => {
+    const legit =
+      "Wembanyama plays for the San Antonio Spurs and was the first pick in the 2023 draft, " +
+      "standing 7 foot 2 as the tallest player in the league. " +
+      "His family is athletic: his father was a track athlete for Congo and his mother played for the French national team.";
+    assert.strictEqual(dedupRepeats(legit), legit);
+  });
 });
 
 describe("dedupRepeats — near-duplicate collapse", () => {
