@@ -238,7 +238,16 @@ describe("normalizeCitations", () => {
       ],
     });
     assert.deepStrictEqual(out, [
-      { type: "fact", text: "sky is blue", author: "A", url: "u", source: "#c", timestamp: "2026-05-21T19:14:37Z" },
+      {
+        type: "fact",
+        text: "sky is blue",
+        author: "A",
+        url: "u",
+        source: "#c",
+        timestamp: "2026-05-21T19:14:37Z",
+        title: undefined,
+        platform: undefined,
+      },
     ]);
   });
   it("skips items without text and prefers items over sources", () => {
@@ -251,6 +260,56 @@ describe("normalizeCitations", () => {
   });
   it("returns [] for empty payloads", () => {
     assert.deepStrictEqual(normalizeCitations({}), []);
+  });
+
+  it("extracts title and platform from a registry source", () => {
+    const out = normalizeCitations({
+      sources: [
+        {
+          kind: "wiki_page",
+          title: "Booth Plan",
+          excerpt: "This channel is a lively hub… prima",
+          permalink: "https://w/x",
+          native: { platform: "discord", channel_name: "#general" },
+        },
+      ],
+    });
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].title, "Booth Plan");
+    assert.strictEqual(out[0].platform, "discord");
+  });
+
+  it("extracts title and platform from a legacy flat item", () => {
+    const out = normalizeCitations({
+      items: [{ type: "channel_message", text: "msg", title: "Topic", platform: "slack" }],
+    });
+    assert.strictEqual(out[0].title, "Topic");
+    assert.strictEqual(out[0].platform, "slack");
+  });
+
+  it("collapses 3 identical sources to 1 (id-keyed)", () => {
+    const dup = { kind: "wiki_page", title: "Same", permalink: "https://w/x", id: "src-7" };
+    const out = normalizeCitations({ sources: [dup, dup, dup] });
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].title, "Same");
+  });
+
+  it("collapses identical sources by (type, url, text) when no id is present", () => {
+    const dup = { type: "channel_message", text: "hello", permalink: "https://x/1" };
+    const out = normalizeCitations({ items: [dup, dup, dup] });
+    assert.strictEqual(out.length, 1);
+  });
+
+  it("preserves distinct sources (dedup must not over-collapse)", () => {
+    const out = normalizeCitations({
+      sources: [
+        { kind: "wiki_page", title: "A", permalink: "https://w/a", id: "1" },
+        { kind: "wiki_page", title: "B", permalink: "https://w/b", id: "2" },
+        { kind: "wiki_page", title: "A", permalink: "https://w/a", id: "1" }, // dup of first
+      ],
+    });
+    assert.strictEqual(out.length, 2);
+    assert.deepStrictEqual(out.map((c) => c.title), ["A", "B"]);
   });
 });
 

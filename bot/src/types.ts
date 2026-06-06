@@ -24,6 +24,14 @@ export interface Citation {
   /** ISO-8601 timestamp of the source message, when known — rendered as a
    *  relative "Nd ago" recency signal on the citation line. */
   timestamp?: string;
+  /** Real page/document title (e.g. a wiki page name). Preferred over `text`
+   *  as the citation label for titled sources so we don't show a truncated
+   *  excerpt where a clean title exists. */
+  title?: string;
+  /** Originating platform of the source (e.g. "slack", "discord"). Used to mark
+   *  cross-platform provenance on a citation line when it differs from the
+   *  channel the question was asked in. */
+  platform?: string;
 }
 
 /** A documented tension/contradiction relevant to the answer (proactive nudge). */

@@ -107,6 +107,99 @@ def _get_principal() -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Authorized-channels contextvar (channel-isolation, set per QA turn)
+# ---------------------------------------------------------------------------
+#
+# The QA agent answers ONLY from the channel where it was @mentioned. The
+# @mention itself proves the asking human is a member of that channel, so
+# v1 binds ``authorized_channel_ids = {current_channel}`` for the turn.
+# Every retrieval / graph / list tool intersects its target channel against
+# this set and refuses anything outside it — closing the cross-channel and
+# cross-platform fan-out that let a question in one channel read another's
+# knowledge. An empty set means "unbound" (e.g. non-chat callers / tests
+# that never bound it): tools then skip the check and fall back to the
+# per-capability principal ACL.
+
+_authorized_channel_ids: ContextVar[frozenset[str]] = ContextVar(
+    "authorized_channel_ids", default=frozenset()
+)
+
+
+def bind_authorized_channels(channel_ids: set[str] | frozenset[str]) -> Token:
+    """Bind the set of channel ids the current turn may query.
+
+    Reset the returned token at turn end (mirrors ``bind_principal``)::
+
+        token = bind_authorized_channels({channel_id})
+        try:
+            ...run agent...
+        finally:
+            reset_authorized_channels(token)
+    """
+    return _authorized_channel_ids.set(frozenset(channel_ids))
+
+
+def reset_authorized_channels(token: Token) -> None:
+    """Reset the authorized-channels contextvar to its previous value.
+
+    Swallows cross-task / double-reset errors like ``reset_principal`` so a
+    racing error-path reset never crashes the request handler.
+    """
+    try:
+        _authorized_channel_ids.reset(token)
+    except (ValueError, LookupError, RuntimeError):
+        logger.warning("reset_authorized_channels: token invalid (cross-task or double-reset)")
+
+
+@contextlib.contextmanager
+def bound_authorized_channels(channel_ids: set[str] | frozenset[str]):
+    """Bind ``channel_ids`` to the contextvar for the duration of the block.
+
+    Prefer this to the raw bind/reset pair for test and standalone call
+    sites — it resets even if the block raises.
+    """
+    token = bind_authorized_channels(channel_ids)
+    try:
+        yield token
+    finally:
+        reset_authorized_channels(token)
+
+
+def get_authorized_channels() -> frozenset[str]:
+    """Return the channel ids the current turn may query (empty if unbound)."""
+    return _authorized_channel_ids.get()
+
+
+def is_channel_authorized(channel_id: str) -> bool:
+    """True if *channel_id* is queryable this turn.
+
+    When the contextvar is unbound (empty set) the gate is open — callers
+    outside the chat ask path are governed by the per-capability principal
+    ACL instead. When bound, only the listed channels pass.
+    """
+    authorized = _authorized_channel_ids.get()
+    if not authorized:
+        return True
+    return channel_id in authorized
+
+
+def channel_blocked(tool: str, channel_id: str) -> bool:
+    """Shared channel-isolation backstop for every channel-scoped QA tool.
+
+    Returns True (and logs) when *channel_id* is outside the turn's authorized
+    set, so the tool can refuse before touching any store. Centralised on
+    purpose: EVERY tool that accepts a ``channel_id`` and reads channel-keyed
+    data MUST call this, so adding a new tool can't silently reopen the
+    cross-channel / cross-platform hole. Unbound context (non-chat callers,
+    tests) passes through to the per-capability principal ACL.
+    """
+    if not is_channel_authorized(channel_id):
+        logger.warning("%s: channel=%s not authorized for this turn — refusing", tool, channel_id)
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Error → structured dict translation
 # ---------------------------------------------------------------------------
 
@@ -161,6 +254,17 @@ async def list_connections_tool() -> dict:
     catalog.
     """
     from beever_atlas.capabilities.connections import list_connections
+
+    # Channel-isolation: in a scoped chat turn the bot answers about the single
+    # @mention channel — enumerating every connected platform/workspace would
+    # leak org structure. Refuse the inventory when scoped (the prompt-layer
+    # boundary check turns this into a friendly "I can only help with this
+    # channel" rather than a raw error).
+    if get_authorized_channels():
+        return {
+            "error": "scoped_to_channel",
+            "detail": "Connection enumeration is disabled here; this assistant is scoped to the current channel.",
+        }
 
     principal_id = _get_principal()
     if not principal_id:
@@ -227,6 +331,19 @@ async def list_channels_tool(connection_id: str) -> dict:
 
     try:
         channels = await list_channels(principal_id, connection_id)
+        # Channel-isolation: never surface the full org inventory through chat.
+        # When a turn is scoped (the @mention channel), show ONLY those channels
+        # and drop never-synced ones — they hold no data and listing their names
+        # alone leaks org structure. The unbound MCP/web path is unchanged (it
+        # legitimately enumerates the connection's catalog).
+        if isinstance(channels, list):
+            authorized = get_authorized_channels()
+            if authorized:
+                channels = [
+                    c
+                    for c in channels
+                    if c.get("channel_id") in authorized and c.get("sync_status") != "never_synced"
+                ]
         return {"channels": channels}
     except CapabilityError as exc:
         logger.warning(
@@ -444,6 +561,12 @@ __all__ = [
     "bind_principal",
     "reset_principal",
     "bound_principal",
+    "bind_authorized_channels",
+    "reset_authorized_channels",
+    "bound_authorized_channels",
+    "get_authorized_channels",
+    "is_channel_authorized",
+    "channel_blocked",
     "list_connections_tool",
     "list_channels_tool",
     "trigger_sync_tool",

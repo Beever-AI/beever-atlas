@@ -5,12 +5,23 @@ from __future__ import annotations
 import logging
 
 from beever_atlas.agents.tools._citation_decorator import cite_tool_output
+from beever_atlas.agents.tools.orchestration_tools import channel_blocked as _channel_blocked
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_PAGE_TYPES = frozenset(
     {"overview", "faq", "decisions", "people", "glossary", "activity", "topics"}
 )
+
+_PAGE_TYPE_LABELS: dict[str, str] = {
+    "overview": "Overview",
+    "faq": "FAQ",
+    "decisions": "Decisions",
+    "people": "People",
+    "glossary": "Glossary",
+    "activity": "Activity",
+    "topics": "Topics",
+}
 
 
 @cite_tool_output(kind="wiki_page")
@@ -26,6 +37,8 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
     Returns:
         Dict with page_type, content (markdown), and summary — or None if unavailable.
     """
+    if _channel_blocked("get_wiki_page", channel_id):
+        return None
     if page_type not in SUPPORTED_PAGE_TYPES:
         return None
     try:
@@ -58,6 +71,7 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
                 return {
                     "page_type": page_type,
                     "channel_id": channel_id,
+                    "title": _PAGE_TYPE_LABELS.get(page_type, page_type.title()),
                     "content": fresh_content,
                     "summary": f"Recent activity ({len(fresh_facts)} items)",
                     "text": fresh_content[:400],
@@ -70,6 +84,7 @@ async def get_wiki_page(channel_id: str, page_type: str) -> dict | None:
         return {
             "page_type": page_type,
             "channel_id": channel_id,
+            "title": _PAGE_TYPE_LABELS.get(page_type, page_type.title()),
             "content": content_text,
             "summary": summary_text,
             "text": summary_text or content_text[:400],
@@ -92,6 +107,8 @@ async def get_topic_overview(channel_id: str, topic_name: str | None = None) -> 
     Returns:
         Dict with tier, summary, and metadata — or None if unavailable.
     """
+    if _channel_blocked("get_topic_overview", channel_id):
+        return None
     try:
         from beever_atlas.stores import get_stores
 
@@ -105,6 +122,7 @@ async def get_topic_overview(channel_id: str, topic_name: str | None = None) -> 
                 "tier": "summary",
                 "channel_id": channel_id,
                 "page_type": "overview",
+                "title": "Overview",
                 "summary": summary.text,
                 "text": summary.text,
                 "cluster_count": summary.cluster_count,
@@ -123,11 +141,16 @@ async def get_topic_overview(channel_id: str, topic_name: str | None = None) -> 
             best = clusters[0]
         if best is None:
             return None
+        _slug = (best.topic_tags[0] if best.topic_tags else None) or topic_name
+        # De-slug for the display title: "q3-roadmap" -> "Q3 Roadmap" rather
+        # than the hyphen-mangling ".title()" would produce ("Q3-Roadmap").
+        _title = (_slug or "Topics").replace("-", " ").replace("_", " ").strip().title()
         return {
             "tier": "topic",
             "channel_id": channel_id,
             "page_type": "topics",
-            "slug": (best.topic_tags[0] if best.topic_tags else None) or topic_name,
+            "title": _title,
+            "slug": _slug,
             "cluster_id": best.id,
             "summary": best.summary,
             "text": best.summary,

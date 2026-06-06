@@ -25,6 +25,7 @@ import logging
 from typing import Any, TypedDict
 
 from beever_atlas.agents.tools._citation_decorator import cite_tool_output
+from beever_atlas.agents.tools.orchestration_tools import channel_blocked as _channel_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,14 @@ async def search_relationships(
         >>> # result
         >>> # [{'_empty': True, 'entity': 'Nobody', 'reason': 'no_edges'}]
     """
+    if _channel_blocked("search_relationships", channel_id):
+        return [
+            {
+                "_empty": True,
+                "entity": entities[0] if entities else "",
+                "reason": "channel_access_denied",
+            }
+        ]
     try:
         from beever_atlas.stores import get_stores
 
@@ -316,6 +325,8 @@ async def trace_decision_history(channel_id: str, topic: str) -> list:
         >>> # events
         >>> # []
     """
+    if _channel_blocked("trace_decision_history", channel_id):
+        return [{"_empty": True, "entity": topic, "reason": "channel_access_denied"}]
     try:
         from beever_atlas.stores import get_stores
 
@@ -433,6 +444,8 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list:
         >>> # experts
         >>> # [{'_empty': True, 'entity': 'Obscure XYZ', 'reason': 'no_edges'}]
     """
+    if _channel_blocked("find_experts", channel_id):
+        return [{"_empty": True, "entity": topic, "reason": "channel_access_denied"}]
     try:
         from beever_atlas.stores import get_stores
 

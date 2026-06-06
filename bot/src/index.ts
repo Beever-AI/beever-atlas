@@ -8,7 +8,7 @@ config({ path: resolve(import.meta.dirname, "../../.env") });
 import { Chat } from "chat";
 import { renderResponse } from "./renderer.js";
 import { fetchSSEWithRetry } from "./sse-client.js";
-import { extractChannelId, extractPlatform } from "./thread-id.js";
+import { extractChannelId, extractPlatform, extractThreadId } from "./thread-id.js";
 import { decideSubscribedThreadActionWithLookup } from "./trigger.js";
 import { stripMention } from "./mentions.js";
 import { ParticipantCache } from "./participant-cache.js";
@@ -78,7 +78,9 @@ function registerHandlers(bot: Chat): void {
     }
 
     if (!(await passesRateLimit(thread, message))) return;
-    await answerInThread(thread, question, "mention", message.author);
+    // Loose top-level @mention (not inside a thread) → key the session on
+    // (user, channel) within an idle window, not on the thread id.
+    await answerInThread(thread, question, "mention", message.author, false);
   });
 
   // Handler: follow-up messages in subscribed threads. The SDK routes EVERY
@@ -246,9 +248,13 @@ export async function answerInThread(
   question: string,
   surface: ReplySurface,
   author?: unknown,
+  isThreaded: boolean = true,
 ): Promise<void> {
   const platform = extractPlatform(thread.id);
   const startedAt = Date.now();
+  const userId = (author as { userId?: string } | undefined)?.userId || "unknown";
+  const channelId = extractChannelId(thread.id);
+  const threadId = extractThreadId(thread.id);
   try {
     // Show a typing/thinking indicator while the backend streams so a
     // multi-second answer doesn't feel unresponsive. Feature-detected and
@@ -257,13 +263,15 @@ export async function answerInThread(
     if (typeof thread.startTyping === "function") {
       thread.startTyping().catch(() => {});
     }
-    // Stable per-thread session id → backend resumes the thread's history so
-    // follow-ups remember the prior exchange. See session-id.ts for the
-    // thread-scoped (not channel/user) security rationale.
+    // Stable session id → backend resumes the prior exchange so follow-ups
+    // remember context. Threaded replies key on the thread; loose top-level
+    // @mentions key on (user, channel) within an idle window. See session-id.ts
+    // for the security rationale.
     const result = await askBackend(
-      extractChannelId(thread.id),
+      channelId,
       question,
-      deriveSessionId(thread.id),
+      deriveSessionId(threadId, userId, channelId, isThreaded),
+      userId,
     );
     // Post as `{ markdown }`: the renderer emits canonical CommonMark and the
     // chat SDK converts it to each platform's native format (Slack Block Kit,
@@ -312,6 +320,7 @@ async function askBackend(
   channelId: string,
   question: string,
   sessionId: string,
+  userId: string,
 ): Promise<AskResult> {
   // Encode the channel id so a value with slashes/`..` can't escape the route
   // path and reach an unintended backend endpoint.
@@ -326,7 +335,7 @@ async function askBackend(
   // slow or flapping backend doesn't surface a hard error to the user.
   return fetchSSEWithRetry(
     url,
-    { method: "POST", headers, body: JSON.stringify({ question, session_id: sessionId }) },
+    { method: "POST", headers, body: JSON.stringify({ question, session_id: sessionId, user_id: userId }) },
     { maxAttempts: 3, signal: AbortSignal.timeout(ASK_TIMEOUT_MS) },
   );
 }

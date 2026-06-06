@@ -63,7 +63,8 @@ async def _noop_decomposed_prompt(question: str, channel_id: str):
     return f"[Channel: {channel_id}]\n\n{question}", None
 
 
-async def _noop_chat_history(session_id: str):
+async def _noop_chat_history(session_id: str, *args, **kwargs):
+    # Accepts the ACL context (user_id, channel_id) the ask runner now passes.
     return []
 
 

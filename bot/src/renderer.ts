@@ -145,11 +145,13 @@ function domainOf(url: string): string {
  * A raw platform user-id is never shown as an author; segments are omitted when
  * absent, so a bare citation still renders `- {icon} [N]`.
  */
-function renderCitationLine(c: Citation, num: number): string {
+function renderCitationLine(c: Citation, num: number, platform: string): string {
   const url = c.url ? cleanUrl(c.url) : "";
   const marker = url ? `[${num}](${url})` : `[${num}]`;
   const author = c.author && !isRawPlatformId(c.author) ? cleanField(c.author, 80) : "";
-  const title = c.text ? cleanField(c.text, 80) : "";
+  // The label for titled sources (wiki/decision/graph). `text` is an excerpt; a
+  // real `title` is preferred so we don't show truncated garbage.
+  const label = c.text ? cleanField(c.text, 80) : "";
   const age = c.timestamp ? (relativeTime(c.timestamp) ?? "") : "";
 
   const segments: string[] = [];
@@ -158,15 +160,25 @@ function renderCitationLine(c: Citation, num: number): string {
     if (author) segments.push(author);
     if (c.source) {
       const src = cleanField(c.source, 80);
-      segments.push(src.startsWith("#") ? src : `#${src}`); // idempotent hash
+      let chan = src.startsWith("#") ? src : `#${src}`; // idempotent hash
+      // Cross-platform provenance: when this source came from a DIFFERENT
+      // platform than the one being answered in, mark it (e.g. "#general (discord)").
+      const srcPlatform = c.platform ? cleanField(c.platform, 20).toLowerCase() : "";
+      if (srcPlatform && srcPlatform !== platform) chan += ` (${srcPlatform})`;
+      segments.push(chan);
     }
   } else if (c.type === "web_result") {
-    segments.push(domainOf(url) || title); // domain preferred, fall back to title
+    // The 🌐 icon already signals "web"; the domain is the label. Only fall back
+    // to a "(web)" suffix on the title when neither icon-implied domain exists.
+    segments.push(domainOf(url) || label);
   } else if (c.type === "wiki_page") {
-    if (title) segments.push(title);
+    // Prefer the real page title; fall back to the excerpt ONLY if absent, and
+    // cap that fallback harder (40) so an incomplete excerpt is obviously partial.
+    const wikiLabel = c.title ? cleanField(c.title, 80) : (label ? cleanField(label, 40) : "");
+    if (wikiLabel) segments.push(wikiLabel);
   } else {
     // decision_record / graph_relationship / media / uploaded_file
-    if (title) segments.push(title);
+    if (label) segments.push(label);
     if (author) segments.push(author);
   }
   if (age) segments.push(age);
@@ -181,10 +193,14 @@ function renderCitationLine(c: Citation, num: number): string {
  * 1-based index so inline `[n]` markers in the answer stay valid even though
  * sources and related context are shown in separate blocks.
  */
-function renderCitationBlock(heading: string, entries: Array<{ c: Citation; num: number }>): string {
+function renderCitationBlock(
+  heading: string,
+  entries: Array<{ c: Citation; num: number }>,
+  platform: string,
+): string {
   if (entries.length === 0) return "";
   const shown = entries.slice(0, MAX_CITATIONS);
-  const lines = shown.map(({ c, num }) => renderCitationLine(c, num)).join("\n");
+  const lines = shown.map(({ c, num }) => renderCitationLine(c, num, platform)).join("\n");
   const overflow = entries.length - shown.length;
   const more = overflow > 0 ? `\n_+${overflow} more_` : "";
   // Surface the total count in the heading when the list overflows, so the reader
@@ -194,8 +210,8 @@ function renderCitationBlock(heading: string, entries: Array<{ c: Citation; num:
 }
 
 /** Backward-compatible: render all citations as a single Sources block. */
-export function renderCitations(citations: Citation[]): string {
-  return renderCitationBlock("## 📎 Sources", citations.map((c, i) => ({ c, num: i + 1 })));
+export function renderCitations(citations: Citation[], platform = "unknown"): string {
+  return renderCitationBlock("## 📎 Sources", citations.map((c, i) => ({ c, num: i + 1 })), platform);
 }
 
 /** Group citations into direct sources vs graph "related context", keeping indices. */
@@ -261,15 +277,32 @@ export function relativeTime(iso: string, now: number = Date.now()): string | nu
   return `${days}d ago`;
 }
 
+/** Whole days between an ISO timestamp and `now`; null if unparseable. */
+export function ageInDays(iso: string, now: number = Date.now()): number | null {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return Math.floor((now - t) / 86_400_000);
+}
+
+/** Beyond this age, the freshness footer adds a "may be outdated" caveat. */
+const STALE_AFTER_DAYS = 30;
+
 /**
  * Honest freshness footer. The backend's `last_sync_ts` is the timestamp of the
  * channel's last synced *message*, not the sync-run time, so we label it "last
  * activity" — saying "synced Nd ago" misled users on quiet-but-fresh channels.
+ * When that activity is older than {@link STALE_AFTER_DAYS} days the line gains a
+ * soft "may be outdated" caveat so a stale answer doesn't read as current.
  */
 function renderFreshness(lastSyncTs?: string): string {
   if (!lastSyncTs) return "";
   const rel = relativeTime(lastSyncTs);
-  return rel ? `\n🕐 _last activity ${rel}_` : "";
+  if (!rel) return "";
+  const days = ageInDays(lastSyncTs);
+  if (days !== null && days > STALE_AFTER_DAYS) {
+    return `\n🕐 _last activity ${rel} — may be outdated_`;
+  }
+  return `\n🕐 _last activity ${rel}_`;
 }
 
 /**
@@ -336,8 +369,8 @@ export function renderResponse(result: AskResult, platform: string): string {
     // A low-confidence warning sits right under the answer so truncation can
     // never drop this trust signal — but only when there ARE sources to verify.
     (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "") +
-    renderCitationBlock("## 📎 Sources", sources) +
-    renderCitationBlock("## 🧠 Related", related) +
+    renderCitationBlock("## 📎 Sources", sources, plat) +
+    renderCitationBlock("## 🧠 Related", related, plat) +
     renderTensions(result.tensions) +
     (hasChannelSource ? renderFreshness(result.lastSyncTs) : "") +
     renderFollowUps(result.followUps) +

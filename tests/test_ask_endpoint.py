@@ -69,7 +69,8 @@ async def _noop_decomposed_prompt(question: str, channel_id: str) -> tuple:
     return f"[Channel: {channel_id}]\n\n{question}", None
 
 
-async def _noop_chat_history(session_id: str):
+async def _noop_chat_history(session_id: str, *args, **kwargs):
+    # Accepts the ACL context (user_id, channel_id) the ask runner now passes.
     return []
 
 
@@ -113,6 +114,61 @@ def mock_runner_error():
         mock_cr.return_value = runner_instance
         mock_cs.return_value = mock_session
         yield runner_instance
+
+
+class TestPrincipalMemoryIdentitySplit:
+    """Regression: tool ACL binds the authenticated principal; conversation
+    memory keys on the bridge-asserted platform user_id. The two must not be
+    conflated (else orchestration tools see an empty connection list)."""
+
+    @pytest.mark.asyncio
+    async def test_principal_for_tools_platform_id_for_memory(self, client: AsyncClient):
+        captured: dict = {}
+
+        async def _spy_history(session_id, user_id=None, channel_id=None, *a, **k):
+            captured["history_user_id"] = user_id
+            captured["history_channel_id"] = channel_id
+            return []
+
+        def _spy_bind_principal(pid):
+            captured["bound_principal"] = pid
+            return None
+
+        mock_session = MagicMock()
+        mock_session.user_id = "U_PLATFORM"
+        mock_session.id = "sess"
+
+        with (
+            patch(
+                "beever_atlas.agents.query.qa_agent.get_agent_for_mode", return_value=MagicMock()
+            ),
+            patch("beever_atlas.api.ask.create_runner") as mock_cr,
+            patch("beever_atlas.api.ask.create_session", new_callable=AsyncMock) as mock_cs,
+            patch(
+                "beever_atlas.api.ask._build_decomposed_prompt", side_effect=_noop_decomposed_prompt
+            ),
+            patch("beever_atlas.api.ask._load_chat_history_parts", side_effect=_spy_history),
+            patch(
+                "beever_atlas.agents.tools.orchestration_tools.bind_principal",
+                side_effect=_spy_bind_principal,
+            ),
+        ):
+            runner_instance = MagicMock()
+            runner_instance.run_async = _mock_run_async_success
+            mock_cr.return_value = runner_instance
+            mock_cs.return_value = mock_session
+            resp = await client.post(
+                "/api/channels/C123/ask",
+                json={"question": "hi", "user_id": "U_PLATFORM"},
+            )
+            assert resp.status_code == 200
+            _ = resp.text  # drain the SSE stream so the generator runs
+
+        # Tool ACL must NOT be the platform id (it is the authenticated principal).
+        assert captured.get("bound_principal") not in (None, "U_PLATFORM")
+        # Conversation memory keys on the platform id + channel.
+        assert captured.get("history_user_id") == "U_PLATFORM"
+        assert captured.get("history_channel_id") == "C123"
 
 
 class TestAskEndpointValidation:

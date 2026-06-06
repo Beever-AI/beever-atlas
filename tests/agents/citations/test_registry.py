@@ -218,6 +218,67 @@ def test_finalize_builds_legacy_items():
     assert item["text"] == "hello world"
 
 
+def test_legacy_items_include_title_field():
+    """_build_legacy_items must emit a 'title' key mirroring source.title."""
+    r = SourceRegistry()
+    sid = r.register(
+        **_base_kwargs(
+            title="FAQ",
+            kind="wiki_page",
+            native_identity="C1:faq::",
+            native={"channel_id": "C1", "page_type": "faq"},
+            excerpt="Some faq content here.",
+        )
+    )
+    r.mark_referenced(sid, 1)
+    env = r.finalize()
+    assert len(env.items) == 1
+    item = env.items[0]
+    assert "title" in item, "legacy item must carry a 'title' field"
+    assert item["title"] == "FAQ"
+
+
+def test_legacy_items_title_present_for_channel_message():
+    """title field is emitted for all kinds, not just wiki_page."""
+    r = SourceRegistry()
+    sid = r.register(
+        **_base_kwargs(
+            title="alice in #general",
+            native={
+                "platform": "slack",
+                "channel_id": "C1",
+                "channel_name": "general",
+                "author": "alice",
+            },
+        )
+    )
+    r.mark_referenced(sid, 1)
+    env = r.finalize()
+    item = env.items[0]
+    assert item["title"] == "alice in #general"
+
+
+def test_legacy_items_title_not_equal_to_excerpt():
+    """The title field must not be the same as the excerpt text."""
+    r = SourceRegistry()
+    excerpt = "This channel is a lively hub of activity and discussion."
+    sid = r.register(
+        **_base_kwargs(
+            title="Overview",
+            kind="wiki_page",
+            native_identity="C1:overview::",
+            native={"channel_id": "C1", "page_type": "overview"},
+            excerpt=excerpt,
+        )
+    )
+    r.mark_referenced(sid, 1)
+    env = r.finalize()
+    item = env.items[0]
+    assert item["title"] != item["text"], "title must not be the excerpt"
+    assert item["title"] == "Overview"
+    assert item["text"] == excerpt
+
+
 # ---- contextvar lifecycle ---------------------------------------------
 
 

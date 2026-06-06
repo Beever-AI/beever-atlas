@@ -8,6 +8,7 @@ import {
   renderTensions,
   enforceCap,
   relativeTime,
+  ageInDays,
   CHAR_CAP,
 } from "./renderer.js";
 import type { AskResult } from "./types.js";
@@ -411,5 +412,97 @@ describe("relativeTime", () => {
   });
   it("returns null for unparseable input", () => {
     assert.strictEqual(relativeTime("not-a-date", now), null);
+  });
+});
+
+describe("ageInDays", () => {
+  const now = Date.parse("2026-06-04T12:00:00Z");
+  it("computes whole days between an ISO timestamp and now", () => {
+    assert.strictEqual(ageInDays("2026-06-04T12:00:00Z", now), 0);
+    assert.strictEqual(ageInDays("2026-06-03T12:00:00Z", now), 1);
+    assert.strictEqual(ageInDays("2026-04-05T12:00:00Z", now), 60);
+  });
+  it("returns null for unparseable input", () => {
+    assert.strictEqual(ageInDays("nope", now), null);
+  });
+});
+
+describe("freshness staleness caveat (>30d)", () => {
+  const channelCite = [{ type: "channel_message", text: "x", source: "#g" }];
+  it("appends a 'may be outdated' caveat when last activity is older than 30 days", () => {
+    const old = new Date(Date.now() - 45 * 24 * 3600_000).toISOString();
+    const out = renderResponse(result({ lastSyncTs: old, citations: channelCite }), "slack");
+    assert.ok(out.includes("last activity "));
+    assert.ok(out.includes("may be outdated"), "stale data must carry the caveat");
+  });
+  it("does NOT append the caveat for recent activity (<30 days)", () => {
+    const recent = new Date(Date.now() - 5 * 24 * 3600_000).toISOString();
+    const out = renderResponse(result({ lastSyncTs: recent, citations: channelCite }), "slack");
+    assert.ok(out.includes("last activity "));
+    assert.ok(!out.includes("may be outdated"), "fresh data must not carry the caveat");
+  });
+});
+
+describe("wiki page title preference (change 3)", () => {
+  it("prefers the real page title over a truncated excerpt", () => {
+    const out = renderResponse(
+      result({
+        citations: [
+          {
+            type: "wiki_page",
+            title: "Booth Planning",
+            text: "This channel is a lively hub for coordinating the booth and prima…",
+            url: "https://wiki/x",
+          },
+        ],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("Booth Planning"), "the page title is the label");
+    assert.ok(!out.includes("lively hub"), "the excerpt must not be the label when a title exists");
+  });
+
+  it("falls back to a hard-capped (40-char) excerpt when no title is present", () => {
+    const longExcerpt = "x".repeat(60);
+    const out = renderResponse(
+      result({ citations: [{ type: "wiki_page", text: longExcerpt, url: "https://wiki/x" }] }),
+      "slack",
+    );
+    // The fallback excerpt is capped at 40, so the full 60-char run never appears.
+    assert.ok(!out.includes(longExcerpt));
+    assert.ok(out.includes("x".repeat(40)));
+    assert.ok(!out.includes("x".repeat(41)));
+  });
+});
+
+describe("cross-platform provenance marker (change 5)", () => {
+  it("appends '(platform)' to a channel source from a different platform", () => {
+    const out = renderResponse(
+      result({
+        citations: [{ type: "channel_message", text: "x", author: "Jack", source: "#general", platform: "discord" }],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("#general (discord)"), "cross-platform provenance must be visible");
+  });
+
+  it("does NOT append the marker when the source platform matches the answer platform", () => {
+    const out = renderResponse(
+      result({
+        citations: [{ type: "channel_message", text: "x", author: "Jack", source: "#general", platform: "slack" }],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("#general"));
+    assert.ok(!out.includes("(slack)"), "same-platform sources must not be marked");
+  });
+
+  it("does NOT append a marker when no platform is present (back-compat)", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "Jack", source: "#general" }] }),
+      "slack",
+    );
+    assert.ok(out.includes("Jack · #general"));
+    assert.ok(!out.includes("("), "no spurious marker without a platform");
   });
 });

@@ -112,6 +112,45 @@ describe("answerInThread", () => {
     assert.ok(posted, "reply should still be posted despite a typing failure");
   });
 
+  it("plumbs user_id and a session_id into the backend POST body", async () => {
+    let sentBody: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(String(init.body));
+      return sseResponse(HAPPY_SSE);
+    }) as unknown as typeof fetch;
+    const thread: PostableThread = {
+      id: "slack:C0B5YCR1NL8:1700000000.0001",
+      post: async () => {},
+    };
+    await answerInThread(thread, "why?", "mention", { userId: "U1" });
+    assert.strictEqual(sentBody.user_id, "U1");
+    assert.strictEqual(sentBody.question, "why?");
+    assert.strictEqual(typeof sentBody.session_id, "string");
+  });
+
+  it("defaults user_id to \"unknown\" when the author has no id", async () => {
+    let sentBody: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(String(init.body));
+      return sseResponse(HAPPY_SSE);
+    }) as unknown as typeof fetch;
+    const thread: PostableThread = { id: "slack:C1:T1", post: async () => {} };
+    await answerInThread(thread, "q", "mention");
+    assert.strictEqual(sentBody.user_id, "unknown");
+  });
+
+  it("derives different session ids for threaded vs loose top-level mentions", async () => {
+    const sessions: string[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sessions.push(JSON.parse(String(init.body)).session_id);
+      return sseResponse(HAPPY_SSE);
+    }) as unknown as typeof fetch;
+    const thread: PostableThread = { id: "slack:C1:T1", post: async () => {} };
+    await answerInThread(thread, "q", "mention", { userId: "U1" }, true); // threaded
+    await answerInThread(thread, "q", "mention", { userId: "U1" }, false); // top-level
+    assert.notStrictEqual(sessions[0], sessions[1]);
+  });
+
   it("delivers an ephemeral error notice when the backend call fails", async () => {
     // A 4xx is terminal (no retry) → answerInThread swallows it into a notice.
     globalThis.fetch = (async () => new Response("bad request", { status: 400 })) as typeof fetch;

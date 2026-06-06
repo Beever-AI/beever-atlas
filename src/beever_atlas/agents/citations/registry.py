@@ -295,6 +295,7 @@ def _build_legacy_items(sources: list[Source], refs: list[CitationRef]) -> list[
                 "author": native.get("author", ""),
                 "channel": native.get("channel_name") or native.get("channel", ""),
                 "timestamp": native.get("timestamp", ""),
+                "title": source.title,
                 "text": source.excerpt,
                 "permalink": source.permalink,
             }

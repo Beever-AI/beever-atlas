@@ -98,6 +98,14 @@ class AskRequest(BaseModel):
     include_citations: bool = Field(default=True)
     max_results: int = Field(default=10, ge=1, le=50)
     session_id: str | None = Field(default=None, description="Resume an existing session")
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "Acting human user id, asserted by the chat bridge on behalf of the "
+            "channel-native user. Used for conversation-memory keying/ACL. When "
+            "absent (e.g. web UI), the authenticated principal id is used."
+        ),
+    )
     mode: str = Field(default="deep", pattern="^(quick|deep|summarize)$")
     attachments: list[dict] = Field(default_factory=list, description="Attached file content")
     disabled_tools: list[str] = Field(
@@ -352,8 +360,20 @@ async def _build_decomposed_prompt(
     return prompt, plan
 
 
-async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]:
-    """Load last 10 turns from ChatHistoryStore as genai Content objects."""
+async def _load_chat_history_parts(
+    session_id: str,
+    user_id: str | None = None,
+    channel_id: str | None = None,
+) -> list[genai_types.Content]:
+    """Load last 10 turns from ChatHistoryStore as genai Content objects.
+
+    ACL-scoped: conversation memory must never cross users or channels. When
+    *user_id* / *channel_id* are supplied we verify the stored session
+    actually belongs to this (user, channel) before returning any turns — a
+    guessed or stale ``session_id`` from another user or another channel is
+    treated as a cold start (returns ``[]``), not a memory leak. The check
+    fails safe: any lookup error → cold start.
+    """
     try:
         # Phase 2 of #31 — use the shared singleton instead of per-request
         # ChatHistoryStore construction. The singleton was started at app
@@ -361,6 +381,41 @@ async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]
         from beever_atlas.stores import get_stores
 
         store = get_stores().chat_history
+
+        # Memory ACL — only enforced when we know who is asking and where.
+        if user_id is not None or channel_id is not None:
+            try:
+                session_doc = await store.load_session_with_channels(session_id)
+            except Exception:
+                session_doc = None
+            if session_doc is None:
+                # Unknown session id → legitimate first message; cold start.
+                return []
+            # Fail CLOSED: when we know who is asking, the stored session must
+            # provably belong to this user — an unset/mismatched owner is denied,
+            # not waved through (a real session always persists user_id).
+            owner = session_doc.get("user_id")
+            if user_id is not None and owner != user_id:
+                logger.warning(
+                    "memory ACL: cross/indeterminate-user history load denied (session=%s)",
+                    session_id,
+                )
+                return []
+            # Fail CLOSED on channel too: a channel-scoped request must provably
+            # match the session's channel(s). If we can't establish provenance
+            # (no channel ids on the doc), refuse rather than leak.
+            if channel_id is not None:
+                doc_channels = set(session_doc.get("channel_ids") or [])
+                top_channel = session_doc.get("channel_id")
+                if top_channel:
+                    doc_channels.add(top_channel)
+                if channel_id not in doc_channels:
+                    logger.warning(
+                        "memory ACL: cross/indeterminate-channel history load denied (session=%s)",
+                        session_id,
+                    )
+                    return []
+
         messages = await store.get_context_messages(session_id=session_id)
 
         contents = []
@@ -376,6 +431,71 @@ async def _load_chat_history_parts(session_id: str) -> list[genai_types.Content]
     except Exception:
         logger.debug("Could not load chat history for session=%s", session_id)
         return []
+
+
+_META_RECALL_PATTERNS = (
+    "what did i ask",
+    "what did i just ask",
+    "what was my question",
+    "what did we discuss",
+    "what did we talk about",
+    "what have we talked about",
+    "summarize our",
+    "summarise our",
+    "summarize this conversation",
+    "summarise this conversation",
+    "summarize our conversation",
+    "recap our",
+    "recap this conversation",
+    "do you remember what",
+    "remind me what i",
+    "my previous question",
+    "my last question",
+    "my earlier question",
+    "what did you just say",
+    "what did you tell me",
+)
+
+
+_ACTING_USER_ID_RE = re.compile(r"^[\w.:@|=-]{1,128}$")
+
+
+def _resolve_acting_user_id(asserted: str | None, principal_id: str) -> str:
+    """Resolve the acting human id for conversation-memory keying.
+
+    The chat bridge asserts the channel-native user's id in the request body;
+    the web UI omits it and falls back to the authenticated principal. We
+    validate the asserted value (bounded length, safe charset) so it can't be
+    used to inject into store keys or logs, and fall back to the principal on
+    anything unexpected.
+
+    NOTE (security follow-up): this trusts any caller holding a valid service
+    key to assert a user id. In the current deployment only the bridge/web
+    hold BEEVER_API_KEYS, so the blast radius is limited to memory continuity
+    (channel data is separately gated). A stricter model gates this behind a
+    dedicated bridge principal (require_bridge) — tracked for a follow-up.
+    """
+    asserted = (asserted or "").strip()
+    if asserted and _ACTING_USER_ID_RE.match(asserted):
+        return asserted
+    if asserted:
+        logger.warning("ask: ignoring malformed acting user_id; using principal")
+    return principal_id
+
+
+def _is_meta_recall_question(question: str) -> bool:
+    """Heuristic: True if *question* is about the conversation itself.
+
+    Meta/recall questions ("what did I ask you?", "summarize our chat") should
+    be answered from the injected ``<prior_conversation>`` turns, not routed to
+    channel retrieval (which dead-ends on an empty state). Conservative on
+    purpose: a missed meta question merely falls back to normal retrieval; we
+    avoid false positives that would suppress legitimate channel lookups.
+    """
+    if not question:
+        return False
+    lowered = question.lower()
+    return any(p in lowered for p in _META_RECALL_PATTERNS)
 
 
 def _compute_confidence(registry) -> float:
@@ -486,6 +606,7 @@ async def _run_agent_stream(
     attachments: list[dict] | None = None,
     use_v2_schema: bool = False,
     disabled_tools: list[str] | None = None,
+    principal_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the ADK agent and yield SSE events including tool call progress."""
     from beever_atlas.agents.query.qa_agent import (
@@ -572,6 +693,10 @@ async def _run_agent_stream(
     # the runner runs and reset in the finally below to avoid cross-channel
     # leakage between concurrent asks.
     _ws_token = None
+    # Channel-isolation: the set of channels this turn may query. v1 binds the
+    # @mention channel only — the @mention proves the asking user is a member of
+    # it. Every retrieval/graph/list tool refuses channels outside this set.
+    _authorized_token = None
     if _registry_enabled:
         from beever_atlas.agents.citations import registry as _citation_registry_mod
         from beever_atlas.agents.citations.permalink_resolver import default_resolver
@@ -583,8 +708,9 @@ async def _run_agent_stream(
         _follow_ups_collector, _follow_ups_token = bind_collector()
         _rewriter = StreamRewriter(_registry)
 
-    # Task 4.8: Load prior conversation turns so agent has continuity
-    history_parts = await _load_chat_history_parts(session_id)
+    # Task 4.8: Load prior conversation turns so agent has continuity.
+    # ACL-scoped to (user, channel) so memory never crosses users/channels.
+    history_parts = await _load_chat_history_parts(session_id, user_id, channel_id)
 
     # Task 4.3: Decompose question and annotate prompt for complex questions
     prompt_text, _decomposition_plan = await _build_decomposed_prompt(question, channel_id)
@@ -624,8 +750,20 @@ async def _run_agent_stream(
             text = h.parts[0].text if h.parts else ""
             history_lines.append(f"[{role_label}]: {text}")
         history_ctx = "\n".join(history_lines)
+        # Meta/recall questions ("what did I ask you?", "summarize our chat")
+        # are about the conversation itself — answer them from the turns above,
+        # not from channel retrieval (which dead-ends on an empty state). Prime
+        # the agent so it reads <prior_conversation> instead of calling tools.
+        intent_hint = ""
+        if _is_meta_recall_question(question):
+            intent_hint = (
+                "\n\n[NOTE: This question is about our conversation itself. Answer "
+                "directly from <prior_conversation> above — do NOT call channel "
+                "retrieval tools for it.]"
+            )
         prompt_text = (
-            f"<prior_conversation>\n{history_ctx}\n</prior_conversation>\n\n" + prompt_text
+            f"<prior_conversation>\n{history_ctx}\n</prior_conversation>{intent_hint}\n\n"
+            + prompt_text
         )
 
     new_message = genai_types.Content(
@@ -679,10 +817,31 @@ async def _run_agent_stream(
         try:
             from beever_atlas.agents.tools.orchestration_tools import bind_principal
 
-            _principal_token = bind_principal(session.user_id)
+            # Tool ACL binds the AUTHENTICATED principal — NOT the platform
+            # user id used for memory keying. The bridge asserts a platform
+            # user_id (e.g. "U1") for conversation continuity, but connection/
+            # channel/sync tools must still resolve against the real owner
+            # principal, or they'd see an empty connection list. Falls back to
+            # the session user (web path, where they're the same).
+            _principal_token = bind_principal(principal_id or session.user_id)
         except Exception:
             logger.warning(
                 "failed to bind principal for orchestration tools",
+                exc_info=True,
+            )
+        # Channel-isolation: constrain every retrieval/graph/list tool to the
+        # @mention channel for this turn (defence-in-depth behind the prompt's
+        # boundary check). Bound BEFORE runner.run_async so tool invocations
+        # see it; reset in the finally below.
+        try:
+            from beever_atlas.agents.tools.orchestration_tools import (
+                bind_authorized_channels,
+            )
+
+            _authorized_token = bind_authorized_channels({channel_id})
+        except Exception:
+            logger.warning(
+                "failed to bind authorized channels for tool isolation",
                 exc_info=True,
             )
         # Bind the Slack workspace subdomain BEFORE runner.run_async so tool
@@ -1099,6 +1258,17 @@ async def _run_agent_stream(
                 reset_principal(_principal_token)
             except Exception:
                 logger.warning("failed to reset principal", exc_info=True)
+        # Reset the authorized-channels contextvar so a turn's channel scope
+        # never leaks into a concurrent ask for a different channel (security).
+        if _authorized_token is not None:
+            try:
+                from beever_atlas.agents.tools.orchestration_tools import (
+                    reset_authorized_channels,
+                )
+
+                reset_authorized_channels(_authorized_token)
+            except Exception:
+                logger.warning("failed to reset authorized channels", exc_info=True)
         # Reset the workspace-domain contextvar so a domain never leaks across
         # concurrent asks for different channels (correctness/security).
         if _ws_token is not None:
@@ -1500,7 +1670,15 @@ async def ask_channel(
            citations, follow_ups, metadata, error, done.
     """
     await assert_channel_access(principal, channel_id)
-    user_id = principal.id
+    # Conversation memory is keyed to the acting HUMAN, not the shared bridge
+    # service key. The chat bridge authenticated the platform event, so it is
+    # trusted to assert the channel-native user's id in ``body.user_id``; we
+    # use it for session ownership + memory keying so each human gets their own
+    # continuity and one user's history never bleeds into another's. The web UI
+    # omits it and falls back to the authenticated principal. Channel access
+    # above is still gated on the principal; per-turn channel isolation is
+    # enforced separately via the authorized-channels contextvar.
+    user_id = _resolve_acting_user_id(body.user_id, principal.id)
     session_id = body.session_id or str(uuid.uuid4())
     # Issue #45 — when the client supplies a session_id, verify it isn't
     # someone else's session before persisting Q&A messages or feedback to
@@ -1519,6 +1697,7 @@ async def ask_channel(
             mode=body.mode,
             attachments=body.attachments,
             disabled_tools=body.disabled_tools,
+            principal_id=principal.id,
         ),
         media_type="text/event-stream",
         headers={

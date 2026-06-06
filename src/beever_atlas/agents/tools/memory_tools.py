@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from beever_atlas.agents.tools._citation_decorator import cite_tool_output
 from beever_atlas.agents.tools.channel_resolver import resolve_channel_name
+from beever_atlas.agents.tools.orchestration_tools import channel_blocked as _channel_blocked
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ async def search_qa_history(channel_id: str, query: str, limit: int = 5) -> list
     Returns:
         List of past Q&A entries with question, answer, citations, timestamp.
     """
+    if _channel_blocked("search_qa_history", channel_id):
+        return []
     try:
         from beever_atlas.infra.config import get_settings
         from beever_atlas.stores.qa_history_store import QAHistoryStore
@@ -155,6 +158,8 @@ async def search_channel_facts(
     Returns:
         Ranked facts with author, channel, timestamp, permalink, confidence.
     """
+    if _channel_blocked("search_channel_facts", channel_id):
+        return []
     global _mmr_logged
     try:
         from beever_atlas.stores import get_stores
@@ -257,6 +262,8 @@ async def search_media_references(
     Returns:
         Media items with URL, type, and surrounding message context.
     """
+    if _channel_blocked("search_media_references", channel_id):
+        return []
     try:
         from beever_atlas.stores import get_stores
 
@@ -341,6 +348,8 @@ async def get_recent_activity(
     Returns:
         Facts from the last N days ordered by timestamp descending.
     """
+    if _channel_blocked("get_recent_activity", channel_id):
+        return []
     try:
         from beever_atlas.stores import get_stores
 
