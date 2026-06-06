@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { extractChannelId, extractPlatform } from "./thread-id.js";
+import { extractChannelId, extractPlatform, hasThreadRoot } from "./thread-id.js";
 
 describe("extractChannelId", () => {
   it("returns the second segment", () => {
@@ -25,5 +25,18 @@ describe("extractPlatform", () => {
   it("returns 'unknown' for malformed ids", () => {
     assert.strictEqual(extractPlatform("nocolons"), "unknown");
     assert.strictEqual(extractPlatform(":emptyprefix"), "unknown");
+  });
+});
+
+describe("hasThreadRoot", () => {
+  it("is true for an id with a non-empty thread segment", () => {
+    assert.strictEqual(hasThreadRoot("slack:C123:1700000000.0001"), true);
+    assert.strictEqual(hasThreadRoot("teams:19:abc"), true);
+  });
+
+  it("is false for an id with no (or empty) thread segment", () => {
+    assert.strictEqual(hasThreadRoot("slack:C123"), false);
+    assert.strictEqual(hasThreadRoot("slack:C123:"), false);
+    assert.strictEqual(hasThreadRoot("nocolons"), false);
   });
 });

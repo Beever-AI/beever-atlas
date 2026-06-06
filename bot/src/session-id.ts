@@ -14,12 +14,21 @@ const IDLE_WINDOW_MS = 30 * 60 * 1000;
  * exchange, so follow-up questions remember context.
  *
  * Two keying modes, chosen by `isThreaded`:
- *  - THREADED (`isThreaded === true`) — a reply inside an actual thread. Key on
- *    the THREAD (`bot-thread:${threadId}`) for precise continuity: every message
- *    in that thread resumes exactly that thread's history.
- *  - LOOSE TOP-LEVEL (`isThreaded === false`) — a bare top-level @mention that is
- *    NOT inside a thread. There is no thread to scope to, so we key on
- *    (user, channel) within a 30-minute IDLE WINDOW
+ *  - THREADED (`isThreaded === true`) — a message that belongs to a real thread.
+ *    Key on the THREAD (`bot-thread:${threadId}`) for precise continuity: every
+ *    message in that thread resumes exactly that thread's history. This is the
+ *    mode BOTH `onNewMention` and `onSubscribedMessage` use, because `thread.id`
+ *    is the STABLE thread ROOT for every message in a thread (Slack encodes it as
+ *    `<platform>:<channel>:<threadTs>` with `threadTs = event.thread_ts ||
+ *    event.ts`, so the root @mention and all its replies resolve to ONE id). The
+ *    previous code keyed the root @mention with the loose mode below, which gave
+ *    it a DIFFERENT id from its own thread replies — so backend memory never
+ *    carried across the conversation. Callers pass
+ *    `isThreaded = hasThreadRoot(thread.id)` so this mode is used whenever a
+ *    genuine thread segment is present.
+ *  - LOOSE TOP-LEVEL (`isThreaded === false`) — a degenerate id with no thread
+ *    segment (no stable thread root to scope to). We key on (user, channel)
+ *    within a 30-minute IDLE WINDOW
  *    (`bot-topmention:${userId}:${channelId}:${bucket}`). This gives continuity
  *    for back-to-back mentions from the same user in the same channel, then a
  *    fresh session once they've been idle past the window.

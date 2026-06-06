@@ -345,7 +345,29 @@ export function renderEmptyState(result: AskResult, platform: string): string {
   ];
   const freshness = renderFreshness(result.lastSyncTs);
   if (freshness) lines.push(freshness.trimStart());
+  // A just-completed sync explains an empty result better than a dead-end: the
+  // backend may still be indexing, so reassure instead of implying "nothing
+  // here". Only when the last activity is genuinely recent (<1h).
+  const justSynced = renderJustSynced(result.lastSyncTs);
+  if (justSynced) lines.push(justSynced.trimStart());
   return enforceCap(lines.join("\n"), capFor(platform));
+}
+
+/** Window under which a sync counts as "just synced" for the empty-state nudge. */
+const JUST_SYNCED_WITHIN_MS = 60 * 60 * 1000;
+
+/**
+ * Reassurance line for the empty state when the channel's last activity is very
+ * recent (<1h): indexing may still be catching up, so a momentarily empty result
+ * isn't a dead end. Silent when the sync is old or absent.
+ */
+function renderJustSynced(lastSyncTs?: string, now: number = Date.now()): string {
+  if (!lastSyncTs) return "";
+  const t = Date.parse(lastSyncTs);
+  if (Number.isNaN(t)) return "";
+  const ageMs = now - t;
+  if (ageMs < 0 || ageMs >= JUST_SYNCED_WITHIN_MS) return "";
+  return `\n_Just synced — new messages may be indexed shortly._`;
 }
 
 /** Render a full reply for the given platform. */
@@ -363,9 +385,16 @@ export function renderResponse(result: AskResult, platform: string): string {
   // Channel freshness ("last activity Nd ago") only makes sense when the answer
   // actually rests on channel messages — not for web/wiki-only answers.
   const hasChannelSource = citations.some((c) => MESSAGE_KINDS.has(c.type));
+  // A web-ONLY answer (every citation is a web_result; no channel/wiki source)
+  // is general knowledge, not this team's data. The model omits that caveat for
+  // factual queries ("who won the 2024 NBA championship"), so add it
+  // deterministically — once, right under the answer so it survives truncation.
+  const hasWebOnly =
+    citations.length > 0 && !hasChannelSource && citations.every((c) => c.type === "web_result");
 
   const body =
     (result.answer || "").trimEnd() +
+    (hasWebOnly ? "\n_ℹ️ From external sources — not your team's data._" : "") +
     // A low-confidence warning sits right under the answer so truncation can
     // never drop this trust signal — but only when there ARE sources to verify.
     (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "") +

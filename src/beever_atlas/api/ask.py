@@ -184,6 +184,75 @@ def _dedup_exact_double(text: str, session_id: str) -> str:
     return text
 
 
+def _scrub_channel_id(text: str, channel_id: str | None) -> str:
+    """Remove a leaked raw channel id from the answer (privacy + dedup enabler).
+
+    The prompt forbids echoing the raw channel id, but the model occasionally
+    slips it in (e.g. "...within this channel (C0B5YCR1NL8)..."). Stripping it is
+    both a privacy safety-net AND a dedup enabler: once the id is gone, a doubled
+    answer where only one copy carried the id becomes a clean byte-double that
+    ``_dedup_exact_double`` can collapse.
+    """
+    if not channel_id or channel_id not in text:
+        return text
+    out = text.replace(f" ({channel_id})", "").replace(f"({channel_id})", "")
+    out = out.replace(channel_id, "")
+    if out != text:
+        logger.warning("dedup: scrubbed leaked channel id from answer")
+    return out
+
+
+def _norm_block(s: str) -> str:
+    """Citation/whitespace-insensitive normalized form of a text block."""
+    return re.sub(r"\s+", " ", _CITE_MARKER_RE.sub("", s)).strip().lower()
+
+
+def _collapse_repeated_paragraphs(text: str, session_id: str) -> str:
+    """Drop paragraphs that repeat an earlier one (near-duplicate aware).
+
+    Catches the ~part of P0 where the model restates the whole answer (or a
+    paragraph of it) separated by blank lines — including citation-renumbered or
+    lightly-varied copies, since comparison is on the normalized form. Only drops
+    blocks ≥40 normalized chars so short legitimate repeats survive. Preserves
+    paragraph structure and the original (correctly-numbered) text of kept blocks.
+    """
+    paras = re.split(r"\n\s*\n", text)
+    if len(paras) < 2:
+        return text
+    seen: set[str] = set()
+    kept: list[str] = []
+    dropped = False
+    for p in paras:
+        key = _norm_block(p)
+        if len(key) >= 40 and key in seen:
+            dropped = True
+            continue
+        if len(key) >= 40:
+            seen.add(key)
+        kept.append(p)
+    if not dropped:
+        return text
+    out = "\n\n".join(kept)
+    # Safety: never gut a real answer down to nothing.
+    if len(out.strip()) < 30 and len(text.strip()) > 100:
+        return text
+    logger.warning("dedup: collapsed repeated paragraph(s) (session=%s)", session_id)
+    return out
+
+
+def _finalize_answer(text: str, session_id: str, channel_id: str | None = None) -> str:
+    """Full finalization net: scrub leaked id, then collapse duplicate copies.
+
+    Order matters — scrubbing the channel id first turns an "(id)"-variant double
+    into a clean byte-double the half-dedup can catch, then the paragraph pass
+    mops up blank-line-separated repeats.
+    """
+    text = _scrub_channel_id(text, channel_id)
+    text = _dedup_exact_double(text, session_id)
+    text = _collapse_repeated_paragraphs(text, session_id)
+    return text
+
+
 class _HeartbeatSentinel:
     """Yielded by ``_stream_with_heartbeats`` whenever the underlying
     agent stream has been silent for the heartbeat interval. The QA
@@ -498,6 +567,55 @@ def _is_meta_recall_question(question: str) -> bool:
     return any(p in lowered for p in _META_RECALL_PATTERNS)
 
 
+# A #channel token in the question (Slack/Discord/Mattermost channel reference).
+_CHANNEL_TOKEN_RE = re.compile(r"#([a-z0-9][a-z0-9._-]{1,80})", re.IGNORECASE)
+# Verbs that make a #channel mention a meta/creation request, not a "read that
+# channel" request — don't refuse those.
+_CHANNEL_META_VERBS = (
+    "create",
+    "make",
+    "add",
+    "new ",
+    "rename",
+    "delete",
+    "remove",
+    "name a",
+    "call it",
+    "set up",
+    "start a",
+)
+
+
+def _detect_cross_channel(question: str, current_channel_name: str | None) -> str | None:
+    """Code-level backstop for channel isolation.
+
+    Returns the named OTHER channel (e.g. ``#research``) when the question
+    explicitly asks about a channel that isn't the current one, else ``None``.
+    The prompt boundary rule is advisory and the model sometimes ignores it
+    (answering with the current channel's data mislabeled as the named one);
+    this guard lets the endpoint short-circuit a firm refusal before the agent
+    runs. Skips channel-creation/meta phrasing to avoid false positives, and
+    only fires when the current channel's human name is known (so we can tell
+    "different" from "same").
+    """
+    if not question or not current_channel_name:
+        return None
+    current_raw = current_channel_name.lstrip("#")
+    # If the name didn't resolve to a human handle (still a raw platform id like
+    # C0B5YCR1NL8), we can't reliably tell "same" from "different" — don't guess.
+    if not current_raw or re.fullmatch(r"[A-Z0-9]{8,}", current_raw):
+        return None
+    current = current_raw.lower()
+    lowered = question.lower()
+    if any(v in lowered for v in _CHANNEL_META_VERBS):
+        return None
+    for m in _CHANNEL_TOKEN_RE.finditer(question):
+        name = m.group(1).rstrip(".,!?:;").lower()
+        if name and name != current:
+            return "#" + name
+    return None
+
+
 def _compute_confidence(registry) -> float:
     """Honest answer confidence in [0.1, 0.95] from retrieval signals.
 
@@ -609,6 +727,50 @@ async def _run_agent_stream(
     principal_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the ADK agent and yield SSE events including tool call progress."""
+    # Channel-isolation backstop (P1): if the question explicitly names a
+    # DIFFERENT channel, refuse firmly in code BEFORE running the agent. The
+    # prompt rule is advisory and the model sometimes answers with the current
+    # channel's data mislabeled as the named one; this guarantees a consistent
+    # refusal instead.
+    try:
+        from beever_atlas.agents.tools.channel_resolver import resolve_channel_name
+
+        _current_name = await resolve_channel_name(channel_id)
+        _other_channel = _detect_cross_channel(question, _current_name)
+    except Exception:
+        _other_channel = None
+    if _other_channel:
+        logger.info(
+            "cross-channel refusal: question names %s, scoped to %s",
+            _other_channel,
+            channel_id,
+        )
+        _refusal = (
+            f"I can only help with **this** channel here. To ask about "
+            f"{_other_channel}, mention me directly in that channel."
+        )
+        yield _sse_event("response_delta", {"delta": _refusal})
+        yield _sse_event(
+            "metadata",
+            await _build_metadata_event(
+                channel_id=channel_id, session_id=session_id, mode=mode, registry=None
+            ),
+        )
+        try:
+            await _persist_qa_history(
+                question=question,
+                answer=_refusal,
+                citations=[],
+                channel_id=channel_id,
+                user_id=user_id,
+                session_id=session_id,
+                use_v2_schema=use_v2_schema,
+            )
+        except Exception:
+            logger.warning("failed to persist cross-channel refusal", exc_info=True)
+        yield _sse_event("done", {})
+        return
+
     from beever_atlas.agents.query.qa_agent import (
         create_qa_agent,
         get_agent_for_mode,
@@ -1116,7 +1278,7 @@ async def _run_agent_stream(
                 # Finalization safety net: collapse a verbatim-doubled answer
                 # before citations/persistence. Conservative (exact halves
                 # ≥80 chars only). Runs on the answer body before gallery append.
-                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
+                accumulated_text = _finalize_answer(accumulated_text, session_id, channel_id)
 
                 # Safety net: if retrieval found media but the LLM skipped the
                 # `## Media` section, build and append one from the registry.
@@ -1301,7 +1463,7 @@ async def _run_agent_stream(
                     accumulated_text += _tail
                 # Finalization safety net (mirror of the turn_complete path):
                 # collapse a verbatim-doubled answer before gallery/citations.
-                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
+                accumulated_text = _finalize_answer(accumulated_text, session_id, channel_id)
                 from beever_atlas.agents.query.gallery_fallback import (
                     maybe_build_gallery,
                 )
@@ -1314,7 +1476,7 @@ async def _run_agent_stream(
                 # Finalization safety net for the registry-off sub-path (the
                 # registry-on body was already deduped above; re-running on a
                 # single copy is a no-op).
-                accumulated_text = _dedup_exact_double(accumulated_text, session_id)
+                accumulated_text = _finalize_answer(accumulated_text, session_id, channel_id)
                 # Flush rewriter + emit envelope when registry is active.
                 if _rewriter is not None and _registry is not None:
                     tail = _rewriter.flush()

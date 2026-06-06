@@ -116,6 +116,52 @@ def mock_runner_error():
         yield runner_instance
 
 
+class TestCrossChannelShortCircuit:
+    """P1: a question naming a DIFFERENT channel is refused in code, before the
+    agent runs — no tool calls, no mislabeled current-channel data."""
+
+    @pytest.mark.asyncio
+    async def test_other_channel_question_refused_without_agent(self, client: AsyncClient):
+        async def _name(channel_id):
+            return "basketball"
+
+        with (
+            patch(
+                "beever_atlas.agents.tools.channel_resolver.resolve_channel_name",
+                side_effect=_name,
+            ),
+            patch("beever_atlas.api.ask.create_runner") as mock_cr,
+            patch("beever_atlas.api.ask._persist_qa_history", new_callable=AsyncMock),
+        ):
+            resp = await client.post(
+                "/api/channels/C123/ask",
+                json={"question": "what is being discussed in #research?"},
+            )
+            body = resp.text
+        assert resp.status_code == 200
+        assert "event: tool_call_start" not in body  # agent never ran
+        assert mock_cr.call_count == 0  # runner never built
+        assert "#research" in body and "this** channel" in body  # firm refusal
+
+    @pytest.mark.asyncio
+    async def test_same_channel_question_not_short_circuited(
+        self, client: AsyncClient, mock_runner
+    ):
+        async def _name(channel_id):
+            return "basketball"
+
+        with patch(
+            "beever_atlas.agents.tools.channel_resolver.resolve_channel_name",
+            side_effect=_name,
+        ):
+            resp = await client.post(
+                "/api/channels/C123/ask",
+                json={"question": "what is #basketball about?"},
+            )
+        assert resp.status_code == 200
+        assert "event: done" in resp.text  # ran the normal agent path
+
+
 class TestPrincipalMemoryIdentitySplit:
     """Regression: tool ACL binds the authenticated principal; conversation
     memory keys on the bridge-asserted platform user_id. The two must not be

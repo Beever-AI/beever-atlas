@@ -151,6 +151,22 @@ describe("answerInThread", () => {
     assert.notStrictEqual(sessions[0], sessions[1]);
   });
 
+  it("P2: a root @mention and its thread replies share ONE session id", async () => {
+    // Both handlers key on the thread when a thread root exists (isThreaded=true),
+    // and thread.id is the stable thread root → root + replies resolve to one id.
+    const sessions: string[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sessions.push(JSON.parse(String(init.body)).session_id);
+      return sseResponse(HAPPY_SSE);
+    }) as unknown as typeof fetch;
+    const thread: PostableThread = { id: "slack:C0B5YCR1NL8:1700000000.0001", post: async () => {} };
+    await answerInThread(thread, "root mention", "mention", { userId: "U1" }, true);
+    await answerInThread(thread, "first reply", "follow-up", { userId: "U1" }, true);
+    await answerInThread(thread, "later reply", "follow-up", { userId: "U2" }, true);
+    assert.strictEqual(sessions[0], sessions[1]);
+    assert.strictEqual(sessions[0], sessions[2]);
+  });
+
   it("delivers an ephemeral error notice when the backend call fails", async () => {
     // A 4xx is terminal (no retry) → answerInThread swallows it into a notice.
     globalThis.fetch = (async () => new Response("bad request", { status: 400 })) as typeof fetch;

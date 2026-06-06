@@ -33,3 +33,17 @@ export function extractPlatform(threadId: string): string {
   const parts = threadId.split(":");
   return parts.length >= 2 && parts[0] ? parts[0].toLowerCase() : "unknown";
 }
+
+/**
+ * True when this thread id carries a real, NON-EMPTY thread segment
+ * (`<platform>:<channelId>:<thread>`) — i.e. it identifies a stable thread root
+ * we can key a session on. The SDK always encodes one (Slack uses
+ * `event.thread_ts || event.ts`, so even a root @mention has the root ts here),
+ * so this is true in practice; it returns false only for a degenerate/malformed
+ * id with no thread segment, where the caller should fall back to the loose
+ * idle-window key instead of keying on an unstable value.
+ */
+export function hasThreadRoot(threadId: string): boolean {
+  const parts = threadId.split(":");
+  return parts.length >= 3 && parts.slice(2).join(":").trim().length > 0;
+}

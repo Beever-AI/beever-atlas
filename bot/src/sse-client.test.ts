@@ -9,6 +9,8 @@ import {
   resolveIsEmpty,
   normalizeTensions,
   dedupDoubledAnswer,
+  dedupRepeats,
+  scrubChannelId,
 } from "./sse-client.js";
 
 describe("dedupDoubledAnswer", () => {
@@ -43,6 +45,109 @@ describe("dedupDoubledAnswer", () => {
       "event: done\ndata: {}\n\n";
     const result = await consumeSSEStream(mockResponse(body));
     assert.strictEqual(result.answer, a, "the rendered answer must not be doubled");
+  });
+});
+
+describe("dedupRepeats — near-duplicate collapse", () => {
+  const CHAN = "C0B5YCR1NL8";
+  const HALF =
+    "In the basketball channel, SGA refers to Shai Gilgeous-Alexander, a top-3 player known for durability and scoring.";
+
+  it("collapses halves that differ only by a leaked (channelId)", () => {
+    // First half carries the leaked id, second half doesn't — normalized equal.
+    const a = `${HALF} (${CHAN})`;
+    const b = HALF;
+    const out = dedupRepeats(`${a} ${b}`, CHAN);
+    // Collapsed to ONE copy of the substantive text. The `(id)` sits exactly at
+    // the seam (a dropped span), so the kept prefix is the clean HALF — even
+    // better, since scrubChannelId would strip the id anyway.
+    assert.strictEqual(out.split("In the basketball channel").length - 1, 1, "collapsed to one copy");
+    assert.ok(!out.includes(CHAN), "leaked id at the seam is dropped");
+    assert.ok(out.includes("durability and scoring."));
+  });
+
+  it("collapses citation-renumbered halves ([1][2] → [3][4])", () => {
+    const c1 = `${HALF} [1]. He strengthens Team Canada [2].`;
+    const c2 = `${HALF} [3]. He strengthens Team Canada [4].`;
+    assert.strictEqual(dedupRepeats(c1 + c2).trim(), c1.trim());
+  });
+
+  it("drops a repeated sentence (block-level), preserving the first", () => {
+    const s = "The booth is H25 and staffing was confirmed by Jack last week.";
+    const out = dedupRepeats(`${s} ${s} More unique context follows here.`);
+    // The duplicate sentence appears exactly once.
+    assert.strictEqual(out.split("The booth is H25").length - 1, 1);
+    assert.ok(out.includes("More unique context follows here."));
+  });
+
+  it("leaves a genuinely non-repetitive answer unchanged", () => {
+    const text =
+      "Team Canada is strong because of SGA's two-way play. The roster also adds depth at guard, " +
+      "and the coaching staff favors a switch-heavy defense that suits the personnel.";
+    assert.strictEqual(dedupRepeats(text), text);
+  });
+
+  it("leaves a short legitimate repeat ('Yes. Yes.') unchanged", () => {
+    // Each "Yes." block is < 40 chars, so block-level dedup must not touch it.
+    const text =
+      "Yes. Yes. The decision was ratified and the team agreed to proceed with the launch plan.";
+    assert.strictEqual(dedupRepeats(text), text);
+  });
+
+  it("never guts a real answer down to near-empty (safety guard)", () => {
+    // A contrived input where a split would otherwise leave <30 chars: the guard
+    // returns the original instead.
+    const text = "x".repeat(120);
+    // An all-same-char string byte-doubles to 60 chars (>30), so it's safe to
+    // collapse; assert it does NOT collapse below the guard floor.
+    const out = dedupRepeats(text);
+    assert.ok(out.length >= 30);
+  });
+});
+
+describe("scrubChannelId", () => {
+  const CHAN = "C0B5YCR1NL8";
+  it("removes a parenthesized ( channelId ) form", () => {
+    assert.strictEqual(
+      scrubChannelId(`The booth is H25 (${CHAN}).`, CHAN),
+      "The booth is H25.",
+    );
+  });
+  it("removes a bare channel id occurrence", () => {
+    assert.strictEqual(
+      scrubChannelId(`See ${CHAN} for details.`, CHAN).replace(/\s+/g, " ").trim(),
+      "See for details.",
+    );
+  });
+  it("is a no-op when no channel id is provided", () => {
+    assert.strictEqual(scrubChannelId(`keep ${CHAN}`, undefined), `keep ${CHAN}`);
+  });
+});
+
+describe("finalizeResult — dedup + scrub end-to-end", () => {
+  const CHAN = "C0B5YCR1NL8";
+  it("scrubs the channel id from the rendered answer", async () => {
+    const body =
+      `event: response_delta\ndata: ${JSON.stringify({ delta: `The booth is H25 (${CHAN}).` })}\n\n` +
+      `event: metadata\ndata: {"route":"qa_agent","confidence":0.9}\n\n` +
+      "event: done\ndata: {}\n\n";
+    const result = await consumeSSEStream(mockResponse(body), { channelId: CHAN });
+    assert.ok(!result.answer.includes(CHAN), "leaked channel id must be scrubbed");
+    assert.ok(result.answer.includes("The booth is H25."));
+  });
+
+  it("collapses an (id)-variant near-double and scrubs the id", async () => {
+    const half =
+      "In the basketball channel, SGA refers to Shai Gilgeous-Alexander, a durable top-3 scorer.";
+    const a = `${half} (${CHAN})`;
+    const body =
+      `event: response_delta\ndata: ${JSON.stringify({ delta: `${a} ${half}` })}\n\n` +
+      `event: metadata\ndata: {"route":"qa_agent","confidence":0.9}\n\n` +
+      "event: done\ndata: {}\n\n";
+    const result = await consumeSSEStream(mockResponse(body), { channelId: CHAN });
+    // Only one copy survives AND the id is gone.
+    assert.ok(!result.answer.includes(CHAN));
+    assert.strictEqual(result.answer.split("In the basketball channel").length - 1, 1);
   });
 });
 

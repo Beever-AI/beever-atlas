@@ -475,6 +475,77 @@ describe("wiki page title preference (change 3)", () => {
   });
 });
 
+describe("web-only 'not your team's data' caveat (P3)", () => {
+  const CAVEAT = "From external sources — not your team's data.";
+  it("adds the caveat when ALL citations are web_result", () => {
+    const out = renderResponse(
+      result({
+        answer: "The Boston Celtics won the 2024 NBA championship.",
+        citations: [
+          { type: "web_result", text: "ESPN", url: "https://espn.com/a" },
+          { type: "web_result", text: "NBA", url: "https://nba.com/b" },
+        ],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes(CAVEAT), "web-only answer must carry the caveat");
+    // One line per answer — not per citation.
+    assert.strictEqual(out.split(CAVEAT).length - 1, 1);
+  });
+
+  it("does NOT add the caveat for a mixed channel + web answer", () => {
+    const out = renderResponse(
+      result({
+        citations: [
+          { type: "channel_message", text: "x", source: "#g" },
+          { type: "web_result", text: "ESPN", url: "https://espn.com/a" },
+        ],
+      }),
+      "slack",
+    );
+    assert.ok(!out.includes(CAVEAT), "mixed answers are partly team data — no caveat");
+  });
+
+  it("does NOT add the caveat for a wiki-only answer", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "wiki_page", text: "Page", url: "https://w/x" }] }),
+      "slack",
+    );
+    assert.ok(!out.includes(CAVEAT), "wiki is the team's own data — no caveat");
+  });
+
+  it("places the caveat before the Sources block (survives truncation)", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "web_result", text: "ESPN", url: "https://espn.com/a" }] }),
+      "slack",
+    );
+    const caveatIdx = out.indexOf(CAVEAT);
+    const sourcesIdx = out.indexOf("## 📎 Sources");
+    assert.ok(caveatIdx >= 0 && sourcesIdx >= 0);
+    assert.ok(caveatIdx < sourcesIdx, "caveat must come before the Sources block");
+  });
+});
+
+describe("empty-state just-synced reassurance (change 4)", () => {
+  const JUST_SYNCED = "Just synced — new messages may be indexed shortly.";
+  it("adds the reassurance line when last activity is < 1h ago", () => {
+    const recent = new Date(Date.now() - 10 * 60_000).toISOString(); // 10 min ago
+    const out = renderResponse(result({ isEmpty: true, lastSyncTs: recent }), "slack");
+    assert.ok(out.includes(JUST_SYNCED), "a fresh sync must reassure on the empty state");
+  });
+
+  it("does NOT add it when the sync is old (> 1h)", () => {
+    const old = new Date(Date.now() - 3 * 3600_000).toISOString(); // 3h ago
+    const out = renderResponse(result({ isEmpty: true, lastSyncTs: old }), "slack");
+    assert.ok(!out.includes(JUST_SYNCED));
+  });
+
+  it("does NOT add it when there is no sync timestamp", () => {
+    const out = renderResponse(result({ isEmpty: true }), "slack");
+    assert.ok(!out.includes(JUST_SYNCED));
+  });
+});
+
 describe("cross-platform provenance marker (change 5)", () => {
   it("appends '(platform)' to a channel source from a different platform", () => {
     const out = renderResponse(
