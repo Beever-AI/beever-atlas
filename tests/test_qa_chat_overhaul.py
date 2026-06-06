@@ -305,7 +305,8 @@ class TestAgentModeConfig:
 
         prompt = build_qa_system_prompt()
         assert "Beever Atlas" in prompt
-        assert "Do not disclose" in prompt
+        # Non-disclosure invariant (phrasing loosened to a behavioral instruction).
+        assert "NEVER disclose" in prompt
 
     def test_retrieval_pipeline_in_prompt(self, monkeypatch):
         from beever_atlas.infra import config

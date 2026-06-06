@@ -89,7 +89,9 @@ async def test_over_cap_logs_warning():
     fake_session.user_id = "u1"
 
     fake_runner = MagicMock()
-    long_text = "A" * 1600
+    # Asymmetric so the duplicate-answer dedup net (exact-equal halves) does not
+    # collapse this synthetic over-cap fixture before the length check runs.
+    long_text = "A" * 1599 + "B"
     event = _make_turn_complete_event(long_text)
     fake_runner.run_async = MagicMock(return_value=_async_events(event))
 
