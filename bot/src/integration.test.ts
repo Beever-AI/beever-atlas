@@ -79,7 +79,8 @@ describe("integration: SSE stream → rendered reply", () => {
     assert.ok(out.includes("🕐 _last activity 2h ago_"));
     assert.ok(out.includes("_You might also ask:_"));
     assert.ok(out.includes("- How do I switch to MinIO?"));
-    assert.ok(out.includes("_via qa_agent_"));
+    // Internal route footer is suppressed (no "via qa_agent" leaked to users).
+    assert.ok(!out.includes("via qa_agent"));
     // High confidence → NO warning.
     assert.ok(!out.includes("low confidence"));
   });

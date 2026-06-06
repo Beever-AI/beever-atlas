@@ -108,29 +108,69 @@ function cleanUrl(u: string): string {
 
 /** Citation kinds that read as "related context" (graph) rather than direct sources. */
 const RELATED_KINDS = new Set(["decision_record", "graph_relationship"]);
+/** Kinds whose "source" is a person+channel rather than a titled document. */
+const MESSAGE_KINDS = new Set(["channel_message", "qa_history"]);
 
 /**
- * One concise citation line as a canonical markdown list item:
- *   `- {icon} [N](url) {author} · {#channel} · {age}`
- *
- * The numbered marker `[N]` is itself the clickable link to the source when a
- * permalink is present (`[N](url)`) — matching the inline `[N]` markers in the
- * answer — so there's no separate "open" segment. When there's no url it renders
- * as plain `[N]`. The full fact text is intentionally dropped (the inline marker
- * already references it; repeating it buried the answer). A relative age is
- * appended when the source carries a timestamp, as a recency/trust signal.
- * Segments are omitted when absent, so a bare citation still renders `- {icon} [N]`.
+ * A bare platform-native id (e.g. Slack "U0B55TPHLHF") that leaked through when a
+ * display name couldn't be resolved. It carries no trust to a reader, so we omit
+ * it rather than print it. Requires a U/W/C/D/G/T prefix, 8+ chars, AND at least
+ * one digit — real platform ids always contain digits, so an all-caps display
+ * name/handle like "TEAMWORK" or "CATHERINE" is never mistaken for an id.
+ */
+const RAW_ID_RE = /^[UWCDGT][A-Z0-9]*[0-9][A-Z0-9]{6,}$/;
+function isRawPlatformId(s: string): boolean {
+  return RAW_ID_RE.test(s.trim());
+}
+
+/** Registrable domain (no leading www.) of an http(s) url, or "" if unparseable. */
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * One concise, NAMED citation line as a canonical markdown list item. The numbered
+ * marker `[N]` is itself the clickable link when a permalink is present
+ * (`[N](url)`) — matching the inline `[N]` markers in the answer. After the marker
+ * comes a human-readable label tuned per kind so a source reads at a glance
+ * (Perplexity/Glean style) instead of a bare `[N]`:
+ *   - channel_message → `{author} · {#channel} · {age}`
+ *   - web_result      → `{domain} · {age}`
+ *   - wiki_page       → `{page title} · {age}`
+ *   - decision/graph  → `{short title} · {author?} · {age}`
+ * A raw platform user-id is never shown as an author; segments are omitted when
+ * absent, so a bare citation still renders `- {icon} [N]`.
  */
 function renderCitationLine(c: Citation, num: number): string {
   const url = c.url ? cleanUrl(c.url) : "";
   const marker = url ? `[${num}](${url})` : `[${num}]`;
+  const author = c.author && !isRawPlatformId(c.author) ? cleanField(c.author, 80) : "";
+  const title = c.text ? cleanField(c.text, 80) : "";
+  const age = c.timestamp ? (relativeTime(c.timestamp) ?? "") : "";
+
   const segments: string[] = [];
-  if (c.author) segments.push(cleanField(c.author, 80));
-  if (c.source) segments.push(cleanField(c.source, 80));
-  if (c.timestamp) {
-    const age = relativeTime(c.timestamp);
-    if (age) segments.push(age);
+  if (MESSAGE_KINDS.has(c.type)) {
+    // Who said it, where — the message text itself is referenced by the inline [N].
+    if (author) segments.push(author);
+    if (c.source) {
+      const src = cleanField(c.source, 80);
+      segments.push(src.startsWith("#") ? src : `#${src}`); // idempotent hash
+    }
+  } else if (c.type === "web_result") {
+    segments.push(domainOf(url) || title); // domain preferred, fall back to title
+  } else if (c.type === "wiki_page") {
+    if (title) segments.push(title);
+  } else {
+    // decision_record / graph_relationship / media / uploaded_file
+    if (title) segments.push(title);
+    if (author) segments.push(author);
   }
+  if (age) segments.push(age);
+
   const tail = segments.filter((s) => s.length > 0).join(" · ");
   const head = `- ${iconFor(c.type)} ${marker}`;
   return tail ? `${head} ${tail}` : head;
@@ -147,7 +187,10 @@ function renderCitationBlock(heading: string, entries: Array<{ c: Citation; num:
   const lines = shown.map(({ c, num }) => renderCitationLine(c, num)).join("\n");
   const overflow = entries.length - shown.length;
   const more = overflow > 0 ? `\n_+${overflow} more_` : "";
-  return `\n\n${heading}\n${lines}${more}`;
+  // Surface the total count in the heading when the list overflows, so the reader
+  // knows how many sources back the answer (e.g. "## 📎 Sources · 9").
+  const head = entries.length > MAX_CITATIONS ? `${heading} · ${entries.length}` : heading;
+  return `\n\n${head}\n${lines}${more}`;
 }
 
 /** Backward-compatible: render all citations as a single Sources block. */
@@ -229,7 +272,14 @@ function renderFreshness(lastSyncTs?: string): string {
   return rel ? `\n🕐 _last activity ${rel}_` : "";
 }
 
+/**
+ * Internal agent/route names that must never be shown to end users — "via
+ * qa_agent" is developer chrome, not information. The footer only renders for a
+ * genuinely user-facing route name (none today), so it effectively disappears.
+ */
+const INTERNAL_ROUTES = new Set(["qa_agent", "deep", "quick", "summarize", "memory_agent", "router", "echo"]);
 function renderRoute(route: string): string {
+  if (!route || INTERNAL_ROUTES.has(route)) return "";
   return `\n_via ${cleanField(route, 40)}_`;
 }
 
@@ -270,18 +320,28 @@ export function renderResponse(result: AskResult, platform: string): string {
   const plat = (platform || "unknown").toLowerCase();
   if (result.isEmpty) return renderEmptyState(result, plat);
 
-  const { sources, related } = partitionCitations(result.citations || []);
+  const citations = result.citations || [];
+  const { sources, related } = partitionCitations(citations);
+  // "No sources → no citation UI" (Glean rule): a greeting or general-knowledge
+  // reply with zero citations must NOT show a confidence caveat ("verify against
+  // the sources" with no sources), a Related block, or the route footer. It
+  // renders as just the answer + follow-ups.
+  const hasSources = sources.length + related.length > 0;
+  // Channel freshness ("last activity Nd ago") only makes sense when the answer
+  // actually rests on channel messages — not for web/wiki-only answers.
+  const hasChannelSource = citations.some((c) => MESSAGE_KINDS.has(c.type));
+
   const body =
     (result.answer || "").trimEnd() +
     // A low-confidence warning sits right under the answer so truncation can
-    // never drop this trust signal.
-    renderConfidence(result.confidence, result.isEmpty) +
+    // never drop this trust signal — but only when there ARE sources to verify.
+    (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "") +
     renderCitationBlock("## 📎 Sources", sources) +
     renderCitationBlock("## 🧠 Related", related) +
     renderTensions(result.tensions) +
-    renderFreshness(result.lastSyncTs) +
+    (hasChannelSource ? renderFreshness(result.lastSyncTs) : "") +
     renderFollowUps(result.followUps) +
-    renderRoute(result.route || "qa_agent");
+    (hasSources ? renderRoute(result.route || "") : "");
 
   return enforceCap(body, capFor(plat));
 }

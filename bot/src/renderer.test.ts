@@ -25,13 +25,14 @@ function result(overrides: Partial<AskResult> = {}): AskResult {
 }
 
 describe("renderResponse", () => {
-  it("renders the answer and a route footer", () => {
+  it("renders the answer; the internal route footer is suppressed", () => {
     const out = renderResponse(result(), "slack");
     assert.ok(out.includes("The booth is H25."));
-    assert.ok(out.includes("via qa_agent"));
+    // "via qa_agent" is internal dev chrome — never shown to users.
+    assert.ok(!out.includes("via qa_agent"));
   });
 
-  it("renders concise citation lines with kind icons, provenance, and clickable links", () => {
+  it("renders NAMED citation cards: titles for wiki/decision, author·#channel for messages", () => {
     const out = renderResponse(
       result({
         citations: [
@@ -43,17 +44,43 @@ describe("renderResponse", () => {
       "slack",
     );
     assert.ok(out.includes("## 📎 Sources"));
-    // Concise: the numbered marker itself is the clickable link — `[N](url)` —
-    // NOT the verbose fact text, and NOT a bare <url> autolink or [open] segment.
-    assert.ok(out.includes("- 📖 [1](https://wiki/x)"));
+    // wiki_page: the marker links, and the PAGE TITLE is the human label.
+    assert.ok(out.includes("- 📖 [1](https://wiki/x) AI+ Power 2026"));
     assert.ok(!out.includes("[open]"), "marker is the link; no separate [open] segment");
-    assert.ok(!out.includes("AI+ Power 2026"), "fact text should be dropped");
     assert.ok(!out.includes("<https://wiki/x>"), "links should be [N](url), not bare angle autolinks");
-    // No url → plain marker.
+    // channel_message: author · #channel, but NOT the message text (the inline [N] refs it).
     assert.ok(out.includes("- 💬 [2] Jack · #general"));
-    assert.ok(!out.includes("booth confirmed"), "fact text should be dropped");
-    // decision_record routes to the Related block; bare line, original index.
-    assert.ok(out.includes("- ⚖️ [3]"));
+    assert.ok(!out.includes("booth confirmed"), "message text is dropped; the inline marker references it");
+    // decision_record (Related block): short title shown as the label.
+    assert.ok(out.includes("- ⚖️ [3] staffing decided"));
+  });
+
+  it("omits a raw platform user-id as the author, shows a real name", () => {
+    const idAuthor = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "U0B55TPHLHF", source: "basketball" }] }),
+      "slack",
+    );
+    assert.ok(!idAuthor.includes("U0B55TPHLHF"), "raw user id must not be shown");
+    assert.ok(idAuthor.includes("#basketball"), "channel name still shown, with leading #");
+    const named = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "Carmen Lee", source: "#basketball" }] }),
+      "slack",
+    );
+    assert.ok(named.includes("Carmen Lee · #basketball"));
+    // An all-caps handle WITHOUT a digit is a real name, not an id — keep it.
+    const caps = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "x", author: "TEAMWORK", source: "#g" }] }),
+      "slack",
+    );
+    assert.ok(caps.includes("TEAMWORK · #g"), "all-caps name without a digit is not a raw id");
+  });
+
+  it("labels a web source by its domain", () => {
+    const out = renderResponse(
+      result({ citations: [{ type: "web_result", text: "Some Long Article Title", url: "https://www.espn.com/nba/x" }] }),
+      "slack",
+    );
+    assert.ok(out.includes("- 🌐 [1](https://www.espn.com/nba/x) espn.com"), "domain (no www) is the label");
   });
 
   it("caps citations at 5 and notes the overflow", () => {
@@ -64,10 +91,35 @@ describe("renderResponse", () => {
     assert.ok(out.includes("+3 more"));
   });
 
-  it("shows an honest 'last activity' freshness line only when lastSyncTs is present", () => {
+  it("shows 'last activity' freshness only for channel-sourced answers", () => {
     const iso = new Date(Date.now() - 2 * 3600_000).toISOString();
-    assert.ok(renderResponse(result({ lastSyncTs: iso }), "slack").includes("last activity "));
-    assert.ok(!renderResponse(result(), "slack").includes("last activity "));
+    const channelCite = [{ type: "channel_message", text: "x", source: "#g" }];
+    // Channel-sourced + lastSyncTs → freshness shown.
+    assert.ok(
+      renderResponse(result({ lastSyncTs: iso, citations: channelCite }), "slack").includes("last activity "),
+    );
+    // Web/wiki-only answer → no channel-freshness line (provenance mismatch fix).
+    assert.ok(
+      !renderResponse(
+        result({ lastSyncTs: iso, citations: [{ type: "web_result", text: "t", url: "https://x.com" }] }),
+        "slack",
+      ).includes("last activity "),
+    );
+    // No lastSyncTs → nothing regardless.
+    assert.ok(!renderResponse(result({ citations: channelCite }), "slack").includes("last activity "));
+    // Mixed channel + web → freshness still shown (a channel source is present).
+    assert.ok(
+      renderResponse(
+        result({
+          lastSyncTs: iso,
+          citations: [
+            { type: "channel_message", text: "x", source: "#g" },
+            { type: "web_result", text: "t", url: "https://x.com" },
+          ],
+        }),
+        "slack",
+      ).includes("last activity "),
+    );
   });
 
   it("truncates over-long Discord replies with a marker", () => {
@@ -206,6 +258,49 @@ describe("related-context grouping", () => {
   });
 });
 
+describe("no-sources chrome gating (greeting / general-knowledge)", () => {
+  it("a zero-citation reply renders ONLY the answer + follow-ups — no trust chrome", () => {
+    const out = renderResponse(
+      result({
+        answer: "Hi! I'm Beever Atlas. Ask me what your team has discussed.",
+        citations: [],
+        confidence: 0.4, // low-ish, but there are NO sources to verify
+        lastSyncTs: new Date(Date.now() - 3 * 3600_000).toISOString(),
+        followUps: ["What did we decide about the roadmap?"],
+      }),
+      "slack",
+    );
+    assert.ok(out.includes("Hi! I'm Beever Atlas"));
+    assert.ok(out.includes("You might also ask:"));
+    // None of the citation/trust chrome leaks onto a sourceless reply.
+    assert.ok(!out.includes("verify against the sources"));
+    assert.ok(!out.includes("limited sources"));
+    assert.ok(!out.includes("## 📎 Sources"));
+    assert.ok(!out.includes("## 🧠 Related"));
+    assert.ok(!out.includes("last activity"));
+    assert.ok(!out.includes("via "));
+  });
+});
+
+describe("source count heading", () => {
+  it("appends '· N' to the Sources heading only when the list overflows", () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ type: "channel_message", text: `c${i}`, source: "#g" }));
+    const over = renderResponse(result({ citations: many }), "teams");
+    assert.ok(over.includes("## 📎 Sources · 8"));
+    const few = renderResponse(
+      result({ citations: [{ type: "channel_message", text: "c", source: "#g" }] }),
+      "slack",
+    );
+    assert.ok(few.includes("## 📎 Sources\n"));
+    assert.ok(!few.includes("Sources · "));
+    // Boundary: exactly MAX_CITATIONS (5) → no overflow, plain heading.
+    const five = Array.from({ length: 5 }, (_, i) => ({ type: "channel_message", text: `c${i}`, source: "#g" }));
+    const atCap = renderResponse(result({ citations: five }), "slack");
+    assert.ok(atCap.includes("## 📎 Sources\n"));
+    assert.ok(!atCap.includes("Sources · "), "exactly 5 must not append '· 5'");
+  });
+});
+
 describe("renderConfidence", () => {
   it("warns on a low score and softly nudges on a medium score", () => {
     assert.ok(renderConfidence(0.2, false).includes("low confidence"));
@@ -222,9 +317,14 @@ describe("renderConfidence", () => {
     assert.strictEqual(renderConfidence(0, false), "");
     assert.strictEqual(renderConfidence(0.1, true), "");
   });
-  it("appears in a full reply only when low", () => {
-    assert.ok(renderResponse(result({ confidence: 0.2 }), "slack").includes("low confidence"));
-    assert.ok(!renderResponse(result({ confidence: 0.9 }), "slack").includes("low confidence"));
+  it("appears in a full reply only when low AND there are sources", () => {
+    const cite = [{ type: "channel_message", text: "x", source: "#g" }];
+    assert.ok(renderResponse(result({ confidence: 0.2, citations: cite }), "slack").includes("low confidence"));
+    // Mid band with sources → the softer "limited sources" nudge appears end-to-end.
+    assert.ok(renderResponse(result({ confidence: 0.5, citations: cite }), "slack").includes("limited sources"));
+    assert.ok(!renderResponse(result({ confidence: 0.9, citations: cite }), "slack").includes("low confidence"));
+    // No sources → no confidence caveat at all (a greeting must not say "verify against the sources").
+    assert.ok(!renderResponse(result({ confidence: 0.2, citations: [] }), "slack").includes("low confidence"));
   });
 });
 

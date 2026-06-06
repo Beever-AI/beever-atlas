@@ -8,7 +8,43 @@ import {
   detectEmptyRetrieval,
   resolveIsEmpty,
   normalizeTensions,
+  dedupDoubledAnswer,
 } from "./sse-client.js";
+
+describe("dedupDoubledAnswer", () => {
+  const A =
+    "In the #basketball channel, SGA refers to Shai Gilgeous-Alexander, a top-3 player known for durability";
+  it("collapses an exactly-doubled answer (same citation markers)", () => {
+    const a = A + " [1]. He strengthens Team Canada [2].";
+    assert.strictEqual(dedupDoubledAnswer(a + a), a);
+  });
+  it("collapses a citation-RENUMBERED doubled answer ([1][2] → [3][4])", () => {
+    const c1 = A + " [1]. He strengthens Team Canada [2].";
+    const c2 = A + " [3]. He strengthens Team Canada [4].";
+    assert.strictEqual(dedupDoubledAnswer(c1 + c2), c1);
+  });
+  it("leaves a single (non-doubled) answer untouched", () => {
+    assert.strictEqual(dedupDoubledAnswer(A), A);
+  });
+  it("leaves a short answer untouched", () => {
+    assert.strictEqual(dedupDoubledAnswer("hi there"), "hi there");
+  });
+  it("leaves a legitimately repetitive-phrase answer untouched", () => {
+    const legit = "The Celtics beat the Mavericks 4-1 [1]. The Celtics are champions [1]. More context here.";
+    assert.strictEqual(dedupDoubledAnswer(legit), legit);
+  });
+  it("dedups the answer end-to-end through consumeSSEStream", async () => {
+    const a = A + " [1]. He strengthens Team Canada [2].";
+    // The backend streamed the full answer twice (the session-replay bug).
+    const body =
+      `event: response_delta\ndata: ${JSON.stringify({ delta: a })}\n\n` +
+      `event: response_delta\ndata: ${JSON.stringify({ delta: a })}\n\n` +
+      `event: metadata\ndata: {"route":"qa_agent","confidence":0.9}\n\n` +
+      "event: done\ndata: {}\n\n";
+    const result = await consumeSSEStream(mockResponse(body));
+    assert.strictEqual(result.answer, a, "the rendered answer must not be doubled");
+  });
+});
 
 function mockResponse(body: string): Response {
   return new Response(body, {

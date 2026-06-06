@@ -163,14 +163,57 @@ export function resolveIsEmpty(
   return backendEmpty === true;
 }
 
+/** Inline citation markers, normalized before comparing two copies of an answer. */
+const CITE_MARKER_RE = /\[\d+\]|\[src:[^\]]+\]/y;
+
+/**
+ * Collapse an answer the backend streamed TWICE. A session-history replay makes
+ * the model echo the prior identical assistant turn before the new one, so the
+ * accumulated `response_delta` text is the full answer doubled (the backend's
+ * own finalization net fixes only its persisted copy, not the streamed events).
+ * Citation markers are normalized before comparison because the rewriter can
+ * renumber the second copy ([1][2] → [3][4]). Conservative: only collapses a
+ * clean ≥80-char doubling, so a legitimate answer is never corrupted.
+ */
+export function dedupDoubledAnswer(text: string): string {
+  const n = text.length;
+  if (n < 80) return text;
+  // Fast path: exact byte doubling.
+  if (n % 2 === 0 && text.slice(0, n / 2) === text.slice(n / 2)) return text.slice(0, n / 2);
+  // Renumbering-aware: compare with citation markers collapsed.
+  const norm = text.replace(/\[\d+\]|\[src:[^\]]+\]/g, "[#]");
+  const m = norm.length;
+  if (m >= 80 && m % 2 === 0 && norm.slice(0, m / 2) === norm.slice(m / 2)) {
+    // Walk the ORIGINAL, tracking normalized length, to find where the first
+    // copy ends (normalized index m/2), and keep that prefix.
+    const target = m / 2;
+    let normLen = 0;
+    let i = 0;
+    while (i < n && normLen < target) {
+      CITE_MARKER_RE.lastIndex = i;
+      const mt = CITE_MARKER_RE.exec(text);
+      if (mt && mt.index === i) {
+        normLen += 3; // len("[#]")
+        i = CITE_MARKER_RE.lastIndex;
+      } else {
+        normLen += 1;
+        i += 1;
+      }
+    }
+    return text.slice(0, i);
+  }
+  return text;
+}
+
 function finalizeResult(state: StreamState): AskResult {
+  const answer = dedupDoubledAnswer(state.answer);
   return {
-    answer: state.answer,
+    answer,
     citations: state.citations,
     route: state.route,
     confidence: state.confidence,
     costUsd: state.costUsd,
-    isEmpty: resolveIsEmpty(state.answer, state.citations, state.backendEmpty),
+    isEmpty: resolveIsEmpty(answer, state.citations, state.backendEmpty),
     lastSyncTs: state.lastSyncTs,
     followUps: state.followUps,
     tensions: state.tensions,
