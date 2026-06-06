@@ -2715,6 +2715,28 @@ async function handleListChannels(
   }
 }
 
+/**
+ * Attach the Slack workspace domain (cached from auth.test at registration) to a
+ * channel so the backend can build clickable citation permalinks. Slack-only,
+ * best-effort — a missing domain just leaves citations unlinked, never errors.
+ *
+ * Called by EVERY single-channel route (platform-level AND per-connection) so no
+ * route can silently drop the domain — the backend's BridgeAdapter uses the
+ * per-connection path, so patching only the platform route left permalinks dead.
+ * Prefers the exact per-connection domain when the connectionId is known.
+ */
+export function attachSlackWorkspaceDomain(
+  channel: NormalizedChannel,
+  chatManager: ChatManager,
+  connectionId?: string,
+): void {
+  if (channel.workspace_domain || channel.platform !== "slack") return;
+  const domain =
+    (connectionId ? chatManager.getWorkspaceDomain(connectionId) : null) ??
+    chatManager.getWorkspaceDomainForPlatform("slack");
+  if (domain) channel.workspace_domain = domain;
+}
+
 async function handleGetChannel(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -2739,14 +2761,9 @@ async function handleGetChannel(
     }
 
     const channel = await bridge.getChannel(channelId);
-    // Attach the Slack workspace domain (per-connection, cached from auth.test)
-    // so the backend can build clickable citation permalinks. The per-platform
-    // bridges don't know it; chatManager does. Slack-only and best-effort — a
-    // missing domain just leaves citations unlinked.
-    if (!channel.workspace_domain && (channel.platform === "slack" || resolvedPlatform === "slack")) {
-      const domain = chatManager.getWorkspaceDomainForPlatform("slack");
-      if (domain) channel.workspace_domain = domain;
-    }
+    // This route resolves the bridge by platform (no specific connectionId), so
+    // the helper falls back to the platform-level domain lookup.
+    attachSlackWorkspaceDomain(channel, chatManager);
     jsonResponse(res, 200, channel);
   } catch (err) {
     console.error("Bridge: getChannel error:", safeErrorMessage(err));
@@ -3360,6 +3377,9 @@ export function registerBridgeRoutes(
     if (req.method === "GET" && connChannelMatch) {
       await handleConnectionRoute(req, res, chatManager, connChannelMatch[1], async (bridge) => {
         const channel = await bridge.getChannel(decodeChannelSegment(connChannelMatch[2]));
+        // The backend's BridgeAdapter resolves channels via THIS per-connection
+        // route, so the domain must be attached here too (exact, by connectionId).
+        attachSlackWorkspaceDomain(channel, chatManager, connChannelMatch[1]);
         jsonResponse(res, 200, channel);
       });
       return true;
