@@ -45,6 +45,40 @@ def test_slack_permalink():
     assert r.resolve(s) == expected
 
 
+def test_slack_permalink_from_native_message_id_when_ts_is_iso():
+    """Real Slack facts store message_ts as an ISO datetime (display format); the
+    numeric ts lives on the native message id. The resolver must fall back to it."""
+    r = PermalinkResolver()
+    s = _source(
+        "channel_message",
+        {
+            "platform": "slack",
+            "channel_id": "C0B5YCR1NL8",
+            "message_ts": "2026-05-21T19:14:45.369000+00:00",  # ISO — not usable directly
+            "message_id": "1779390885.369099",  # the real numeric Slack ts
+            "workspace_domain": "beeveratlas",
+        },
+    )
+    expected = "https://beeveratlas.slack.com/archives/C0B5YCR1NL8/p1779390885369099"
+    assert r.resolve(s) == expected
+
+
+def test_slack_iso_ts_and_no_native_id_returns_null():
+    """An ISO ts with no numeric native id can't build a permalink — returns None,
+    never a broken URL."""
+    r = PermalinkResolver()
+    s = _source(
+        "channel_message",
+        {
+            "platform": "slack",
+            "channel_id": "C1",
+            "message_ts": "2026-05-21T19:14:45+00:00",
+            "workspace_domain": "w",
+        },
+    )
+    assert r.resolve(s) is None
+
+
 def test_slack_missing_workspace_returns_null():
     r = PermalinkResolver()
     s = _source(

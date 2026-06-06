@@ -373,6 +373,13 @@ class PreprocessorAgent(BaseAgent):
             enriched["thread_context"] = _build_thread_context(msg, messages_by_ts)
             enriched["preprocessed"] = True
             enriched["msg_id"] = f"msg-{msg_seq}"
+            # Preserve the platform-native message id (e.g. the numeric Slack ts
+            # "1779390885.369099") so the persister can stamp it onto facts for
+            # permalink construction. The LLM only ever sees the synthetic
+            # ``msg_id`` above; the native id is what builds a real message URL.
+            enriched["native_message_id"] = (
+                msg.get("message_id") or msg.get("source_message_id") or ""
+            )
             msg_seq += 1
             preprocessed.append(enriched)
 

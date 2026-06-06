@@ -9,11 +9,26 @@ The raised threshold must:
 
 from __future__ import annotations
 
-from beever_atlas.agents.ingestion.persister import match_media_by_word_overlap
+from beever_atlas.agents.ingestion.persister import (
+    match_media_by_word_overlap,
+    native_message_id,
+)
 
 
 def _msg(author: str, text: str, **extra) -> dict:
     return {"author_id": author, "text": text, **extra}
+
+
+def test_native_message_id_prefers_explicit_then_message_id():
+    # Explicit native_message_id wins.
+    assert native_message_id({"native_message_id": "1779390885.369099", "message_id": "x"}) == (
+        "1779390885.369099"
+    )
+    # Falls back to raw message_id (the numeric Slack ts from the bridge).
+    assert native_message_id({"message_id": "1712500000.001100"}) == "1712500000.001100"
+    # Neither present → empty (citation stays unlinked, never a broken id).
+    assert native_message_id({"msg_id": "msg-2"}) == ""
+    assert native_message_id({}) == ""
 
 
 def test_single_common_word_does_not_attribute_media():

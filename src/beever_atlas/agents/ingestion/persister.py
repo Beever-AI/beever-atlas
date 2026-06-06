@@ -46,6 +46,18 @@ def weaviate_failed(persist_errors: list[str]) -> bool:
     return any(err.startswith(WEAVIATE_ERROR_PREFIX) for err in persist_errors)
 
 
+def native_message_id(source_msg: dict[str, Any]) -> str:
+    """The platform-native message id of a preprocessed source message.
+
+    This is the value (e.g. the numeric Slack ts ``1779390885.369099``) needed to
+    build a real message permalink — as opposed to the synthetic ``msg-N``
+    reference the LLM emits. Prefers the explicit ``native_message_id`` the
+    preprocessor stamps, falling back to the raw ``message_id``. Returns ``""``
+    when neither is present (citation simply stays unlinked).
+    """
+    return source_msg.get("native_message_id") or source_msg.get("message_id") or ""
+
+
 def match_media_by_word_overlap(
     fact: dict[str, Any],
     preprocessed_messages: list[dict[str, Any]],
@@ -249,6 +261,13 @@ class PersisterAgent(BaseAgent):
                     heuristic_match = True
 
             if source_msg:
+                # Preserve the platform-native message id (e.g. the numeric Slack
+                # ts) for permalink construction. The LLM only emits the synthetic
+                # ``msg-N`` reference, which can't build a real message URL — so
+                # override source_message_id with the matched message's native id.
+                native_id = native_message_id(source_msg)
+                if native_id:
+                    fact_data["source_message_id"] = native_id
                 media_urls = source_msg.get("source_media_urls") or []
                 if media_urls:
                     logger.info(

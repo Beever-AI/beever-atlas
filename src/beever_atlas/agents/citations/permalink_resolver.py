@@ -72,7 +72,13 @@ class PermalinkResolver:
 
         if platform == "slack":
             workspace = native.get("workspace_domain") or native.get("workspace")
-            ts_path = _slack_ts_path(str(message_ts or ""))
+            # ``message_ts`` is stored as an ISO datetime for display; the numeric
+            # Slack ts needed for the archive URL is carried on the native message
+            # id (source_message_id → message_id). Try message_ts first (legacy
+            # numeric data), then fall back to the native message id.
+            ts_path = _slack_ts_path(str(message_ts or "")) or _slack_ts_path(
+                str(native.get("message_id") or "")
+            )
             if not workspace or not ts_path:
                 _warn_once(source.id, "slack missing workspace or ts")
                 return None
