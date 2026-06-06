@@ -70,6 +70,14 @@ describe("dedupDoubledAnswer", () => {
       "His family is athletic: his father was a track athlete for Congo and his mother played for the French national team.";
     assert.strictEqual(dedupRepeats(legit), legit);
   });
+  it("does NOT collapse a restate-then-EXPAND answer (same opening, new info)", () => {
+    // A legit answer that restates its opening clause then adds detail — the
+    // multi-sentence-repeat gate must keep it intact (only ONE segment matches).
+    const restate =
+      "The Postgres migration improves query latency and reduces storage costs across the analytics workload significantly this quarter. " +
+      "The Postgres migration improves query latency by switching to columnar storage and reduces storage costs via better compression too.";
+    assert.strictEqual(dedupRepeats(restate), restate, "expansion must not be dropped");
+  });
 });
 
 describe("dedupRepeats — near-duplicate collapse", () => {

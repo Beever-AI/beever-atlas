@@ -375,6 +375,24 @@ function fuzzyParaphraseFirstHalf(text: string, channelId?: string): string | nu
   // (tiny tail) is not. Require the shorter half to be ≥50% of the longer.
   if (Math.min(l1, l2) / Math.max(l1, l2) < 0.5) return null;
   if (tokenJaccard(first, second, channelId) < FUZZY_DOUBLE_MIN_JACCARD) return null;
+  // Confirm a FULL multi-sentence repeat, not a single restated opening clause
+  // that then EXPANDS with new info (which shares the opening but is legitimate
+  // — token stats alone can't separate it, but it has only ONE matching
+  // segment). Require the first half to be ≥2 substantial sentences AND ≥2 of
+  // them to have a near-match somewhere in the second half. A re-paraphrased
+  // whole answer repeats every point; a restate-then-expand repeats only one.
+  const firstSents = splitBlocks(first).filter(
+    (s) => normalizeBlock(s, channelId).length >= 24,
+  );
+  if (firstSents.length < 2) return null;
+  const secondSents = splitBlocks(second);
+  let matched = 0;
+  for (const fs of firstSents) {
+    // 0.3 because paraphrased sentences overlap modestly (synonyms differ); the
+    // multi-sentence gate above is the primary discriminator.
+    if (secondSents.some((ss) => tokenJaccard(fs, ss, channelId) >= 0.3)) matched++;
+  }
+  if (matched < 2) return null;
   return first.trimEnd();
 }
 
