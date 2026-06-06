@@ -197,6 +197,11 @@ def _scrub_channel_id(text: str, channel_id: str | None) -> str:
         return text
     out = text.replace(f" ({channel_id})", "").replace(f"({channel_id})", "")
     out = out.replace(channel_id, "")
+    # Tidy the seam the removal leaves behind (double space / space-before-punct)
+    # so the PERSISTED answer (web UI / MCP consumers) is clean too — the bot
+    # renderer does the same on its rendered copy.
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"[ \t]+([.,;:!?])", r"\1", out)
     if out != text:
         logger.warning("dedup: scrubbed leaked channel id from answer")
     return out
@@ -569,20 +574,14 @@ def _is_meta_recall_question(question: str) -> bool:
 
 # A #channel token in the question (Slack/Discord/Mattermost channel reference).
 _CHANNEL_TOKEN_RE = re.compile(r"#([a-z0-9][a-z0-9._-]{1,80})", re.IGNORECASE)
-# Verbs that make a #channel mention a meta/creation request, not a "read that
-# channel" request — don't refuse those.
-_CHANNEL_META_VERBS = (
-    "create",
-    "make",
-    "add",
-    "new ",
-    "rename",
-    "delete",
-    "remove",
-    "name a",
-    "call it",
-    "set up",
-    "start a",
+# Channel-MANAGEMENT verbs (word-bounded so "add" can't match "address", "new"
+# can't match "renew", etc.). A request is treated as management — not a "read
+# that channel" request — only when such a verb appears AND the literal word
+# "channel" is present (e.g. "create a #x channel", "make a #standup channel"),
+# which avoids suppressing genuine cross-channel reads like "what did they make
+# in #research" (verb, but no "channel").
+_CHANNEL_MGMT_VERB_RE = re.compile(
+    r"\b(create|make|set ?up|start|add|rename|delete)\b", re.IGNORECASE
 )
 
 
@@ -607,7 +606,7 @@ def _detect_cross_channel(question: str, current_channel_name: str | None) -> st
         return None
     current = current_raw.lower()
     lowered = question.lower()
-    if any(v in lowered for v in _CHANNEL_META_VERBS):
+    if _CHANNEL_MGMT_VERB_RE.search(lowered) and "channel" in lowered:
         return None
     for m in _CHANNEL_TOKEN_RE.finditer(question):
         name = m.group(1).rstrip(".,!?:;").lower()
@@ -740,11 +739,8 @@ async def _run_agent_stream(
     except Exception:
         _other_channel = None
     if _other_channel:
-        logger.info(
-            "cross-channel refusal: question names %s, scoped to %s",
-            _other_channel,
-            channel_id,
-        )
+        # Don't echo the user-typed channel name at INFO; log only the scope.
+        logger.debug("cross-channel refusal: scoped to channel_id=%s", channel_id)
         _refusal = (
             f"I can only help with **this** channel here. To ask about "
             f"{_other_channel}, mention me directly in that channel."

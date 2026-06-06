@@ -32,6 +32,14 @@ def test_scrub_noop_when_absent():
     assert _scrub_channel_id("text", None) == "text"
 
 
+def test_scrub_leaves_clean_spacing():
+    # bare id mid-sentence → no double space; id before period → no dangling space
+    assert _scrub_channel_id("the channel C0B5YCR1NL8 is active.", CID) == (
+        "the channel is active."
+    )
+    assert _scrub_channel_id("scoped to C0B5YCR1NL8.", CID) == "scoped to."
+
+
 # --------------------------------------------------------------------------
 # P0: dedup — the id-variant double collapses once the id is scrubbed
 # --------------------------------------------------------------------------
@@ -105,6 +113,17 @@ def test_detect_flags_other_channel(q):
 )
 def test_detect_allows_same_or_meta(q):
     assert _detect_cross_channel(q, "basketball") is None
+
+
+def test_detect_meta_verb_match_is_word_bounded():
+    # "address" contains "add" but must NOT be treated as a channel-meta verb,
+    # so a genuine cross-channel question still refuses.
+    assert (
+        _detect_cross_channel("what is the address discussed in #research", "basketball")
+        == "#research"
+    )
+    # "removed" contains "remove"; still a read question → refuse.
+    assert _detect_cross_channel("what was removed from #research", "basketball") == "#research"
 
 
 def test_detect_no_guess_when_name_unresolved():
