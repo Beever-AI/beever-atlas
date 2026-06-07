@@ -31,7 +31,7 @@ function fakeChatManager(opts: {
 /** Fake adapter that records startGatewayListener calls and never self-completes
  *  its listener (so the loop parks after one arming until aborted). */
 function fakeAdapter() {
-  const calls: { durationMs: number; webhookUrl: string; signal: AbortSignal }[] = [];
+  const calls: { durationMs: number; webhookUrl?: string; signal: AbortSignal }[] = [];
   const adapter: DiscordGatewayAdapter & { calls: typeof calls } = {
     mentionRoleIds: [],
     calls,
@@ -47,22 +47,23 @@ function fakeAdapter() {
 describe("DiscordGatewaySupervisor", () => {
   it("is a complete no-op when no Discord adapter is registered", async () => {
     const cm = fakeChatManager({ discord: [] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: true });
     sup.sync();
     await tick();
     assert.strictEqual(sup.activeCount(), 0);
     sup.stop();
   });
 
-  it("starts one keep-alive loop per Discord connection with the right webhook + window", async () => {
+  it("starts one in-process keep-alive loop per Discord connection (no webhookUrl)", async () => {
     const a = fakeAdapter();
     const cm = fakeChatManager({ discord: [{ connectionId: "conn-1", adapter: a }] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true, windowMs: 1234 });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: true, windowMs: 1234 });
     sup.sync();
     await tick();
     assert.strictEqual(sup.activeCount(), 1);
     assert.strictEqual(a.calls.length, 1);
-    assert.strictEqual(a.calls[0].webhookUrl, "http://localhost:3001/api/webhooks/conn-1");
+    // In-process dispatch: no webhookUrl is passed (preserves thread context).
+    assert.strictEqual(a.calls[0].webhookUrl, undefined);
     assert.strictEqual(a.calls[0].durationMs, 1234);
     assert.strictEqual(a.calls[0].signal.aborted, false);
     sup.stop();
@@ -71,7 +72,7 @@ describe("DiscordGatewaySupervisor", () => {
   it("retires loops bound to stale adapters on re-sync (generation guard)", async () => {
     const a = fakeAdapter();
     const cm = fakeChatManager({ discord: [{ connectionId: "conn-1", adapter: a }] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: true });
     sup.sync();
     await tick();
     const firstSignal = a.calls[0].signal;
@@ -86,7 +87,7 @@ describe("DiscordGatewaySupervisor", () => {
   it("stop() aborts every active listener", async () => {
     const a = fakeAdapter();
     const cm = fakeChatManager({ discord: [{ connectionId: "conn-1", adapter: a }] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: true });
     sup.sync();
     await tick();
     const sig = a.calls[0].signal;
@@ -98,7 +99,7 @@ describe("DiscordGatewaySupervisor", () => {
   it("does not start any loop when disabled", async () => {
     const a = fakeAdapter();
     const cm = fakeChatManager({ discord: [{ connectionId: "conn-1", adapter: a }] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: false });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: false });
     sup.sync();
     await tick();
     assert.strictEqual(a.calls.length, 0);
@@ -118,7 +119,7 @@ describe("DiscordGatewaySupervisor", () => {
       },
     };
     const cm = fakeChatManager({ discord: [{ connectionId: "c", adapter }] });
-    const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true, retryMs: 20 });
+    const sup = new DiscordGatewaySupervisor(cm, { enabled: true, retryMs: 20 });
     sup.sync();
     await tick(60); // long enough for ~2 paced re-arms, not a hot loop
     sup.stop();
@@ -153,7 +154,7 @@ describe("DiscordGatewaySupervisor", () => {
       return { ok: false, json: async () => [] } as Response;
     }) as typeof fetch;
     try {
-      const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true });
+      const sup = new DiscordGatewaySupervisor(cm, { enabled: true });
       sup.sync();
       await tick(20);
       assert.deepStrictEqual(a.mentionRoleIds, ["existing-role", "managed-role"]);
@@ -185,7 +186,7 @@ describe("DiscordGatewaySupervisor", () => {
       return { ok: false, json: async () => [] } as Response;
     }) as typeof fetch;
     try {
-      const sup = new DiscordGatewaySupervisor(cm, 3001, { enabled: true });
+      const sup = new DiscordGatewaySupervisor(cm, { enabled: true });
       sup.sync();
       await tick(20);
       sup.sync(); // simulate a rebuild/recycle

@@ -1,26 +1,50 @@
 /**
  * Helpers for parsing Chat SDK thread ids.
  *
- * Thread ids follow the pattern `"<platform>:<channelId>:<thread>"`
- * (e.g. `"slack:C123:1700000000.000100"`). The platform prefix is the only
- * place the post-time platform is recoverable, since the SDK `Thread`/`Message`
- * objects passed to handlers do not carry a platform field.
+ * Most platforms encode `"<platform>:<channelId>:<thread>"`
+ * (e.g. `"slack:C123:1700000000.000100"`). **Discord is the exception**: its
+ * adapter encodes an extra leading guild segment —
+ * `"discord:<guildId>:<channelId>[:<thread>]"` — so for Discord the channel is
+ * the THIRD token and the thread is the FOURTH, each shifted one past every
+ * other platform. The helpers special-case Discord; all other platforms keep
+ * the `<platform>:<channelId>:<thread>` layout unchanged.
+ *
+ * The platform prefix is the only place the post-time platform is recoverable,
+ * since the SDK `Thread`/`Message` objects passed to handlers carry no platform
+ * field.
  */
 
-/** Extract the channel id (second segment), falling back to the whole id. */
+/** True when a thread id uses Discord's extra-leading-guild-segment layout. */
+function isDiscord(parts: string[]): boolean {
+  return parts[0]?.toLowerCase() === "discord";
+}
+
+/**
+ * Extract the channel id, falling back to the whole id.
+ * Slack/Teams/Telegram/Mattermost: the second segment. Discord: the THIRD
+ * segment (the second is the guild id) — using the second there routes the
+ * `/api/channels/{id}/ask` call to the guild and misses the channel's indexed
+ * knowledge entirely.
+ */
 export function extractChannelId(threadId: string): string {
   const parts = threadId.split(":");
+  if (isDiscord(parts) && parts.length >= 3) {
+    return parts[2];
+  }
   return parts.length >= 2 ? parts[1] : threadId;
 }
 
 /**
- * Extract the thread segment (everything after `<platform>:<channelId>:`),
- * falling back to the whole id when there is no third segment. A thread id can
- * itself contain colons (e.g. a Slack message ts joined with a parent), so we
- * keep the full remainder rather than just the third token.
+ * Extract the thread segment, falling back to the whole id when there is no
+ * thread token. A thread id can itself contain colons (e.g. a Slack message ts
+ * joined with a parent), so we keep the full remainder rather than just one
+ * token. For Discord the thread starts one token later (after the guild).
  */
 export function extractThreadId(threadId: string): string {
   const parts = threadId.split(":");
+  if (isDiscord(parts)) {
+    return parts.length >= 4 ? parts.slice(3).join(":") : threadId;
+  }
   return parts.length >= 3 ? parts.slice(2).join(":") : threadId;
 }
 
@@ -45,5 +69,8 @@ export function extractPlatform(threadId: string): string {
  */
 export function hasThreadRoot(threadId: string): boolean {
   const parts = threadId.split(":");
+  if (isDiscord(parts)) {
+    return parts.length >= 4 && parts.slice(3).join(":").trim().length > 0;
+  }
   return parts.length >= 3 && parts.slice(2).join(":").trim().length > 0;
 }

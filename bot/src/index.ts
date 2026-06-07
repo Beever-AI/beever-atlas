@@ -1089,7 +1089,7 @@ async function main(): Promise<void> {
   // webhook and is a no-op when no Discord connection is registered, so other
   // platforms are unaffected. Re-sync after every rebuild/recycle because those
   // replace adapter instances the in-flight listeners are bound to.
-  const discordGateway = new DiscordGatewaySupervisor(chatManager, PORT);
+  const discordGateway = new DiscordGatewaySupervisor(chatManager);
   discordGateway.sync();
   chatManager.onRebuildComplete(() => discordGateway.sync());
 

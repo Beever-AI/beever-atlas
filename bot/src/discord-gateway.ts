@@ -18,8 +18,18 @@
  * the bot and @mentions get no reply. This module is the long-running-Node
  * equivalent of that cron: for each registered Discord connection it runs a
  * chain-on-completion loop that keeps exactly ONE Gateway listener alive at a
- * time (no overlap → no duplicate delivery → no double replies), forwarding
- * Gateway events back to the bot's own per-connection webhook endpoint.
+ * time (no overlap → no duplicate delivery → no double replies).
+ *
+ * In-process dispatch (no webhookUrl)
+ * -----------------------------------
+ * `startGatewayListener` is called WITHOUT a webhookUrl, which selects the
+ * adapter's in-process gateway handler. That path dispatches messages straight
+ * to the adapter's own `Chat` instance using the full discord.js `Message`
+ * object — so it correctly detects thread messages (`message.channel.isThread()`
+ * → continue in the thread) and both user and role mentions. The alternative
+ * webhook-forwarding mode POSTs the *raw* gateway payload, which omits
+ * `channel_type`; that loses thread context and breaks in-thread continuation,
+ * so we deliberately avoid it.
  *
  * Scope guarantee
  * ---------------
@@ -47,7 +57,8 @@ export interface DiscordGatewayAdapter {
     options: { waitUntil: (task: Promise<unknown>) => void },
     durationMs: number,
     abortSignal: AbortSignal,
-    webhookUrl: string,
+    /** Omitted → in-process dispatch (correct thread/mention handling). */
+    webhookUrl?: string,
   ): Promise<{ status: number }>;
 }
 
@@ -158,7 +169,6 @@ export class DiscordGatewaySupervisor {
 
   constructor(
     private readonly chatManager: ChatManager,
-    private readonly port: number,
     opts: DiscordGatewayOptions = {},
   ) {
     this.windowMs = opts.windowMs ?? 540_000; // 9 minutes
@@ -248,17 +258,17 @@ export class DiscordGatewaySupervisor {
     signal: AbortSignal,
     gen: number,
   ): Promise<void> {
-    const webhookUrl = `http://localhost:${this.port}/api/webhooks/${connectionId}`;
     console.log(`Discord gateway: starting keep-alive for connection ${connectionId}`);
     while (!signal.aborted && gen === this.generation) {
       const started = Date.now();
       try {
         let listenerPromise: Promise<unknown> = Promise.resolve();
+        // No webhookUrl → in-process dispatch via the adapter's own Chat
+        // instance, with correct thread + mention handling.
         const res = await adapter.startGatewayListener(
           { waitUntil: (task) => { listenerPromise = task; } },
           this.windowMs,
           signal,
-          webhookUrl,
         );
         if (res.status >= 400) {
           throw new Error(`startGatewayListener returned HTTP ${res.status}`);
