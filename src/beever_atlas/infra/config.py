@@ -356,6 +356,7 @@ class Settings(BaseSettings):
     def public_bot_base(self) -> str:
         """Public bot base URL with any trailing slash removed (empty if unset)."""
         return (self.public_bot_url or "").rstrip("/")
+
     # When True, accept both constant-time and legacy `==` bridge auth paths
     # for one release cycle. Every legacy accept logs a warning.
     bridge_hmac_dual: bool = Field(default=False, alias="BEEVER_BRIDGE_HMAC_DUAL")
