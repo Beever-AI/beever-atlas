@@ -106,8 +106,14 @@ async def _migrate_env_connection(stores: StoreClients, settings) -> None:
         )
         return
 
+    # An app-level token (xapp-...) enables Socket Mode: the bot reaches Slack
+    # over an outbound WebSocket, so no public inbound URL/tunnel is required.
+    # Prefer it when present; otherwise fall back to Events API (signing secret).
+    slack_app_token = os.environ.get("SLACK_APP_TOKEN", "")
     slack_signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
     credentials: dict = {"botToken": slack_token}
+    if slack_app_token:
+        credentials["appToken"] = slack_app_token
     if slack_signing_secret:
         credentials["signingSecret"] = slack_signing_secret
 

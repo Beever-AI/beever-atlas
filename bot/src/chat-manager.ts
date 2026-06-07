@@ -173,7 +173,8 @@ export class ChatManager {
       // Required credential keys per platform — entries missing any of these are
       // skipped so a single broken connection cannot take down the entire bot.
       const REQUIRED_CREDENTIALS: Record<string, string[]> = {
-        slack: ["botToken", "signingSecret"],
+        // Slack has two valid credential shapes (webhook vs socket mode), so it
+        // is validated separately below rather than via this simple AND-list.
         discord: ["botToken", "publicKey", "applicationId"],
         teams: ["appId", "appPassword"],
         telegram: ["botToken"],
@@ -183,6 +184,19 @@ export class ChatManager {
       const adapterInstances: Record<string, unknown> = {};
 
       for (const [key, entry] of this.adapters.entries()) {
+        // Slack: botToken is always required, plus EITHER a signingSecret
+        // (Events API / webhook mode — needs a public inbound URL) OR an
+        // appToken (Socket Mode — outbound WebSocket, no public URL needed).
+        let slackMode: "socket" | "webhook" | null = null;
+        if (entry.platform === "slack") {
+          const plan = planSlackAdapter(entry.config);
+          if (!plan.ok) {
+            console.warn(`ChatManager: skipping "${key}" — missing required credentials: ${plan.missing.join(", ")}`);
+            continue;
+          }
+          slackMode = plan.mode;
+        }
+
         const required = REQUIRED_CREDENTIALS[entry.platform];
         if (required) {
           const missing = required.filter((k) => !entry.config[k]);
@@ -194,10 +208,26 @@ export class ChatManager {
 
         try {
           if (entry.platform === "slack") {
-            const slackAdapter = createSlackAdapter({
-              botToken: entry.config.botToken,
-              signingSecret: entry.config.signingSecret,
-            });
+            // Socket Mode (appToken present) connects an OUTBOUND WebSocket to
+            // Slack — like Discord/Mattermost — so it needs no public inbound
+            // URL and survives host restarts without re-pointing a tunnel.
+            // Falls back to webhook/Events-API mode (signingSecret) otherwise.
+            // The socket is started automatically by the adapter's
+            // initialize(chat), which runs during newBot.initialize() below.
+            const useSocketMode = slackMode === "socket";
+            const slackAdapter = useSocketMode
+              ? createSlackAdapter({
+                  botToken: entry.config.botToken,
+                  appToken: entry.config.appToken,
+                  mode: "socket",
+                })
+              : createSlackAdapter({
+                  botToken: entry.config.botToken,
+                  signingSecret: entry.config.signingSecret,
+                });
+            console.log(
+              `ChatManager: Slack adapter "${key}" using ${useSocketMode ? "socket" : "webhook"} mode`,
+            );
             adapterInstances[key] = slackAdapter;
             // Cache team_id → connectionId for URL-based file routing
             try {
@@ -511,6 +541,31 @@ export class ChatManager {
     }
     return null;
   }
+}
+
+/**
+ * Decide how a Slack adapter should be built from its credentials.
+ *
+ * Slack supports two inbound transports:
+ *  - "socket": Socket Mode — needs `botToken` + `appToken` (xapp-...). The
+ *    adapter opens an OUTBOUND WebSocket to Slack (like Discord/Mattermost), so
+ *    no public inbound URL/tunnel is required and it survives host restarts.
+ *  - "webhook": Events API — needs `botToken` + `signingSecret`. Slack POSTs
+ *    events to a public inbound URL, so it requires a tunnel in local dev.
+ *
+ * When both `appToken` and `signingSecret` are present, socket mode wins (it is
+ * strictly easier to operate locally). Returns `ok:false` with the missing keys
+ * when neither transport can be satisfied.
+ */
+export function planSlackAdapter(config: Record<string, unknown>):
+  | { ok: true; mode: "socket" | "webhook" }
+  | { ok: false; missing: string[] } {
+  const has = (k: string) => Boolean(config[k]);
+  const missing: string[] = [];
+  if (!has("botToken")) missing.push("botToken");
+  if (!has("signingSecret") && !has("appToken")) missing.push("signingSecret|appToken");
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, mode: has("appToken") ? "socket" : "webhook" };
 }
 
 /**

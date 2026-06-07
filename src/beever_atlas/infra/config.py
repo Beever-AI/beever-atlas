@@ -344,6 +344,18 @@ class Settings(BaseSettings):
     # Bridge (bot service)
     bridge_url: str = Field(default="http://localhost:3001")
     bridge_api_key: str = Field(default="")
+    # Public URL at which the bot's inbound webhooks are reachable from the
+    # internet (e.g. an ngrok/cloudflared tunnel in local dev, or the real
+    # domain in production). Surfaced read-only to the web Settings UI so users
+    # know exactly what to paste into Slack's Request URL and Teams' messaging
+    # endpoint. Inbound-webhook platforms (Slack Events API, Teams) need this;
+    # outbound ones (Discord, Mattermost, Slack Socket Mode) do not.
+    public_bot_url: str = Field(default="", alias="PUBLIC_BOT_URL")
+
+    @property
+    def public_bot_base(self) -> str:
+        """Public bot base URL with any trailing slash removed (empty if unset)."""
+        return (self.public_bot_url or "").rstrip("/")
     # When True, accept both constant-time and legacy `==` bridge auth paths
     # for one release cycle. Every legacy accept logs a warning.
     bridge_hmac_dual: bool = Field(default=False, alias="BEEVER_BRIDGE_HMAC_DUAL")

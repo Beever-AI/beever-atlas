@@ -43,35 +43,48 @@ Go to **OAuth & Permissions** → **Scopes** → **Bot Token Scopes** and add:
 | `mpim:history` | Multi-party DM history |
 | `mpim:read` | List multi-party DMs |
 
-## 3. Enable Event Subscriptions
+## 3. Choose a delivery mode: Socket Mode **or** Events API
 
-Go to **Event Subscriptions** → Toggle **Enable Events** ON.
+Slack can deliver events two ways. **Pick one.**
 
-### Request URL
+| | **Socket Mode** (recommended for local / self-hosted) | **Events API** (webhook) |
+|---|---|---|
+| Transport | Outbound WebSocket from the bot | Slack POSTs to a public URL |
+| Needs a public URL / tunnel? | **No** | **Yes** |
+| Survives host restarts? | **Yes**, reconnects automatically | Only if the public URL is stable |
+| Credential | App-Level Token (`xapp-…`) | Signing Secret |
+| Multi-workspace OAuth? | No (single workspace) | Yes |
 
-The Request URL is where Slack sends webhook events. During development, you need to expose your local bot service:
+Socket Mode behaves like the Discord and Mattermost adapters — no tunnel, no re-pointing after a reboot. Prefer it unless you need multi-workspace OAuth (typical only for the hosted/EE multi-tenant build, which runs behind a real public domain).
 
-**Option A: ngrok (recommended for dev)**
+### Option A — Socket Mode (no public URL needed)
+
+1. **Settings → Socket Mode** → toggle **Enable Socket Mode** ON.
+2. **Basic Information → App-Level Tokens** → **Generate Token and Scopes** → add the `connections:write` scope → copy the token (starts with `xapp-`).
+3. Still configure **Event Subscriptions → Subscribe to bot events** (below) — the event list applies to both modes — but you do **not** set a Request URL.
+4. In the connection wizard (or `SLACK_APP_TOKEN`), provide the `xapp-` token. No signing secret is required.
+
+### Option B — Events API (public Request URL)
+
+Go to **Event Subscriptions** → toggle **Enable Events** ON, then set the **Request URL** to where the bot is reachable from the internet.
+
+Expose the local bot service (port 3001):
+
 ```bash
-# Install ngrok
-brew install ngrok
-
-# Expose bot service (default port 3001)
+# ngrok — reserve a free STATIC domain so the URL survives restarts:
+#   https://dashboard.ngrok.com/domains
+ngrok http 3001 --url=https://<your-static>.ngrok-free.app
+# …or an ephemeral URL (changes every restart):
 ngrok http 3001
+# Shortcut: make tunnel NGROK_DOMAIN=<your-static>.ngrok-free.app
 
-# Use the HTTPS URL ngrok gives you, e.g.:
-# https://abc123.ngrok-free.app/api/slack
-```
-
-**Option B: Cloudflare Tunnel**
-```bash
-brew install cloudflared
+# or Cloudflare Tunnel:
 cloudflared tunnel --url http://localhost:3001
 ```
 
-Set the Request URL to: `https://<your-tunnel>/api/slack`
+Set **Request URL** to `https://<your-public-url>/api/slack` and provide the **Signing Secret** in the wizard. Slack sends a verification challenge — the Chat SDK handles it automatically.
 
-Slack will send a verification challenge — the Chat SDK handles this automatically.
+> **Tip:** Set `PUBLIC_BOT_URL` to this same `https://…` base. The Settings → connection wizard then shows the exact Request URL to paste (and the Teams messaging endpoint), so you never have to assemble it by hand. With a **static** ngrok domain you configure Slack/Teams once and reboots no longer break inbound delivery.
 
 ### Subscribe to Bot Events
 

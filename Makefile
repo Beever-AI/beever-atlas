@@ -1,4 +1,4 @@
-.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures reembed-all reembed-resume reembed-dry-run
+.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures reembed-all reembed-resume reembed-dry-run tunnel
 
 install:
 	uv sync --extra dev
@@ -41,6 +41,25 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+# Expose the bot's inbound webhooks (port 3001) over a public HTTPS tunnel so
+# Slack (Events API) and Microsoft Teams can deliver events in local dev.
+# Discord, Mattermost, and Slack Socket Mode do NOT need this.
+#
+# Set NGROK_DOMAIN to a reserved static domain (free tier includes one — see
+# https://dashboard.ngrok.com/domains) so the URL survives reboots and you only
+# configure Slack/Teams once. Then put the same https URL in PUBLIC_BOT_URL.
+#   make tunnel NGROK_DOMAIN=your-name.ngrok-free.app
+# Without a domain it falls back to an ephemeral URL (changes every restart).
+tunnel:
+	@command -v ngrok >/dev/null 2>&1 || { echo "ngrok not installed: brew install ngrok"; exit 1; }
+	@if [ -n "$(NGROK_DOMAIN)" ]; then \
+		echo "Starting ngrok on static domain https://$(NGROK_DOMAIN) → :3001"; \
+		ngrok http 3001 --url=https://$(NGROK_DOMAIN); \
+	else \
+		echo "Starting ngrok on an EPHEMERAL url → :3001 (set NGROK_DOMAIN for a stable one)"; \
+		ngrok http 3001; \
+	fi
 
 demo:
 	docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up --build

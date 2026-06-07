@@ -36,6 +36,12 @@ services:
       REDIS_URL: redis://redis:6379
       BRIDGE_URL: http://bot:3001
       BRIDGE_API_KEY: ${BRIDGE_API_KEY:-}
+      # Public URL where the bot's inbound webhooks are reachable from the
+      # internet (tunnel in local dev, real domain in prod). Surfaced read-only
+      # in the Settings → connection wizard so users know the exact Slack
+      # Request URL / Teams messaging endpoint to paste. Optional: Discord,
+      # Mattermost, and Slack Socket Mode do not need it.
+      PUBLIC_BOT_URL: ${PUBLIC_BOT_URL:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health')"]
       interval: 30s

@@ -530,11 +530,18 @@ async function registerTeamsFromEnvIfPresent(
 async function fallbackToEnvCredentials(chatManager: ChatManager): Promise<void> {
   let registered = 0;
 
-  // Slack
+  // Slack — Socket Mode (SLACK_APP_TOKEN, xapp-...) is preferred for local/
+  // single-workspace dev: it uses an outbound WebSocket and needs no public
+  // inbound URL. Falls back to Events API (signing secret) when no app token.
   const slackToken = process.env.SLACK_BOT_TOKEN;
+  const slackAppToken = process.env.SLACK_APP_TOKEN;
   const slackSecret = process.env.SLACK_SIGNING_SECRET;
-  if (slackToken && slackSecret) {
-    console.log("Env fallback: registering Slack adapter from .env credentials");
+  if (slackToken && slackAppToken) {
+    console.log("Env fallback: registering Slack adapter (socket mode) from .env credentials");
+    await chatManager.register("slack", { botToken: slackToken, appToken: slackAppToken });
+    registered++;
+  } else if (slackToken && slackSecret) {
+    console.log("Env fallback: registering Slack adapter (webhook mode) from .env credentials");
     await chatManager.register("slack", { botToken: slackToken, signingSecret: slackSecret });
     registered++;
   }

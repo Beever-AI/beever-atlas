@@ -35,6 +35,51 @@ class TestSettings:
         assert hasattr(settings, "jina_api_key")
         assert hasattr(settings, "tavily_api_key")
 
+    def test_public_bot_base_empty_by_default(self):
+        from beever_atlas.infra.config import Settings
+
+        assert Settings().public_bot_base == ""
+
+    def test_public_bot_base_strips_trailing_slash(self, monkeypatch):
+        from beever_atlas.infra.config import Settings
+
+        monkeypatch.setenv("PUBLIC_BOT_URL", "https://abc.ngrok-free.app/")
+        assert Settings().public_bot_base == "https://abc.ngrok-free.app"
+
+    def test_public_bot_url_reads_alias_env(self, monkeypatch):
+        from beever_atlas.infra.config import Settings
+
+        monkeypatch.setenv("PUBLIC_BOT_URL", "https://host.example.com")
+        assert Settings().public_bot_base == "https://host.example.com"
+
+
+class TestConnectivityEndpoint:
+    """`/api/config/connectivity` surfaces the exact inbound-webhook URLs to the
+    Settings UI so users know what to paste into Slack / Teams."""
+
+    async def test_returns_computed_webhook_urls_when_configured(self, monkeypatch):
+        import beever_atlas.api.config as cfg
+        from beever_atlas.infra.config import Settings
+
+        monkeypatch.setenv("PUBLIC_BOT_URL", "https://abc.ngrok-free.app/")
+        monkeypatch.setattr(cfg, "get_settings", Settings)
+        result = await cfg.get_connectivity()
+        assert result["configured"] is True
+        assert result["public_bot_url"] == "https://abc.ngrok-free.app"
+        assert result["webhooks"]["slack"] == "https://abc.ngrok-free.app/api/slack"
+        assert result["webhooks"]["teams"] == "https://abc.ngrok-free.app/api/teams"
+
+    async def test_empty_when_unconfigured(self, monkeypatch):
+        import beever_atlas.api.config as cfg
+        from beever_atlas.infra.config import Settings
+
+        monkeypatch.delenv("PUBLIC_BOT_URL", raising=False)
+        monkeypatch.setattr(cfg, "get_settings", Settings)
+        result = await cfg.get_connectivity()
+        assert result["configured"] is False
+        assert result["public_bot_url"] == ""
+        assert result["webhooks"] == {"slack": "", "teams": ""}
+
 
 class TestEmbeddingSettings:
     """PR-B: ``EmbeddingSettings`` defaults preserve legacy Jina behavior and

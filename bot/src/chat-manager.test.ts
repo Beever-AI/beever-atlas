@@ -1,6 +1,51 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { ChatManager, parseSlackWorkspaceDomain } from "./chat-manager.js";
+import { ChatManager, parseSlackWorkspaceDomain, planSlackAdapter } from "./chat-manager.js";
+
+describe("planSlackAdapter", () => {
+  it("chooses socket mode when an appToken is present", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ botToken: "xoxb-1", appToken: "xapp-1" }),
+      { ok: true, mode: "socket" },
+    );
+  });
+  it("chooses webhook mode when only a signingSecret is present", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ botToken: "xoxb-1", signingSecret: "s1" }),
+      { ok: true, mode: "webhook" },
+    );
+  });
+  it("prefers socket mode when both appToken and signingSecret are present", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ botToken: "xoxb-1", appToken: "xapp-1", signingSecret: "s1" }),
+      { ok: true, mode: "socket" },
+    );
+  });
+  it("reports missing botToken", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ signingSecret: "s1" }),
+      { ok: false, missing: ["botToken"] },
+    );
+  });
+  it("reports missing transport when neither appToken nor signingSecret is set", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ botToken: "xoxb-1" }),
+      { ok: false, missing: ["signingSecret|appToken"] },
+    );
+  });
+  it("reports both missing when given an empty config", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({}),
+      { ok: false, missing: ["botToken", "signingSecret|appToken"] },
+    );
+  });
+  it("treats empty-string credentials as absent", () => {
+    assert.deepStrictEqual(
+      planSlackAdapter({ botToken: "", appToken: "" }),
+      { ok: false, missing: ["botToken", "signingSecret|appToken"] },
+    );
+  });
+});
 
 describe("parseSlackWorkspaceDomain", () => {
   it("extracts the subdomain from a Slack auth.test url", () => {
