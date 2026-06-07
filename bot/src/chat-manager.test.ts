@@ -347,7 +347,10 @@ describe("ChatManager — scheduleAdapterRecycle()", () => {
     });
 
     cm.scheduleAdapterRecycle(20);
-    await new Promise((r) => setTimeout(r, 70));
+    // Wait generously (≈10 intervals) so a loaded CI runner whose event loop
+    // delays setInterval ticks still clears the ≥2 threshold — a 70ms window
+    // was tight enough to flake when only one tick fired in time.
+    await new Promise((r) => setTimeout(r, 200));
     cm.stopAdapterRecycle();
 
     assert.ok(rebuildCount >= 2, `expected at least 2 rebuilds, got ${rebuildCount}`);
