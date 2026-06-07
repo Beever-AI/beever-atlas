@@ -19,9 +19,9 @@ type Step = 1 | 2 | 3 | 4 | 5;
 
 const SLACK_INSTRUCTIONS = [
   { text: "Go to", link: "https://api.slack.com/apps", linkText: "api.slack.com/apps" },
-  { text: "Click Create New App → From scratch" },
+  { text: "Create New App → From scratch, then open your app." },
   {
-    text: "Under OAuth & Permissions → Scopes → Bot Token Scopes, turn on all required scopes:",
+    text: "OAuth & Permissions → Bot Token Scopes — add:",
     details: [
       "channels:history",
       "channels:read",
@@ -31,22 +31,18 @@ const SLACK_INSTRUCTIONS = [
       "users:read",
     ],
   },
-  { text: "Click Install to Workspace and authorize" },
-  { text: "Copy the Bot User OAuth Token (starts with xoxb-)" },
+  { text: "Install to Workspace and authorize." },
+  { text: "OAuth & Permissions → copy the Bot User OAuth Token (starts with xoxb-)." },
   {
-    text: "Choose how Slack delivers events — pick ONE:",
+    text: "Pick how Slack delivers events — Socket Mode is recommended (no public URL, survives restarts):",
     details: [
-      "A) Socket Mode (recommended, no public URL): Settings → Socket Mode → enable it, then Basic Information → App-Level Tokens → generate a token with the connections:write scope. Copy it (starts with xapp-).",
-      "B) Events API (needs a public URL): Basic Information → copy the Signing Secret instead. You will also set a Request URL in the next step.",
+      "Socket Mode → Settings → Socket Mode (enable) → Basic Information → App-Level Tokens → generate with scope connections:write → copy the xapp- token",
+      "Events API → Basic Information → copy the Signing Secret, then set the Request URL shown above",
     ],
   },
   {
-    text: "Under Event Subscriptions → Subscribe to bot events, add the events the bot listens for (both modes):",
+    text: "Event Subscriptions → Subscribe to bot events — add (both modes):",
     details: ["app_mention", "message.channels", "message.groups"],
-  },
-  {
-    text: "Events API only — set Event Subscriptions → Request URL to your public bot URL + /api/slack and wait for the green Verified ✓ (skip this entirely if you chose Socket Mode):",
-    details: ["https://<your-public-url>/api/slack"],
   },
 ];
 
@@ -279,10 +275,12 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
         onClick={onClose}
       />
 
-      {/* Dialog */}
-      <div className="relative z-10 w-full max-w-3xl bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+      {/* Dialog — flex column capped at the viewport so a tall step (e.g. the
+          Slack instructions) scrolls in the middle instead of pushing the
+          footer off-screen / overlapping it. */}
+      <div className="relative z-10 flex flex-col w-full max-w-3xl max-h-[90vh] bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-border space-y-3">
+        <div className="shrink-0 px-6 py-4 border-b border-border space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-foreground">
               Connect {{ slack: "Slack", discord: "Discord", teams: "Microsoft Teams", telegram: "Telegram", mattermost: "Mattermost" }[platform]}
@@ -298,8 +296,9 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
           <StepIndicator current={step} />
         </div>
 
-        {/* Content */}
-        <div className="px-6 py-5">
+        {/* Content — scrolls independently; min-h-0 lets it shrink within the
+            flex column so overflow-y actually engages. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5">
           {step === 1 && (
             <StepInstructions
               platform={platform}
@@ -338,7 +337,7 @@ export function ConnectionWizard({ platform, onClose, onComplete }: ConnectionWi
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-muted/30">
+        <div className="shrink-0 flex items-center justify-between px-6 py-4 border-t border-border bg-muted/30">
           <div>
             {step === 2 && (
               <button
