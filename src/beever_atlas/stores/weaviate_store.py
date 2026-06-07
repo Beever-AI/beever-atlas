@@ -93,6 +93,11 @@ class WeaviateStore:
         ("cluster_id", DataType.TEXT),
         ("channel_id", DataType.TEXT),
         ("platform", DataType.TEXT),
+        # Discord guild id — needed to build the
+        # discord.com/channels/{guild}/{channel}/{message} citation permalink.
+        # Empty for non-Discord platforms. Auto-added to existing collections
+        # by the missing-property migration on connect.
+        ("guild_id", DataType.TEXT),
         ("author_id", DataType.TEXT),
         ("author_name", DataType.TEXT),
         ("message_ts", DataType.TEXT),
@@ -278,6 +283,7 @@ class WeaviateStore:
             "cluster_id": fact.cluster_id or "__none__",
             "channel_id": fact.channel_id,
             "platform": fact.platform,
+            "guild_id": fact.guild_id,
             "author_id": fact.author_id,
             "author_name": fact.author_name,
             "message_ts": fact.message_ts,
@@ -325,6 +331,7 @@ class WeaviateStore:
             cluster_id=props.get("cluster_id") or None,
             channel_id=props.get("channel_id", ""),
             platform=props.get("platform", "slack"),
+            guild_id=props.get("guild_id", ""),
             author_id=props.get("author_id", ""),
             author_name=props.get("author_name", ""),
             message_ts=props.get("message_ts", ""),
