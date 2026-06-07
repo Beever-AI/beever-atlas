@@ -312,6 +312,18 @@ class Settings(BaseSettings):
     # Application
     beever_api_url: str = Field(default="http://localhost:8000")
     cors_origins: str = Field(default="http://localhost:5173,http://localhost:3000")
+    # Public base URL of the web app (used to turn internal citation routes such
+    # as /channel/{id}/wiki/overview into ABSOLUTE http(s) links the chat
+    # renderer will keep — its cleanUrl drops bare relative paths). Empty by
+    # default: when unset the resolver returns None for internal-route kinds
+    # rather than emitting a broken bare path. Trailing slash is stripped so
+    # f"{base}{path}" never double-slashes.
+    public_web_url: str = Field(default="", alias="PUBLIC_WEB_URL")
+
+    @property
+    def public_web_base(self) -> str:
+        """Public web base URL with any trailing slash removed (empty if unset)."""
+        return (self.public_web_url or "").rstrip("/")
 
     # Media processing
     media_max_file_size_mb: int = Field(default=20)

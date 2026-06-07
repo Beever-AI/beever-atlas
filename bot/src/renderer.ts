@@ -43,7 +43,7 @@ export const CHAR_CAP: Record<string, number> = {
 };
 
 const MAX_CITATIONS = 5;
-const TRUNCATE_SUFFIX = "\n…_[truncated]_";
+const TRUNCATE_SUFFIX = "\n… [truncated]";
 
 /** Icon per citation kind so wiki / message / decision / graph sources read at a glance. */
 const KIND_ICON: Record<string, string> = {
@@ -68,14 +68,27 @@ function capFor(platform: string): number {
 /** Truncate to a hard char budget, appending a marker when content was cut. */
 export function enforceCap(text: string, cap: number): string {
   if (text.length <= cap) return text;
-  const budget = Math.max(0, cap - TRUNCATE_SUFFIX.length);
+  // Reserve room for the marker AND up to two emphasis-balancing tokens (`_`
+  // and `*`) so the balanced output stays under the cap — otherwise the final
+  // hard-clamp fires and re-exposes the dangling marker it was meant to close.
+  const BALANCE_SLACK = 2;
+  const budget = Math.max(0, cap - TRUNCATE_SUFFIX.length - BALANCE_SLACK);
   let head = text.slice(0, budget);
   // Don't slice through a surrogate pair — a lone high surrogate renders as a
   // replacement character on every platform.
   const lastCode = head.charCodeAt(head.length - 1);
   if (lastCode >= 0xd800 && lastCode <= 0xdbff) head = head.slice(0, -1);
-  const out = head.trimEnd() + TRUNCATE_SUFFIX;
-  // Guarantee the contract even when the cap is smaller than the marker itself.
+  let head2 = head.trimEnd();
+  // If the cut left an odd number of `_` or `*` emphasis markers, the dangling
+  // marker would swallow following text (or the plain-text suffix) as
+  // italics/bold. Close it so the marker can't render literally.
+  const underscores = (head2.match(/_/g) ?? []).length;
+  const asterisks = (head2.match(/\*/g) ?? []).length;
+  if (underscores % 2 === 1) head2 += "_";
+  if (asterisks % 2 === 1) head2 += "*";
+  const out = head2 + TRUNCATE_SUFFIX;
+  // Guarantee the hard cap even when the cap is smaller than the marker itself
+  // or the balancing tokens pushed us over.
   return out.length <= cap ? out : text.slice(0, cap);
 }
 
@@ -121,6 +134,25 @@ const MESSAGE_KINDS = new Set(["channel_message", "qa_history"]);
 const RAW_ID_RE = /^[UWCDGT][A-Z0-9]*[0-9][A-Z0-9]{6,}$/;
 function isRawPlatformId(s: string): boolean {
   return RAW_ID_RE.test(s.trim());
+}
+
+/**
+ * Generic wiki page names that read identically across channels ("Overview",
+ * "FAQ", "Home"…) and so carry no standalone signal — when a wiki citation's
+ * title is one of these we qualify it with the channel/source for context.
+ */
+const LOW_SIGNAL_WIKI_TITLES = new Set([
+  "overview",
+  "faq",
+  "home",
+  "index",
+  "readme",
+  "summary",
+  "general",
+  "main",
+]);
+function isLowSignalWikiTitle(title: string): boolean {
+  return LOW_SIGNAL_WIKI_TITLES.has(title.trim().toLowerCase());
 }
 
 /** Registrable domain (no leading www.) of an http(s) url, or "" if unparseable. */
@@ -183,7 +215,17 @@ function renderCitationLine(c: Citation, num: number, platform: string): string 
     // Prefer the real page title; fall back to the excerpt ONLY if absent, and
     // cap that fallback harder (40) so an incomplete excerpt is obviously partial.
     const wikiLabel = c.title ? cleanField(c.title, 80) : (label ? cleanField(label, 40) : "");
-    if (wikiLabel) segments.push(wikiLabel);
+    if (wikiLabel) {
+      segments.push(wikiLabel);
+      // A generic page name ("Overview", "FAQ", "Home"…) carries no signal on
+      // its own — many channels each have an "Overview". When the title is one
+      // of those low-signal names, qualify it with the source/channel so the
+      // reader knows WHICH overview (e.g. "Overview · #general").
+      if (isLowSignalWikiTitle(wikiLabel) && c.source) {
+        const src = cleanField(c.source, 60);
+        if (src) segments.push(src.startsWith("#") ? src : `#${src}`);
+      }
+    }
   } else {
     // decision_record / graph_relationship / media / uploaded_file
     if (label) segments.push(label);
@@ -400,12 +442,19 @@ export function renderResponse(result: AskResult, platform: string): string {
   const hasWebOnly =
     citations.length > 0 && !hasChannelSource && citations.every((c) => c.type === "web_result");
 
-  const body =
+  const cap = capFor(plat);
+
+  // The ANSWER segment may be truncated under cap pressure. The web-only caveat
+  // and confidence stay here by design — they sit directly under the answer and
+  // were already meant to survive (they precede the Sources block).
+  const answerSegment =
     (result.answer || "").trimEnd() +
     (hasWebOnly ? "\n_ℹ️ From external sources — not your team's data._" : "") +
-    // A low-confidence warning sits right under the answer so truncation can
-    // never drop this trust signal — but only when there ARE sources to verify.
-    (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "") +
+    (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "");
+
+  // The TAIL is the short, high-value structure (Sources + follow-up chips +
+  // footer) that must be preserved — truncating it loses the most useful parts.
+  const tail =
     renderCitationBlock("## 📎 Sources", sources, plat) +
     renderCitationBlock("## 🧠 Related", related, plat) +
     renderTensions(result.tensions) +
@@ -413,5 +462,18 @@ export function renderResponse(result: AskResult, platform: string): string {
     renderFollowUps(result.followUps) +
     (hasSources ? renderRoute(result.route || "") : "");
 
-  return enforceCap(body, capFor(plat));
+  // Whole message fits — emit as-is.
+  if (answerSegment.length + tail.length <= cap) {
+    return answerSegment + tail;
+  }
+  // Degrade gracefully: if the tail ALONE exceeds the cap there is no room to
+  // keep both, so fall back to capping the whole message (the answer wins, the
+  // tail is the sacrificial part) — never emit an over-cap message.
+  if (tail.length >= cap) {
+    return enforceCap(answerSegment + tail, cap);
+  }
+  // Reserve the tail's budget and truncate only the answer to whatever remains,
+  // then re-append the preserved tail.
+  const answerBudget = cap - tail.length;
+  return enforceCap(answerSegment, answerBudget) + tail;
 }

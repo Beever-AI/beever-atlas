@@ -153,6 +153,26 @@ describe("renderResponse", () => {
     assert.ok(out.includes("[truncated]"));
   });
 
+  it("preserves Sources + follow-ups when only the answer must be truncated", () => {
+    const out = renderResponse(
+      result({
+        answer: "x".repeat(5000),
+        citations: [{ type: "wiki_page", text: "Booth Map", url: "https://wiki/booths" }],
+        followUps: ["Where is registration?", "What time does it open?"],
+      }),
+      "discord",
+    );
+    assert.ok(out.length <= CHAR_CAP.discord);
+    // The high-value tail survives even though the answer body was cut.
+    assert.ok(out.includes("## 📎 Sources"), "Sources block must be preserved");
+    assert.ok(out.includes("[1](https://wiki/booths)"), "source link must be preserved");
+    assert.ok(out.includes("You might also ask"), "follow-up chips must be preserved");
+    assert.ok(out.includes("Where is registration?"), "follow-up text must be preserved");
+    // The truncation marker carries no stray markdown emphasis pair.
+    assert.ok(out.includes("[truncated]"));
+    assert.ok(!out.includes("_[truncated]_"));
+  });
+
   it("applies the Telegram and Mattermost caps", () => {
     const tele = renderResponse(result({ answer: "t".repeat(9000) }), "telegram");
     assert.ok(tele.length <= CHAR_CAP.telegram);
@@ -396,7 +416,22 @@ describe("enforceCap", () => {
   it("truncates and appends a marker", () => {
     const out = enforceCap("a".repeat(50), 20);
     assert.ok(out.length <= 20);
-    assert.ok(out.endsWith("[truncated]_"));
+    assert.ok(out.endsWith("[truncated]"));
+  });
+
+  it("leaves no lone dangling emphasis marker when cutting mid-italic", () => {
+    // Body ends in an OPEN `_italic` (odd number of underscores). The plain-text
+    // marker must not become italicized by the dangling underscore. The cap is
+    // generous enough that the balanced output fits (so we exercise the
+    // emphasis-balancing path, not the hard-clamp fallback).
+    const out = enforceCap("hello _italic" + "x".repeat(200), 60);
+    assert.ok(out.length <= 60);
+    // Underscore count must be even (balanced) so emphasis never bleeds into
+    // the marker and renders the underscores literally.
+    assert.strictEqual((out.match(/_/g) ?? []).length % 2, 0, "left an unbalanced emphasis marker");
+    // The plain-text marker itself carries no emphasis pair.
+    assert.ok(!out.includes("_[truncated]_"));
+    assert.ok(out.includes("[truncated]"));
   });
 
   it("never exceeds the cap even when the cap is smaller than the marker", () => {
@@ -410,7 +445,7 @@ describe("enforceCap", () => {
     const out = enforceCap(text, 32);
     assert.ok(out.length <= 32);
     // No unpaired surrogate left dangling before the marker.
-    const beforeMarker = out.replace("\n…_[truncated]_", "");
+    const beforeMarker = out.replace("\n… [truncated]", "");
     const lastCode = beforeMarker.charCodeAt(beforeMarker.length - 1);
     assert.ok(!(lastCode >= 0xd800 && lastCode <= 0xdbff), "left a lone high surrogate");
   });

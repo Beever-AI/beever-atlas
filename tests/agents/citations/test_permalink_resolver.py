@@ -13,6 +13,12 @@ from beever_atlas.agents.citations.permalink_resolver import (
     reset_warn_cache,
 )
 from beever_atlas.agents.citations.types import Source
+from beever_atlas.infra.config import get_settings
+
+# Public web base URL used by the internal-route tests so wiki/qa/file
+# permalinks resolve to ABSOLUTE links. Channel-message permalinks are already
+# absolute and ignore this entirely.
+_BASE = "https://atlas.example.com"
 
 
 def _source(kind, native, source_id="src_testtesttest"):
@@ -24,6 +30,18 @@ def _source(kind, native, source_id="src_testtesttest"):
         retrieved_by={},
         native=native,
     )
+
+
+@pytest.fixture(autouse=True)
+def _public_web_url(monkeypatch):
+    """Default the internal-route base URL ON for this module and reset the
+    cached Settings so each test sees a fresh value. Tests that need the
+    'unset' behaviour delete the env var and clear the cache themselves.
+    """
+    monkeypatch.setenv("PUBLIC_WEB_URL", _BASE)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def setup_function():
@@ -148,7 +166,7 @@ def test_file_platform_falls_back_to_internal_route():
 def test_wiki_page_internal_route():
     r = PermalinkResolver()
     s = _source("wiki_page", {"channel_id": "C1", "page_type": "overview"})
-    assert r.resolve(s) == "/channel/C1/wiki/overview"
+    assert r.resolve(s) == f"{_BASE}/channel/C1/wiki/overview"
 
 
 def test_wiki_page_with_slug_anchor():
@@ -157,25 +175,62 @@ def test_wiki_page_with_slug_anchor():
         "wiki_page",
         {"channel_id": "C1", "page_type": "faq", "slug": "q-12"},
     )
-    assert r.resolve(s) == "/channel/C1/wiki/faq#q-12"
+    assert r.resolve(s) == f"{_BASE}/channel/C1/wiki/faq#q-12"
+
+
+def test_wiki_page_absolute_when_base_url_set():
+    """A wiki permalink is an ABSOLUTE http(s) link when PUBLIC_WEB_URL is set,
+    so the chat renderer's cleanUrl keeps it (it drops bare relative paths)."""
+    r = PermalinkResolver()
+    s = _source("wiki_page", {"channel_id": "C1", "page_type": "overview"})
+    url = r.resolve(s)
+    assert url is not None
+    assert url.startswith("https://")
+    assert url == f"{_BASE}/channel/C1/wiki/overview"
+
+
+def test_wiki_page_none_when_base_url_unset(monkeypatch):
+    """With PUBLIC_WEB_URL unset, the resolver returns None for internal routes
+    rather than emitting a broken bare relative path."""
+    monkeypatch.delenv("PUBLIC_WEB_URL", raising=False)
+    get_settings.cache_clear()
+    r = PermalinkResolver()
+    s = _source("wiki_page", {"channel_id": "C1", "page_type": "overview"})
+    assert r.resolve(s) is None
 
 
 def test_qa_history_internal_route():
     r = PermalinkResolver()
     s = _source("qa_history", {"qa_id": "QA1", "session_id": "S1"})
-    assert r.resolve(s) == "/ask?session=S1#qa-QA1"
+    assert r.resolve(s) == f"{_BASE}/ask?session=S1#qa-QA1"
 
 
 def test_qa_history_no_session():
     r = PermalinkResolver()
     s = _source("qa_history", {"qa_id": "QA1"})
-    assert r.resolve(s) == "/ask#qa-QA1"
+    assert r.resolve(s) == f"{_BASE}/ask#qa-QA1"
+
+
+def test_qa_history_none_when_base_url_unset(monkeypatch):
+    monkeypatch.delenv("PUBLIC_WEB_URL", raising=False)
+    get_settings.cache_clear()
+    r = PermalinkResolver()
+    s = _source("qa_history", {"qa_id": "QA1"})
+    assert r.resolve(s) is None
 
 
 def test_uploaded_file_route():
     r = PermalinkResolver()
     s = _source("uploaded_file", {"file_id": "F7"})
-    assert r.resolve(s) == "/files/F7"
+    assert r.resolve(s) == f"{_BASE}/files/F7"
+
+
+def test_uploaded_file_none_when_base_url_unset(monkeypatch):
+    monkeypatch.delenv("PUBLIC_WEB_URL", raising=False)
+    get_settings.cache_clear()
+    r = PermalinkResolver()
+    s = _source("uploaded_file", {"file_id": "F7"})
+    assert r.resolve(s) is None
 
 
 def test_web_result_passthrough():

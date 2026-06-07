@@ -9,6 +9,13 @@ guild / team metadata needed by URL templates must already be present in
 `Source.native` when the tool decorator registers the source. The
 decorator is responsible for looking up platform metadata and stashing
 it there. This keeps the resolver pure and trivially unit-testable.
+
+Internal-route kinds (wiki_page, qa_history, uploaded_file) are prefixed
+with the configured ``PUBLIC_WEB_URL`` base so they become ABSOLUTE
+http(s) links the chat renderer keeps (its ``cleanUrl`` drops bare
+relative paths). When the base URL is unset these kinds resolve to None
+rather than emitting a broken relative path. Channel-message permalinks
+(slack/discord/teams) are already absolute and are unaffected.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ import re
 from typing import Any
 
 from beever_atlas.agents.citations.types import Source
+from beever_atlas.infra.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,23 @@ def _warn_once(source_id: str, reason: str) -> None:
         return
     _LOGGED_NULLS.add(source_id)
     logger.warning("permalink null for source=%s: %s", source_id, reason)
+
+
+def _absolute(path: str, source_id: str) -> str | None:
+    """Prefix an internal route (``/channel/...``) with the configured public
+    web base URL so the chat renderer keeps it as a clickable link.
+
+    Returns ``None`` (not a bare relative path) when ``PUBLIC_WEB_URL`` is
+    unset — a relative path is dropped by the renderer's ``cleanUrl`` anyway,
+    so emitting it would surface a bare ``[N]`` with no link. Channel-message
+    permalinks (slack/discord/teams) are already absolute and never pass
+    through here.
+    """
+    base = get_settings().public_web_base
+    if not base:
+        _warn_once(source_id, "PUBLIC_WEB_URL unset — internal route not absolutized")
+        return None
+    return f"{base}{path}"
 
 
 def _slack_ts_path(ts: str) -> str | None:
@@ -118,7 +143,7 @@ class PermalinkResolver:
             return None
         slug = n.get("slug")
         anchor = f"#{slug}" if slug and slug != page_type else ""
-        return f"/channel/{channel_id}/wiki/{page_type}{anchor}"
+        return _absolute(f"/channel/{channel_id}/wiki/{page_type}{anchor}", source.id)
 
     def _resolve_qa_history(self, source: Source) -> str | None:
         n = source.native
@@ -128,15 +153,15 @@ class PermalinkResolver:
             _warn_once(source.id, "qa_history missing qa_id")
             return None
         if session:
-            return f"/ask?session={session}#qa-{qa_id}"
-        return f"/ask#qa-{qa_id}"
+            return _absolute(f"/ask?session={session}#qa-{qa_id}", source.id)
+        return _absolute(f"/ask#qa-{qa_id}", source.id)
 
     def _resolve_uploaded_file(self, source: Source) -> str | None:
         file_id = source.native.get("file_id")
         if not file_id:
             _warn_once(source.id, "uploaded_file missing file_id")
             return None
-        return f"/files/{file_id}"
+        return _absolute(f"/files/{file_id}", source.id)
 
     def _resolve_web_result(self, source: Source) -> str | None:
         url = source.native.get("url")
