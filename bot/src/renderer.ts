@@ -444,17 +444,23 @@ export function renderResponse(result: AskResult, platform: string): string {
 
   const cap = capFor(plat);
 
-  // The ANSWER segment may be truncated under cap pressure. The web-only caveat
-  // and confidence stay here by design — they sit directly under the answer and
-  // were already meant to survive (they precede the Sources block).
-  const answerSegment =
-    (result.answer || "").trimEnd() +
+  // Only the ANSWER body may be truncated under cap pressure.
+  const answerBody = (result.answer || "").trimEnd();
+
+  // Trust caveats — the web-only provenance note and the low-confidence
+  // "verify against the sources" warning — sit right under the answer AND must
+  // survive truncation: they are the most safety-critical signal. So they LEAD
+  // the preserved tail rather than trailing the truncatable answer body (where
+  // they would be the first content cut). Order under the answer is unchanged.
+  const caveat =
     (hasWebOnly ? "\n_ℹ️ From external sources — not your team's data._" : "") +
     (hasSources ? renderConfidence(result.confidence, result.isEmpty) : "");
 
-  // The TAIL is the short, high-value structure (Sources + follow-up chips +
-  // footer) that must be preserved — truncating it loses the most useful parts.
+  // The TAIL is the short, high-value structure (trust caveats + Sources +
+  // follow-up chips + footer) that must be preserved — truncating it loses the
+  // most useful and most trust-critical parts.
   const tail =
+    caveat +
     renderCitationBlock("## 📎 Sources", sources, plat) +
     renderCitationBlock("## 🧠 Related", related, plat) +
     renderTensions(result.tensions) +
@@ -463,17 +469,19 @@ export function renderResponse(result: AskResult, platform: string): string {
     (hasSources ? renderRoute(result.route || "") : "");
 
   // Whole message fits — emit as-is.
-  if (answerSegment.length + tail.length <= cap) {
-    return answerSegment + tail;
+  if (answerBody.length + tail.length <= cap) {
+    return answerBody + tail;
   }
-  // Degrade gracefully: if the tail ALONE exceeds the cap there is no room to
-  // keep both, so fall back to capping the whole message (the answer wins, the
-  // tail is the sacrificial part) — never emit an over-cap message.
-  if (tail.length >= cap) {
-    return enforceCap(answerSegment + tail, cap);
+  // Degrade gracefully when the answer cannot be truncated cleanly: if the tail
+  // alone meets/exceeds the cap, OR the leftover answer budget is too small to
+  // even hold the truncation marker (which would make enforceCap hard-clamp
+  // WITHOUT a marker and WITHOUT the surrogate/emphasis guards), fall back to
+  // capping the whole message — never emit an over-cap or silently-chopped cut.
+  if (tail.length >= cap || cap - tail.length < TRUNCATE_SUFFIX.length) {
+    return enforceCap(answerBody + tail, cap);
   }
   // Reserve the tail's budget and truncate only the answer to whatever remains,
   // then re-append the preserved tail.
   const answerBudget = cap - tail.length;
-  return enforceCap(answerSegment, answerBudget) + tail;
+  return enforceCap(answerBody, answerBudget) + tail;
 }

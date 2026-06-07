@@ -173,6 +173,29 @@ describe("renderResponse", () => {
     assert.ok(!out.includes("_[truncated]_"));
   });
 
+  it("preserves the low-confidence trust caveat even when the answer is truncated", () => {
+    const out = renderResponse(
+      result({
+        answer: "y".repeat(5000),
+        confidence: 0.1, // below LOW_CONFIDENCE → emits the verify-against-sources warning
+        citations: [{ type: "wiki_page", text: "Booth Map", url: "https://wiki/booths" }],
+        followUps: ["Where is registration?"],
+      }),
+      "discord",
+    );
+    assert.ok(out.length <= CHAR_CAP.discord);
+    // The answer body was cut...
+    assert.ok(out.includes("[truncated]"));
+    // ...but the safety-critical low-confidence caveat MUST survive: it now leads
+    // the preserved tail instead of trailing the truncatable answer (where it
+    // was the first content dropped — the regression this guards against).
+    assert.ok(
+      out.includes("low confidence — please verify against the sources"),
+      "low-confidence caveat must survive truncation",
+    );
+    assert.ok(out.includes("## 📎 Sources"), "Sources must still be preserved");
+  });
+
   it("applies the Telegram and Mattermost caps", () => {
     const tele = renderResponse(result({ answer: "t".repeat(9000) }), "telegram");
     assert.ok(tele.length <= CHAR_CAP.telegram);

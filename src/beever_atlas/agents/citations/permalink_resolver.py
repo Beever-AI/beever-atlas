@@ -125,10 +125,13 @@ class PermalinkResolver:
             return f"https://teams.microsoft.com/l/message/{channel_id}/{message_id}"
 
         if platform == "file":
-            # Imported files have no native platform URL; fall back to internal route.
+            # Imported files have no native platform URL; fall back to the
+            # internal /files route, absolutized through PUBLIC_WEB_URL so the
+            # renderer keeps it (its cleanUrl drops bare relative paths) — same
+            # treatment as _resolve_uploaded_file. None when the base is unset.
             file_id = native.get("file_id")
             if file_id:
-                return f"/files/{file_id}"
+                return _absolute(f"/files/{file_id}", source.id)
             return None
 
         _warn_once(source.id, f"unknown platform={platform}")

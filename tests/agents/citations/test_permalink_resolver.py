@@ -155,12 +155,28 @@ def test_unknown_platform_returns_null():
 
 
 def test_file_platform_falls_back_to_internal_route():
+    """A file-platform channel_message permalink is absolutized through
+    PUBLIC_WEB_URL (same as _resolve_uploaded_file) so the renderer keeps it —
+    a bare relative /files/{id} would be dropped by cleanUrl."""
     r = PermalinkResolver()
     s = _source(
         "channel_message",
         {"platform": "file", "channel_id": "C1", "file_id": "F9"},
     )
-    assert r.resolve(s) == "/files/F9"
+    assert r.resolve(s) == f"{_BASE}/files/F9"
+
+
+def test_file_platform_none_when_base_url_unset(monkeypatch):
+    """With PUBLIC_WEB_URL unset the file-platform route resolves to None rather
+    than a broken bare relative path (consistent with the other internal kinds)."""
+    monkeypatch.delenv("PUBLIC_WEB_URL", raising=False)
+    get_settings.cache_clear()
+    r = PermalinkResolver()
+    s = _source(
+        "channel_message",
+        {"platform": "file", "channel_id": "C1", "file_id": "F9"},
+    )
+    assert r.resolve(s) is None
 
 
 def test_wiki_page_internal_route():
