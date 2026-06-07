@@ -35,9 +35,13 @@ class TestSettings:
         assert hasattr(settings, "jina_api_key")
         assert hasattr(settings, "tavily_api_key")
 
-    def test_public_bot_base_empty_by_default(self):
+    def test_public_bot_base_empty_when_unset(self, monkeypatch):
         from beever_atlas.infra.config import Settings
 
+        # Force-empty via the env source (which outranks the dotenv source) so a
+        # developer's local .env PUBLIC_BOT_URL=<live tunnel> can't leak in. This
+        # exercises the empty/unconfigured branch of public_bot_base.
+        monkeypatch.setenv("PUBLIC_BOT_URL", "")
         assert Settings().public_bot_base == ""
 
     def test_public_bot_base_strips_trailing_slash(self, monkeypatch):
@@ -73,7 +77,9 @@ class TestConnectivityEndpoint:
         import beever_atlas.api.config as cfg
         from beever_atlas.infra.config import Settings
 
-        monkeypatch.delenv("PUBLIC_BOT_URL", raising=False)
+        # Force-empty via the env source (outranks dotenv) so a developer's local
+        # .env PUBLIC_BOT_URL can't leak in and falsely mark this configured.
+        monkeypatch.setenv("PUBLIC_BOT_URL", "")
         monkeypatch.setattr(cfg, "get_settings", Settings)
         result = await cfg.get_connectivity()
         assert result["configured"] is False
