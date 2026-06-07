@@ -23,6 +23,7 @@ import type { AskResult } from "./types.js";
 import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
+import { DiscordGatewaySupervisor } from "./discord-gateway.js";
 
 import { WebhookBuffer } from "./webhook-buffer.js";
 import { validateEnv } from "./validate-env.js";
@@ -657,7 +658,7 @@ export async function lazySyncIfNeeded(chatManager: ChatManager): Promise<boolea
 
 // ── HTTP server for webhooks ────────────────────────────────────────────────
 
-function startServer(chatManager: ChatManager): void {
+function startServer(chatManager: ChatManager, discordGateway?: DiscordGatewaySupervisor): void {
   const handleBridge = registerBridgeRoutes(chatManager, () => lazySyncIfNeeded(chatManager));
   const webhookBuffer = new WebhookBuffer(chatManager);
 
@@ -785,6 +786,7 @@ function startServer(chatManager: ChatManager): void {
       backgroundSyncTimer = null;
     }
     chatManager.stopAdapterRecycle();
+    discordGateway?.stop();
     server.close();
     const bot = chatManager.getCurrentBot();
     if (bot) {
@@ -1080,7 +1082,18 @@ async function main(): Promise<void> {
   // adapters are registered.
   chatManager.onRebuildComplete(warmTeamsAdapters);
 
-  startServer(chatManager);
+  // Discord delivers plain channel messages — including ordinary @mentions —
+  // only over a Gateway WebSocket that the host must keep alive (Slack uses
+  // webhooks, Mattermost its own ws). Run a Discord-scoped keep-alive
+  // supervisor: it forwards Gateway events to the bot's own per-connection
+  // webhook and is a no-op when no Discord connection is registered, so other
+  // platforms are unaffected. Re-sync after every rebuild/recycle because those
+  // replace adapter instances the in-flight listeners are bound to.
+  const discordGateway = new DiscordGatewaySupervisor(chatManager, PORT);
+  discordGateway.sync();
+  chatManager.onRebuildComplete(() => discordGateway.sync());
+
+  startServer(chatManager, discordGateway);
   console.log("Bot service ready");
 }
 
