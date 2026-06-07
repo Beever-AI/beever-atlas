@@ -517,11 +517,14 @@ describe("ChatManager — scheduleAdapterRecycle()", () => {
     });
 
     cm.scheduleAdapterRecycle(10);
-    await new Promise((r) => setTimeout(r, 200));
+    // Generous window (~50 intervals) so a loaded CI runner whose event loop
+    // delays setInterval ticks still clears the ≥5 threshold — 200ms was tight
+    // enough to flake when only 4 ticks fired in time.
+    await new Promise((r) => setTimeout(r, 500));
     cm.stopAdapterRecycle();
 
     // Without reset, attempts would max out at 3-4 before the breaker fires.
-    // With reset, we expect many more attempts in 200 ms × 10 ms interval.
+    // With reset, we expect many more attempts over the window × 10 ms interval.
     assert.ok(attempts >= 5, `expected ≥5 attempts (counter reset on success), got ${attempts}`);
   });
 });
