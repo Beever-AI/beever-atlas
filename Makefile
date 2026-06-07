@@ -1,4 +1,4 @@
-.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures reembed-all reembed-resume reembed-dry-run tunnel
+.PHONY: install test lint dev stop docker-up docker-down clean demo demo-regenerate-fixtures reembed-all reembed-resume reembed-dry-run tunnel tunnel-up tunnel-install tunnel-uninstall
 
 install:
 	uv sync --extra dev
@@ -60,6 +60,27 @@ tunnel:
 		echo "Starting ngrok on an EPHEMERAL url → :3001 (set NGROK_DOMAIN for a stable one)"; \
 		ngrok http 3001; \
 	fi
+
+# Reboot-proof tunnel for inbound platforms (Slack Events API, Teams): start the
+# tunnel, write PUBLIC_BOT_URL into .env, restart the backend, and re-point the
+# Teams messaging endpoint — then hold the tunnel open. Config via .env
+# (NGROK_DOMAIN, TEAMS_APP_ID) or flags. `make tunnel-up DRY_RUN=1` to preview.
+tunnel-up:
+	uv run python -m scripts.tunnel_up $(if $(NGROK_DOMAIN),--domain $(NGROK_DOMAIN),) $(if $(DRY_RUN),--dry-run,)
+
+# Install/uninstall the macOS launchd agent so the tunnel comes up at login and
+# survives reboots (re-syncs PUBLIC_BOT_URL + Teams endpoint each start).
+tunnel-install:
+	@sed -e "s#__REPO_DIR__#$(CURDIR)#g" -e "s#__UV__#$$(command -v uv)#g" \
+		deploy/launchd/ai.beever.tunnel.plist.template \
+		> $(HOME)/Library/LaunchAgents/ai.beever.tunnel.plist
+	launchctl load -w $(HOME)/Library/LaunchAgents/ai.beever.tunnel.plist
+	@echo "Installed launchd agent. Logs: /tmp/beever-tunnel.{out,err}.log"
+
+tunnel-uninstall:
+	-launchctl unload -w $(HOME)/Library/LaunchAgents/ai.beever.tunnel.plist
+	-rm -f $(HOME)/Library/LaunchAgents/ai.beever.tunnel.plist
+	@echo "Removed launchd tunnel agent."
 
 demo:
 	docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up --build

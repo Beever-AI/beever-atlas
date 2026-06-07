@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd agent that keeps the public tunnel up across reboots so inbound
+  webhook platforms (Slack Events API, Microsoft Teams) keep working without
+  manual re-pointing. Discord / Mattermost / Slack Socket Mode do not need this.
+
+  Install (replace the placeholders with absolute paths):
+    sed -e "s#__REPO_DIR__#$(pwd)#g" -e "s#__UV__#$(command -v uv)#g" \
+      deploy/launchd/ai.beever.tunnel.plist.template \
+      > ~/Library/LaunchAgents/ai.beever.tunnel.plist
+    launchctl load -w ~/Library/LaunchAgents/ai.beever.tunnel.plist
+
+  Stop / uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/ai.beever.tunnel.plist
+
+  Logs: /tmp/beever-tunnel.out.log and /tmp/beever-tunnel.err.log
+
+  Tip: reserve a free static ngrok domain (dashboard.ngrok.com/domains) and put
+  NGROK_DOMAIN (+ TEAMS_APP_ID) in the repo .env so the URL never changes and the
+  Teams endpoint is configured once.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.beever.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__UV__</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>scripts.tunnel_up</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_DIR__</string>
+
+    <!-- Start at login and keep the tunnel alive; if ngrok dies, tunnel_up exits
+         and launchd restarts it, which re-syncs PUBLIC_BOT_URL + Teams endpoint. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Back off restarts so a misconfig doesn't hot-loop. -->
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/beever-tunnel.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/beever-tunnel.err.log</string>
+</dict>
+</plist>
