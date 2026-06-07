@@ -36,6 +36,15 @@ class CreateConnectionRequest(BaseModel):
     credentials: dict[str, str]
 
 
+class UpdateCredentialsRequest(BaseModel):
+    """Partial credential update. Only the provided keys are merged over the
+    stored credentials (e.g. add ``app_token`` to switch Slack to Socket Mode);
+    omitted keys are preserved. Empty-string values are ignored, never stored,
+    so a blank field in the UI means "keep existing" rather than "clear"."""
+
+    credentials: dict[str, str]
+
+
 class UpdateChannelsRequest(BaseModel):
     selected_channels: list[str]
 
@@ -431,6 +440,70 @@ async def _refresh_proxy_hosts(stores) -> None:
         await refresh_runtime_proxy_hosts(stores)
     except Exception:
         logger.exception("connections: failed to refresh proxy host allowlist (non-fatal)")
+
+
+@router.patch("/api/connections/{connection_id}/credentials", response_model=ConnectionResponse)
+async def update_connection_credentials(
+    connection_id: str,
+    body: UpdateCredentialsRequest,
+    principal: Principal = Depends(require_user),
+) -> ConnectionResponse:
+    """Rotate/extend a connection's credentials IN PLACE — no delete, no cascade.
+
+    The only non-destructive way to change credentials: deleting a connection
+    cascade-purges its sole-owned channels' data. This merges the provided
+    non-empty keys over the stored credentials (e.g. add ``app_token`` to flip
+    Slack to Socket Mode), re-registers the adapter so the running bot rebuilds
+    with the change, and persists — leaving channels and synced data intact.
+    """
+    from beever_atlas.capabilities.errors import ConnectionAccessDenied
+    from beever_atlas.infra.channel_access import assert_connection_owned
+
+    stores = get_stores()
+    conn = await stores.platform.get_connection(connection_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
+
+    # Owner-gated, mirroring delete_connection: only the owner may rotate creds.
+    # (Single-tenant fallback admits legacy/un-owned rows.)
+    try:
+        await assert_connection_owned(principal, connection_id)
+    except ConnectionAccessDenied as e:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this connection."
+        ) from e
+
+    # Merge only non-empty provided keys; a blank field means "keep existing".
+    incoming = {k: v for k, v in body.credentials.items() if isinstance(v, str) and v.strip()}
+    if not incoming:
+        raise HTTPException(status_code=422, detail="No credential values provided to update.")
+
+    try:
+        merged = stores.platform.decrypt_connection_credentials(conn)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail="Could not read existing credentials for this connection."
+        ) from e
+    merged.update(incoming)
+
+    # Re-register so the running bot rebuilds the adapter with the new creds
+    # (raises HTTPException on bridge failure — surfaced to the UI).
+    await _register_adapter(conn.platform, merged, connection_id=connection_id)
+
+    updated = await stores.platform.update_connection(
+        connection_id, credentials=merged, status="connected"
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Connection {connection_id!r} not found")
+
+    logger.info(
+        "Updated credentials for connection id=%s platform=%s (keys=%s)",
+        connection_id,
+        conn.platform,
+        sorted(incoming.keys()),
+    )
+    await _refresh_proxy_hosts(stores)
+    return _to_response(updated)
 
 
 @router.delete("/api/connections/{connection_id}", status_code=204)
