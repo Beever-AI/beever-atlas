@@ -268,6 +268,24 @@ class PersisterAgent(BaseAgent):
                 native_id = native_message_id(source_msg)
                 if native_id:
                     fact_data["source_message_id"] = native_id
+                # Stamp platform + guild_id from the matched source message so
+                # the permalink resolver can pick the right URL template and
+                # (for Discord) build a clickable message link. Both fields
+                # ride on the preprocessed message dict (copied verbatim from
+                # the NormalizedMessage via ``vars()`` upstream).
+                #
+                # REGRESSION GUARD: only override ``platform`` when the source
+                # actually carries one. Slack messages set platform="slack"
+                # here and keep resolving via the Slack archives template; if
+                # the source had no platform we leave fact_data's existing
+                # value (AtomicFact's "slack" default) untouched so nothing
+                # that worked before breaks.
+                src_platform = source_msg.get("platform")
+                if src_platform:
+                    fact_data["platform"] = src_platform
+                src_guild_id = source_msg.get("guild_id")
+                if src_guild_id:
+                    fact_data["guild_id"] = src_guild_id
                 media_urls = source_msg.get("source_media_urls") or []
                 if media_urls:
                     logger.info(

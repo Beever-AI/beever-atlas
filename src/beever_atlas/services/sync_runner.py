@@ -61,6 +61,10 @@ def _normalized_to_channel_messages(messages: list[Any]) -> list[ChannelMessage]
                 ChannelMessage(
                     source_id=source_id,
                     channel_id=str(_read(m, "channel_id") or ""),
+                    # Discord-only guild id; empty for other platforms. Mirrors
+                    # how ``platform``/``source_id`` are read above so the
+                    # permalink resolver downstream can build Discord URLs.
+                    guild_id=str(_read(m, "guild_id") or ""),
                     message_id=message_id,
                     channel_name=str(_read(m, "channel_name") or ""),
                     timestamp=timestamp,

@@ -182,6 +182,10 @@ class ChatBridgeAdapter(BaseAdapter):
             raw_metadata=raw,
             author_name=raw.get("author_name", ""),
             author_image=raw.get("author_image", ""),
+            # Discord-only: present on the bridge JSON for Discord messages,
+            # absent (→ "") for other platforms. Carried through so the fact
+            # store can build clickable Discord permalinks.
+            guild_id=raw.get("guild_id", ""),
         )
 
     async def fetch_history(

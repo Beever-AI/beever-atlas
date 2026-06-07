@@ -219,6 +219,9 @@ async def _search_channel_facts_impl(
                     "channel_id": fact.channel_id,
                     "channel_name": await resolve_channel_name(fact.channel_id),
                     "platform": fact.platform,
+                    # Discord-only guild id for clickable permalinks; empty
+                    # for other platforms.
+                    "guild_id": fact.guild_id,
                     "message_ts": fact.message_ts,
                     "timestamp": _format_timestamp(fact.message_ts),
                     "permalink": fact.source_message_id,
@@ -414,6 +417,8 @@ async def _get_recent_activity_impl(
                                 if hasattr(fact, "channel_id") and fact.channel_id
                                 else "",
                                 "platform": getattr(fact, "platform", "slack"),
+                                # Discord-only guild id for clickable permalinks.
+                                "guild_id": getattr(fact, "guild_id", ""),
                                 "message_ts": fact.message_ts,
                                 "timestamp": _format_timestamp(fact.message_ts),
                                 "importance": fact.importance,

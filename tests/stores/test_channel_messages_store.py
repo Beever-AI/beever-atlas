@@ -425,6 +425,69 @@ async def test_find_channel_message_by_message_id_returns_none_when_missing() ->
     assert doc is None
 
 
+async def test_upsert_persists_guild_id_for_discord_permalinks() -> None:
+    """Discord ``guild_id`` must survive the upsert→read round-trip so the
+    decoupled ExtractionWorker can rebuild it and the citation layer can build
+    a ``discord.com/channels/{guild}/{channel}/{message}`` permalink. It lives
+    on ``$setOnInsert`` (immutable provenance). Regression guard for the
+    permalink fix — the round-trip is the one seam the write must not drop."""
+    store, _ = _store_with_fake()
+    msg = ChannelMessage(
+        source_id="discord",
+        channel_id="C123",
+        message_id="m_guild",
+        timestamp=datetime(2026, 4, 29, 10, 0, tzinfo=UTC),
+        author="alice",
+        content="hi",
+        guild_id="G999",
+    )
+    await store.upsert_channel_messages([msg])
+    doc = await store.find_channel_message_by_message_id(channel_id="C123", message_id="m_guild")
+    assert doc is not None
+    assert doc.get("guild_id") == "G999"
+
+
+async def test_upsert_guild_id_defaults_empty_for_non_discord() -> None:
+    """Non-Discord messages persist an empty guild_id (no permalink template
+    reads it) — so the field is inert for Slack/Mattermost/Teams."""
+    store, _ = _store_with_fake()
+    await store.upsert_channel_messages([_msg(message_id="m_slack")])
+    doc = await store.find_channel_message_by_message_id(channel_id="C123", message_id="m_slack")
+    assert doc is not None
+    assert doc.get("guild_id", "") == ""
+
+
+async def test_resync_backfills_guild_id_onto_existing_row() -> None:
+    """A row stored before guild_id existed must gain it on the next sync —
+    hence guild_id lives in $set, not $setOnInsert. Without this, existing
+    channels would never get clickable Discord permalinks."""
+    store, _ = _store_with_fake()
+    # First sync: a Discord message whose guild_id wasn't captured yet.
+    before = ChannelMessage(
+        source_id="discord",
+        channel_id="C123",
+        message_id="m_bf",
+        timestamp=datetime(2026, 4, 29, 10, 0, tzinfo=UTC),
+        author="alice",
+        content="hi",
+    )
+    await store.upsert_channel_messages([before])
+    # Re-sync: same message, now carrying the guild_id.
+    after = ChannelMessage(
+        source_id="discord",
+        channel_id="C123",
+        message_id="m_bf",
+        timestamp=datetime(2026, 4, 29, 10, 0, tzinfo=UTC),
+        author="alice",
+        content="hi",
+        guild_id="G999",
+    )
+    await store.upsert_channel_messages([after])
+    doc = await store.find_channel_message_by_message_id(channel_id="C123", message_id="m_bf")
+    assert doc is not None
+    assert doc.get("guild_id") == "G999"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # State-machine validation
 # ─────────────────────────────────────────────────────────────────────────────

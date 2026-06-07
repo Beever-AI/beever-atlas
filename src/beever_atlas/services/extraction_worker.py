@@ -97,6 +97,10 @@ def _doc_to_normalized_message(doc: dict[str, Any]) -> NormalizedMessage | None:
             raw_metadata=dict(doc.get("raw_metadata") or {}),
             author_name=str(doc.get("author_name") or ""),
             author_image=str(doc.get("author_image") or ""),
+            # Discord-only guild id persisted on the channel_messages row;
+            # carried back so it survives into preprocessed_messages and the
+            # persister can stamp it onto the fact for permalink construction.
+            guild_id=str(doc.get("guild_id") or ""),
         )
     except Exception as exc:  # noqa: BLE001 — defensive: skip the bad row
         logger.warning(

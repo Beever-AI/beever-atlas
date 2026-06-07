@@ -48,6 +48,11 @@ export interface NormalizedMessage {
   is_bot: boolean;
   subtype: string | null;
   links: Array<{ url: string; title?: string; description?: string; imageUrl?: string; siteName?: string }>;
+  /** Discord-only: the guild (server) id that owns this message's channel.
+   *  Used by the backend to build clickable Discord permalinks
+   *  (https://discord.com/channels/{guild_id}/{channel_id}/{message_id}).
+   *  Omitted for Slack/Teams/Mattermost/Telegram. */
+  guild_id?: string;
 }
 
 export interface NormalizedChannel {
@@ -61,6 +66,9 @@ export interface NormalizedChannel {
   /** Slack workspace domain (subdomain of *.slack.com), used by the backend to
    *  build clickable citation permalinks. Set only for Slack; omitted otherwise. */
   workspace_domain?: string | null;
+  /** Discord-only: the guild (server) id that owns this channel. Used by the
+   *  backend to build clickable Discord permalinks. Omitted for other platforms. */
+  guild_id?: string;
 }
 
 // ── Platform Bridge interface ────────────────────────────────────────────────
@@ -1015,6 +1023,8 @@ class DiscordBridge implements PlatformBridge {
                 member_count: ch.member_count ?? null,
                 topic: ch.topic ?? null,
                 purpose: null,
+                // Discord-only: guild id for clickable message permalinks.
+                guild_id: guild.id,
               });
             }
           }
@@ -1049,6 +1059,8 @@ class DiscordBridge implements PlatformBridge {
       member_count: ch.member_count ?? null,
       topic: ch.topic ?? null,
       purpose: null,
+      // Discord-only: guild id for clickable message permalinks.
+      guild_id: ch.guild_id ?? undefined,
     };
   }
 
@@ -1074,6 +1086,9 @@ class DiscordBridge implements PlatformBridge {
         platform: "discord",
         channel_id: channelId,
         channel_name: ch.name || "",
+        // Discord-only: guild id from the channel object the backend uses
+        // to build clickable message permalinks.
+        guild_id: ch.guild_id ?? undefined,
         message_id: m.id,
         timestamp: m.timestamp || new Date().toISOString(),
         thread_id: m.message_reference?.message_id ?? null,

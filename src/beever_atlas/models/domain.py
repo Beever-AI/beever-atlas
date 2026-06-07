@@ -41,6 +41,12 @@ class AtomicFact(BaseModel):
     cluster_id: str | None = None
     channel_id: str = ""
     platform: str = "slack"
+    guild_id: str = ""
+    """Discord-only: the guild (server) id, stamped by the persister from the
+    matched source message so the permalink resolver can build a clickable
+    Discord message URL. Empty for non-Discord platforms (their URL templates
+    do not need it). ``platform`` keeps its "slack" default; the persister
+    overrides it explicitly only when the source message carries a platform."""
     author_id: str = ""
     author_name: str = ""
     message_ts: str = ""

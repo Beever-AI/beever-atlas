@@ -130,6 +130,14 @@ class ChannelMessage(BaseModel):
     channel_id: str
     message_id: str
 
+    # ---- platform provenance (Discord permalinks) -------------------------
+    guild_id: str = ""
+    """Discord-only: the guild (server) id that owns this message's channel.
+    Threaded from the bridge → sync → fact so the permalink resolver can build
+    ``https://discord.com/channels/{guild_id}/{channel_id}/{message_id}``.
+    Empty string for Slack/Teams/Mattermost/Telegram (those URL templates do
+    not need it)."""
+
     # ---- channel display (for UI label parity in dual-read path) ----------
     channel_name: str = ""
 

@@ -1724,6 +1724,13 @@ class MongoDBStore:
                     "is_bot",
                     "links",
                     "raw_metadata",
+                    # Discord guild id — needed to build
+                    # discord.com/channels/{guild}/{channel}/{message} citation
+                    # permalinks. Constant per message, but kept in $set (not
+                    # $setOnInsert) so a re-sync BACKFILLS it onto rows that
+                    # were stored before this field existed. Empty for
+                    # non-Discord platforms.
+                    "guild_id",
                 )
                 if k in doc
             }

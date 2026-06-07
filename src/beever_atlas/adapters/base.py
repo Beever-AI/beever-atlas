@@ -26,6 +26,10 @@ class NormalizedMessage:
     raw_metadata: dict[str, Any] = field(default_factory=dict)
     author_name: str = ""
     author_image: str = ""
+    # Discord-only: the guild (server) id that owns this message's channel.
+    # Threaded through to the fact store so the permalink resolver can build a
+    # clickable Discord message URL. Empty for other platforms.
+    guild_id: str = ""
 
 
 @dataclass

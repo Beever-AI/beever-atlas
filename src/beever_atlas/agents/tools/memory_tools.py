@@ -208,6 +208,9 @@ async def search_channel_facts(
                     "channel_id": fact.channel_id,
                     "channel_name": await resolve_channel_name(fact.channel_id),
                     "platform": fact.platform,
+                    # Discord-only guild id; lets _extract_native build a
+                    # clickable Discord permalink. Empty for other platforms.
+                    "guild_id": fact.guild_id,
                     "message_ts": fact.message_ts,
                     "timestamp": _format_timestamp(fact.message_ts),
                     "permalink": fact.source_message_id,
@@ -392,6 +395,8 @@ async def get_recent_activity(
                                 if hasattr(fact, "channel_id") and fact.channel_id
                                 else "",
                                 "platform": getattr(fact, "platform", "slack"),
+                                # Discord-only guild id for clickable permalinks.
+                                "guild_id": getattr(fact, "guild_id", ""),
                                 "message_ts": fact.message_ts,
                                 "timestamp": _format_timestamp(fact.message_ts),
                                 # Platform-native message id (Discord/Teams
