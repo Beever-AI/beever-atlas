@@ -15,6 +15,8 @@ import { PlatformCard } from "@/components/settings/PlatformCard";
 import { ConnectionWizard } from "@/components/settings/ConnectionWizard";
 import { FileImportWizard } from "@/components/settings/FileImportWizard";
 import { ManageChannelsDialog } from "@/components/settings/ManageChannelsDialog";
+import { EditCredentialsDialog } from "@/components/settings/EditCredentialsDialog";
+import { ConfirmRemoveDialog } from "@/components/settings/ConfirmRemoveDialog";
 import type { PlatformConnection } from "@/lib/types";
 
 type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
@@ -31,6 +33,7 @@ export type SettingsOutletContext = {
   onAdd: () => void;
   onDisconnect: (c: PlatformConnection) => void;
   onManage: (c: PlatformConnection) => void;
+  onEdit: (c: PlatformConnection) => void;
 };
 
 function SlackIcon({ className }: { className?: string }) {
@@ -104,16 +107,15 @@ export function SettingsPage() {
   const [showFileImport, setShowFileImport] = useState(false);
   const [managingConnection, setManagingConnection] = useState<PlatformConnection | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [removingConnection, setRemovingConnection] = useState<PlatformConnection | null>(null);
+  const [editingConnection, setEditingConnection] = useState<PlatformConnection | null>(null);
 
-  async function handleDisconnect(connection: PlatformConnection) {
-    if (!confirm(`Disconnect "${connection.display_name || connection.platform}"? This cannot be undone.`)) return;
-    try {
-      await remove(connection.id);
-      refetch();
-      window.dispatchEvent(new Event("connections-changed"));
-    } catch {
-      // error shown by hook
-    }
+  function handleDisconnect(connection: PlatformConnection) {
+    setRemovingConnection(connection);
+  }
+
+  function handleEdit(connection: PlatformConnection) {
+    setEditingConnection(connection);
   }
 
   function handleWizardComplete(_connection: PlatformConnection) {
@@ -140,6 +142,7 @@ export function SettingsPage() {
     onAdd: () => setShowPicker(true),
     onDisconnect: handleDisconnect,
     onManage: setManagingConnection,
+    onEdit: handleEdit,
   };
 
   return (
@@ -259,6 +262,36 @@ export function SettingsPage() {
           onClose={handleManageComplete}
         />
       )}
+
+      {removingConnection && (
+        <ConfirmRemoveDialog
+          connection={removingConnection}
+          onCancel={() => setRemovingConnection(null)}
+          onConfirm={async (cascade) => {
+            try {
+              await remove(removingConnection.id, cascade);
+              refetch();
+              window.dispatchEvent(new Event("connections-changed"));
+            } catch {
+              // error shown by hook
+            } finally {
+              setRemovingConnection(null);
+            }
+          }}
+        />
+      )}
+
+      {editingConnection && (
+        <EditCredentialsDialog
+          connection={editingConnection}
+          onClose={() => setEditingConnection(null)}
+          onSaved={() => {
+            setEditingConnection(null);
+            refetch();
+            window.dispatchEvent(new Event("connections-changed"));
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -266,7 +299,7 @@ export function SettingsPage() {
 /** The Integrations tab content — a route element under ``/settings/integrations``.
  *  Pulls connection state + handlers from the parent ``SettingsPage`` via outlet context. */
 export function IntegrationsTab() {
-  const { loading, error, connections, onAdd, onDisconnect, onManage } =
+  const { loading, error, connections, onAdd, onDisconnect, onManage, onEdit } =
     useOutletContext<SettingsOutletContext>();
   return (
     <>
@@ -312,6 +345,7 @@ export function IntegrationsTab() {
               connection={connection}
               onDisconnect={() => onDisconnect(connection)}
               onManage={() => onManage(connection)}
+              onEdit={() => onEdit(connection)}
             />
           ))}
         </div>

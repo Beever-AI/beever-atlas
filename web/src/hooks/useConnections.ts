@@ -62,7 +62,7 @@ export function useCreateConnection(): UseCreateConnectionReturn {
 }
 
 export interface UseDeleteConnectionReturn {
-  remove: (id: string) => Promise<void>;
+  remove: (id: string, cascade?: boolean) => Promise<void>;
   loading: boolean;
   error: string | null;
 }
@@ -71,11 +71,11 @@ export function useDeleteConnection(): UseDeleteConnectionReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const remove = useCallback(async (id: string): Promise<void> => {
+  const remove = useCallback(async (id: string, cascade?: boolean): Promise<void> => {
     setLoading(true);
     setError(null);
     try {
-      await api.delete<void>(`/api/connections/${id}`);
+      await api.delete<void>(`/api/connections/${id}?cascade=${cascade !== false}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to delete connection";
       setError(msg);
@@ -86,6 +86,34 @@ export function useDeleteConnection(): UseDeleteConnectionReturn {
   }, []);
 
   return { remove, loading, error };
+}
+
+export interface UseUpdateCredentialsReturn {
+  update: (id: string, credentials: Record<string, string>) => Promise<PlatformConnection>;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useUpdateCredentials(): UseUpdateCredentialsReturn {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const update = useCallback(async (id: string, credentials: Record<string, string>): Promise<PlatformConnection> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const connection = await api.patch<PlatformConnection>(`/api/connections/${id}/credentials`, { credentials });
+      return connection;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to update credentials";
+      setError(msg);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { update, loading, error };
 }
 
 export interface UseConnectionChannelsReturn {

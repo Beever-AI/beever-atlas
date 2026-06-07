@@ -7,7 +7,7 @@ import { useCreateConnection } from "@/hooks/useConnections";
 import { useConnectionChannels, useUpdateChannels } from "@/hooks/useConnections";
 import type { PlatformConnection } from "@/lib/types";
 
-type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
+export type Platform = "slack" | "discord" | "teams" | "telegram" | "mattermost";
 
 interface ConnectionWizardProps {
   platform: Platform;
@@ -95,7 +95,7 @@ const MATTERMOST_INSTRUCTIONS = [
   { text: "Add the bot user to any channels where it should read from. The bot will only receive events from channels it is a member of" },
 ];
 
-interface CredentialField {
+export interface CredentialField {
   key: string;
   label: string;
   placeholder: string;
@@ -131,7 +131,7 @@ function validateAadGuid(label: string) {
       : `${label} must look like xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`;
 }
 
-const CREDENTIAL_FIELDS: Record<Platform, CredentialField[]> = {
+export const CREDENTIAL_FIELDS: Record<Platform, CredentialField[]> = {
   slack: [
     { key: "bot_token", label: "Bot Token", placeholder: "xoxb-...", type: "password" },
     {

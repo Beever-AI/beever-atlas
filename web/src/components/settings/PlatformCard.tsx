@@ -1,4 +1,4 @@
-import { MessageSquare, XCircle, AlertCircle, Settings, Trash2, RefreshCw, MonitorSmartphone, Send, FileText } from "lucide-react";
+import { MessageSquare, XCircle, AlertCircle, Settings, Trash2, RefreshCw, MonitorSmartphone, Send, FileText, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { getPlatformBadgeStyle } from "@/lib/platform-badge";
@@ -8,6 +8,7 @@ interface PlatformCardProps {
   connection: PlatformConnection;
   onDisconnect: () => void;
   onManage: () => void;
+  onEdit: () => void;
 }
 
 function SlackIcon({ className }: { className?: string }) {
@@ -46,7 +47,7 @@ const PLATFORM_META: Record<
   file: { label: "Uploaded files (CSV / TSV / JSONL)", Icon: FileText },
 };
 
-export function PlatformCard({ connection, onDisconnect, onManage }: PlatformCardProps) {
+export function PlatformCard({ connection, onDisconnect, onManage, onEdit }: PlatformCardProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const meta = PLATFORM_META[connection.platform] ?? { label: connection.platform, Icon: MessageSquare };
@@ -120,6 +121,17 @@ export function PlatformCard({ connection, onDisconnect, onManage }: PlatformCar
             {!isEnv && (
               <button
                 type="button"
+                onClick={onEdit}
+                title="Edit credentials"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+                Edit credentials
+              </button>
+            )}
+            {!isEnv && (
+              <button
+                type="button"
                 onClick={onDisconnect}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               >
@@ -138,6 +150,16 @@ export function PlatformCard({ connection, onDisconnect, onManage }: PlatformCar
               <Settings className="w-4 h-4" />
               Manage Channels
             </button>
+            {!isEnv && (
+              <button
+                type="button"
+                onClick={onEdit}
+                title="Edit credentials"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+              </button>
+            )}
             {!isEnv && (
               <button
                 type="button"
