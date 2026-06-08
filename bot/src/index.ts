@@ -125,12 +125,12 @@ function registerHandlers(bot: Chat): void {
     // If the image-answerable override was the only reason we got here but no
     // image actually described (all skipped / no proxyFile), honour the original
     // text-only gate instead of answering a hollow default question.
-    if (!gotImages && decision !== "respond") {
-      if (decision === "prompt") {
-        await thread.post("Please ask me a question! For example: @beever what is our tech stack?");
-      }
+    const after = resolvePostExtraction(decision, gotImages);
+    if (after === "prompt") {
+      await thread.post("Please ask me a question! For example: @beever what is our tech stack?");
       return;
     }
+    if (after === "skip") return;
     // The backend requires a non-empty question; a bare image ping has none, so
     // ask a sensible default about the attached image.
     const finalQuestion = question.trim() || (gotImages ? "What is in this image?" : question);
@@ -442,6 +442,27 @@ export function decideMentionGate(input: {
   });
   if (input.hasImage && decision !== "respond") return "respond";
   return decision;
+}
+
+/**
+ * Recover the original text-only intent after image extraction.
+ *
+ * The image override (decideMentionGate) can turn a bare/quiet mention into
+ * "respond" purely because an image was attached. If extraction then yields
+ * NOTHING (all images skipped — no proxyFile, fetch failed, non-image), we must
+ * NOT answer a hollow default question; honour what the text alone warranted.
+ *
+ *  - images described  → "proceed" (answer about the image)
+ *  - no images, text warranted a reply → "proceed"
+ *  - no images, text was a bare mention → "prompt" (nudge)
+ *  - no images, text was an announcement/pleasantry → "skip" (stay quiet)
+ */
+export function resolvePostExtraction(
+  originalTextDecision: RespondDecision,
+  gotImages: boolean,
+): "proceed" | "prompt" | "skip" {
+  if (gotImages) return "proceed";
+  return originalTextDecision === "respond" ? "proceed" : originalTextDecision;
 }
 
 /** A safe per-connection byte fetcher (the bridge `proxyFile` contract). */

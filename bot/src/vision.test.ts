@@ -31,8 +31,13 @@ process.env.BOT_VISION_MAX_IMAGES = "2";
 process.env.BOT_VISION_MAX_BYTES = "1000";
 process.env.BRIDGE_API_KEY = "bridge-secret";
 
-const { extractImageAttachments, decideMentionGate, isImageAttachment, answerInThread } =
-  await import("./index.js");
+const {
+  extractImageAttachments,
+  decideMentionGate,
+  resolvePostExtraction,
+  isImageAttachment,
+  answerInThread,
+} = await import("./index.js");
 
 type ProxyFile = (url: string) => Promise<{ contentType: string; buffer: Buffer }>;
 
@@ -78,6 +83,24 @@ describe("decideMentionGate", () => {
       decideMentionGate({ text: "what is our stack?", broadcast: false, hasImage: false }),
       "respond",
     );
+  });
+});
+
+describe("resolvePostExtraction (gate recovery when images fail)", () => {
+  it("proceeds when at least one image was described", () => {
+    // Even if the text alone would have been a bare mention, a described image
+    // is a real answerable subject.
+    assert.strictEqual(resolvePostExtraction("prompt", true), "proceed");
+    assert.strictEqual(resolvePostExtraction("skip", true), "proceed");
+    assert.strictEqual(resolvePostExtraction("respond", true), "proceed");
+  });
+
+  it("falls back to the text-only intent when no image was described", () => {
+    // The image override turned these into "respond"; with zero images
+    // extracted we must honour what the text alone warranted.
+    assert.strictEqual(resolvePostExtraction("prompt", false), "prompt"); // bare @mention → nudge
+    assert.strictEqual(resolvePostExtraction("skip", false), "skip"); // announcement → stay quiet
+    assert.strictEqual(resolvePostExtraction("respond", false), "proceed"); // real question → answer
   });
 });
 
