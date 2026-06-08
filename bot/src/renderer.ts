@@ -93,6 +93,76 @@ export function enforceCap(text: string, cap: number): string {
 }
 
 /**
+ * Make `##`/`###` headings and bullet lists render as real blocks on every
+ * platform.
+ *
+ * The QA model sometimes glues a heading or list onto the SAME line as the
+ * preceding prose — `…persistence. ## Overview …` or `…characteristics: * a`.
+ * Every chat platform's markdown parser (Slack mrkdwn, and the remark-gfm the
+ * SDK FormatConverter feeds Discord/Teams/Mattermost) only promotes an ATX
+ * heading / list item that is at the START of a line; a mid-line `##` renders
+ * as literal `##` text, producing the observed wall-of-text. (The web Ask UI is
+ * unaffected — it renders the persisted markdown with its own React renderer.)
+ *
+ * This pass: (1) breaks a heading/list glued mid-line onto its own line, then
+ * (2) guarantees a blank line before each heading and before the FIRST item of
+ * a list (never between items — that would split the list), and (3) collapses
+ * 3+ newlines to 2. Code-fenced blocks (```/~~~, e.g. Mermaid) are left
+ * untouched. Idempotent: already-clean markdown passes through unchanged.
+ */
+const _HEAD_RE = /^[ \t]*#{1,6}[ \t]+\S/;
+const _LIST_RE = /^[ \t]*([-*+]|\d+\.)[ \t]+/;
+const _FENCE_RE = /^[ \t]*(```|~~~)/;
+
+export function normalizeBlocks(md: string): string {
+  // Pass 1 — glue-break: split a heading/list off the preceding text. Headings
+  // break after any non-space char; lists only after sentence-ending
+  // punctuation (`.` `:` `]`) so a prose dash ("A - B") is never mis-split.
+  const expanded: string[] = [];
+  let inFence = false;
+  for (const line of md.split("\n")) {
+    if (_FENCE_RE.test(line)) {
+      expanded.push(line);
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      expanded.push(line);
+      continue;
+    }
+    const broken = line
+      .replace(/(\S)[ \t]+(#{1,6}[ \t]+)/g, "$1\n$2")
+      .replace(/([.:\]])[ \t]+([-*+][ \t]+\S)/g, "$1\n$2");
+    for (const seg of broken.split("\n")) expanded.push(seg);
+  }
+
+  // Pass 2 — block separation: a blank line before each heading / first list item.
+  const out: string[] = [];
+  inFence = false;
+  for (const line of expanded) {
+    if (_FENCE_RE.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+    const prev = out.length ? out[out.length - 1] : "";
+    const prevNonBlank = prev.trim() !== "";
+    if (_HEAD_RE.test(line) && prevNonBlank) {
+      out.push("");
+    } else if (_LIST_RE.test(line) && prevNonBlank && !_LIST_RE.test(prev)) {
+      out.push("");
+    }
+    out.push(line);
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+/**
  * Defense-in-depth: citation fields come from the backend but pass through
  * channel-message content, wiki titles, and user display names. Collapse
  * control chars / newlines (so a crafted value can't forge an extra
@@ -444,8 +514,10 @@ export function renderResponse(result: AskResult, platform: string): string {
 
   const cap = capFor(plat);
 
-  // Only the ANSWER body may be truncated under cap pressure.
-  const answerBody = (result.answer || "").trimEnd();
+  // Only the ANSWER body may be truncated under cap pressure. normalizeBlocks
+  // breaks mid-line-glued `##` headings / lists onto their own line so they
+  // render as real blocks on every platform (else they show as literal `##`).
+  const answerBody = normalizeBlocks(result.answer || "").trimEnd();
 
   // Trust caveats — the web-only provenance note and the low-confidence
   // "verify against the sources" warning — sit right under the answer AND must

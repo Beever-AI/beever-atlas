@@ -9,9 +9,51 @@ import {
   enforceCap,
   relativeTime,
   ageInDays,
+  normalizeBlocks,
   CHAR_CAP,
 } from "./renderer.js";
 import type { AskResult } from "./types.js";
+
+describe("normalizeBlocks", () => {
+  it("breaks a heading glued mid-line onto its own block", () => {
+    const out = normalizeBlocks("...data persistence. ## Beever Atlas Overview\nbody");
+    assert.ok(out.includes("persistence.\n\n## Beever Atlas Overview"), out);
+    // The heading is now at line-start (a chat platform will promote it).
+    assert.ok(/\n## Beever Atlas Overview/.test(out));
+  });
+
+  it("breaks a list item glued after sentence-ending punctuation", () => {
+    const out = normalizeBlocks("memory [4]. * Long-term Recall: enables recall");
+    assert.ok(out.includes("[4].\n\n* Long-term Recall"), out);
+  });
+
+  it("adds a blank line before a heading on a single newline, not between list items", () => {
+    const out = normalizeBlocks("prose\n## H\n- a\n- b");
+    assert.ok(out.includes("prose\n\n## H"), out);
+    // No blank line inserted between the two list items.
+    assert.ok(out.includes("- a\n- b"), out);
+  });
+
+  it("leaves already-clean markdown unchanged (idempotent)", () => {
+    const clean = "Intro.\n\n## Heading\n\n- a\n- b";
+    assert.strictEqual(normalizeBlocks(clean), clean);
+    assert.strictEqual(normalizeBlocks(normalizeBlocks(clean)), clean);
+  });
+
+  it("does not touch `#`/`-` inside a fenced code block (e.g. Mermaid)", () => {
+    const fenced = "text\n```mermaid\n## not a heading\n- not a list\n```\nafter";
+    assert.strictEqual(normalizeBlocks(fenced), fenced);
+  });
+
+  it("never mis-splits a prose dash (A - B)", () => {
+    const out = normalizeBlocks("the A - B tradeoff is real");
+    assert.strictEqual(out, "the A - B tradeoff is real");
+  });
+
+  it("collapses 3+ newlines to 2", () => {
+    assert.strictEqual(normalizeBlocks("a\n\n\n\nb"), "a\n\nb");
+  });
+});
 
 function result(overrides: Partial<AskResult> = {}): AskResult {
   return {
