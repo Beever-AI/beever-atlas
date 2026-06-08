@@ -47,6 +47,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      # Cold start (ADK init, store connections, migration shim) can exceed
+      # interval*retries on a small host. Without start_period the container is
+      # marked unhealthy mid-boot, which aborts `docker compose up` and leaves
+      # depends_on services (the bot) unstarted. Give boot up to 3 min before
+      # failures count.
+      start_period: 180s
 
   web:
     build:
