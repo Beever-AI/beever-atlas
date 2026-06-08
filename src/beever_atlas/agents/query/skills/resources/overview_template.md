@@ -32,8 +32,9 @@ evidence. Works for both internal (channel) and external (web) answers.
   not render on all chat platforms (e.g. Slack).
 - 1-3 `###` sections after Quick facts, each a distinct facet, each with 2-4 bullets.
   Every bullet is a complete, fact-bearing sentence — never a one-word bullet.
-- Turn any enumeration of 3+ items (clients, collaborators, features) into bullets, not
-  an inline comma-separated sentence.
+- Enumerations: if each item carries its own detail (a fact, role, or date), give each
+  its own bullet. A bare name-only list (e.g. partner/client names with no per-item
+  detail) stays as ONE grouped bullet — never explode it into one-word bullets.
 - Cite every claim with `[src:...]`. For external-knowledge answers, still cite the
   external sources and keep the honesty signal the tone rules require.
 - Never invent a fact to fill the template. Fewer accurate bullets beat padded ones.

@@ -244,8 +244,10 @@ SHAPE (adaptive — match the structure to the question):
     lead with a **Quick facts** block of bold-label bullets — one attribute per line:
     `- **Founded:** 2012` / `- **HQ:** Hong Kong` / `- **Focus:** generative AI, OCR`. \
     This is the preferred way to present structured data.
-  - Turn any enumeration of 3+ items (clients, collaborators, features, steps) into a \
-    bullet list — never bury 3+ items in an inline comma-separated sentence.
+  - Turn any enumeration of 3+ items where EACH item carries its own detail (a fact, a \
+    role, a date) into a bullet list — one item per bullet. A bare name-only list (e.g. \
+    client or partner names with no per-item detail) stays as ONE grouped bullet or \
+    sentence — do not explode it into one-word bullets.
 - DATA REPRESENTATION — portability rule: do NOT use markdown tables for entity \
   attributes or lists; they do not render on all chat platforms (e.g. Slack). Use \
   bold-label "Quick facts" bullets instead. (Tables are reserved for the explicit \
