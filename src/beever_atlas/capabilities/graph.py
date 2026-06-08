@@ -126,6 +126,45 @@ async def _search_relationships_impl(
         }
 
 
+async def _fact_based_timeline(channel_id: str, topic: str, limit: int = 8) -> list:
+    """Chronological timeline built from facts when the graph has no SUPERSEDES
+    chain. Lets "trace the decisions around X" answer from the topic's real
+    activity (approvals, updates, observations) instead of an empty state — the
+    decision-trace skill's documented fallback. Returns DecisionEvent-shaped
+    dicts (relationship ``"EVENT"`` since these are not formal supersessions)."""
+    from beever_atlas.capabilities.memory import _search_channel_facts_impl
+
+    facts = await _search_channel_facts_impl(channel_id, topic, limit=limit)
+
+    def _ts(f: dict) -> float:
+        try:
+            return float(f.get("message_ts") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    out: list = []
+    for f in sorted(facts, key=_ts):
+        text = (f.get("text") or "").strip()
+        if not text:
+            continue
+        out.append(
+            {
+                "entity": topic,
+                "superseded_by": "",
+                "superseded_by_id": None,
+                "relationship": "EVENT",
+                "confidence": float(f.get("confidence") or 0.5),
+                "context": text,
+                "position": len(out),
+                "text": text,
+                "decision_id": f"{channel_id}:{topic}:{f.get('fact_id') or len(out)}",
+                "channel_id": channel_id,
+                "topic": topic,
+            }
+        )
+    return out
+
+
 async def _trace_decision_history_impl(channel_id: str, topic: str) -> list:
     """Core implementation of decision-history trace (no access check)."""
     try:
@@ -172,6 +211,13 @@ async def _trace_decision_history_impl(channel_id: str, topic: str) -> list:
                     "topic": topic,
                 }
             )
+
+        if not timeline:
+            # No formal SUPERSEDES chain — fall back to a fact-based timeline so
+            # "trace the decisions around X" answers from the topic's real
+            # activity instead of an empty state. search_channel_facts is in the
+            # decision-trace skill's allowed_tools, so this stays within budget.
+            timeline = await _fact_based_timeline(channel_id, topic)
 
         if not timeline:
             return [{"_empty": True, "entity": topic, "reason": "no_edges"}]

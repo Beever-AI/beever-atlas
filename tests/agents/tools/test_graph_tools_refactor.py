@@ -305,6 +305,39 @@ async def test_find_experts_falls_back_to_fact_authorship():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_trace_decision_history_falls_back_to_fact_timeline():
+    """When the topic entity exists but has no SUPERSEDES chain, trace must
+    return a chronological fact-based timeline (not the empty sentinel), so
+    'trace the decisions around X' answers from real activity."""
+    graph = _graph_mock()
+    graph.fuzzy_match_entities.return_value = [("OSS launch", 0.9)]
+    graph.find_entity_by_name.return_value = _node("OSS launch", type_="Topic")
+    # Edges exist but NONE are SUPERSEDES.
+    graph.get_neighbors.return_value = _subgraph(
+        [_node("OSS launch")], [_edge("Alice", "OSS launch", "MENTIONED")]
+    )
+    facts = [
+        {"text": "Plan approved", "message_ts": "200", "confidence": 0.9, "fact_id": "f2"},
+        {"text": "Plan drafted", "message_ts": "100", "confidence": 0.8, "fact_id": "f1"},
+    ]
+    with (
+        _patch_stores(graph),
+        patch(
+            "beever_atlas.capabilities.memory._search_channel_facts_impl",
+            AsyncMock(return_value=facts),
+        ),
+    ):
+        result = await trace_decision_history("C1", "OSS launch")
+
+    assert isinstance(result, list)
+    assert all("_empty" not in e for e in result)
+    # Sorted oldest-first by message_ts.
+    assert [e["text"] for e in result] == ["Plan drafted", "Plan approved"]
+    assert result[0]["relationship"] == "EVENT"
+    assert result[0]["topic"] == "OSS launch"
+
+
 def test_public_tool_names_frozen():
     assert search_relationships.__name__ == "search_relationships"
     assert trace_decision_history.__name__ == "trace_decision_history"
