@@ -1099,9 +1099,7 @@ class Neo4jStore:
                 node_map[src.name] = src
                 node_map[tgt.name] = tgt
                 edges.append(
-                    self._rel_from_record(
-                        row["rel"], source_name=src.name, target_name=tgt.name
-                    )
+                    self._rel_from_record(row["rel"], source_name=src.name, target_name=tgt.name)
                 )
 
         return Subgraph(nodes=list(node_map.values()), edges=edges)

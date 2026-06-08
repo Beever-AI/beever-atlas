@@ -466,9 +466,7 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list:
             )
             person_names = {p.name for p in persons if getattr(p, "name", None)}
         except Exception:
-            logger.warning(
-                "find_experts: person roster lookup failed for channel=%s", channel_id
-            )
+            logger.warning("find_experts: person roster lookup failed for channel=%s", channel_id)
 
         topic_lower = topic.lower()
         person_scores: dict[str, dict[str, Any]] = {}
@@ -526,9 +524,7 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list:
                     bucket["expertise_score"] += cnt
                     bucket["fact_count"] += cnt
             except Exception:
-                logger.warning(
-                    "find_experts: fact-authorship fallback failed for topic=%s", topic
-                )
+                logger.warning("find_experts: fact-authorship fallback failed for topic=%s", topic)
 
         scored = sorted(
             person_scores.values(),
