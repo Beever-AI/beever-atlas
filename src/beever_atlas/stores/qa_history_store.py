@@ -28,6 +28,16 @@ _QA_HISTORY_PROPERTIES: list[tuple[str, DataType]] = [
     ("answer_kind", DataType.TEXT),
 ]
 
+# Content properties BM25 / hybrid may keyword-scan. MUST be passed explicitly on
+# every query.bm25()/query.hybrid() call: an omitted query_properties makes
+# Weaviate scan every searchable text prop, including ones added by the
+# ensure_schema missing-property migration after rows already existed (e.g.
+# answer_kind). Those rows lack an inverted ("wand") bucket for the new prop, so
+# the BM25 pass raises "could not find bucket for property ..." and the whole
+# search fails — silently returning empty QA-history recall. Restrict to the
+# question/answer text we actually want to match.
+_QA_BM25_QUERY_PROPERTIES: list[str] = ["question", "answer"]
+
 _REFUSAL_MARKERS = [
     "no record",
     "no information",
@@ -249,6 +259,7 @@ class QAHistoryStore:
             combined = channel_filter & not_deleted
             result = collection.query.hybrid(
                 query=query,
+                query_properties=_QA_BM25_QUERY_PROPERTIES,
                 vector=query_vector,
                 alpha=resolved_alpha,
                 limit=limit,
@@ -299,6 +310,7 @@ class QAHistoryStore:
             combined = channel_filter & not_deleted
             result = collection.query.bm25(
                 query=query,
+                query_properties=_QA_BM25_QUERY_PROPERTIES,
                 limit=limit,
                 filters=combined,
             )

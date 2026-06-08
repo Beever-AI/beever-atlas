@@ -59,6 +59,16 @@ async def test_true_hybrid_search_calls_weaviate_hybrid():
     assert call_kwargs["alpha"] == 0.6
     assert call_kwargs["limit"] == 10
 
+    # Regression guard: hybrid MUST scope BM25 to explicit content properties.
+    # Omitting query_properties makes Weaviate scan every searchable text prop
+    # (incl. late-added structured ids like guild_id whose existing rows have no
+    # inverted bucket) → "wand: could not find bucket for property guild_id" →
+    # the whole search throws and every fact retrieval silently returns empty.
+    qp = call_kwargs["query_properties"]
+    assert "memory_text" in qp
+    for structured in ("guild_id", "channel_id", "tier"):
+        assert structured not in qp, f"{structured} must not be BM25-scanned"
+
     # Result shape must match bm25_search / semantic_search consumers
     assert len(results) == 1
     assert "fact" in results[0]
@@ -148,6 +158,32 @@ async def test_true_hybrid_search_applies_channel_and_tier_filter():
     call_kwargs = fake_collection.query.hybrid.call_args.kwargs
     # filters must be set (non-None)
     assert call_kwargs.get("filters") is not None
+
+
+@pytest.mark.asyncio
+async def test_bm25_search_scopes_query_properties_excluding_guild_id():
+    """bm25_search must pass explicit query_properties so Weaviate never scans
+    structured-id props (guild_id/channel_id/tier). Without this, the BM25 WAND
+    pass fails with 'could not find bucket for property guild_id' on collections
+    where guild_id was schema-migrated in after rows already existed."""
+    from beever_atlas.stores.weaviate_store import WeaviateStore
+
+    store = WeaviateStore(url="http://localhost:8080")
+
+    fake_result = MagicMock()
+    fake_result.objects = []
+
+    fake_collection = MagicMock()
+    fake_collection.query.bm25.return_value = fake_result
+
+    with patch.object(store, "_collection", return_value=fake_collection):
+        await store.bm25_search(query="Alan Yang", channel_id="C123", tier="atomic")
+
+    fake_collection.query.bm25.assert_called_once()
+    qp = fake_collection.query.bm25.call_args.kwargs["query_properties"]
+    assert "memory_text" in qp
+    for structured in ("guild_id", "channel_id", "tier"):
+        assert structured not in qp, f"{structured} must not be BM25-scanned"
 
 
 # ---------------------------------------------------------------------------

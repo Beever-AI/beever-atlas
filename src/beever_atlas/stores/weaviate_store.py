@@ -85,6 +85,29 @@ class WeaviateStore:
             await asyncio.to_thread(self._client.close)
             self._client = None
 
+    # Properties that BM25 / hybrid keyword search is allowed to scan.
+    #
+    # MUST be set explicitly on every ``query.bm25()`` / ``query.hybrid()`` call.
+    # When ``query_properties`` is omitted, Weaviate BM25-scans EVERY searchable
+    # text property — including structured ids like ``guild_id`` that are added to
+    # the class schema AFTER objects were imported (the missing-property migration
+    # on connect adds the schema entry but does NOT build a per-object inverted
+    # ("wand") bucket for the existing rows). Weaviate then raises
+    # ``wand: could not find bucket for property guild_id`` and the WHOLE search
+    # fails, so every fact retrieval silently returns empty. Restricting the scan
+    # to the human-readable content fields both dodges that fault and is the
+    # correct intent — we only ever want to keyword-match the fact body / author /
+    # tags / summary, never structured ids (guild_id / channel_id / tier / *_ts).
+    # Every property listed here is verified to carry an inverted ("wand") bucket
+    # on existing rows; do NOT add a late-introduced property without backfilling.
+    _BM25_QUERY_PROPERTIES: list[str] = [
+        "memory_text",
+        "author_name",
+        "topic_tags",
+        "entity_tags",
+        "thread_context_summary",
+    ]
+
     # All expected properties for the MemoryFact collection.
     _EXPECTED_PROPERTIES: list[tuple[str, DataType]] = [
         ("memory_text", DataType.TEXT),
@@ -906,6 +929,7 @@ class WeaviateStore:
             combined = channel_filter & tier_filter
             result = collection.query.bm25(
                 query=query,
+                query_properties=self._BM25_QUERY_PROPERTIES,
                 limit=limit,
                 filters=combined,
             )
@@ -966,6 +990,7 @@ class WeaviateStore:
 
             result = collection.query.hybrid(
                 query=query_text,
+                query_properties=self._BM25_QUERY_PROPERTIES,
                 vector=query_vector,
                 alpha=resolved_alpha,
                 limit=limit,
