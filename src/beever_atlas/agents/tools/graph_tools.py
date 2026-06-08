@@ -453,6 +453,23 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list:
 
         rels = await graph.list_relationships(channel_id=channel_id, limit=500)
 
+        # Restrict candidate experts to PEOPLE. Without this, find_experts
+        # returned whatever sat on the other end of a topic-name match —
+        # concept/document/event nodes like "Copyright-assignment CLA", "AI
+        # Agents" or "FSF" surfaced as "experts on project". We score only
+        # entities typed Person. If the channel has no Person roster yet (older
+        # graphs), fall back to the previous any-endpoint behaviour.
+        person_names: set[str] = set()
+        try:
+            persons = await graph.list_entities(
+                channel_id=channel_id, entity_type="Person", limit=1000
+            )
+            person_names = {p.name for p in persons if getattr(p, "name", None)}
+        except Exception:
+            logger.warning(
+                "find_experts: person roster lookup failed for channel=%s", channel_id
+            )
+
         topic_lower = topic.lower()
         person_scores: dict[str, dict[str, Any]] = {}
 
@@ -460,19 +477,58 @@ async def find_experts(channel_id: str, topic: str, limit: int = 5) -> list:
             for endpoint in (rel.source, rel.target):
                 if endpoint and topic_lower in endpoint.lower():
                     other = rel.target if endpoint == rel.source else rel.source
-                    if other:
-                        bucket = person_scores.setdefault(
-                            other,
-                            {
-                                "handle": other,
-                                "expertise_score": 0,
-                                "fact_count": 0,
-                                "_topics": set(),
-                            },
-                        )
-                        bucket["expertise_score"] += 1
-                        bucket["fact_count"] += 1
-                        bucket["_topics"].add(endpoint)
+                    if not other or other == endpoint:
+                        continue
+                    # Only people count as experts (when the roster is known).
+                    if person_names and other not in person_names:
+                        continue
+                    bucket = person_scores.setdefault(
+                        other,
+                        {
+                            "handle": other,
+                            "expertise_score": 0,
+                            "fact_count": 0,
+                            "_topics": set(),
+                        },
+                    )
+                    bucket["expertise_score"] += 1
+                    bucket["fact_count"] += 1
+                    bucket["_topics"].add(endpoint)
+
+        # Augment with fact-authorship when the entity graph yields few people.
+        # The graph only links a person to a topic when an edge endpoint's NAME
+        # contains the topic, which is sparse — so "who contributes to X" often
+        # came back empty even though people clearly authored facts about X. Rank
+        # the humans who wrote facts matching the topic as a fallback/top-up.
+        if len(person_scores) < limit:
+            try:
+                from collections import Counter
+
+                from beever_atlas.capabilities.memory import _search_channel_facts_impl
+
+                _SKIP_AUTHORS = {"", "unknown", "system", "bot", "beever atlas", "assistant"}
+                facts = await _search_channel_facts_impl(channel_id, topic, limit=30)
+                author_counts: Counter[str] = Counter()
+                for f in facts:
+                    name = (f.get("author") or "").strip()
+                    if name and name.lower() not in _SKIP_AUTHORS:
+                        author_counts[name] += 1
+                for name, cnt in author_counts.most_common(limit * 2):
+                    bucket = person_scores.setdefault(
+                        name,
+                        {
+                            "handle": name,
+                            "expertise_score": 0,
+                            "fact_count": 0,
+                            "_topics": {topic},
+                        },
+                    )
+                    bucket["expertise_score"] += cnt
+                    bucket["fact_count"] += cnt
+            except Exception:
+                logger.warning(
+                    "find_experts: fact-authorship fallback failed for topic=%s", topic
+                )
 
         scored = sorted(
             person_scores.values(),

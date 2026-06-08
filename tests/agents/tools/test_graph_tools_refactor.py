@@ -224,12 +224,80 @@ async def test_find_experts_shape_matches_typeddict():
 async def test_find_experts_empty_returns_list_sentinel():
     graph = _graph_mock()
     graph.list_relationships.return_value = []
+    graph.list_entities.return_value = []
 
-    with _patch_stores(graph):
+    with (
+        _patch_stores(graph),
+        patch(
+            "beever_atlas.capabilities.memory._search_channel_facts_impl",
+            AsyncMock(return_value=[]),
+        ),
+    ):
         result = await find_experts("C1", "Nothing")
 
     assert isinstance(result, list)
     assert result == [{"_empty": True, "entity": "Nothing", "reason": "no_edges"}]
+
+
+def _handles(result) -> set[str]:
+    return {h.get("handle") or h.get("subject_id") for h in result if "_empty" not in h}
+
+
+@pytest.mark.asyncio
+async def test_find_experts_excludes_non_person_entities():
+    """A concept on the other end of a topic-name match must NOT be ranked as
+    an expert — only entities typed Person count. Guards the regression where
+    'who contributes to project' returned 'Copyright-assignment CLA' / 'FSF'."""
+    graph = _graph_mock()
+    graph.list_entities.return_value = [_node("alice"), _node("bob")]
+    graph.list_relationships.return_value = [
+        _edge("alice", "Project Apollo", "WORKS_ON"),
+        _edge("Copyright-assignment CLA", "Project Apollo", "RELATES_TO"),
+    ]
+
+    with (
+        _patch_stores(graph),
+        patch(
+            "beever_atlas.capabilities.memory._search_channel_facts_impl",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        result = await find_experts("C1", "Project", limit=5)
+
+    handles = _handles(result)
+    assert "alice" in handles
+    assert "Copyright-assignment CLA" not in handles
+
+
+@pytest.mark.asyncio
+async def test_find_experts_falls_back_to_fact_authorship():
+    """When the entity graph yields no people, rank the humans who authored
+    facts about the topic; skip system/bot authors."""
+    graph = _graph_mock()
+    graph.list_entities.return_value = []
+    graph.list_relationships.return_value = []  # no graph signal
+
+    facts = (
+        [{"author": "Carol"}] * 3
+        + [{"author": "Dave"}]
+        + [{"author": "Beever Atlas"}] * 5  # bot — must be skipped
+    )
+    with (
+        _patch_stores(graph),
+        patch(
+            "beever_atlas.capabilities.memory._search_channel_facts_impl",
+            AsyncMock(return_value=facts),
+        ),
+    ):
+        result = await find_experts("C1", "deployment", limit=5)
+
+    handles = _handles(result)
+    assert "Carol" in handles
+    assert "Dave" in handles
+    assert "Beever Atlas" not in handles
+    # Carol (3 facts) must outrank Dave (1 fact).
+    ordered = [h.get("handle") or h.get("subject_id") for h in result if "_empty" not in h]
+    assert ordered.index("Carol") < ordered.index("Dave")
 
 
 # ---------------------------------------------------------------------------
