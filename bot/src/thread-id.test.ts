@@ -23,6 +23,23 @@ describe("extractChannelId", () => {
     assert.strictEqual(extractChannelId("nocolons"), "nocolons");
     assert.strictEqual(extractChannelId("discord:guild456"), "guild456");
   });
+
+  it("base64-decodes the Mattermost channel to the raw indexed id", () => {
+    // The SDK base64-encodes the Mattermost channel; ingestion stores facts
+    // under the raw id. extractChannelId must return the raw id so /ask
+    // retrieval hits the indexed channel (regression: "nothing indexed" on a
+    // fully-synced Mattermost channel).
+    const raw = "ykamsyq77tf13ybrnybsnh4bgh";
+    const enc = Buffer.from(raw, "utf8").toString("base64"); // eWthbXN5cTc3...=
+    assert.strictEqual(extractChannelId(`mattermost:${enc}:thread123`), raw);
+    // Padding-stripped form (as it appears in real thread ids) decodes too.
+    assert.strictEqual(extractChannelId(`mattermost:${enc.replace(/=+$/, "")}:t`), raw);
+  });
+
+  it("leaves a non-base64 / already-raw Mattermost segment unchanged", () => {
+    // A segment that doesn't decode to a canonical 26-char id is returned as-is.
+    assert.strictEqual(extractChannelId("mattermost:plainchannel:t"), "plainchannel");
+  });
 });
 
 describe("extractThreadId", () => {

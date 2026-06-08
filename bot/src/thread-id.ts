@@ -19,19 +19,49 @@ function isDiscord(parts: string[]): boolean {
   return parts[0]?.toLowerCase() === "discord";
 }
 
+/** A canonical Mattermost id is 26 lowercase base32 chars (a–z, 0–9). */
+const MATTERMOST_ID_RE = /^[a-z0-9]{26}$/;
+
+/**
+ * Recover the RAW Mattermost channel id from a thread-id segment.
+ *
+ * The SDK base64-encodes the Mattermost channel id inside the thread id
+ * (`mattermost:<base64-channel>:<thread>`), but ingestion/sync — and therefore
+ * the stored facts, wiki, and the `/api/channels/{id}/...` routes — key on the
+ * RAW Mattermost channel id. Passing the base64 segment to `/ask` queries a
+ * non-existent channel and returns "nothing indexed" even for a fully-synced
+ * channel (observed live). Decode it back. Guarded: only accept a decode that
+ * yields a canonical 26-char Mattermost id, so a segment that is already raw
+ * (or any non-base64 value) is returned unchanged.
+ */
+function decodeMattermostChannel(segment: string): string {
+  try {
+    const decoded = Buffer.from(segment, "base64").toString("utf8");
+    if (MATTERMOST_ID_RE.test(decoded)) return decoded;
+  } catch {
+    /* not base64 — fall through to the raw segment */
+  }
+  return segment;
+}
+
 /**
  * Extract the channel id, falling back to the whole id.
- * Slack/Teams/Telegram/Mattermost: the second segment. Discord: the THIRD
- * segment (the second is the guild id) — using the second there routes the
+ * Slack/Teams/Telegram: the second segment. Discord: the THIRD segment (the
+ * second is the guild id) — using the second there routes the
  * `/api/channels/{id}/ask` call to the guild and misses the channel's indexed
- * knowledge entirely.
+ * knowledge entirely. Mattermost: the second segment, base64-DECODED to the raw
+ * channel id that ingestion stored facts under (see decodeMattermostChannel).
  */
 export function extractChannelId(threadId: string): string {
   const parts = threadId.split(":");
   if (isDiscord(parts) && parts.length >= 3) {
     return parts[2];
   }
-  return parts.length >= 2 ? parts[1] : threadId;
+  if (parts.length < 2) return threadId;
+  if (parts[0]?.toLowerCase() === "mattermost") {
+    return decodeMattermostChannel(parts[1]);
+  }
+  return parts[1];
 }
 
 /**
