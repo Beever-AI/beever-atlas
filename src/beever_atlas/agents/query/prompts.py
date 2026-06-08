@@ -229,29 +229,43 @@ OUTPUT_CONTRACT_STRICT = """\
 This is a CHAT reply. Lead with the answer; match length to the question. Be the kind \
 of message someone is glad to read in a channel — not a document.
 
-SHAPE (adaptive):
+SHAPE (adaptive — match the structure to the question):
 - Open with a 1-2 sentence TL;DR that answers the question directly. The reader should \
-  get the point from the first line.
-- Headings are OPTIONAL. For a short answer (≤50 words) skip headings entirely. Add a \
-  `##` heading only when the answer runs long (well past ~80 words) or genuinely covers \
-  2+ distinct sub-topics that need separating.
-- Bullets, tables, and Mermaid diagrams are tools you SHOULD reach for when they make \
-  the answer clearer — NOT mandatory ceremony. When brevity wins, plain sentences win.
-  - Use a markdown table when listing 3+ items that each have 2+ attributes AND a table \
-    is genuinely easier to scan than prose.
+  get the point from the first line. For an entity/overview answer, bold the subject in \
+  the TL;DR (e.g. "**Votee AI** is …").
+- A FOCUSED factual question (≤50 words to answer) stays plain prose — no headings, just \
+  answer it and stop.
+- A SUBSTANTIVE answer (an overview, "what is X", "tell me about X", a multi-facet or \
+  multi-part question, or anything running past ~80 words) MUST be structured and \
+  scannable, not a wall of prose:
+  - Group distinct facets under `##` (or `###` for sub-points) headings — e.g. `## What \
+    they do`, `## Notable`, `## How it works`. Aim for 2-4 short sections.
+  - When describing an entity's attributes (a company, tool, project, person, product), \
+    lead with a **Quick facts** block of bold-label bullets — one attribute per line:
+    `- **Founded:** 2012` / `- **HQ:** Hong Kong` / `- **Focus:** generative AI, OCR`. \
+    This is the preferred way to present structured data.
+  - Turn any enumeration of 3+ items (clients, collaborators, features, steps) into a \
+    bullet list — never bury 3+ items in an inline comma-separated sentence.
+- DATA REPRESENTATION — portability rule: do NOT use markdown tables for entity \
+  attributes or lists; they do not render on all chat platforms (e.g. Slack). Use \
+  bold-label "Quick facts" bullets instead. (Tables are reserved for the explicit \
+  side-by-side comparison skill; Mermaid for directional relationships only.)
   - Use a Mermaid fenced block (```mermaid) for directional relationships (pipelines, \
     supersedes chains, org structures, decision → outcome) only when the structure is \
     the point and the diagram beats a sentence. Keep nodes ≤12 and label every edge.
-- Every bullet you do write must be a complete, fact-bearing sentence — no one-word \
-  bullets, no bullets that only restate a heading.
+- Every bullet must be a complete, fact-bearing sentence or a `**Label:** value` quick- \
+  fact — no one-word bullets, no bullets that only restate a heading.
 - When the answer braids internal (channel) knowledge with external (web) context, \
   separate them with `## From your knowledge base` and `## External context`, then a \
   short `## Synthesis`. Do NOT mix internal and external facts in one bullet.
 
 LENGTH (adaptive):
 - Chat target: 20-80 words for a focused question — answer it and stop.
-- Substantive/multi-part question: 150-300 words, organized with light headings.
-- Never pad to hit a length. A correct one-line answer beats a padded paragraph.
+- Substantive/overview/multi-part question: 150-350 words, organized with headings and \
+  bullet structure as above. Prefer depth that is genuinely informative — cover the \
+  distinct facets the reader needs — over a single dense paragraph.
+- Never pad to hit a length. A correct one-line answer beats a padded paragraph; but for \
+  a real overview question, a flat 3-sentence prose blob is too thin — structure it.
 
 CITATION RIGOR (non-negotiable):
 - EVERY factual claim drawn from a tool result MUST carry an inline citation. Brevity \

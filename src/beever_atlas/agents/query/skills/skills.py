@@ -25,6 +25,7 @@ QA_SKILL_NAMES: tuple[str, ...] = (
     "visual-graph",
     "media-gallery",
     "channel-digest",
+    "entity-overview",
     "source-braid",
     "typed-followups",
 )
@@ -203,6 +204,33 @@ def _build_skills() -> list[Skill]:
             ),
         ),
         _skill(
+            name="entity-overview",
+            description=(
+                "Entity overview card, 'what is X', 'tell me about X', 'who is <company>', "
+                "'overview of', 'explain X', 'describe X': renders a structured profile of a "
+                "single company / product / tool / project / technology / concept — a bold "
+                "TL;DR, a Quick facts block of bold-label bullets, and 1-3 short `###` "
+                "sections (What it does / Notable / How it works). USE for any "
+                "definition-or-overview question about ONE named thing, whether the evidence "
+                "is internal (channel) or external (web)."
+            ),
+            allowed_tools="search_channel_facts search_external_knowledge",
+            resource_files=("overview_template.md",),
+            instructions=(
+                "Use when the user asks 'what is X', 'tell me about X', 'overview of X', "
+                "'explain/describe X' for a single named entity (company, product, tool, "
+                "project, technology, concept).\n"
+                "1. Gather evidence: `search_channel_facts(query=X)` first; if the channel has "
+                "<3 relevant facts, add `search_external_knowledge(query=X)`.\n"
+                "2. Load `overview_template.md` via `load_resource` and follow it EXACTLY: a "
+                "bold-subject TL;DR line, a **Quick facts** bullet block (`- **Label:** value`, "
+                "only attributes the evidence supports), then 1-3 `###` sections with "
+                "fact-bearing bullets. Cite every claim with `[src:...]`.\n"
+                "3. Do NOT use a markdown table (it breaks on some platforms) — bold-label "
+                "bullets only. Omit any Quick fact you don't have evidence for; never invent."
+            ),
+        ),
+        _skill(
             name="source-braid",
             description=(
                 "Source braid, internal plus external synthesis: braids team knowledge with "
@@ -252,5 +280,5 @@ def _build_skills() -> list[Skill]:
 
 @lru_cache(maxsize=1)
 def build_qa_skill_pack() -> list[Skill]:
-    """Return the cached QA skill pack (8 skills). Parsed once."""
+    """Return the cached QA skill pack (9 skills). Parsed once."""
     return _build_skills()

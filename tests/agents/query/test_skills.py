@@ -37,9 +37,25 @@ def _tool_registry_names() -> set[str]:
 
 def test_skill_pack_count() -> None:
     skills = build_qa_skill_pack()
-    assert len(skills) == 8
-    assert len(QA_SKILL_NAMES) == 8
+    assert len(skills) == 9
+    assert len(QA_SKILL_NAMES) == 9
     assert {s.frontmatter.name for s in skills} == set(QA_SKILL_NAMES)
+
+
+def test_entity_overview_skill_present_and_loads_template() -> None:
+    """The entity-overview skill (richer 'what is X' cards) is registered and its
+    L3 template resource is bundled."""
+    skills = {s.frontmatter.name: s for s in build_qa_skill_pack()}
+    assert "entity-overview" in skills
+    overview = skills["entity-overview"]
+    # Template asset is loaded and carries the portable "Quick facts" pattern
+    # (bold-label bullets, not a table).
+    assets = overview.resources.assets
+    assert "overview_template.md" in assets
+    raw = assets["overview_template.md"]
+    body = raw.decode() if isinstance(raw, bytes) else raw
+    assert "Quick facts" in body
+    assert "Do NOT use a markdown table" in body
 
 
 def test_skill_names_are_kebab() -> None:

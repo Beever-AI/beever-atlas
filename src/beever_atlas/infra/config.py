@@ -423,7 +423,7 @@ class Settings(BaseSettings):
     )
 
     # QA Agent Skills (progressive disclosure via ADK SkillToolset).
-    # When ON, create_qa_agent() wires an 8-skill pack into the QA LlmAgent
+    # When ON, create_qa_agent() wires a 9-skill pack into the QA LlmAgent
     # so the model can load_skill / load_resource on demand for richer
     # formatted output (timelines, profile cards, comparison tables, etc.).
     # REQUIRES qa_new_prompt=True (QA_RICH_OUTPUT); agent-build raises
