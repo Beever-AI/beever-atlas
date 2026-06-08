@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
-    "@fontsource-variable/geist": "^5.2.8",
+    "@fontsource-variable/geist": "^5.2.9",
     "@fontsource/encode-sans-expanded": "^5.2.7",
     "@fontsource/fraunces": "^5.2.9",
     "@fontsource/ibm-plex-mono": "^5.2.7",
