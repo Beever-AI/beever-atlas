@@ -1081,22 +1081,28 @@ class Neo4jStore:
                 eid=entity_id,
                 limit=limit,
             )
-            records = await result.data()
+            node_map: dict[str, GraphEntity] = {}
+            edges: list[GraphRelationship] = []
 
-        node_map: dict[str, GraphEntity] = {}
-        edges: list[GraphRelationship] = []
-
-        for row in records:
-            src_node = row["src_node"]
-            tgt_node = row["tgt_node"]
-            rel = row["rel"]
-
-            src = self._entity_from_record(src_node)
-            tgt = self._entity_from_record(tgt_node)
-            node_map[src.name] = src
-            node_map[tgt.name] = tgt
-
-            edges.append(self._rel_from_record(rel, source_name=src.name, target_name=tgt.name))
+            # Iterate RAW records — NOT result.data(). result.data() serialises a
+            # Relationship value into a 3-tuple (start_node, "TYPE", end_node),
+            # which (a) drops the relationship's own properties
+            # (confidence/context/source_fact_id) and (b) crashes
+            # _rel_from_record, whose dict(rel) then sees a tuple →
+            # "dictionary update sequence element #0 has length 12; 2 is
+            # required", so EVERY deep-mode relationship traversal silently
+            # returned no edges. Raw records preserve real Node/Relationship
+            # objects, which the _from_record helpers already handle.
+            async for row in result:
+                src = self._entity_from_record(row["src_node"])
+                tgt = self._entity_from_record(row["tgt_node"])
+                node_map[src.name] = src
+                node_map[tgt.name] = tgt
+                edges.append(
+                    self._rel_from_record(
+                        row["rel"], source_name=src.name, target_name=tgt.name
+                    )
+                )
 
         return Subgraph(nodes=list(node_map.values()), edges=edges)
 
