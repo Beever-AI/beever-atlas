@@ -13,6 +13,7 @@ import {
   decideShouldRespond,
   decideSubscribedThreadActionWithLookup,
   isBroadcast,
+  type RespondDecision,
 } from "./trigger.js";
 import { stripMention } from "./mentions.js";
 import { ParticipantCache } from "./participant-cache.js";
@@ -20,7 +21,7 @@ import { logReplySent, type ReplySurface } from "./reply-metrics.js";
 import { deriveSessionId } from "./session-id.js";
 import { RateLimiter } from "./rate-limiter.js";
 import type { AskResult } from "./types.js";
-import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds } from "./bridge.js";
+import { registerBridgeRoutes, recordTelegramChat, recordTeamsConversation, warmTeamsGraphToken, seedTeamsKnownTeamIds, resolveProxyFile } from "./bridge.js";
 import { jsonResponse, readBody, MAX_BODY_SIZE, BodyTooLargeError, safeErrorMessage } from "./http-utils.js";
 import { ChatManager } from "./chat-manager.js";
 import { DiscordGatewaySupervisor } from "./discord-gateway.js";
@@ -53,6 +54,21 @@ const PARTICIPANT_CACHE_TTL_MS = parseInt(process.env.BOT_PARTICIPANT_CACHE_TTL_
 //    minute before a one-time "give me a moment" notice and silent drop.
 const RATE_LIMIT_PER_MIN = parseInt(process.env.BOT_RATELIMIT_PER_MIN || "12", 10);
 const RATE_WINDOW_MS = 60_000;
+//  - VISION_ENABLED: real-time image vision on @mention. Set BOT_VISION_ENABLED=off
+//    to kill-switch the whole image path (mentions still answer from text).
+//  - VISION_MAX_IMAGES: cap per message so a flood of attachments can't fan out
+//    into many vision calls. VISION_MAX_BYTES mirrors the backend MAX_UPLOAD_SIZE
+//    (10MB decoded) and is enforced client-side before we base64 + POST.
+//  - VISION_TIMEOUT_MS bounds a single extract-text call (per image).
+const VISION_ENABLED = (process.env.BOT_VISION_ENABLED || "on").toLowerCase() !== "off";
+const VISION_MAX_IMAGES = parseInt(process.env.BOT_VISION_MAX_IMAGES || "4", 10);
+const VISION_MAX_BYTES = parseInt(process.env.BOT_VISION_MAX_BYTES || `${10 * 1024 * 1024}`, 10);
+const VISION_TIMEOUT_MS = parseInt(process.env.BOT_VISION_TIMEOUT_MS || "30000", 10);
+
+// Set in main() so the mention handler (a closure passed to ChatManager) can
+// resolve the inbound message's per-connection bridge `proxyFile`. The SDK
+// Message carries no connection handle, and the handler only receives `bot`.
+let _chatManager: ChatManager | undefined;
 
 const participantCache = new ParticipantCache(PARTICIPANT_CACHE_TTL_MS);
 const rateLimiter = new RateLimiter(RATE_LIMIT_PER_MIN, RATE_WINDOW_MS);
@@ -77,22 +93,47 @@ function registerHandlers(bot: Chat): void {
 
     const platform = extractPlatform(thread.id);
     const question = stripMention(message.text || "", platform);
-    // Addressing & intent gate: only speak when actually asked something. Bare
-    // mention → nudge; an announcement (@channel/@here/@everyone) or a pleasantry
-    // that happens to tag the bot → stay quiet.
+    // An image @mention ("@bot what is this?" + screenshot, or a bare image
+    // ping) is a real question ABOUT the image. Detect it so the gate below
+    // treats it as answerable instead of nudging on the thin text.
+    const hasImage =
+      VISION_ENABLED &&
+      (message.attachments || []).some(isImageAttachment);
+    const broadcast = isBroadcast(message.text || "");
+    // Original text-only intent (drives the post-extraction fallback below).
     const decision = decideShouldRespond({
       text: question,
-      broadcast: isBroadcast(message.text || ""),
+      broadcast,
       isMention: true,
       surface: "mention",
     });
-    if (decision === "prompt") {
+    // Addressing & intent gate, with the additive image override: only speak
+    // when actually asked something OR an image is attached. Bare mention →
+    // nudge; an announcement or pleasantry that tags the bot → stay quiet.
+    const gate = decideMentionGate({ text: question, broadcast, hasImage });
+    if (gate === "prompt") {
       await thread.post("Please ask me a question! For example: @beever what is our tech stack?");
       return;
     }
-    if (decision === "skip") return;
+    if (gate === "skip") return;
 
     if (!(await passesRateLimit(thread, message))) return;
+
+    // Describe any images (fail-open: never blocks the text reply).
+    const atts = hasImage ? await extractImageAttachments(message, thread.id) : undefined;
+    const gotImages = !!atts && atts.length > 0;
+    // If the image-answerable override was the only reason we got here but no
+    // image actually described (all skipped / no proxyFile), honour the original
+    // text-only gate instead of answering a hollow default question.
+    if (!gotImages && decision !== "respond") {
+      if (decision === "prompt") {
+        await thread.post("Please ask me a question! For example: @beever what is our tech stack?");
+      }
+      return;
+    }
+    // The backend requires a non-empty question; a bare image ping has none, so
+    // ask a sensible default about the attached image.
+    const finalQuestion = question.trim() || (gotImages ? "What is in this image?" : question);
     // P2 — key on the THREAD (isThreaded=true), same as onSubscribedMessage.
     // On every supported platform `thread.id` is the STABLE thread ROOT: Slack
     // encodes it as `slack:<channel>:<threadTs>` where threadTs is
@@ -102,7 +143,7 @@ function registerHandlers(bot: Chat): void {
     // backend session — the old `false` here put the root on a separate
     // idle-window key, so memory never carried into the thread. Fall back to the
     // loose idle-window key only for a degenerate id with no thread segment.
-    await answerInThread(thread, question, "mention", message.author, hasThreadRoot(thread.id));
+    await answerInThread(thread, finalQuestion, "mention", message.author, hasThreadRoot(thread.id), atts);
   });
 
   // Handler: follow-up messages in subscribed threads. The SDK routes EVERY
@@ -292,6 +333,7 @@ export async function answerInThread(
   surface: ReplySurface,
   author?: unknown,
   isThreaded: boolean = true,
+  attachments?: ImageAttachment[],
 ): Promise<void> {
   const platform = extractPlatform(thread.id);
   const startedAt = Date.now();
@@ -315,6 +357,7 @@ export async function answerInThread(
       question,
       deriveSessionId(threadId, userId, channelId, isThreaded),
       userId,
+      attachments,
     );
     // Post as `{ markdown }`: the renderer emits canonical CommonMark and the
     // chat SDK converts it to each platform's native format (Slack Block Kit,
@@ -359,11 +402,144 @@ function backendApiKey(): string {
   return raw.split(",").map((k) => k.trim()).find(Boolean) || "";
 }
 
+/** Extracted image description, shaped for the backend AskRequest.attachments field. */
+export interface ImageAttachment {
+  filename: string;
+  extracted_text: string;
+  mime_type: string;
+}
+
+/** Minimal shape of a chat-sdk attachment we read off an inbound Message. */
+interface IncomingAttachment {
+  type?: string;
+  mimeType?: string;
+  name?: string;
+  url?: string;
+}
+
+/** True when an attachment is an image we can describe. */
+export function isImageAttachment(att: IncomingAttachment): boolean {
+  if (att.type === "image") return true;
+  return typeof att.mimeType === "string" && att.mimeType.startsWith("image/");
+}
+
+/**
+ * Pre-extraction mention gate. Runs the normal text intent gate, then applies
+ * an ADDITIVE override: a mention that carries an image is answerable even when
+ * its text alone would only prompt/skip (so "image + 'what is this?'" doesn't
+ * hit the bare-mention greeting branch). Text-only gating is unchanged.
+ */
+export function decideMentionGate(input: {
+  text: string;
+  broadcast: boolean;
+  hasImage: boolean;
+}): RespondDecision {
+  const decision = decideShouldRespond({
+    text: input.text,
+    broadcast: input.broadcast,
+    isMention: true,
+    surface: "mention",
+  });
+  if (input.hasImage && decision !== "respond") return "respond";
+  return decision;
+}
+
+/** A safe per-connection byte fetcher (the bridge `proxyFile` contract). */
+type ProxyFile = (url: string) => Promise<{ contentType: string; buffer: Buffer }>;
+
+/** Production proxyFile resolver: the real per-connection bridge SSRF-guarded
+ *  fetch. Injectable so tests can supply a fake without the live ChatManager. */
+function defaultProxyFileResolver(platform: string): ProxyFile | null {
+  return _chatManager ? resolveProxyFile(_chatManager, platform) : null;
+}
+
+/**
+ * Fetch each image attachment's bytes SAFELY (via the connection's bridge
+ * `proxyFile` — never the adapter `fetchData`, which lacks an SSRF guard and
+ * would leak the bot token), run them through the backend vision pipeline, and
+ * return `{ filename, extracted_text, mime_type }` for the /ask attachments
+ * field.
+ *
+ * FAIL-OPEN by design: every step is wrapped per-image; on ANY error (no
+ * proxyFile for the platform, proxyFile throw, oversize, missing BRIDGE_API_KEY
+ * → 401, timeout, non-2xx) the image is skipped and the others continue. Image
+ * processing must NEVER abort the reply. Logs lengths/counts only — never bytes
+ * or extracted tokens (they can carry PII).
+ */
+export async function extractImageAttachments(
+  message: { attachments?: IncomingAttachment[]; text?: string },
+  threadId: string,
+  resolveProxy: (platform: string) => ProxyFile | null = defaultProxyFileResolver,
+): Promise<ImageAttachment[]> {
+  if (!VISION_ENABLED) return [];
+  const all = message.attachments || [];
+  const images = all.filter(isImageAttachment).slice(0, VISION_MAX_IMAGES);
+  if (images.length === 0) return [];
+
+  const platform = extractPlatform(threadId);
+  const proxyFile = resolveProxy(platform);
+  if (!proxyFile) {
+    // No safe byte-fetch path for this platform → skip every image. Never fall
+    // back to a raw fetch (SSRF + token-leak risk).
+    console.log(`[vision] no proxyFile for ${platform}; skipping ${images.length} image(s)`);
+    return [];
+  }
+
+  const bridgeKey = process.env.BRIDGE_API_KEY || "";
+  const messageText = message.text || "";
+  const results: ImageAttachment[] = [];
+
+  for (const att of images) {
+    try {
+      if (!att.url) continue;
+      const { buffer, contentType } = await proxyFile(att.url);
+      if (buffer.length > VISION_MAX_BYTES) {
+        console.log(`[vision] image over ${VISION_MAX_BYTES}B (${buffer.length}B); skipped`);
+        continue;
+      }
+      const mimeType = att.mimeType || contentType || "image/png";
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      // BRIDGE_API_KEY (the internal bridge bearer) — a DIFFERENT secret than
+      // the BEEVER_API_KEYS the public askBackend uses.
+      if (bridgeKey) headers["Authorization"] = `Bearer ${bridgeKey}`;
+      const resp = await fetch(`${BACKEND_URL}/api/internal/media/extract-text`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          filename: att.name || "image",
+          mime_type: mimeType,
+          data_b64: buffer.toString("base64"),
+          message_text: messageText,
+        }),
+        signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
+      });
+      if (!resp.ok) {
+        console.log(`[vision] extract-text returned ${resp.status}; image skipped`);
+        continue;
+      }
+      const data = (await resp.json()) as ImageAttachment;
+      if (data && typeof data.extracted_text === "string") {
+        results.push({
+          filename: data.filename || att.name || "image",
+          extracted_text: data.extracted_text,
+          mime_type: data.mime_type || mimeType,
+        });
+      }
+    } catch (err) {
+      // Per-image isolation: one failure never aborts the reply or the others.
+      console.error("[vision] image processing failed; skipped:", safeErrorMessage(err));
+    }
+  }
+  console.log(`[vision] described ${results.length}/${images.length} image(s) for ${platform}`);
+  return results;
+}
+
 async function askBackend(
   channelId: string,
   question: string,
   sessionId: string,
   userId: string,
+  attachments?: ImageAttachment[],
 ): Promise<AskResult> {
   // Encode the channel id so a value with slashes/`..` can't escape the route
   // path and reach an unintended backend endpoint.
@@ -373,12 +549,18 @@ async function askBackend(
   if (apiKey) {
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
+  // Include `attachments` ONLY when non-empty so the text-only body stays
+  // byte-identical to before — existing SSE tests assert on the exact body.
+  const payload: Record<string, unknown> = { question, session_id: sessionId, user_id: userId };
+  if (attachments && attachments.length > 0) {
+    payload.attachments = attachments;
+  }
   // Bound the whole call (the timeout budget is shared across retries) and let
   // fetchSSEWithRetry absorb transient 5xx / network blips with backoff so a
   // slow or flapping backend doesn't surface a hard error to the user.
   return fetchSSEWithRetry(
     url,
-    { method: "POST", headers, body: JSON.stringify({ question, session_id: sessionId, user_id: userId }) },
+    { method: "POST", headers, body: JSON.stringify(payload) },
     // Pass the channel id so the SSE client can scrub a leaked raw channel id
     // from the answer and use it to collapse an `(id)`-variant near-duplicate.
     { maxAttempts: 3, signal: AbortSignal.timeout(ASK_TIMEOUT_MS), channelId },
@@ -1040,6 +1222,9 @@ async function main(): Promise<void> {
   console.log(`Redis URL: ${REDIS_URL}`);
 
   const chatManager = new ChatManager(REDIS_URL, registerHandlers);
+  // Expose to the mention handler closure so it can resolve a message's
+  // per-connection bridge `proxyFile` for safe image-byte fetches.
+  _chatManager = chatManager;
 
   // Attempt to load connections from backend with retry + .env fallback
   await loadConnectionsFromBackend(chatManager);

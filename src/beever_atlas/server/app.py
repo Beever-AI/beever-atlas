@@ -24,7 +24,11 @@ from beever_atlas.infra.loader_url_headers import LoaderUrlSecurityHeadersMiddle
 
 from beever_atlas.adapters import close_adapter
 from beever_atlas.infra.rate_limit import limiter
-from beever_atlas.api.ask import router as ask_router, public_router as ask_public_router
+from beever_atlas.api.ask import (
+    router as ask_router,
+    public_router as ask_public_router,
+    internal_router as ask_internal_router,
+)
 from beever_atlas.api.channels import router as channels_router
 from beever_atlas.api.connections import (
     router as connections_router,
@@ -1107,6 +1111,7 @@ app.include_router(channels_router, dependencies=_auth)
 app.include_router(connections_router, dependencies=_auth)
 # Internal bot→backend routes: bridge key only, never exposed to end users.
 app.include_router(connections_internal_router, dependencies=[Depends(require_bridge)])
+app.include_router(ask_internal_router, dependencies=[Depends(require_bridge)])
 app.include_router(imports_router, dependencies=_auth)
 app.include_router(sync_router, dependencies=_auth)
 app.include_router(memories_router, dependencies=_auth)

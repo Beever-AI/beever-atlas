@@ -2626,6 +2626,32 @@ function getFirstBridge(chatManager: ChatManager): { platform: string; bridge: P
   return null;
 }
 
+/**
+ * Resolve the per-connection `proxyFile` for an inbound message's platform.
+ *
+ * SAFETY-CRITICAL: callers (e.g. the bot's @mention vision path) MUST fetch
+ * attachment bytes through this `proxyFile`, NEVER the chat-sdk adapter's raw
+ * `fetchData`. `proxyFile` runs `assertHostAllowedAndPublic` (RFC1918 /
+ * loopback / link-local / cloud-metadata block) plus Discord CDN-expiry refresh
+ * and Slack files.info fallback. A leaked/attacker-influenced url cannot reach
+ * a private host through it.
+ *
+ * The SDK `Message`/`Thread` objects passed to handlers carry no connection id,
+ * only the platform (recovered from the thread-id prefix). We therefore resolve
+ * by platform — the single-connection-per-platform default — which mirrors how
+ * the existing webhook routing resolves a bridge. Returns `null` when no bridge
+ * is registered for the platform, in which case the caller MUST skip the image
+ * (do NOT fall back to a raw fetch).
+ */
+export function resolveProxyFile(
+  chatManager: ChatManager,
+  platform: string,
+): ((url: string) => Promise<{ contentType: string; buffer: Buffer }>) | null {
+  const bridge = getBridge(chatManager, platform);
+  if (!bridge) return null;
+  return (url: string) => bridge.proxyFile(url);
+}
+
 /** Infer platform from a file URL.
  *
  * Uses parsed-URL hostname checks (exact match or proper subdomain suffix),

@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Internal routes (bot → backend). Mounted separately in `server/app.py` with
+# `Depends(require_bridge)` so they stay OFF the public surface and behind
+# BRIDGE_API_KEY — a leaked user key can NOT reach the vision pipeline. Mirrors
+# the `internal_router` pattern in `api/connections.py`.
+internal_router = APIRouter()
+
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Process-local cache of channel_id -> Slack workspace subdomain (e.g.
@@ -2758,3 +2764,82 @@ async def submit_ask_feedback(
     )
 
     return {"status": "ok", "feedback": doc}
+
+
+# ---------------------------------------------------------------------------
+# Internal: ephemeral image → text (bot @mention vision path)
+# ---------------------------------------------------------------------------
+
+
+class _ExtractMediaTextRequest(BaseModel):
+    """Body for the bot's describe-only image extraction call.
+
+    `data_b64` is the base64-encoded raw image bytes the bot fetched (safely,
+    via its per-connection `proxyFile` SSRF guard). This path is ephemeral —
+    nothing is persisted to GridFS; it only returns a vision description for
+    injection into the `/ask` attachments field.
+    """
+
+    filename: str
+    mime_type: str
+    data_b64: str
+    message_text: str = ""
+
+
+# Magic-byte signatures for the image mimes ImageExtractor supports. We verify
+# the DECODED bytes actually start with a real image signature (defence against
+# a mislabelled/poisoned `mime_type`), not just trust the claimed mime.
+# NOTE: Pillow-based dimension / decode-bomb checks (pixel-count caps) are a
+# deferred v2 hardening — Pillow is not installed in this image.
+def _looks_like_image(data: bytes) -> bool:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True  # PNG
+    if data.startswith(b"\xff\xd8\xff"):
+        return True  # JPEG
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return True  # GIF
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True  # WEBP
+    return False
+
+
+@internal_router.post("/api/internal/media/extract-text")
+async def extract_media_text(body: _ExtractMediaTextRequest) -> dict:
+    """Describe an image via the existing vision pipeline (bot @mention path).
+
+    Secured by the router-level `require_bridge` dependency (mounted in
+    `server/app.py`). Never expose to end users — a leaked user API key must
+    not reach the vision pipeline.
+    """
+    import base64
+    import binascii
+
+    from beever_atlas.services.media_extractors import ImageExtractor
+
+    try:
+        decoded = base64.b64decode(body.data_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid base64 payload")
+
+    # Single source of truth for the size cap — reuse the upload limit on the
+    # DECODED bytes (not the inflated base64 string).
+    if len(decoded) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size: 10MB")
+
+    extractor = ImageExtractor()
+    if body.mime_type not in extractor.supported_mime_types or not _looks_like_image(decoded):
+        raise HTTPException(status_code=415, detail="Unsupported or non-image file")
+
+    result = await extractor.extract(decoded, body.filename, {"message_text": body.message_text})
+    extracted_text = result.text
+    # Truncate to 4000 chars (mirror upload_attachment).
+    if len(extracted_text) > 4000:
+        extracted_text = (
+            extracted_text[:4000] + "\n\n[... truncated, showing first 4000 characters ...]"
+        )
+
+    return {
+        "filename": body.filename,
+        "extracted_text": extracted_text,
+        "mime_type": body.mime_type,
+    }
