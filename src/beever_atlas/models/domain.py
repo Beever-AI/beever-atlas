@@ -21,11 +21,30 @@ class AtomicFact(BaseModel):
     # per occurrence in the 5/30/90/180/360s backoff schedule (observed
     # in production logs 2026-05-11). Validation errors against
     # deterministic LLM output should fail fast OR coerce; we coerce.
+    #
+    # The metadata fields (``guild_id`` etc.) are covered for a different
+    # reason: rows written to Weaviate before a field existed read back as an
+    # explicit ``null`` property, and a default only applies when the key is
+    # ABSENT — not when it is present-but-None. So ``_obj_to_fact`` crashed
+    # listing legacy facts (e.g. non-Discord facts with ``guild_id=None``).
+    # Coercing on read keeps the store backward-compatible across schema
+    # evolution without a data migration.
     @field_validator(
         "thread_context_summary",
         "derived_from",
         "source_media_url",
         "source_media_type",
+        "channel_id",
+        "platform",
+        "guild_id",
+        "author_id",
+        "author_name",
+        "message_ts",
+        "source_message_id",
+        "importance",
+        "fact_type",
+        "source_lang",
+        "tier",
         mode="before",
     )
     @classmethod
