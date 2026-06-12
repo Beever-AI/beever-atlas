@@ -270,7 +270,6 @@ async def search_relationships(
         }
 
 
-@cite_tool_output(kind="decision_record")
 async def _fact_based_timeline(channel_id: str, topic: str, limit: int = 8) -> list:
     """Chronological timeline built from facts when the graph has no SUPERSEDES
     chain. Lets "trace the decisions around X" answer from the topic's real
@@ -310,6 +309,7 @@ async def _fact_based_timeline(channel_id: str, topic: str, limit: int = 8) -> l
     return out
 
 
+@cite_tool_output(kind="decision_record")
 async def trace_decision_history(channel_id: str, topic: str) -> list:
     """Trace the temporal evolution of decisions about a topic.
 
