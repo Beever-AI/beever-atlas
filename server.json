@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Beever-AI/beever-atlas",
   "description": "Open-source LLM knowledge base: team chat into a typed knowledge graph and auto-generated wiki.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repository": {
     "url": "https://github.com/Beever-AI/beever-atlas",
     "source": "github"
@@ -10,7 +10,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/beever-ai/beever-atlas:0.2.0",
+      "identifier": "ghcr.io/beever-ai/beever-atlas:0.3.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
