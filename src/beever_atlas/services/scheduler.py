@@ -50,6 +50,24 @@ class SyncScheduler:
         # coordination is needed. The actual queue state lives in
         # ``channel_messages`` (Mongo), not in the scheduler.
         self._mongodb_uri = mongodb_uri
+        # SECURITY — CVE-2026-31072 / GHSA-9cfw-f3f9-7mm7 (apscheduler RCE).
+        # apscheduler's serializing data stores (SQLAlchemyDataStore /
+        # MongoDBDataStore) and serializing event brokers (e.g. RedisEventBroker /
+        # MQTTEventBroker) reconstruct schedules and events by deserializing
+        # stored task state via JSONSerializer / CBORSerializer. A crafted
+        # payload in the backing store can be deserialized into arbitrary object
+        # construction → remote code execution. There is currently NO patched
+        # apscheduler release that closes this; the only safe posture is to
+        # avoid the serializer code path entirely.
+        # MemoryDataStore never serializes — schedules live as in-process Python
+        # objects and are re-registered from ``startup()`` on every boot — so the
+        # vulnerable JSONSerializer / CBORSerializer path is unreachable here.
+        # DO NOT replace MemoryDataStore with a persistent serializing data store
+        # (SQLAlchemyDataStore / MongoDBDataStore) or switch to a serializing
+        # event broker (e.g. RedisEventBroker) until apscheduler ships a patched
+        # release — doing so re-introduces the deserialization RCE. (See also the
+        # bound-method pickling rationale above; that switch would also break job
+        # registration.)
         self._data_store = MemoryDataStore()
         self._scheduler = AsyncScheduler(data_store=self._data_store)
         self._global_semaphore: asyncio.Semaphore | None = None
