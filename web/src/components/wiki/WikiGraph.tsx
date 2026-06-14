@@ -552,7 +552,6 @@ export function WikiGraph({ channelId: channelIdOverride }: WikiGraphProps = {})
         } catch { /* fcose already registered or missing */ }
 
         try {
-          // @ts-expect-error — cytoscape-dagre has no .d.ts
           const dagre = (await import("cytoscape-dagre")).default;
           (cytoscape as { use: (ext: unknown) => void }).use(dagre);
         } catch { /* already registered */ }
