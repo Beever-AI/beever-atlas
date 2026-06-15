@@ -50,8 +50,14 @@ COPY --chown=app:app --from=builder /app/src /app/src
 COPY --chown=app:app --from=builder /app/scripts /app/scripts
 COPY --chown=app:app --from=builder /app/pyproject.toml /app/pyproject.toml
 
-# Ensure the venv is on PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# Ensure the venv is on PATH. PYTHONUNBUFFERED is required, not cosmetic:
+# in MCP stdio mode (CMD overridden to `python -m beever_atlas.api.mcp_server`)
+# the JSON-RPC frames must flush immediately, and unbuffered stdout also keeps
+# container logs live in API-server mode. PYTHONDONTWRITEBYTECODE avoids .pyc
+# litter under the read-mostly non-root runtime.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # All RUN commands below execute as 'app'. New writable dirs MUST be created
 # here, before USER, OR with explicit `chown app:app` after USER (otherwise the
@@ -64,6 +70,18 @@ USER app
 # registry validator pulls the published manifest and reads this label to verify
 # OCI artifact ownership.
 LABEL io.modelcontextprotocol.server.name="io.github.Beever-AI/beever-atlas"
+
+# OCI image annotations. `image.source` is what links the GHCR package to this
+# repo (and surfaces the README + provenance on the package page); the rest feed
+# registry/Glama metadata and `docker inspect`. Dynamic values (version, revision,
+# created) are injected at release time by docker/metadata-action in
+# .github/workflows/release.yml and override these defaults.
+LABEL org.opencontainers.image.title="beever-atlas" \
+      org.opencontainers.image.description="Wiki-first RAG system with dual semantic + graph memory" \
+      org.opencontainers.image.source="https://github.com/Beever-AI/beever-atlas" \
+      org.opencontainers.image.url="https://github.com/Beever-AI/beever-atlas" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="Beever AI Limited"
 
 EXPOSE 8000
 

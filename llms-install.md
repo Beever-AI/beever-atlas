@@ -30,10 +30,16 @@ Start with **Path A** to verify everything wires up, then move to **Path B** for
 - **Docker** installed and running (`docker --version`, `docker compose version`).
 - Network access to build the image from the repo `Dockerfile`.
 
-> **Note:** A prebuilt image at `ghcr.io/beever-ai/beever-atlas` is **not published yet**.
-> Until it is, build locally from the repo `Dockerfile` (Path A/B below) or
-> `pip install` / `uv` the package from source. Do **not** reference a pullable
-> `ghcr.io` image — it does not exist yet.
+> **Prebuilt image:** published at `ghcr.io/beever-ai/beever-atlas` — public,
+> multi-arch (linux/amd64 + linux/arm64), built from this repo's `Dockerfile`.
+> Pull a pinned release tag (recommended) or `:latest`:
+>
+> ```bash
+> docker pull ghcr.io/beever-ai/beever-atlas:0.3.0   # or :latest
+> ```
+>
+> Building locally from the repo `Dockerfile` (Path A/B below) is still fully
+> supported and is required if you've made local changes.
 
 ---
 
