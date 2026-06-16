@@ -32,7 +32,7 @@ dependencies = [
     "tavily-python>=0.5.0",
     "slowapi>=0.1.9",
     "aiolimiter>=1.1.0",
-    "python-multipart>=0.0.27,<1.0.0",
+    "python-multipart>=0.0.31,<1.0.0",
     # S3-compatible byte backend for channel media (MinIO locally, AWS S3 for
     # EE). aioboto3 transitively pins aiobotocore + a compatible botocore;
     # do NOT also add boto3 or the sync minio SDK — aiobotocore pins a narrow
