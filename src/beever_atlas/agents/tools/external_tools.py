@@ -10,6 +10,15 @@ from beever_atlas.agents.tools._citation_decorator import cite_tool_output
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MODES = frozenset({"general", "documentation", "best_practices"})
+MAX_EXTERNAL_SEARCH_QUERY_LENGTH = 500
+
+
+def _clean_external_search_query(query: str) -> str:
+    """Normalize and bound model-produced external search queries."""
+    if not isinstance(query, str):
+        return ""
+    query = " ".join(query.split())
+    return query[:MAX_EXTERNAL_SEARCH_QUERY_LENGTH]
 
 
 @cite_tool_output(kind="web_result")
@@ -28,6 +37,15 @@ async def search_external_knowledge(query: str, mode: str = "general") -> dict:
     """
     if mode not in SUPPORTED_MODES:
         mode = "general"
+
+    query = _clean_external_search_query(query)
+    if not query:
+        return {
+            "error": "invalid_query",
+            "message": "External search query must be a non-empty string.",
+            "results": [],
+            "source": "external",
+        }
 
     try:
         from beever_atlas.infra.config import get_settings

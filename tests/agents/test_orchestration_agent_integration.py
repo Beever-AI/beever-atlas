@@ -147,19 +147,17 @@ def test_untrusted_filter_full_orchestration_set():
     )
 
 
-def test_untrusted_filter_existing_qa_tools_unaffected():
-    """No existing QA_TOOLS name contains 'sync' or 'refresh'.
-
-    This confirms the new denylist fragments don't accidentally drop any
-    existing retrieval tools when orchestration_tools are not present.
-    """
+def test_untrusted_filter_removes_external_qa_tool_only():
+    """External QA search is removed while internal retrieval tools survive."""
     filtered = _filter_tools_for_untrusted(list(QA_TOOLS))
     filtered_names = {_tool_name(t) for t in filtered}
     qa_names = {_tool_name(t) for t in QA_TOOLS}
+    expected = qa_names - {"search_external_knowledge"}
 
-    assert filtered_names == qa_names, (
-        f"New denylist fragments collide with existing QA_TOOLS!\n"
-        f"  Dropped: {qa_names - filtered_names}"
+    assert filtered_names == expected, (
+        f"Unexpected untrusted QA tool filter result.\n"
+        f"  Expected dropped: {{'search_external_knowledge'}}\n"
+        f"  Actual dropped:   {qa_names - filtered_names}"
     )
 
 
@@ -169,7 +167,7 @@ def test_untrusted_filter_combined_qa_plus_orchestration():
     filtered = _filter_tools_for_untrusted(combined)
     filtered_names = {_tool_name(t) for t in filtered}
 
-    qa_names = {_tool_name(t) for t in QA_TOOLS}
+    qa_names = {_tool_name(t) for t in QA_TOOLS} - {"search_external_knowledge"}
     expected = qa_names | READ_ONLY_NAMES
 
     assert filtered_names == expected, (

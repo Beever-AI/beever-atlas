@@ -57,13 +57,34 @@ def test_cache_key_includes_qa_skills_enabled(monkeypatch):
     assert build_calls[1][3] is True
 
 
-def test_cache_key_tuple_has_four_entries(monkeypatch):
-    """Guard against regressions that drop the skills flag from the key."""
+def test_cache_key_tuple_has_five_entries(monkeypatch):
+    """Guard against regressions that drop toolset safety flags from the key."""
     monkeypatch.setattr(qa_mod, "create_qa_agent", lambda mode="deep", **_k: object())
     monkeypatch.setattr(qa_mod, "_current_registry_flag", lambda: False)
     monkeypatch.setattr(qa_mod, "_current_new_prompt_flag", lambda: False)
     monkeypatch.setattr(qa_mod, "_current_skills_flag", lambda: False)
     qa_mod.get_agent_for_mode("deep")
     key = next(iter(qa_mod._agents))
-    assert len(key) == 4
-    assert key == ("deep", False, False, False)
+    assert len(key) == 5
+    assert key == ("deep", False, False, False, False)
+
+
+def test_cache_key_includes_untrusted_context(monkeypatch):
+    build_calls: list[bool] = []
+
+    def fake_create(mode="deep", **kwargs):
+        build_calls.append(bool(kwargs.get("untrusted_context")))
+        return object()
+
+    monkeypatch.setattr(qa_mod, "create_qa_agent", fake_create)
+    monkeypatch.setattr(qa_mod, "_current_registry_flag", lambda: False)
+    monkeypatch.setattr(qa_mod, "_current_new_prompt_flag", lambda: False)
+    monkeypatch.setattr(qa_mod, "_current_skills_flag", lambda: False)
+
+    trusted = qa_mod.get_agent_for_mode("deep", untrusted_context=False)
+    trusted_cached = qa_mod.get_agent_for_mode("deep", untrusted_context=False)
+    untrusted = qa_mod.get_agent_for_mode("deep", untrusted_context=True)
+
+    assert trusted is trusted_cached
+    assert untrusted is not trusted
+    assert build_calls == [False, True]
