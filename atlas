@@ -985,8 +985,12 @@ if $COMPOSE_CMD up -d --build --force-recreate --remove-orphans; then
   # to documented defaults if the lookup returns nothing (test stubs,
   # custom override files, etc.).
   # ------------------------------------------------------------------
-  web_port=$($COMPOSE_CMD port web 80 2>/dev/null | awk -F: '{print $NF}' | head -n1)
-  backend_port=$($COMPOSE_CMD port beever-atlas 8000 2>/dev/null | awk -F: '{print $NF}' | head -n1)
+  # web listens on 8080 (nginx-unprivileged), not 80 — query the real container
+  # port. The `{ … || true; }` wrapper keeps `set -euo pipefail` from aborting
+  # the (advisory) readiness banner when `docker compose port` exits non-zero
+  # for an unmapped port on some compose versions — the stack is already up.
+  web_port=$({ $COMPOSE_CMD port web 8080 2>/dev/null || true; } | awk -F: '{print $NF}' | head -n1)
+  backend_port=$({ $COMPOSE_CMD port beever-atlas 8000 2>/dev/null || true; } | awk -F: '{print $NF}' | head -n1)
   web_port="${web_port:-3000}"
   backend_port="${backend_port:-8000}"
 
