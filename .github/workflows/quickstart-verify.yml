@@ -1,0 +1,126 @@
+name: Quickstart Verify – make demo & one-line install
+
+# Verifies the two paths external users actually run, on a clean machine with
+# working Docker (something a degraded local Docker Desktop can't prove). Both
+# the seed-loader regression (demo/ not in the image) and the .env bootstrap
+# are exercised end-to-end, so they cannot silently break again.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 6 * * *"
+
+concurrency:
+  group: quickstart-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  make-demo:
+    name: make demo seeds a fresh clone
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+
+      # The recipe must parse (tab-indented recipe + .env bootstrap shell).
+      - name: make demo parses
+        run: make -n demo
+
+      # Mirror `make demo` on a FRESH clone (no .env). The target bootstraps
+      # .env from .env.example; assert it did, and that the values compose
+      # guards with ${VAR:?} are non-empty (the bug: WEAVIATE_API_KEY shipped
+      # blank, so even `cp .env.example .env` aborted compose).
+      - name: Bootstrap .env like a fresh `make demo`
+        run: |
+          rm -f .env
+          if [ ! -f .env ]; then cp .env.example .env; fi
+          test -f .env || { echo "::error::bootstrap did not create .env"; exit 1; }
+          grep -Eq '^WEAVIATE_API_KEY=.+' .env || { echo "::error::WEAVIATE_API_KEY blank — compose \${VAR:?} guard would abort make demo"; exit 1; }
+          grep -Eq '^NEO4J_PASSWORD=.+' .env  || { echo "::error::NEO4J_PASSWORD blank"; exit 1; }
+          # CI has no embedding-provider key; disable the boot-time dim guard so
+          # the backend can reach healthy (same rationale as the smoke job).
+          sed -i 's/^EMBEDDING_DIM_GUARD=.*/EMBEDDING_DIM_GUARD=false/' .env
+
+      - name: Bring up the demo stack (detached mirror of `make demo`)
+        run: docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up -d --build
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
+
+      - name: Wait for backend health
+        run: bash scripts/wait-for-health.sh
+
+      - name: Seed-loader completes (the regression we fixed)
+        run: |
+          set -e
+          cid=$(docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml ps -q seed-loader)
+          if [ -z "$cid" ]; then echo "::error::seed-loader container not found"; exit 1; fi
+          # `docker wait` blocks until the one-shot loader exits, returns its code.
+          code=$(docker wait "$cid")
+          echo "seed-loader exit code: $code"
+          docker logs "$cid" 2>&1 | tail -40
+          if [ "$code" != "0" ]; then
+            echo "::error::seed-loader failed (exit $code) — demo data was NOT seeded"
+            exit 1
+          fi
+          if ! docker logs "$cid" 2>&1 | grep -q "Demo data seeded successfully"; then
+            echo "::error::seed-loader exited 0 but success marker missing"
+            exit 1
+          fi
+          echo "make demo seeded the demo corpus end-to-end"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml ps -a || true
+          docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml logs --no-color --tail=all || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml down -v
+
+  one-line-install:
+    name: one-line install (./atlas --non-interactive) is healthy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+
+      # ./atlas reuses an existing .env (it only copies when absent), so seed a
+      # CI-valid one first: no provider key in CI → disable the dim guard.
+      - name: Prepare .env (CI has no provider key)
+        run: |
+          cp .env.example .env
+          sed -i 's/^EMBEDDING_DIM_GUARD=.*/EMBEDDING_DIM_GUARD=false/' .env
+
+      - name: Run the one-line installer, unattended
+        run: ./atlas --non-interactive
+        env:
+          NO_COLOR: "1"
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
+
+      - name: Assert the stack is healthy
+        run: |
+          RESP=$(curl -sf http://localhost:8000/api/health)
+          echo "Health: $RESP"
+          [ "$(echo "$RESP" | jq -r '.status')" = "healthy" ] \
+            || { echo "::error::stack not healthy after ./atlas --non-interactive"; exit 1; }
+          echo "one-line install produced a healthy stack"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose ps -a || true
+          docker compose logs --no-color --tail=all || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
