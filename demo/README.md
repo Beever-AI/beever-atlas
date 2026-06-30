@@ -9,20 +9,9 @@ the Python programming language.
 ## Quick Start
 
 ```bash
-# 1. Clone and configure
 git clone https://github.com/beever-ai/beever-atlas.git
 cd beever-atlas
-cp .env.example .env
-
-# 2. Edit .env — set at minimum:
-#    BEEVER_API_KEYS=dev-key-change-me
-#    NEO4J_PASSWORD=beever_atlas_dev
-#    WEAVIATE_API_KEY=any-long-random-string
-#    CREDENTIAL_MASTER_KEY=$(openssl rand -hex 32)
-#    BRIDGE_API_KEY=$(openssl rand -hex 16)
-
-# 3. Start the full stack + seed demo data (zero API keys required)
-make demo
+make demo   # auto-creates .env from .env.example (demo defaults, no API keys to seed)
 ```
 
 The seed loader starts automatically after all services are healthy, loads the pre-computed

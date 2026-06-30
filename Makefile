@@ -82,7 +82,15 @@ tunnel-uninstall:
 	-rm -f $(HOME)/Library/LaunchAgents/ai.beever.tunnel.plist
 	@echo "Removed launchd tunnel agent."
 
+# `make demo` is zero-config: on first run it bootstraps a .env from
+# .env.example (demo defaults need NO API keys to seed — only /api/ask needs a
+# free GOOGLE_API_KEY), then brings up the full stack + seed-loader. It never
+# clobbers an existing .env.
 demo:
+	@if [ ! -f .env ]; then \
+		cp .env.example .env && \
+		echo "→ Created .env from .env.example (demo defaults — no API keys needed to seed)."; \
+	fi
 	docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up --build
 
 demo-regenerate-fixtures:

@@ -25,8 +25,12 @@ services:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-beever_atlas_dev}
       MONGODB_URI: mongodb://mongodb:27017/beever_atlas
       REDIS_URL: redis://redis:6379
+    # Mount the WHOLE demo/ dir (read-only) so the loader has seed.py itself —
+    # the runtime image ships only src/ + scripts/ (see Dockerfile, Issue #39
+    # hardening), so demo/ is NOT baked in. Mounting just corpus/ + fixtures/
+    # left `python demo/seed.py` failing with "No such file or directory", so
+    # the loader crashed and silently seeded nothing.
     volumes:
-      - ./demo/corpus:/app/demo/corpus:ro
-      - ./demo/fixtures:/app/demo/fixtures:ro
+      - ./demo:/app/demo:ro
     command: ["python", "demo/seed.py"]
     restart: "no"
