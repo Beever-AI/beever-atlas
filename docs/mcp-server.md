@@ -598,3 +598,4 @@ Then use Cursor normally; it will discover Atlas tools in the context menu or sy
 - `openspec/changes/atlas-mcp-server/` — OpenSpec design docs, including auth specs and error catalogs.
 - MCP specification: https://modelcontextprotocol.io/
 - Beever Atlas README: see the main [README.md](../README.md) for architecture and capabilities overview.
+- [Hackathon Builder Guide](guides/hackathon-builder-guide.md) — concrete tool-by-tool starter specs for common things to build with these MCP tools.
