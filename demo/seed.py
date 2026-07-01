@@ -222,10 +222,19 @@ async def seed_precomputed(stores, *, force: bool = False) -> None:
         sys.exit(1)
 
     neo4j_driver = stores.graph._driver
+    executed = 0
+    skipped = 0
     async with neo4j_driver.session() as session:
         for stmt, params in blocks:
-            await session.run(stmt, **params)
-    logger.info("Neo4j: %d statements executed.", len(blocks))
+            try:
+                await session.run(stmt, **params)
+                executed += 1
+            except Exception as exc:
+                # One malformed fixture statement must not abort the whole demo
+                # seed — the facts (Weaviate) are the primary retrieval surface.
+                skipped += 1
+                logger.warning("Neo4j: skipped a fixture statement (%s): %s", type(exc).__name__, exc)
+    logger.info("Neo4j: %d statements executed (%d skipped).", executed, skipped)
 
     logger.info("Seeding complete.")
     print()
@@ -528,9 +537,13 @@ async def _export_fixtures(stores) -> None:
             )
             async for record in node_result:
                 node = record["n"]
-                labels = ":".join(node.labels)
                 props = dict(node)
-                params_line = f"// params: {json.dumps(props)}"
+                # Nodes are MERGE'd by name; a node without a name can't be emitted
+                # as `{name: $name}` (raises ParameterMissing on import), so skip it.
+                if not props.get("name"):
+                    continue
+                labels = ":".join(node.labels)
+                params_line = f"// params: {json.dumps(props, default=str)}"
                 prop_assigns = ", ".join(f"n.{k} = ${k}" for k in props if k != "name")
                 stmt = f"MERGE (n:{labels} {{name: $name}}) SET {prop_assigns};" if prop_assigns else f"MERGE (n:{labels} {{name: $name}});"
                 cypher_lines.append(params_line)
@@ -543,12 +556,16 @@ async def _export_fixtures(stores) -> None:
                 channel_id=DEMO_CHANNEL_ID,
             )
             async for record in rel_result:
+                # Both endpoints are matched by name; skip a relationship whose
+                # source/target node has no name (could never match on import).
+                if not record["src"] or not record["tgt"]:
+                    continue
                 params = {
                     "src": record["src"],
                     "tgt": record["tgt"],
                     **record["props"],
                 }
-                params_line = f"// params: {json.dumps(params)}"
+                params_line = f"// params: {json.dumps(params, default=str)}"
                 stmt = f"MATCH (a {{name: $src}}), (b {{name: $tgt}}) MERGE (a)-[:{record['rel']}]->(b);"
                 cypher_lines.append(params_line)
                 cypher_lines.append(stmt)
