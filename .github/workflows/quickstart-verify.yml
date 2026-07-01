@@ -38,15 +38,29 @@ jobs:
       # guards with ${VAR:?} are non-empty (the bug: WEAVIATE_API_KEY shipped
       # blank, so even `cp .env.example .env` aborted compose).
       - name: Bootstrap .env like a fresh `make demo`
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
         run: |
           rm -f .env
           if [ ! -f .env ]; then cp .env.example .env; fi
           test -f .env || { echo "::error::bootstrap did not create .env"; exit 1; }
           grep -Eq '^WEAVIATE_API_KEY=.+' .env || { echo "::error::WEAVIATE_API_KEY blank — compose \${VAR:?} guard would abort make demo"; exit 1; }
           grep -Eq '^NEO4J_PASSWORD=.+' .env  || { echo "::error::NEO4J_PASSWORD blank"; exit 1; }
-          # CI has no embedding-provider key; disable the boot-time dim guard so
-          # the backend can reach healthy (same rationale as the smoke job).
+          # Disable the boot-time dim guard for CI resilience.
           sed -i 's/^EMBEDDING_DIM_GUARD=.*/EMBEDDING_DIM_GUARD=false/' .env
+          # Seeding itself is zero-key (precomputed fixtures). These keys are only
+          # for the /api/ask smoke below: Gemini answers, Jina embeds the query.
+          # Skip that smoke gracefully when secrets are absent (e.g. fork PRs).
+          if [ -n "$GOOGLE_API_KEY" ] && [ -n "$JINA_API_KEY" ]; then
+            grep -v -E '^(GOOGLE_API_KEY|JINA_API_KEY)=' .env > .env.tmp
+            { printf 'GOOGLE_API_KEY=%s\n' "$GOOGLE_API_KEY"; printf 'JINA_API_KEY=%s\n' "$JINA_API_KEY"; } >> .env.tmp
+            mv .env.tmp .env
+            echo "ASK_SMOKE=1" >> "$GITHUB_ENV"
+          else
+            echo "ASK_SMOKE=0" >> "$GITHUB_ENV"
+            echo "::notice::No API-key secrets — skipping the /api/ask smoke (seed check still runs)."
+          fi
 
       - name: Bring up the demo stack (detached mirror of `make demo`)
         run: docker compose -f docker-compose.yml -f demo/docker-compose.demo.yml up -d --build
@@ -75,6 +89,24 @@ jobs:
             exit 1
           fi
           echo "make demo seeded the demo corpus end-to-end"
+
+      - name: Ask a question end-to-end (/api/ask returns a real answer)
+        if: env.ASK_SMOKE == '1'
+        run: |
+          set -e
+          resp=$(curl -sS -N --max-time 120 -X POST \
+            "http://localhost:8000/api/channels/demo-wikipedia/ask" \
+            -H "Authorization: Bearer dev-key-change-me" \
+            -H "Content-Type: application/json" \
+            -d '{"question":"Who was Ada Lovelace?"}') || { echo "::error::/api/ask request failed"; exit 1; }
+          echo "----- /api/ask response (head) -----"
+          printf '%s\n' "$resp" | head -c 3000; echo
+          if printf '%s' "$resp" | grep -qiE 'channel_access_denied|not_found|"error"|Internal Server Error'; then
+            echo "::error::/api/ask returned an error — the demo channel is not answerable"; exit 1
+          fi
+          printf '%s' "$resp" | grep -qiE 'lovelace|analytical engine|mathematician|babbage' \
+            || { echo "::error::/api/ask did not return a substantive answer about the seeded corpus"; exit 1; }
+          echo "make demo answered a question end-to-end ✅"
 
       - name: Dump logs on failure
         if: failure()
