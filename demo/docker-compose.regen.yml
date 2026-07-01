@@ -1,0 +1,41 @@
+# Maintainer-only override to REGENERATE the demo fixtures via LIVE ingestion.
+#
+# The committed fixtures (demo/fixtures/*) are pre-computed so `make demo` needs
+# zero API keys. To (re)generate them you must run the real ADK extraction
+# pipeline once — that needs GOOGLE_API_KEY (Gemini) + JINA_API_KEY (embeddings).
+# The "Regenerate demo fixtures" GitHub workflow drives this; it is NOT part of
+# `make demo`.
+#
+#   docker compose -f docker-compose.yml -f demo/docker-compose.regen.yml \
+#     up -d --build fixture-writer
+#
+# fixture-writer runs seed.py --live --write-fixtures, which writes the real
+# fixtures into demo/fixtures/ (RW bind mount → persisted on the host so they
+# can be committed). Runs as root so the container (USER app / uid 10001) can
+# write to the host-owned bind mount.
+services:
+  fixture-writer:
+    build: .
+    user: "0:0"
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      WEAVIATE_URL: http://weaviate:8080
+      WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:?WEAVIATE_API_KEY must be set}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-beever_atlas_dev}
+      MONGODB_URI: mongodb://mongodb:27017/beever_atlas
+      REDIS_URL: redis://redis:6379
+    volumes:
+      # RW (no :ro) so --write-fixtures persists the generated fixtures to the host.
+      - ./demo:/app/demo
+    command: ["python", "demo/seed.py", "--live", "--write-fixtures", "--force"]
+    restart: "no"

@@ -6,6 +6,7 @@ name: Quickstart Verify – make demo & one-line install
 # are exercised end-to-end, so they cannot silently break again.
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
