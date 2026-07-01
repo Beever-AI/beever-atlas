@@ -526,50 +526,140 @@ async def _export_fixtures(stores) -> None:
     logger.info("Wrote weaviate_facts.jsonl (%d facts)", len(weaviate_lines))
 
     # --- neo4j_graph.cypher ---
+    # Entity nodes are keyed by (name, type) and are mostly scope="global"
+    # (no channel_id at all — see neo4j_store.upsert_entity), Event nodes are
+    # keyed by weaviate_id, and Media nodes are keyed by url. A node's
+    # channel relevance flows through `(:Entity)-[:MENTIONED_IN]->
+    # (:Event {channel_id})`, the same pattern neo4j_store.search_relationships
+    # / get_channel_entities use to scope entities to a channel — mirror it
+    # here instead of assuming every node has a uniform `channel_id`/`name`.
     cypher_lines: list[str] = []
     try:
         neo4j_driver = stores.graph._driver
         async with neo4j_driver.session() as session:
-            # Export nodes
-            node_result = await session.run(
-                "MATCH (n) WHERE n.channel_id = $channel_id RETURN n",
-                channel_id=DEMO_CHANNEL_ID,
-            )
-            async for record in node_result:
-                node = record["n"]
-                props = dict(node)
-                # Nodes are MERGE'd by name; a node without a name can't be emitted
-                # as `{name: $name}` (raises ParameterMissing on import), so skip it.
-                if not props.get("name"):
-                    continue
-                labels = ":".join(node.labels)
+
+            def _emit_node(label: str, key_props: list[str], props: dict) -> None:
                 params_line = f"// params: {json.dumps(props, default=str)}"
-                prop_assigns = ", ".join(f"n.{k} = ${k}" for k in props if k != "name")
-                stmt = f"MERGE (n:{labels} {{name: $name}}) SET {prop_assigns};" if prop_assigns else f"MERGE (n:{labels} {{name: $name}});"
+                key_match = ", ".join(f"{k}: ${k}" for k in key_props)
+                other = [k for k in props if k not in key_props]
+                prop_assigns = ", ".join(f"n.{k} = ${k}" for k in other)
+                stmt = (
+                    f"MERGE (n:{label} {{{key_match}}}) SET {prop_assigns};"
+                    if prop_assigns
+                    else f"MERGE (n:{label} {{{key_match}}});"
+                )
                 cypher_lines.append(params_line)
                 cypher_lines.append(stmt)
                 cypher_lines.append("")
 
-            # Export relationships
-            rel_result = await session.run(
-                "MATCH (a)-[r]->(b) WHERE a.channel_id = $channel_id RETURN a.name AS src, type(r) AS rel, b.name AS tgt, properties(r) AS props",
-                channel_id=DEMO_CHANNEL_ID,
-            )
-            async for record in rel_result:
-                # Both endpoints are matched by name; skip a relationship whose
-                # source/target node has no name (could never match on import).
-                if not record["src"] or not record["tgt"]:
-                    continue
-                params = {
-                    "src": record["src"],
-                    "tgt": record["tgt"],
-                    **record["props"],
-                }
+            def _emit_rel(rel_type: str, src_match: str, src_params: dict, tgt_match: str, tgt_params: dict, extra_props: dict) -> None:
+                params = {**src_params, **tgt_params, **extra_props}
                 params_line = f"// params: {json.dumps(params, default=str)}"
-                stmt = f"MATCH (a {{name: $src}}), (b {{name: $tgt}}) MERGE (a)-[:{record['rel']}]->(b);"
+                stmt = f"MATCH (a {src_match}), (b {tgt_match}) MERGE (a)-[:{rel_type}]->(b);"
                 cypher_lines.append(params_line)
                 cypher_lines.append(stmt)
                 cypher_lines.append("")
+
+            # --- Event nodes (keyed by weaviate_id) ---
+            event_result = await session.run(
+                "MATCH (ev:Event {channel_id: $channel_id}) RETURN ev",
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in event_result:
+                props = dict(record["ev"])
+                if props.get("weaviate_id"):
+                    _emit_node("Event", ["weaviate_id"], props)
+
+            # --- Media nodes (keyed by url) ---
+            media_result = await session.run(
+                "MATCH (m:Media {channel_id: $channel_id}) RETURN m",
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in media_result:
+                props = dict(record["m"])
+                if props.get("url"):
+                    _emit_node("Media", ["url"], props)
+
+            # --- Entity nodes mentioned in this channel (keyed by name+type) ---
+            # name_vector is a large embedding blob used only for internal
+            # fuzzy-name resolution; drop it to keep the fixture small.
+            entity_result = await session.run(
+                """
+                MATCH (e:Entity)-[:MENTIONED_IN]->(:Event {channel_id: $channel_id})
+                RETURN DISTINCT e
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in entity_result:
+                props = dict(record["e"])
+                props.pop("name_vector", None)
+                if props.get("name") and props.get("type"):
+                    _emit_node("Entity", ["name", "type"], props)
+
+            # --- MENTIONED_IN edges (Entity -> Event) ---
+            mentioned_result = await session.run(
+                """
+                MATCH (e:Entity)-[:MENTIONED_IN]->(ev:Event {channel_id: $channel_id})
+                RETURN e.name AS src_name, e.type AS src_type, ev.weaviate_id AS tgt_weaviate_id
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in mentioned_result:
+                if record["src_name"] and record["tgt_weaviate_id"]:
+                    _emit_rel(
+                        "MENTIONED_IN",
+                        "{name: $src_name, type: $src_type}",
+                        {"src_name": record["src_name"], "src_type": record["src_type"]},
+                        "{weaviate_id: $tgt_weaviate_id}",
+                        {"tgt_weaviate_id": record["tgt_weaviate_id"]},
+                        {},
+                    )
+
+            # --- REFERENCES_MEDIA edges (Entity -> Media) ---
+            media_rel_result = await session.run(
+                """
+                MATCH (e:Entity)-[:MENTIONED_IN]->(:Event {channel_id: $channel_id})
+                MATCH (e)-[:REFERENCES_MEDIA]->(m:Media {channel_id: $channel_id})
+                RETURN DISTINCT e.name AS src_name, e.type AS src_type, m.url AS tgt_url
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in media_rel_result:
+                if record["src_name"] and record["tgt_url"]:
+                    _emit_rel(
+                        "REFERENCES_MEDIA",
+                        "{name: $src_name, type: $src_type}",
+                        {"src_name": record["src_name"], "src_type": record["src_type"]},
+                        "{url: $tgt_url}",
+                        {"tgt_url": record["tgt_url"]},
+                        {},
+                    )
+
+            # --- Direct Entity-Entity relationships where both endpoints are
+            # mentioned in this channel ---
+            entity_rel_result = await session.run(
+                """
+                MATCH (a:Entity)-[:MENTIONED_IN]->(:Event {channel_id: $channel_id})
+                MATCH (a)-[r]->(b:Entity)
+                WHERE NOT type(r) IN ['MENTIONED_IN', 'REFERENCES_MEDIA']
+                MATCH (b)-[:MENTIONED_IN]->(:Event {channel_id: $channel_id})
+                RETURN DISTINCT a.name AS src_name, a.type AS src_type,
+                       type(r) AS rel_type,
+                       b.name AS tgt_name, b.type AS tgt_type,
+                       properties(r) AS rel_props
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in entity_rel_result:
+                if record["src_name"] and record["tgt_name"]:
+                    _emit_rel(
+                        record["rel_type"],
+                        "{name: $src_name, type: $src_type}",
+                        {"src_name": record["src_name"], "src_type": record["src_type"]},
+                        "{name: $tgt_name, type: $tgt_type}",
+                        {"tgt_name": record["tgt_name"], "tgt_type": record["tgt_type"]},
+                        dict(record["rel_props"]),
+                    )
     except Exception as exc:
         logger.warning("Could not export Neo4j graph: %s", exc)
 
