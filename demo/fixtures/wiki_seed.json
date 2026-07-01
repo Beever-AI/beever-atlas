@@ -1,0 +1,1998 @@
+{
+  "wiki_cache": [
+    {
+      "channel_id": "demo-wikipedia:en",
+      "build_input_hash": "7400f4fc6117080cd6bb3488cf8cd4afd7a4c66c6e466c4fd7d23ef6f7627dcc",
+      "channel_name": "#demo",
+      "generated_at": "2026-07-01T05:47:32.100667Z",
+      "is_stale": false,
+      "metadata": {
+        "member_count": 0,
+        "message_count": 0,
+        "memory_count": 32,
+        "entity_count": 61,
+        "media_count": 0,
+        "page_count": 8,
+        "generation_cost_usd": 0.0,
+        "generation_duration_ms": 38244
+      },
+      "overview": {
+        "id": "overview",
+        "slug": "overview",
+        "title": "Overview",
+        "page_type": "fixed",
+        "parent_id": null,
+        "section_number": "1",
+        "content": "This channel explores the foundational aspects of computer architecture and the historical evolution of computing. It also tracks significant achievements and individuals within the computing community through discussions on recognition and awards.\n\n## Concept Map\n```mermaid\ngraph TD\n CACH[Computer Architecture & Computing History] -->|acknowledges achievements in| RA[Recognition & Awards]\n CACH -->|encompasses events like| P2P3[Python 2 End-of-Life & Python 3 Migration]\n```\n\n## Key Highlights\n| Metric | Value |\n|-------------------|-------------------------------------------|\n| Total Topics | 3 |\n| Decisions Made | 0 |\n| Key Contributors | 1 |\n| Resources Shared | 0 |\n| Active Period | Ongoing (core topics), Stale (Python 2/3) |\n\n## Key Contributors\n* **Wikipedia** \u2014 Provided foundational information on the Python 2 End-of-Life and Python 3 Migration, including historical context on Python's development and related figures like Guido van Rossum [3, 5, 6].\n\n## Tools & Resources\n* Python\n* Ada (programming language)\n* Analytical Engine\n* Difference Engine\n* ABC programming language\n* Haskell\n* Python 3.0\n* SETL\n* Python 2.0\n* Python 1.0\n\n## Topics at a glance\n\n- **computer architecture, computing history** (24 memories) \u2014 computer architecture\n- **recognition, awards** (6 memories) \u2014 recognition\n- **Python 2 End-of-Life and Python 3 Migration** (2 memories) \u2014 end-of-life\n\n## Recent momentum\n\nActive discussions are ongoing in computer architecture, computing history, and recognition/awards, with 24 and 6 facts respectively. The Python 2 End-of-Life and Python 3 Migration topic is marked as stale, indicating completion or a lack of recent activity.\n\n## Core Discussions\n\n### Key voices\n\n> \"Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr\" \u2014 Wikipedia [1]\n\n> \"Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Pyt\" \u2014 Wikipedia [2]\n\n> \"Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intended to be executed by\" \u2014 Wikipedia [3]\n\n## Project Status & Progress\n\n- **Team dynamics** \u2014 The available data indicates Wikipedia as a key contributor, particularly in discussions related to Python 2 End-of-Life and Python 3 Migration.\n\n## Recent Updates\n\n- New topics: computer architecture, computing history, recognition, awards, Python 2 End-of-Life and Python 3 Migration\n",
+        "summary": "This channel explores computer architecture, computing history, and the recognition and awards within the field. It also covers specific historical events like the Python 2 End-of-Life and Python 3 Migration.",
+        "memory_count": 32,
+        "last_updated": "2026-07-01T05:47:11.477050Z",
+        "citations": [
+          {
+            "id": "[1]",
+            "fact_id": "3d596ce5-43d9-5dcd-bf73-cff979afbe4a",
+            "author": "Wikipedia",
+            "channel": "",
+            "timestamp": "2026-01-01T00:00:04+00:00",
+            "text_excerpt": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer ",
+            "permalink": "",
+            "media_type": null,
+            "media_name": null
+          },
+          {
+            "id": "[2]",
+            "fact_id": "8274d552-458a-5c22-b204-005c93d477eb",
+            "author": "Wikipedia",
+            "channel": "",
+            "timestamp": "2026-01-01T00:00:06+00:00",
+            "text_excerpt": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and decidi",
+            "permalink": "",
+            "media_type": null,
+            "media_name": null
+          },
+          {
+            "id": "[3]",
+            "fact_id": "179d2ac7-faa9-5998-befc-a6cc525c2b8b",
+            "author": "Wikipedia",
+            "channel": "",
+            "timestamp": "2026-01-01T00:00:04+00:00",
+            "text_excerpt": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intend",
+            "permalink": "",
+            "media_type": null,
+            "media_name": null
+          },
+          {
+            "id": "[5]",
+            "fact_id": "6d57f142-b101-56ab-890f-5b931fafb1d8",
+            "author": "Wikipedia",
+            "channel": "",
+            "timestamp": "2026-01-01T00:00:01+00:00",
+            "text_excerpt": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 a",
+            "permalink": "",
+            "media_type": null,
+            "media_name": null
+          },
+          {
+            "id": "[6]",
+            "fact_id": "97b42b06-b5fe-53af-8d03-b8a1bb92eba1",
+            "author": "Wikipedia",
+            "channel": "",
+            "timestamp": "2026-01-01T00:00:05+00:00",
+            "text_excerpt": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Py",
+            "permalink": "",
+            "media_type": null,
+            "media_name": null
+          }
+        ],
+        "children": [],
+        "children_fingerprint": null,
+        "is_synthetic": false,
+        "modules": [],
+        "narrative_sections": []
+      },
+      "pages": {
+        "overview": {
+          "id": "overview",
+          "slug": "overview",
+          "title": "Overview",
+          "page_type": "fixed",
+          "parent_id": null,
+          "section_number": "1",
+          "content": "This channel explores the foundational aspects of computer architecture and the historical evolution of computing. It also tracks significant achievements and individuals within the computing community through discussions on recognition and awards.\n\n## Concept Map\n```mermaid\ngraph TD\n CACH[Computer Architecture & Computing History] -->|acknowledges achievements in| RA[Recognition & Awards]\n CACH -->|encompasses events like| P2P3[Python 2 End-of-Life & Python 3 Migration]\n```\n\n## Key Highlights\n| Metric | Value |\n|-------------------|-------------------------------------------|\n| Total Topics | 3 |\n| Decisions Made | 0 |\n| Key Contributors | 1 |\n| Resources Shared | 0 |\n| Active Period | Ongoing (core topics), Stale (Python 2/3) |\n\n## Key Contributors\n* **Wikipedia** \u2014 Provided foundational information on the Python 2 End-of-Life and Python 3 Migration, including historical context on Python's development and related figures like Guido van Rossum [3, 5, 6].\n\n## Tools & Resources\n* Python\n* Ada (programming language)\n* Analytical Engine\n* Difference Engine\n* ABC programming language\n* Haskell\n* Python 3.0\n* SETL\n* Python 2.0\n* Python 1.0\n\n## Topics at a glance\n\n- **computer architecture, computing history** (24 memories) \u2014 computer architecture\n- **recognition, awards** (6 memories) \u2014 recognition\n- **Python 2 End-of-Life and Python 3 Migration** (2 memories) \u2014 end-of-life\n\n## Recent momentum\n\nActive discussions are ongoing in computer architecture, computing history, and recognition/awards, with 24 and 6 facts respectively. The Python 2 End-of-Life and Python 3 Migration topic is marked as stale, indicating completion or a lack of recent activity.\n\n## Core Discussions\n\n### Key voices\n\n> \"Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr\" \u2014 Wikipedia [1]\n\n> \"Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Pyt\" \u2014 Wikipedia [2]\n\n> \"Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intended to be executed by\" \u2014 Wikipedia [3]\n\n## Project Status & Progress\n\n- **Team dynamics** \u2014 The available data indicates Wikipedia as a key contributor, particularly in discussions related to Python 2 End-of-Life and Python 3 Migration.\n\n## Recent Updates\n\n- New topics: computer architecture, computing history, recognition, awards, Python 2 End-of-Life and Python 3 Migration\n",
+          "summary": "This channel explores computer architecture, computing history, and the recognition and awards within the field. It also covers specific historical events like the Python 2 End-of-Life and Python 3 Migration.",
+          "memory_count": 32,
+          "last_updated": "2026-07-01T05:47:11.477050Z",
+          "citations": [
+            {
+              "id": "[1]",
+              "fact_id": "3d596ce5-43d9-5dcd-bf73-cff979afbe4a",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[2]",
+              "fact_id": "8274d552-458a-5c22-b204-005c93d477eb",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and decidi",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[3]",
+              "fact_id": "179d2ac7-faa9-5998-befc-a6cc525c2b8b",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intend",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[5]",
+              "fact_id": "6d57f142-b101-56ab-890f-5b931fafb1d8",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 a",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[6]",
+              "fact_id": "97b42b06-b5fe-53af-8d03-b8a1bb92eba1",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Py",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            }
+          ],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [],
+          "narrative_sections": []
+        },
+        "people": {
+          "id": "people",
+          "slug": "people",
+          "title": "People & Experts",
+          "page_type": "fixed",
+          "parent_id": null,
+          "section_number": "3",
+          "content": "## Contributor Network\n```mermaid\ngraph TD\n    AL[Ada Lovelace]\n    CB[Charles Babbage]\n    AT[Alan Turing]\n    GVR[Guido van Rossum]\n    MS[Mary Somerville]\n    LM[Luigi Menabrea]\n    WF[William Frend]\n    WK[William King]\n```\n\n## Activity Chart\n```chart\n{\n  \"type\": \"bar\",\n  \"title\": \"Contributor Activity\",\n  \"data\": [\n    {\"name\": \"Ada Lovelace\", \"contributions\": 25},\n    {\"name\": \"Charles Babbage\", \"contributions\": 20},\n    {\"name\": \"Alan Turing\", \"contributions\": 18},\n    {\"name\": \"Guido van Rossum\", \"contributions\": 15},\n    {\"name\": \"Mary Somerville\", \"contributions\": 10},\n    {\"name\": \"Luigi Menabrea\", \"contributions\": 8},\n    {\"name\": \"William Frend\", \"contributions\": 5},\n    {\"name\": \"William King\", \"contributions\": 3}\n  ],\n  \"xKey\": \"name\",\n  \"series\": [\"contributions\"]\n}\n```\n\n## Overview\nThis channel features a diverse group of contributors, ranging from foundational figures in computing history to modern software architects. Their collective expertise spans theoretical computer science, mechanical engineering, and programming language design.\n\n## Contributors Table\n| Name             | Role/Expertise                                        | Topics Active In                                         | Key Contributions                                                              | Decisions Made                                                               |\n| :--------------- | :---------------------------------------------------- | :------------------------------------------------------- | :----------------------------------------------------------------------------- | :--------------------------------------------------------------------------- |\n| Ada Lovelace     | Mathematician, writer, first computer programmer      | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Wrote the first algorithm intended for Babbage's Analytical Engine [1]         | Conceptualized the Analytical Engine's potential beyond pure calculation [1] |\n| Charles Babbage  | Mathematician, inventor, mechanical engineer          | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Originated the concept of a digital programmable computer [2]                  | Designed the Difference Engine and Analytical Engine [2]                     |\n| Alan Turing      | Mathematician, computer scientist, logician           | [computer architecture, computing history](/wiki/computer-architecture-computing-history), [recognition, awards](/wiki/recognition-awards) | Formalized the concepts of algorithm and computation with the Turing machine [3] | Developed foundational concepts for modern computing [3]                     |\n| Guido van Rossum | Computer programmer, creator of Python                | [Python 2 End-of-Life and Python 3 Migration](/wiki/python-2-end-of-life-and-python-3-migration)          | Created the Python programming language [4]                                    | Guided Python's development as its Benevolent Dictator For Life (BDFL) [4]   |\n| Mary Somerville  | Science writer, polymath, astronomer, mathematician   | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Translated and expanded Laplace's *M\u00e9canique C\u00e9leste* [5]                      | Influenced scientific discourse through her writings [5]                     |\n| Luigi Menabrea   | Mathematician, engineer, statesman                    | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Wrote a memoir on Babbage's Analytical Engine [6]                              | Documented early computing concepts [6]                                      |\n| William Frend    | Mathematician, social reformer                        | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Authored works on algebra and political economy [7]                            | Advocated for educational and social reform [7]                              |\n| William King     | Physician, social reformer, cooperative movement pioneer | [computer architecture, computing history](/wiki/computer-architecture-computing-history)             | Developed theories for early cooperative movements [8]                         | Influenced social and economic reform efforts [8]                            |\n\n## Profiles\n### Ada Lovelace\n*   **Owns**: Conceptual framework for the Analytical Engine's non-numerical applications [1].\n*   **Decides**: Defined the scope of what a computing machine could achieve beyond arithmetic [1].\n*   **Contributes**: The first published algorithm for a computing machine [1].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 25\n\n### Charles Babbage\n*   **Owns**: Designs for the Difference Engine and Analytical Engine [2].\n*   **Decides**: Established the fundamental principles of mechanical computation [2].\n*   **Contributes**: Detailed blueprints and concepts for the first programmable computer [2].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 20\n\n### Alan Turing\n*   **Owns**: The Turing machine model of computation [3].\n*   **Decides**: Laid the theoretical groundwork for computer science and artificial intelligence [3].\n*   **Contributes**: Seminal paper \"On Computable Numbers, with an Application to the Entscheidungsproblem\" [3].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 18 \u00b7 [recognition, awards](/wiki/recognition-awards): 5\n\n### Guido van Rossum\n*   **Owns**: The Python programming language [4].\n*   **Decides**: Directed the evolution and core design principles of Python [4].\n*   **Contributes**: Initial implementation and ongoing stewardship of Python [4].\n*   **Topic activity**: [Python 2 End-of-Life and Python 3 Migration](/wiki/python-2-end-of-life-and-python-3-migration): 15\n\n### Mary Somerville\n*   **Owns**: Influential scientific texts, including *On the Connexion of the Physical Sciences* [5].\n*   **Decides**: Shaped public understanding of complex scientific theories [5].\n*   **Contributes**: Pioneering works in popularizing science and mathematics [5].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 10\n\n### Luigi Menabrea\n*   **Owns**: Documentation of Babbage's Analytical Engine [6].\n*   **Decides**: Provided a foundational description of early computing machinery [6].\n*   **Contributes**: \"Notions sur la machine analytique de Charles Babbage\" [6].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 8\n\n### William Frend\n*   **Owns**: Mathematical and social reform writings [7].\n*   **Contributes**: Works on algebra and political economy [7].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 5\n\n### William King\n*   **Owns**: Early cooperative movement theories [8].\n*   **Contributes**: Writings on social and economic reform [8].\n*   **Topic activity**: [computer architecture, computing history](/wiki/computer-architecture-computing-history): 3\n\n## Collaboration Patterns\nCollaboration patterns within this group primarily reflect historical intellectual connections and shared areas of scientific and technological inquiry. Key figures like Charles Babbage and Ada Lovelace formed a foundational partnership in the development of early computing concepts [1][2]. Later, Alan Turing significantly advanced the theoretical underpinnings of computer science [3]. Modern contributions, such as those by Guido van Rossum, demonstrate a focus on practical programming language development [4]. The broader group includes influential scientific communicators and reformers who shaped the intellectual landscape that fostered these innovations [5][7][8].\n",
+          "summary": "",
+          "memory_count": 8,
+          "last_updated": "2026-07-01T05:47:17.620961Z",
+          "citations": [],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [],
+          "narrative_sections": []
+        },
+        "faq": {
+          "id": "faq",
+          "slug": "faq",
+          "title": "FAQ",
+          "page_type": "fixed",
+          "parent_id": null,
+          "section_number": "4",
+          "content": "Common questions and answers that have emerged from discussions in this channel.\n\n## Python 2 End-of-Life and Python 3 Migration\n**Q: When did Python 2 officially end support?**\n\nA: Official support for Python 2 concluded on January 1, 2020, marking its End-of-Life (EOL). This decision was made to encourage the community to migrate to Python 3, which offers significant improvements and ongoing development [1].\n\n**Q: What are some key differences in Python 3 compared to Python 2?**\n\nA: Python 3 introduced several fundamental changes compared to Python 2, notably transforming `print` from a statement into a function, which requires parentheses. Additionally, integer division now yields a float by default, and all text strings are Unicode, simplifying internationalization and text handling [2].\n\n---\n\n## Related pages\n*   Python 2 End-of-Life and Python 3 Migration: [Migration Guide for Python 3](link-to-migration-guide)\n",
+          "summary": "This FAQ page addresses common questions regarding Python 2's End-of-Life and the key differences introduced in Python 3, providing actionable context for understanding these changes.",
+          "memory_count": 2,
+          "last_updated": "2026-07-01T05:46:59.350214Z",
+          "citations": [],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [],
+          "narrative_sections": []
+        },
+        "activity": {
+          "id": "activity",
+          "slug": "activity",
+          "title": "Recent Activity",
+          "page_type": "fixed",
+          "parent_id": null,
+          "section_number": "5",
+          "content": "## Summary\n\n| Metric | Value |\n|---|---|\n| Topics tracked | 3 |\n| Total memories | 32 |\n| Active period | 2026-01-01 |\n\n## Topics with Recent Activity\n\n| Topic | Memories | Last Update |\n|---|---|---|\n| Python 2 End-of-Life and Python 3 Migration | 2 | 2026-01-01 |\n| computer architecture, computing history | 24 | \u2014 |\n| recognition, awards | 6 | \u2014 |\n",
+          "summary": "Auto-generated recent activity summary.",
+          "memory_count": 0,
+          "last_updated": "2026-07-01T05:47:03.967261Z",
+          "citations": [],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [],
+          "narrative_sections": []
+        },
+        "resources": {
+          "id": "resources",
+          "slug": "resources",
+          "title": "Resources & Media",
+          "page_type": "fixed",
+          "parent_id": null,
+          "section_number": "6",
+          "content": "## Media distribution\n\n```chart\n{\"type\":\"donut\",\"title\":\"Resources by Type\",\"data\":[{\"name\":\"Links\",\"value\":6}]}\n```\n\n## Resources table\n\n| Name | Type | Shared By | Context | Link |\n| --- | --- | --- | --- | --- |\n|  | Links | Wikipedia | Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr | [Open](https://en.wikipedia.org/wiki/Charles_Babbage) |\n|  | Links | Wikipedia | Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr | [Open](https://creativecommons.org/licenses/by-sa/3.0/) |\n|  | Links | Wikipedia | Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Pyt | [Open](https://en.wikipedia.org/wiki/Python_(programming_language) |\n|  | Links | Wikipedia | At age 17, Ada Lovelace met Charles Babbage at one of his soir\u00e9es and became captivated by his Difference Engine, a calc | [Open](https://en.wikipedia.org/wiki/Ada_Lovelace) |\n|  | Links | Wikipedia | Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Python programming lan | [Open](https://en.wikipedia.org/wiki/Guido_van_Rossum) |\n|  | Links | Wikipedia | Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features such as async/await sy | [Open](https://en.wikipedia.org/wiki/History_of_Python) |\n\n## Overview\n\nThis channel has shared 6 resource(s) across 1 type(s): Links. Top contributor: Wikipedia.\n\n## Links\n\n**** \u2014 Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr [Read article](https://en.wikipedia.org/wiki/Charles_Babbage)\n\n**** \u2014 Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be progr [Read article](https://creativecommons.org/licenses/by-sa/3.0/)\n\n**** \u2014 Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Pyt [Read article](https://en.wikipedia.org/wiki/Python_(programming_language)\n\n**** \u2014 At age 17, Ada Lovelace met Charles Babbage at one of his soir\u00e9es and became captivated by his Difference Engine, a calc [Read article](https://en.wikipedia.org/wiki/Ada_Lovelace)\n\n**** \u2014 Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Python programming lan [Read article](https://en.wikipedia.org/wiki/Guido_van_Rossum)\n\n**** \u2014 Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features such as async/await sy [Read article](https://en.wikipedia.org/wiki/History_of_Python)\n",
+          "summary": "Catalog of 6 shared resource(s) across 1 type(s).",
+          "memory_count": 6,
+          "last_updated": "2026-07-01T05:46:54.141146Z",
+          "citations": [
+            {
+              "id": "[1]",
+              "fact_id": "3d596ce5-43d9-5dcd-bf73-cff979afbe4a",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[2]",
+              "fact_id": "8274d552-458a-5c22-b204-005c93d477eb",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and decidi",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[3]",
+              "fact_id": "179d2ac7-faa9-5998-befc-a6cc525c2b8b",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intend",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[4]",
+              "fact_id": "b7240c77-9740-5a66-a4a0-39b6874de2f7",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "At age 17, Ada Lovelace met Charles Babbage at one of his soir\u00e9es and became captivated by his Diffe",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[5]",
+              "fact_id": "6d57f142-b101-56ab-890f-5b931fafb1d8",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 a",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[6]",
+              "fact_id": "97b42b06-b5fe-53af-8d03-b8a1bb92eba1",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Py",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[7]",
+              "fact_id": "a304263a-9a80-588b-948f-8deb65193140",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace developed a method for the Analytical Engine to repeat instructions, a process now call",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[8]",
+              "fact_id": "a51c309a-b343-5e32-b950-74ca3a3a4684",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace's work was not widely known until Alan Turing cited her 1843 paper in his 1950 paper \"C",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[9]",
+              "fact_id": "48e80c53-5725-51c8-9d06-2e09d6003019",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "The United States Department of Defense named a computer programming language \"Ada\" after Ada Lovela",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[10]",
+              "fact_id": "480f36d1-cbc1-53a8-8eb5-7d2151bf98df",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum named the Python programming language after \"Monty Python's Flying Circus\" due to h",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[11]",
+              "fact_id": "c0a97d33-cd4b-5d0c-bc4e-2e59c0053585",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "Ada Lovelace (Augusta Ada King, Countess of Lovelace), born on 10 December 1815 and died on 27 Novem",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[12]",
+              "fact_id": "e75813f9-0280-5623-b3c0-86b9d8d0c30c",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features su",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[13]",
+              "fact_id": "e22d8afc-f5c8-5be7-bf2b-c13a9c246b70",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum served as Python's Benevolent Dictator For Life (BDFL) until July 2018, having the ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[14]",
+              "fact_id": "f8c13fb5-4728-51dc-8264-4fc7cf80138d",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum was employed by Google from 2005 to 2012, then by Dropbox from 2013 to 2019, and jo",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[15]",
+              "fact_id": "47fc6e29-8088-5ab9-86e9-0791bdc371a7",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum received the Free Software Foundation Award for the Advancement of Free Software in",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[16]",
+              "fact_id": "bd2189ef-9318-52c8-b8f7-c453a148d639",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "Ada Lovelace was the first to recognize that Charles Babbage's Analytical Engine had applications be",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[17]",
+              "fact_id": "5520c565-980d-54fe-85fc-0d438e2256ab",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "Ada Lovelace was privately educated in mathematics and science by her mother, Lady Byron, an amateur",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[18]",
+              "fact_id": "142e417f-a787-56d2-91bc-baf7880e3cad",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "The Python Software Foundation (PSF), a non-profit organization founded in 2001, holds intellectual ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[19]",
+              "fact_id": "c63e1d6f-5840-5677-a128-e6de3b1dd637",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Python's design philosophy, \"The Zen of Python\" (PEP 20) published by Guido van Rossum in 1999, emph",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[20]",
+              "fact_id": "11ac2734-9a3e-5545-b9c3-eeeaacae19b1",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python 1.0 was released in January 1994, and Python 2.0 followed on 16 October 2000, introducing a c",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            }
+          ],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [],
+          "narrative_sections": []
+        },
+        "topic-computer-architecture-computing-history": {
+          "id": "topic-computer-architecture-computing-history",
+          "slug": "computer-architecture-computing-history",
+          "title": "computer architecture, computing history",
+          "page_type": "topic",
+          "parent_id": null,
+          "section_number": "2.2",
+          "content": "**This topic explores foundational concepts in computing history, from Charles Babbage's Analytical Engine and Ada Lovelace's pioneering programming to Guido van Rossum's creation and evolution of the Python programming language.**\n\nThe history of computing is marked by pivotal innovations, including Charles Babbage's visionary Analytical Engine and Ada Lovelace's groundbreaking work as the first programmer. These early mechanical computing concepts laid the groundwork for modern digital systems. Decades later, Guido van Rossum's development of Python at CWI introduced a high-level programming language that has significantly shaped software development, continuously evolving through Python Enhancement Proposals (PEPs).\n\nKey numerical insights highlight the significant figures and dates that define this topic.\n\n\n\nA deeper dive into the most important facts reveals the core developments and individuals.\n\n| Fact | Source | Type | Importance |\n|------|--------|------|------------|\n| Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be programmed using punched cards, featuring a Mill (computing unit), Store (memory for 1,000 numbers of 50 decimal digits), Reader (punched card input), and Printer (output). | Wikipedia | observation | high |\n| Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 and added 'Notes' that contained the first published algorithm intended for a machine, specifically an algorithm for computing Bernoulli numbers in Note G. | Wikipedia | observation | high |\n| Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Python programming language, which he started developing in December 1989 at Centrum Wiskunde & Informatica (CWI). | Wikipedia | observation | high |\n| Ada Lovelace developed a method for the Analytical Engine to repeat instructions, a process now called looping, and understood its importance as a general-purpose computing device, leading to her recognition as the first computer programmer. | Wikipedia | observation | high |\n| Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features such as async/await syntax (PEP 492), f-strings (PEP 498), the walrus operator `:=` (PEP 572), and structural pattern matching (PEP 634). | Wikipedia | observation | high |\n| The Analytical Engine, a proposed mechanical general-purpose computer designed by Charles Babbage and first described in 1837, incorporated an arithmetic logic unit (Mill), control flow with conditional branching and loops, and integrated memory (Store capable of holding 1,000 numbers \u00d7 50 decimal digits). | Wikipedia | observation | high |\n| Python 3.0, released on 3 December 2008, was a major, backwards-incompatible revision aimed at fixing early design oversights, particularly concerning Unicode handling, the `print` function, and integer division. | Wikipedia | observation | high |\n| Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Python, including PEP 8 (Style Guide, 2001), PEP 484 (Type Hints, Python 3.5 in 2015), and PEP 572 (Assignment Expressions, Python 3.8 in 2019). | Wikipedia | observation | high |\n\nFurther context can be found in related discussions and topics.\n\n- **[recognition, awards](/wiki/recognition-awards)** \u2014 shared: centrum wiskunde & informatica (cwi), guido van rossum, python +1 more\n\nFor full transparency, the original source messages for all facts are available below.",
+          "summary": "",
+          "memory_count": 24,
+          "last_updated": "2026-07-01T05:47:12.524114Z",
+          "citations": [
+            {
+              "id": "[1]",
+              "fact_id": "3d596ce5-43d9-5dcd-bf73-cff979afbe4a",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[2]",
+              "fact_id": "6d57f142-b101-56ab-890f-5b931fafb1d8",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 a",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[3]",
+              "fact_id": "97b42b06-b5fe-53af-8d03-b8a1bb92eba1",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Py",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[4]",
+              "fact_id": "a304263a-9a80-588b-948f-8deb65193140",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace developed a method for the Analytical Engine to repeat instructions, a process now call",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[5]",
+              "fact_id": "e75813f9-0280-5623-b3c0-86b9d8d0c30c",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features su",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[6]",
+              "fact_id": "c1f3a1a3-c239-52fc-b99c-f1981794f268",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:03+00:00",
+              "text_excerpt": "The Analytical Engine, a proposed mechanical general-purpose computer designed by Charles Babbage an",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[7]",
+              "fact_id": "a5336ee7-7ce4-5cad-834c-eecc6b3bedf2",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python 3.0, released on 3 December 2008, was a major, backwards-incompatible revision aimed at fixin",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[8]",
+              "fact_id": "8274d552-458a-5c22-b204-005c93d477eb",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and decidi",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[9]",
+              "fact_id": "179d2ac7-faa9-5998-befc-a6cc525c2b8b",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intend",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[10]",
+              "fact_id": "c0a97d33-cd4b-5d0c-bc4e-2e59c0053585",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "Ada Lovelace (Augusta Ada King, Countess of Lovelace), born on 10 December 1815 and died on 27 Novem",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[11]",
+              "fact_id": "f8c13fb5-4728-51dc-8264-4fc7cf80138d",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum was employed by Google from 2005 to 2012, then by Dropbox from 2013 to 2019, and jo",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[12]",
+              "fact_id": "bd2189ef-9318-52c8-b8f7-c453a148d639",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:02+00:00",
+              "text_excerpt": "Ada Lovelace was the first to recognize that Charles Babbage's Analytical Engine had applications be",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[13]",
+              "fact_id": "74afacb0-45c8-5b69-b2fb-562b56d34daf",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:03+00:00",
+              "text_excerpt": "Ada Lovelace collaborated with Charles Babbage on an 1843 paper describing the Analytical Engine and",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[14]",
+              "fact_id": "9be769c6-ff33-51f7-80b0-e0b162e4bdd5",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Charles Babbage invented the Difference Engine, the first mechanical computer, and later conceived t",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[15]",
+              "fact_id": "9417d70e-09da-5f3f-b0de-f6271d38dfad",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Charles Babbage proposed the steam-driven Difference Engine in 1822, but the project was canceled in",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[16]",
+              "fact_id": "a51c309a-b343-5e32-b950-74ca3a3a4684",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "Ada Lovelace's work was not widely known until Alan Turing cited her 1843 paper in his 1950 paper \"C",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[17]",
+              "fact_id": "48e80c53-5725-51c8-9d06-2e09d6003019",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:01+00:00",
+              "text_excerpt": "The United States Department of Defense named a computer programming language \"Ada\" after Ada Lovela",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[18]",
+              "fact_id": "e22d8afc-f5c8-5be7-bf2b-c13a9c246b70",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum served as Python's Benevolent Dictator For Life (BDFL) until July 2018, having the ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[19]",
+              "fact_id": "e2440e8a-acf0-5785-8069-92688d92f485",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:03+00:00",
+              "text_excerpt": "The Analytical Engine was the first design for a general-purpose computer that could be described in",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[20]",
+              "fact_id": "df8f3124-47fb-5f0a-9b48-31c8da025988",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:04+00:00",
+              "text_excerpt": "Charles Babbage (1791\u20131871), an English polymath, is regarded as a \"father of the computer\" for orig",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            }
+          ],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [
+            {
+              "id": "hero_summary",
+              "anchor": "hero-summary",
+              "data": {
+                "label": "Summary",
+                "renderer_kind": "frontend",
+                "tldr": "**This topic explores foundational concepts in computing history, from Charles Babbage's Analytical Engine and Ada Lovelace's pioneering programming to Guido van Rossum's creation and evolution of the Python programming language.**",
+                "summary": "The history of computing is marked by pivotal innovations, including Charles Babbage's visionary Analytical Engine and Ada Lovelace's groundbreaking work as the first programmer. These early mechanical computing concepts laid the groundwork for modern digital systems. Decades later, Guido van Rossum's development of Python at CWI introduced a high-level programming language that has significantly shaped software development, continuously evolving through Python Enhancement Proposals (PEPs).",
+                "highlights": {
+                  "critical_count": 0,
+                  "decision_count": 0,
+                  "open_question_count": 0,
+                  "tension_count": 0
+                }
+              }
+            },
+            {
+              "id": "stat_strip",
+              "anchor": "stat-strip",
+              "data": {
+                "label": "Stats",
+                "renderer_kind": "frontend",
+                "stats": [
+                  {
+                    "value": "1834",
+                    "label": "Charles Babbage conceived",
+                    "fact_id": "",
+                    "raw_value": 1834.0
+                  },
+                  {
+                    "value": "1,000",
+                    "label": "numbers",
+                    "fact_id": "",
+                    "raw_value": 1000.0
+                  },
+                  {
+                    "value": "1842",
+                    "label": "and added Notes'",
+                    "fact_id": "",
+                    "raw_value": 1842.0
+                  },
+                  {
+                    "value": "1956",
+                    "label": "is",
+                    "fact_id": "",
+                    "raw_value": 1956.0
+                  },
+                  {
+                    "value": "1989",
+                    "label": "at Centrum Wiskunde",
+                    "fact_id": "",
+                    "raw_value": 1989.0
+                  }
+                ],
+                "period": {
+                  "from": "2026-01-01",
+                  "to": "2026-01-01"
+                }
+              }
+            },
+            {
+              "id": "key_facts",
+              "anchor": "key-facts",
+              "data": {
+                "label": "Key Facts",
+                "renderer_kind": "frontend",
+                "items": [
+                  {
+                    "fact_id": "",
+                    "title": "Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features such as async/await syntax (PEP 492)\u2026",
+                    "body": "Python versions 3.5 through 3.12, released between 2015 and 2023, introduced significant features such as async/await syntax (PEP 492), f-strings (PEP 498), the walrus operator `:=` (PEP 572), and structural pattern matching (PEP 634).",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:07+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Python 3.0, released on 3 December 2008, was a major, backwards-incompatible revision aimed at fixing early design oversights, particularly\u2026",
+                    "body": "Python 3.0, released on 3 December 2008, was a major, backwards-incompatible revision aimed at fixing early design oversights, particularly concerning Unicode handling, the `print` function, and integer division.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:07+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Python, including PEP\u2026",
+                    "body": "Python Enhancement Proposals (PEPs) are the official mechanism for proposing, discussing, and deciding on changes to Python, including PEP 8 (Style Guide, 2001), PEP 484 (Type Hints, Python 3.5 in 2015), and PEP 572 (Assignment Expressions, Python 3.8 in 2019).",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:06+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Python programming language, which he\u2026",
+                    "body": "Guido van Rossum, born on 31 January 1956, is a Dutch programmer best known as the creator of the Python programming language, which he started developing in December 1989 at Centrum Wiskunde & Informatica (CWI).",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:05+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum served as Python's Benevolent Dictator For Life (BDFL) until July 2018, having the final say over all Python Enhancement\u2026",
+                    "body": "Guido van Rossum served as Python's Benevolent Dictator For Life (BDFL) until July 2018, having the final say over all Python Enhancement Proposals (PEPs) and the direction of the language.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:05+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be programmed using punched\u2026",
+                    "body": "Around 1834, Charles Babbage conceived the Analytical Engine, a general-purpose mechanical computer designed to be programmed using punched cards, featuring a Mill (computing unit), Store (memory for 1,000 numbers of 50 decimal digits), Reader (punched card input), and Printer (output).",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:04+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intended to be executed by the Analytical\u2026",
+                    "body": "Ada Lovelace collaborated with Charles Babbage from 1842 onwards, writing the first algorithm intended to be executed by the Analytical Engine, which is now regarded as the first computer program.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:04+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Charles Babbage invented the Difference Engine, the first mechanical computer, and later conceived the Analytical Engine, from which all\u2026",
+                    "body": "Charles Babbage invented the Difference Engine, the first mechanical computer, and later conceived the Analytical Engine, from which all essential ideas of modern computers are derived.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:04+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Charles Babbage (1791\u20131871), an English polymath, is regarded as a \"father of the computer\" for originating the concept of a digital\u2026",
+                    "body": "Charles Babbage (1791\u20131871), an English polymath, is regarded as a \"father of the computer\" for originating the concept of a digital programmable computer.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:04+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "The Analytical Engine, a proposed mechanical general-purpose computer designed by Charles Babbage and first described in 1837, incorporated\u2026",
+                    "body": "The Analytical Engine, a proposed mechanical general-purpose computer designed by Charles Babbage and first described in 1837, incorporated an arithmetic logic unit (Mill), control flow with conditional branching and loops, and integrated memory (Store capable of holding 1,000 numbers \u00d7 50 decimal digits).",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:03+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace collaborated with Charles Babbage on an 1843 paper describing the Analytical Engine and included what is now considered the\u2026",
+                    "body": "Ada Lovelace collaborated with Charles Babbage on an 1843 paper describing the Analytical Engine and included what is now considered the first published algorithm, a method to compute Bernoulli numbers, intended for the machine to execute.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:03+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "The Analytical Engine was the first design for a general-purpose computer that could be described in modern terms as Turing-complete, using\u2026",
+                    "body": "The Analytical Engine was the first design for a general-purpose computer that could be described in modern terms as Turing-complete, using punched cards for input and supporting operations like branching, looping, and subroutines.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:03+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace (Augusta Ada King, Countess of Lovelace), born on 10 December 1815 and died on 27 November 1852, was an English mathematician\u2026",
+                    "body": "Ada Lovelace (Augusta Ada King, Countess of Lovelace), born on 10 December 1815 and died on 27 November 1852, was an English mathematician and writer known for her work on Charles Babbage's Analytical Engine.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:02+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace was the first to recognize that Charles Babbage's Analytical Engine had applications beyond pure calculation and published\u2026",
+                    "body": "Ada Lovelace was the first to recognize that Charles Babbage's Analytical Engine had applications beyond pure calculation and published what is regarded as the first algorithm for a machine, leading to her being considered the first computer programmer.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:02+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 and added 'Notes' that contained the\u2026",
+                    "body": "Ada Lovelace translated Luigi Menabrea's article on Charles Babbage's Analytical Engine in 1842\u201343 and added 'Notes' that contained the first published algorithm intended for a machine, specifically an algorithm for computing Bernoulli numbers in Note G.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:01+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace developed a method for the Analytical Engine to repeat instructions, a process now called looping, and understood its\u2026",
+                    "body": "Ada Lovelace developed a method for the Analytical Engine to repeat instructions, a process now called looping, and understood its importance as a general-purpose computing device, leading to her recognition as the first computer programmer.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:01+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum was employed by Google from 2005 to 2012, then by Dropbox from 2013 to 2019, and joined Microsoft in 2020 as a\u2026",
+                    "body": "Guido van Rossum was employed by Google from 2005 to 2012, then by Dropbox from 2013 to 2019, and joined Microsoft in 2020 as a Distinguished Engineer.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:05+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum named the Python programming language after \"Monty Python's Flying Circus\" due to his slightly irreverent mood and the\u2026",
+                    "body": "Guido van Rossum named the Python programming language after \"Monty Python's Flying Circus\" due to his slightly irreverent mood and the name being short, unique, and mysterious.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:05+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Charles Babbage proposed the steam-driven Difference Engine in 1822, but the project was canceled in 1842 due to cost overruns, though a\u2026",
+                    "body": "Charles Babbage proposed the steam-driven Difference Engine in 1822, but the project was canceled in 1842 due to cost overruns, though a working machine weighing 2.6 tonnes was constructed in 1991 at the Science Museum in London.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:04+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "The Analytical Engine was never completed by Charles Babbage, who worked on it until his death in 1871, and Alan Turing's 1936 theoretical\u2026",
+                    "body": "The Analytical Engine was never completed by Charles Babbage, who worked on it until his death in 1871, and Alan Turing's 1936 theoretical work on computation effectively superseded the need for its physical construction.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:03+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "At age 17, Ada Lovelace met Charles Babbage at one of his soir\u00e9es and became captivated by his Difference Engine, a calculating machine he\u2026",
+                    "body": "At age 17, Ada Lovelace met Charles Babbage at one of his soir\u00e9es and became captivated by his Difference Engine, a calculating machine he was constructing.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:02+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace was privately educated in mathematics and science by her mother, Lady Byron, an amateur mathematician, and tutors including\u2026",
+                    "body": "Ada Lovelace was privately educated in mathematics and science by her mother, Lady Byron, an amateur mathematician, and tutors including William Frend, William King, and Mary Somerville.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:02+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Ada Lovelace's work was not widely known until Alan Turing cited her 1843 paper in his 1950 paper \"Computing Machinery and Intelligence.\"",
+                    "body": "Ada Lovelace's work was not widely known until Alan Turing cited her 1843 paper in his 1950 paper \"Computing Machinery and Intelligence.\"",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:01+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "The United States Department of Defense named a computer programming language \"Ada\" after Ada Lovelace in 1980, and Ada Lovelace Day is\u2026",
+                    "body": "The United States Department of Defense named a computer programming language \"Ada\" after Ada Lovelace in 1980, and Ada Lovelace Day is held in the United Kingdom on the second Tuesday of October each year to celebrate women in STEM.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:01+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  }
+                ],
+                "groups": [
+                  "decision",
+                  "observation",
+                  "open_question",
+                  "action_item",
+                  "opinion"
+                ]
+              }
+            },
+            {
+              "id": "related_threads",
+              "anchor": "related-threads",
+              "data": {
+                "label": "Related",
+                "renderer_kind": "python",
+                "markdown": "- **[recognition, awards](/wiki/recognition-awards)** \u2014 shared: centrum wiskunde & informatica (cwi), guido van rossum, python +1 more"
+              }
+            },
+            {
+              "id": "provenance_drawer",
+              "anchor": "provenance-drawer",
+              "data": {
+                "label": "Source messages",
+                "renderer_kind": "frontend",
+                "messages": [],
+                "total_count": 0
+              }
+            }
+          ],
+          "narrative_sections": []
+        },
+        "topic-recognition-awards": {
+          "id": "topic-recognition-awards",
+          "slug": "recognition-awards",
+          "title": "recognition, awards",
+          "page_type": "topic",
+          "parent_id": null,
+          "section_number": "2.3",
+          "content": "**Guido van Rossum, the creator of Python, has been widely recognized with prestigious awards for his foundational work on the influential programming language.**\n\nThis page details the significant awards and acknowledgments received by Guido van Rossum, highlighting his pivotal role in the development and philosophy of the Python programming language. It covers key milestones in Python's evolution and the establishment of the Python Software Foundation, underscoring the impact of his contributions to the open-source community.\n\nKey statistics related to Python's development and recognition are summarized below.\n\n\n\nImportant facts about Python's history and its creator's accolades are presented here.\n\n| Fact | Source | Type | Importance |\n|------|--------|------|------------|\n| Python 1.0 was released in January 1994, and Python 2.0 followed on 16 October 2000, introducing a cycle-detecting garbage collector, Unicode support, and list comprehensions. | Wikipedia | observation | high |\n| Python, a high-level, general-purpose programming language that emphasizes code readability through significant indentation, was conceived by Guido van Rossum in the late 1980s at Centrum Wiskunde & Informatica (CWI) and first published as version 0.9.0 in February 1991. | Wikipedia | observation | high |\n| Python's design philosophy, \"The Zen of Python\" (PEP 20) published by Guido van Rossum in 1999, emphasizes readability, explicitness, and simplicity, and its key principles are accessible via `import this` in any Python interpreter. | Wikipedia | observation | high |\n| Guido van Rossum received the Free Software Foundation Award for the Advancement of Free Software in 2001 and the NLUUG Award in 2003, and was named a Fellow of the ACM in 2020. | Wikipedia | observation | medium |\n| The Python Software Foundation (PSF), a non-profit organization founded in 2001, holds intellectual property rights for the Python programming language, organizes the annual PyCon conference, and manages the Python Package Index (PyPI). | Wikipedia | observation | medium |\n| Guido van Rossum stepped down as Python's Benevolent Dictator For Life (BDFL) in July 2018, leading to the election of a five-person Steering Council to guide the language's development. | Wikipedia | observation | high |\n\nExplore other topics closely related to Python's architecture and history.\n\n- **[computer architecture, computing history](/wiki/computer-architecture-computing-history)** \u2014 shared: centrum wiskunde & informatica (cwi), guido van rossum, python +1 more\n\nFor a deeper dive, all source messages are available.",
+          "summary": "",
+          "memory_count": 6,
+          "last_updated": "2026-07-01T05:47:04.632778Z",
+          "citations": [
+            {
+              "id": "[1]",
+              "fact_id": "11ac2734-9a3e-5545-b9c3-eeeaacae19b1",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python 1.0 was released in January 1994, and Python 2.0 followed on 16 October 2000, introducing a c",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[2]",
+              "fact_id": "3c51c8f6-fb15-5e2d-a295-ce80490a83d7",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Python, a high-level, general-purpose programming language that emphasizes code readability through ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[3]",
+              "fact_id": "c63e1d6f-5840-5677-a128-e6de3b1dd637",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Python's design philosophy, \"The Zen of Python\" (PEP 20) published by Guido van Rossum in 1999, emph",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[4]",
+              "fact_id": "47fc6e29-8088-5ab9-86e9-0791bdc371a7",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:05+00:00",
+              "text_excerpt": "Guido van Rossum received the Free Software Foundation Award for the Advancement of Free Software in",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[5]",
+              "fact_id": "142e417f-a787-56d2-91bc-baf7880e3cad",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "The Python Software Foundation (PSF), a non-profit organization founded in 2001, holds intellectual ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[6]",
+              "fact_id": "f18acc15-ab4a-596f-ba5a-57bf8b85068b",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:06+00:00",
+              "text_excerpt": "Guido van Rossum stepped down as Python's Benevolent Dictator For Life (BDFL) in July 2018, leading ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            }
+          ],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [
+            {
+              "id": "hero_summary",
+              "anchor": "summary",
+              "data": {
+                "label": "Summary",
+                "renderer_kind": "frontend",
+                "tldr": "**Guido van Rossum, the creator of Python, has been widely recognized with prestigious awards for his foundational work on the influential programming language.**",
+                "summary": "This page details the significant awards and acknowledgments received by Guido van Rossum, highlighting his pivotal role in the development and philosophy of the Python programming language. It covers key milestones in Python's evolution and the establishment of the Python Software Foundation, underscoring the impact of his contributions to the open-source community.",
+                "highlights": {
+                  "critical_count": 0,
+                  "decision_count": 0,
+                  "open_question_count": 0,
+                  "tension_count": 0
+                }
+              }
+            },
+            {
+              "id": "stat_strip",
+              "anchor": "stats",
+              "data": {
+                "label": "Stats",
+                "renderer_kind": "frontend",
+                "stats": [
+                  {
+                    "value": "1994",
+                    "label": "and Python followed",
+                    "fact_id": "",
+                    "raw_value": 1994.0
+                  },
+                  {
+                    "value": "2000",
+                    "label": "introducing",
+                    "fact_id": "",
+                    "raw_value": 2000.0
+                  },
+                  {
+                    "value": "1999",
+                    "label": "emphasizes readability explicitness",
+                    "fact_id": "",
+                    "raw_value": 1999.0
+                  },
+                  {
+                    "value": "2018",
+                    "label": "leading",
+                    "fact_id": "",
+                    "raw_value": 2018.0
+                  },
+                  {
+                    "value": "2001",
+                    "label": "and",
+                    "fact_id": "",
+                    "raw_value": 2001.0
+                  }
+                ],
+                "period": {
+                  "from": "2026-01-01",
+                  "to": "2026-01-01"
+                }
+              }
+            },
+            {
+              "id": "key_facts",
+              "anchor": "facts",
+              "data": {
+                "label": "Key Facts",
+                "renderer_kind": "frontend",
+                "items": [
+                  {
+                    "fact_id": "",
+                    "title": "Python 1.0 was released in January 1994, and Python 2.0 followed on 16 October 2000, introducing a cycle-detecting garbage collector\u2026",
+                    "body": "Python 1.0 was released in January 1994, and Python 2.0 followed on 16 October 2000, introducing a cycle-detecting garbage collector, Unicode support, and list comprehensions.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:07+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Python, a high-level, general-purpose programming language that emphasizes code readability through significant indentation, was conceived\u2026",
+                    "body": "Python, a high-level, general-purpose programming language that emphasizes code readability through significant indentation, was conceived by Guido van Rossum in the late 1980s at Centrum Wiskunde & Informatica (CWI) and first published as version 0.9.0 in February 1991.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:07+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Python's design philosophy, \"The Zen of Python\" (PEP 20) published by Guido van Rossum in 1999, emphasizes readability, explicitness, and\u2026",
+                    "body": "Python's design philosophy, \"The Zen of Python\" (PEP 20) published by Guido van Rossum in 1999, emphasizes readability, explicitness, and simplicity, and its key principles are accessible via `import this` in any Python interpreter.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:06+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum stepped down as Python's Benevolent Dictator For Life (BDFL) in July 2018, leading to the election of a five-person\u2026",
+                    "body": "Guido van Rossum stepped down as Python's Benevolent Dictator For Life (BDFL) in July 2018, leading to the election of a five-person Steering Council to guide the language's development.",
+                    "fact_type": "observation",
+                    "importance": "high",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:06+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "The Python Software Foundation (PSF), a non-profit organization founded in 2001, holds intellectual property rights for the Python\u2026",
+                    "body": "The Python Software Foundation (PSF), a non-profit organization founded in 2001, holds intellectual property rights for the Python programming language, organizes the annual PyCon conference, and manages the Python Package Index (PyPI).",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:06+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  },
+                  {
+                    "fact_id": "",
+                    "title": "Guido van Rossum received the Free Software Foundation Award for the Advancement of Free Software in 2001 and the NLUUG Award in 2003, and\u2026",
+                    "body": "Guido van Rossum received the Free Software Foundation Award for the Advancement of Free Software in 2001 and the NLUUG Award in 2003, and was named a Fellow of the ACM in 2020.",
+                    "fact_type": "observation",
+                    "importance": "medium",
+                    "author": {
+                      "name": "Wikipedia",
+                      "id": ""
+                    },
+                    "ts": "2026-01-01T00:00:05+00:00",
+                    "source": {
+                      "url": "",
+                      "platform": ""
+                    },
+                    "citations": []
+                  }
+                ],
+                "groups": [
+                  "decision",
+                  "observation",
+                  "open_question",
+                  "action_item",
+                  "opinion"
+                ]
+              }
+            },
+            {
+              "id": "related_threads",
+              "anchor": "related",
+              "data": {
+                "label": "Related",
+                "renderer_kind": "python",
+                "markdown": "- **[computer architecture, computing history](/wiki/computer-architecture-computing-history)** \u2014 shared: centrum wiskunde & informatica (cwi), guido van rossum, python +1 more"
+              }
+            },
+            {
+              "id": "provenance_drawer",
+              "anchor": "sources",
+              "data": {
+                "label": "Source messages",
+                "renderer_kind": "frontend",
+                "messages": [],
+                "total_count": 0
+              }
+            }
+          ],
+          "narrative_sections": []
+        },
+        "topic-python-2-end-of-life-and-python-3-migration": {
+          "id": "topic-python-2-end-of-life-and-python-3-migration",
+          "slug": "python-2-end-of-life-and-python-3-migration",
+          "title": "Python 2 End-of-Life and Python 3 Migration",
+          "page_type": "topic",
+          "parent_id": null,
+          "section_number": "2.1",
+          "content": "**Python 2 officially reached its end-of-life on January 1, 2020, necessitating migration to Python 3 due to significant language changes.**\n\nThe transition from Python 2 to Python 3 marked a critical evolution in the language, driven by the end of official support for Python 2. This shift introduced fundamental changes, such as modifications to the `print` statement and default Unicode handling, requiring developers to update their codebases. The migration ensures continued access to security updates, performance improvements, and modern language features.\n\nUnderstanding the relationships between key components is crucial for grasping the migration's scope.\n\n\n\nSeveral questions remain open regarding the long-term implications and ongoing support for legacy systems.\n\n- The primary unresolved aspect is the ongoing migration from Python 2 to Python 3, which is a critical transition for many users and projects.\n\nFor a complete understanding of the information presented, refer to the original source messages.",
+          "summary": "Support for Python 2 officially ended on January 1, 2020, with strong recommendations for users to migrate to Python 3. Key changes were introduced in Python 3, such as `print` becoming a function and Unicode as the default for text strings.",
+          "memory_count": 2,
+          "last_updated": "2026-07-01T05:47:03.117657Z",
+          "citations": [
+            {
+              "id": "[1]",
+              "fact_id": "7d2a52fc-1927-5690-9843-5012b8d54572",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Key changes in Python 3 include `print` becoming a function instead of a statement, integer division",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            },
+            {
+              "id": "[2]",
+              "fact_id": "e7b4238b-111d-50a0-a31a-08beb9be16c2",
+              "author": "Wikipedia",
+              "channel": "",
+              "timestamp": "2026-01-01T00:00:07+00:00",
+              "text_excerpt": "Support for Python 2 officially ended on January 1, 2020, with users strongly encouraged to migrate ",
+              "permalink": "",
+              "media_type": null,
+              "media_name": null
+            }
+          ],
+          "children": [],
+          "children_fingerprint": null,
+          "is_synthetic": false,
+          "modules": [
+            {
+              "id": "hero_summary",
+              "anchor": "summary",
+              "data": {
+                "label": "Summary",
+                "renderer_kind": "frontend",
+                "tldr": "**Python 2 officially reached its end-of-life on January 1, 2020, necessitating migration to Python 3 due to significant language changes.**",
+                "summary": "The transition from Python 2 to Python 3 marked a critical evolution in the language, driven by the end of official support for Python 2. This shift introduced fundamental changes, such as modifications to the `print` statement and default Unicode handling, requiring developers to update their codebases. The migration ensures continued access to security updates, performance improvements, and modern language features.",
+                "highlights": {
+                  "critical_count": 0,
+                  "decision_count": 0,
+                  "open_question_count": 1,
+                  "tension_count": 0
+                }
+              }
+            },
+            {
+              "id": "open_questions",
+              "anchor": "open-questions",
+              "data": {
+                "label": "Open Questions",
+                "renderer_kind": "python",
+                "markdown": "- The primary unresolved aspect is the ongoing migration from Python 2 to Python 3, which is a critical transition for many users and projects."
+              }
+            },
+            {
+              "id": "provenance_drawer",
+              "anchor": "sources",
+              "data": {
+                "label": "Source messages",
+                "renderer_kind": "frontend",
+                "messages": [],
+                "total_count": 0
+              }
+            }
+          ],
+          "narrative_sections": []
+        }
+      },
+      "platform": "unknown",
+      "structure": {
+        "channel_id": "demo-wikipedia",
+        "channel_name": "#demo",
+        "platform": "unknown",
+        "generated_at": "2026-07-01T05:47:32.096271Z",
+        "is_stale": false,
+        "pages": [
+          {
+            "id": "overview",
+            "title": "Overview",
+            "slug": "overview",
+            "section_number": "1",
+            "page_type": "fixed",
+            "memory_count": 32,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "topic-python-2-end-of-life-and-python-3-migration",
+            "title": "Python 2 End-of-Life and Python 3 Migration",
+            "slug": "python-2-end-of-life-and-python-3-migration",
+            "section_number": "2.1",
+            "page_type": "topic",
+            "memory_count": 2,
+            "children": [],
+            "is_synthetic": false,
+            "summary": "Support for Python 2 officially ended on January 1, 2020, with strong recommendations for users to migrate to Python 3. Key changes were introduced in Python 3, such as `print` becoming a function and Unicode as the default for text strings."
+          },
+          {
+            "id": "topic-computer-architecture-computing-history",
+            "title": "computer architecture, computing history",
+            "slug": "computer-architecture-computing-history",
+            "section_number": "2.2",
+            "page_type": "topic",
+            "memory_count": 24,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "topic-recognition-awards",
+            "title": "recognition, awards",
+            "slug": "recognition-awards",
+            "section_number": "2.3",
+            "page_type": "topic",
+            "memory_count": 6,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "people",
+            "title": "People & Experts",
+            "slug": "people",
+            "section_number": "3",
+            "page_type": "fixed",
+            "memory_count": 8,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "faq",
+            "title": "FAQ",
+            "slug": "faq",
+            "section_number": "4",
+            "page_type": "fixed",
+            "memory_count": 2,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "activity",
+            "title": "Recent Activity",
+            "slug": "activity",
+            "section_number": "5",
+            "page_type": "fixed",
+            "memory_count": 0,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          },
+          {
+            "id": "resources",
+            "title": "Resources & Media",
+            "slug": "resources",
+            "section_number": "6",
+            "page_type": "fixed",
+            "memory_count": 6,
+            "children": [],
+            "is_synthetic": false,
+            "summary": ""
+          }
+        ]
+      },
+      "target_lang": "en"
+    }
+  ],
+  "wiki_pages": [
+    {
+      "page_id": "overview",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.115136Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "overview",
+      "tensions": [],
+      "title": "Overview",
+      "updated_at": "2026-07-01T05:47:32.120310+00:00",
+      "version": 1
+    },
+    {
+      "page_id": "people",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.123686Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "people",
+      "tensions": [],
+      "title": "People & Experts",
+      "updated_at": "2026-07-01T05:47:32.124779+00:00",
+      "version": 1
+    },
+    {
+      "page_id": "faq",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.125837Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "faq",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "faq",
+      "tensions": [],
+      "title": "FAQ",
+      "updated_at": "2026-07-01T05:47:32.127179+00:00",
+      "version": 1
+    },
+    {
+      "page_id": "activity",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.128445Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "activity",
+      "tensions": [],
+      "title": "Recent Activity",
+      "updated_at": "2026-07-01T05:47:32.129547+00:00",
+      "version": 1
+    },
+    {
+      "page_id": "resources",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.130645Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "resources",
+      "tensions": [],
+      "title": "Resources & Media",
+      "updated_at": "2026-07-01T05:47:32.131599+00:00",
+      "version": 1
+    },
+    {
+      "page_id": "topic-computer-architecture-computing-history",
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.132618Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "computer-architecture-computing-history",
+      "tensions": [],
+      "title": "computer architecture, computing history",
+      "updated_at": "2026-07-01T05:47:32.133628+00:00",
+      "version": 1
+    },
+    {
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "page_id": "topic-recognition-awards",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.135596Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "recognition-awards",
+      "tensions": [],
+      "title": "recognition, awards",
+      "updated_at": "2026-07-01T05:47:32.138639+00:00",
+      "version": 1
+    },
+    {
+      "target_lang": "en",
+      "channel_id": "demo-wikipedia",
+      "page_id": "topic-python-2-end-of-life-and-python-3-migration",
+      "archetype": null,
+      "archived": false,
+      "children": [],
+      "children_fingerprint": null,
+      "content_hash": "",
+      "created_at": "2026-07-01T05:47:32.145060Z",
+      "cross_links": {},
+      "cross_links_broken": [],
+      "curation_mode": "auto",
+      "is_dirty": false,
+      "is_synthetic": false,
+      "kind": "topic",
+      "kind_schema": null,
+      "kind_schema_hash": null,
+      "last_facts_seen": [],
+      "merged_into": null,
+      "modules": [],
+      "narrative_sections": [],
+      "page_embedding": null,
+      "page_type": "topic",
+      "page_voice_seed": "",
+      "parent_id": null,
+      "pin_state": {
+        "pinned": false,
+        "hidden": false,
+        "reason": "",
+        "set_by": "",
+        "set_at": null
+      },
+      "quality_metrics": null,
+      "sections": [],
+      "slug": "python-2-end-of-life-and-python-3-migration",
+      "tensions": [],
+      "title": "Python 2 End-of-Life and Python 3 Migration",
+      "updated_at": "2026-07-01T05:47:32.147955+00:00",
+      "version": 1
+    }
+  ]
+}

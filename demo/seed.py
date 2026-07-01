@@ -162,6 +162,38 @@ async def seed_precomputed(stores, *, force: bool = False) -> None:
         )
     logger.info("MongoDB: %d messages seeded.", len(messages))
 
+    # --- wiki_seed.json (optional — older checkouts / regen runs before this
+    # was added won't have it; the wiki is an enhancement, not the primary
+    # retrieval surface, so a missing file only skips the wiki, not the seed) ---
+    wiki_seed_path = FIXTURES_DIR / "wiki_seed.json"
+    if wiki_seed_path.exists():
+        wiki_data = json.loads(wiki_seed_path.read_text())
+        wiki_cache_docs = wiki_data.get("wiki_cache", [])
+        for doc in wiki_cache_docs:
+            await db["wiki_cache"].update_one(
+                {"channel_id": doc["channel_id"]},
+                {"$set": doc},
+                upsert=True,
+            )
+        wiki_page_docs = wiki_data.get("wiki_pages", [])
+        for doc in wiki_page_docs:
+            await db["wiki_pages"].update_one(
+                {
+                    "channel_id": doc["channel_id"],
+                    "target_lang": doc["target_lang"],
+                    "page_id": doc["page_id"],
+                },
+                {"$set": doc},
+                upsert=True,
+            )
+        logger.info(
+            "MongoDB: %d wiki_cache doc(s), %d wiki_pages doc(s) seeded.",
+            len(wiki_cache_docs),
+            len(wiki_page_docs),
+        )
+    else:
+        logger.info("No wiki_seed.json fixture found — skipping wiki seed.")
+
     # --- 3. Weaviate: batch-import pre-computed embeddings ---
     weaviate_path = FIXTURES_DIR / "weaviate_facts.jsonl"
     if not weaviate_path.exists():
@@ -327,9 +359,11 @@ async def seed_live(stores, *, force: bool = False, write_fixtures: bool = False
         sys.exit(1)
 
     from beever_atlas.adapters.base import NormalizedMessage
+    from beever_atlas.infra.config import get_settings
     from beever_atlas.services.batch_processor import BatchProcessor
     from beever_atlas.services.policy_resolver import resolve_effective_policy
-    from beever_atlas.models.sync_policy import IngestionConfig
+
+    settings = get_settings()
 
     # --- 1. Read corpus files and build NormalizedMessage list ---
     corpus_files = sorted(CORPUS_DIR.glob("*.md"))
@@ -417,7 +451,39 @@ async def seed_live(stores, *, force: bool = False, write_fixtures: bool = False
     )
     logger.info("Ingestion complete: %s", result)
 
-    # --- 5. Optionally write fixtures ---
+    # --- 5. Consolidate + build the wiki ---
+    # The wiki subsystem hard-requires consolidation to have run first (see
+    # wiki/data_gatherer.py's "Channel has not been consolidated yet" guard) —
+    # a real sync gets both for free via server/app.py's ExtractionWorker
+    # subscriber (services/wiki_auto_builder.py), but this script calls
+    # BatchProcessor directly, bypassing that subscriber entirely. Without
+    # this step the demo channel's wiki stays permanently unreachable, even
+    # via the dashboard's "Generate Wiki" button.
+    logger.info("Consolidating facts...")
+    from beever_atlas.services.consolidation import ConsolidationService
+
+    consolidation_result = await ConsolidationService(
+        stores.weaviate, settings, graph=stores.graph
+    ).full_reconsolidate(DEMO_CHANNEL_ID, channel_name=DEMO_CHANNEL_NAME)
+    logger.info(
+        "Consolidation complete: created=%d updated=%d facts=%d errors=%d",
+        consolidation_result.clusters_created,
+        consolidation_result.clusters_updated,
+        consolidation_result.facts_clustered,
+        len(consolidation_result.errors),
+    )
+
+    logger.info("Building wiki...")
+    from beever_atlas.wiki.builder import WikiBuilder
+    from beever_atlas.wiki.cache import WikiCache
+
+    wiki_cache = WikiCache(settings.mongodb_uri)
+    await WikiBuilder(stores.weaviate, stores.graph, wiki_cache).refresh_wiki(
+        DEMO_CHANNEL_ID, target_lang=None, force_restructure=True
+    )
+    logger.info("Wiki build complete.")
+
+    # --- 6. Optionally write fixtures ---
     if write_fixtures:
         logger.info("--write-fixtures requested. Exporting to demo/fixtures/...")
         await _export_fixtures(stores)
@@ -491,6 +557,34 @@ async def _export_fixtures(stores) -> None:
     }
     (FIXTURES_DIR / "mongo_seed.json").write_text(json.dumps(mongo_data, indent=2))
     logger.info("Wrote mongo_seed.json (%d messages)", len(messages))
+
+    # --- wiki_seed.json ---
+    # PER_PAGE_WIKI=true (the .env.example default) splits wiki content
+    # across two collections: wiki_cache holds one legacy monolith doc per
+    # channel+lang (render-only fields — content, modules, narrative_sections),
+    # keyed by "channel_id:target_lang" (see wiki/cache.py's _cache_key), and
+    # wiki_pages holds one persistence row per page (kind, version, dirty
+    # tracking, ...), keyed by (channel_id, target_lang, page_id). Both are
+    # required — wiki/cache.py's get_page() merges them at read time.
+    wiki_cache_docs = [
+        _serialize(d)
+        async for d in db["wiki_cache"].find(
+            {"channel_id": {"$regex": f"^{DEMO_CHANNEL_ID}(:|$)"}}
+        )
+    ]
+    wiki_page_docs = [
+        _serialize(d) async for d in db["wiki_pages"].find({"channel_id": DEMO_CHANNEL_ID})
+    ]
+    wiki_data = {
+        "wiki_cache": wiki_cache_docs,
+        "wiki_pages": wiki_page_docs,
+    }
+    (FIXTURES_DIR / "wiki_seed.json").write_text(json.dumps(wiki_data, indent=2))
+    logger.info(
+        "Wrote wiki_seed.json (%d wiki_cache doc(s), %d wiki_pages doc(s))",
+        len(wiki_cache_docs),
+        len(wiki_page_docs),
+    )
 
     # --- weaviate_facts.jsonl ---
     # Export facts with their stored vectors from Weaviate
@@ -659,6 +753,57 @@ async def _export_fixtures(stores) -> None:
                         "{name: $tgt_name, type: $tgt_type}",
                         {"tgt_name": record["tgt_name"], "tgt_type": record["tgt_type"]},
                         dict(record["rel_props"]),
+                    )
+
+            # --- WikiPage nodes (keyed by channel_id + target_lang + slug) ---
+            wiki_page_result = await session.run(
+                "MATCH (w:WikiPage {channel_id: $channel_id}) RETURN w",
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in wiki_page_result:
+                props = dict(record["w"])
+                if props.get("channel_id") and props.get("target_lang") and props.get("slug"):
+                    _emit_node("WikiPage", ["channel_id", "target_lang", "slug"], props)
+
+            # --- REFERENCES edges (WikiPage -> WikiPage) ---
+            wiki_ref_result = await session.run(
+                """
+                MATCH (src:WikiPage {channel_id: $channel_id})-[:REFERENCES]->(dst:WikiPage {channel_id: $channel_id})
+                RETURN src.target_lang AS src_lang, src.slug AS src_slug,
+                       dst.target_lang AS dst_lang, dst.slug AS dst_slug
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in wiki_ref_result:
+                if record["src_slug"] and record["dst_slug"]:
+                    _emit_rel(
+                        "REFERENCES",
+                        "{channel_id: $channel_id, target_lang: $src_lang, slug: $src_slug}",
+                        {"channel_id": DEMO_CHANNEL_ID, "src_lang": record["src_lang"], "src_slug": record["src_slug"]},
+                        "{channel_id: $channel_id, target_lang: $dst_lang, slug: $dst_slug}",
+                        {"dst_lang": record["dst_lang"], "dst_slug": record["dst_slug"]},
+                        {},
+                    )
+
+            # --- REFERENCES_ENTITY edges (WikiPage -> Entity) ---
+            # Matched by name only on import, mirroring
+            # neo4j_store.upsert_wiki_reference_entity_edge exactly.
+            wiki_entity_result = await session.run(
+                """
+                MATCH (src:WikiPage {channel_id: $channel_id})-[:REFERENCES_ENTITY]->(e:Entity)
+                RETURN src.target_lang AS src_lang, src.slug AS src_slug, e.name AS entity_name
+                """,
+                channel_id=DEMO_CHANNEL_ID,
+            )
+            async for record in wiki_entity_result:
+                if record["src_slug"] and record["entity_name"]:
+                    _emit_rel(
+                        "REFERENCES_ENTITY",
+                        "{channel_id: $channel_id, target_lang: $src_lang, slug: $src_slug}",
+                        {"channel_id": DEMO_CHANNEL_ID, "src_lang": record["src_lang"], "src_slug": record["src_slug"]},
+                        "{name: $entity_name}",
+                        {"entity_name": record["entity_name"]},
+                        {},
                     )
     except Exception as exc:
         logger.warning("Could not export Neo4j graph: %s", exc)

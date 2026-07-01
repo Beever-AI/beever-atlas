@@ -63,6 +63,15 @@ The endpoint streams [Server-Sent Events (SSE)](https://developer.mozilla.org/en
 
 ---
 
+## Browsing the Wiki
+
+Open **http://localhost:3000**, select the `#demo` channel, and go to its **Wiki** tab —
+the auto-generated overview, topic pages, FAQ, and resources are pre-built into the
+fixtures, so they render immediately with **no API key required** (reading the wiki is
+free; only *regenerating* it needs a `GOOGLE_API_KEY`, via the tab's "Generate" button).
+
+---
+
 ## Demo Corpus
 
 The corpus is sourced from Wikipedia under the Creative Commons Attribution-ShareAlike 3.0

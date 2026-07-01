@@ -3,8 +3,9 @@
 This directory contains pre-computed fixtures for the Beever Atlas demo workspace.
 They are loaded by `demo/seed.py --precomputed` (the default, invoked via `make demo`).
 
-**Current state:** stub placeholders. A maintainer must run `make demo-regenerate-fixtures`
-once before the PR lands to populate real fixtures. See below.
+Fixtures are populated from a real run of the full ADK ingestion pipeline (extraction,
+consolidation, and wiki generation) against `demo/corpus/*.md` — see "Regenerating
+Fixtures" below.
 
 ---
 
@@ -13,9 +14,16 @@ once before the PR lands to populate real fixtures. See below.
 | File | Format | Description |
 |------|--------|-------------|
 | `manifest.json` | JSON | Model versions, generation date, embedding dimensions, corpus file list. |
-| `weaviate_facts.jsonl` | JSONL (binary in git) | One fact object per line: `{text, source_id, channel_id, embedding: [2048 floats], metadata}`. Loaded into the Weaviate `Fact` collection with pre-computed vectors. |
-| `neo4j_graph.cypher` | Cypher + JSON comments | Entity nodes and relationships as parameterised Cypher blocks. Each block is a `// params: {...}` comment followed by a `MERGE`/`MATCH` statement. |
-| `mongo_seed.json` | JSON | Channel document, `channel_sync_state` document, and message documents for MongoDB. |
+| `weaviate_facts.jsonl` | JSONL (binary in git) | One fact object per line: `{text, source_id, channel_id, embedding: [2048 floats], metadata}`. Loaded into the Weaviate `MemoryFact` collection with pre-computed vectors. |
+| `neo4j_graph.cypher` | Cypher + JSON comments | `Entity` (keyed by name+type), `Event` (keyed by weaviate_id), and `Media` (keyed by url) nodes, plus `MENTIONED_IN` / `REFERENCES_MEDIA` / direct Entity–Entity relationships, as parameterised Cypher blocks. Each block is a `// params: {...}` comment followed by a `MERGE`/`MATCH` statement. |
+| `mongo_seed.json` | JSON | Channel document, `channel_sync_state` document, and message documents for MongoDB. Currently always empty — see note below. |
+| `wiki_seed.json` | JSON | The channel's generated wiki: one `wiki_cache` document (rendered page content) and the corresponding `wiki_pages` rows (page metadata) for MongoDB. |
+
+**Note on `mongo_seed.json`:** it's always empty (0 channels/sync-state/messages).
+`demo/seed.py --live` drives ingestion directly through `BatchProcessor`, which never
+writes a `channels` or `channel_sync_state` document — those come from the real sync
+path (`SyncRunner`), which the demo script doesn't replicate. This is pre-existing and
+harmless: nothing in the demo depends on those documents existing.
 
 ---
 
@@ -72,19 +80,45 @@ This file is tracked as binary in `.gitattributes` to avoid diff noise from the 
 ### `neo4j_graph.cypher`
 
 ```cypher
-// params: {"name": "Ada Lovelace", "desc": "English mathematician (1815-1852)", "channel_id": "demo-wikipedia"}
-MERGE (p:Person {name: $name}) SET p.description = $desc, p.channel_id = $channel_id;
+// params: {"name": "Ada Lovelace", "type": "Person", "scope": "global", "channel_id": null, ...}
+MERGE (n:Entity {name: $name, type: $type}) SET n.scope = $scope, n.channel_id = $channel_id, ...;
 
-// params: {"src": "Ada Lovelace", "tgt": "Charles Babbage"}
-MATCH (a {name: $src}), (b {name: $tgt}) MERGE (a)-[:COLLABORATED_WITH]->(b);
+// params: {"src_name": "Ada Lovelace", "src_type": "Person", "tgt_weaviate_id": "d66fad4e-..."}
+MATCH (a {name: $src_name, type: $src_type}), (b {weaviate_id: $tgt_weaviate_id}) MERGE (a)-[:MENTIONED_IN]->(b);
 ```
+
+Each node label uses its real MERGE key (see `demo/seed.py`'s `_export_fixtures`/`_emit_node`) —
+`Entity` on `(name, type)`, `Event` on `weaviate_id`, `Media` on `url` — not a uniform `name`.
+Most `Entity` nodes are `scope: "global"` with `channel_id: null`; their relevance to this
+channel flows through the `MENTIONED_IN` edge to a channel-scoped `Event` node instead.
 
 ### `mongo_seed.json`
 
 ```json
 {
-  "channels": [{"channel_id": "demo-wikipedia", "name": "#demo", ...}],
-  "channel_sync_state": [{"channel_id": "demo-wikipedia", "status": "completed", ...}],
-  "messages": [{"message_id": "demo-msg-0001", "channel_id": "demo-wikipedia", ...}]
+  "channels": [],
+  "channel_sync_state": [],
+  "messages": []
 }
 ```
+
+### `wiki_seed.json`
+
+```json
+{
+  "wiki_cache": [
+    {"channel_id": "demo-wikipedia:en", "generated_at": "...", "pages": {"overview": {"content": "...", ...}, "..."}}
+  ],
+  "wiki_pages": [
+    {"channel_id": "demo-wikipedia", "target_lang": "en", "page_id": "overview", "slug": "overview", "kind": "topic", ...}
+  ]
+}
+```
+
+`wiki_cache` holds one document per `channel_id:target_lang` with the rendered page content
+(`content`, `modules`, `narrative_sections`, ...). `wiki_pages` holds one row per page with
+persistence metadata (`kind`, `version`, dirty-tracking, ...) — `wiki/cache.py`'s `get_page()`
+merges both at read time. Neither is written by `WikiBuilder`'s initial-build path to Neo4j —
+the `:WikiPage` graph (for the separate wiki-graph visualization) is only populated by
+`WikiMaintainer`'s incremental path, which the demo's one-shot seed doesn't invoke. The demo's
+wiki content and pages render correctly without it; only the wiki-graph panel stays empty.
