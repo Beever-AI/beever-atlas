@@ -9,6 +9,13 @@ name: Regenerate demo fixtures (maintainer)
 
 on:
   workflow_dispatch:
+  # TEMPORARY (removed before merge): workflow_dispatch only works once this file
+  # is on the default branch, so bootstrap the very first live regeneration with
+  # a push trigger scoped to this feature branch. The GITHUB_TOKEN commit it
+  # makes does not re-trigger workflows, so there is no loop.
+  push:
+    branches:
+      - fix/demo-quickstart-seed-and-env
 
 permissions:
   contents: write
