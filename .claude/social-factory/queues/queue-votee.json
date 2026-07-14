@@ -1,0 +1,234 @@
+[
+  {
+    "id": "votee-001",
+    "kicker": "Not rented. Not leaked.",
+    "head": [
+      [
+        "Intelligence",
+        "dark"
+      ],
+      [
+        "you own.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Sovereign AI.",
+      "Built in Hong Kong."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "votee-002",
+    "kicker": "World's first, open-source.",
+    "head": [
+      [
+        "The Cantonese LLM,",
+        "dark"
+      ],
+      [
+        "廣東話.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Fully pre-trained —",
+      "not fine-tuned."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "votee-003",
+    "kicker": "Peer-reviewed, not marketed.",
+    "head": [
+      [
+        "Published at",
+        "dark"
+      ],
+      [
+        "ACL 2025.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "HKCanto-Eval — the first",
+      "Cantonese LLM benchmark."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "votee-004",
+    "kicker": "3 billion people.",
+    "head": [
+      [
+        "99% of languages,",
+        "dark"
+      ],
+      [
+        "one mission.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "The OpenAI for",
+      "neglected languages."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "votee-005",
+    "kicker": "For regulated industries.",
+    "head": [
+      [
+        "Your data",
+        "dark"
+      ],
+      [
+        "never leaves.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "On-prem sovereign AI —",
+      "built for compliance."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-006",
+    "kicker": "99% isn't enough.",
+    "head": [
+      [
+        "In banking,",
+        "dark"
+      ],
+      [
+        "zero errors.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Precision AI for",
+      "high-stakes workflows."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-007",
+    "kicker": "Own the model.",
+    "head": [
+      [
+        "Not rented.",
+        "dark"
+      ],
+      [
+        "Owned.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Enterprise LLMs you",
+      "fully control, on-prem."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-008",
+    "kicker": "Beyond the phrasebook.",
+    "head": [
+      [
+        "Real Cantonese,",
+        "dark"
+      ],
+      [
+        "real nuance.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Tone, slang, culture —",
+      "not translated Mandarin."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-009",
+    "kicker": "The next 3 billion.",
+    "head": [
+      [
+        "Language is",
+        "dark"
+      ],
+      [
+        "the frontier.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Sovereign AI for the",
+      "tongues AI forgot."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-010",
+    "kicker": "Trusted by 200+ enterprises.",
+    "head": [
+      [
+        "Sovereignty",
+        "dark"
+      ],
+      [
+        "is a feature.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Trust is the outcome.",
+      "Built for the enterprise."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-011",
+    "kicker": "HKMA GenAI Sandbox.",
+    "head": [
+      [
+        "Compliant",
+        "dark"
+      ],
+      [
+        "by design.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Validated for regulated",
+      "banking workloads."
+    ],
+    "used": false
+  },
+  {
+    "id": "votee-012",
+    "kicker": "Governance, built in.",
+    "head": [
+      [
+        "Not bolted on.",
+        "dark"
+      ],
+      [
+        "Designed in.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Compliance AI that cuts",
+      "research time by 90%."
+    ],
+    "used": false
+  }
+]
