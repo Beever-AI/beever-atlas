@@ -77,7 +77,12 @@ web/dist/
 /package-lock.json
 
 # Claude Code runtime state
-.claude/
+# Claude: ignore local settings, but track shared skills/commands/social-factory
+.claude/*
+!.claude/skills/
+!.claude/commands/
+!.claude/social-factory/
+.claude/social-factory/output/
 
 # QA harness output artifacts
 scripts/_qa_harness_out/

@@ -1,0 +1,234 @@
+[
+  {
+    "id": "beever-001",
+    "kicker": "Modern teams think in chat.",
+    "head": [
+      [
+        "And forget",
+        "dark"
+      ],
+      [
+        "in chat.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Beever Atlas turns conversations",
+      "into a living knowledge base."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "beever-002",
+    "kicker": "Wiki-first knowledge intelligence.",
+    "head": [
+      [
+        "A wiki that writes",
+        "dark"
+      ],
+      [
+        "itself.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Always current —",
+      "without anyone writing it."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "beever-003",
+    "kicker": "Slack · Discord · Teams · Telegram · Mattermost",
+    "head": [
+      [
+        "Your chat is a",
+        "dark"
+      ],
+      [
+        "goldmine.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Beever Atlas makes it",
+      "searchable, automatically."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "beever-004",
+    "kicker": "Knowledge compounds.",
+    "head": [
+      [
+        "Every conversation,",
+        "dark"
+      ],
+      [
+        "smarter.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Chat from perishable",
+      "to compounding asset."
+    ],
+    "used": true,
+    "used_date": "2026-07-03"
+  },
+  {
+    "id": "beever-005",
+    "kicker": "Who decided this?",
+    "head": [
+      [
+        "Never ask",
+        "dark"
+      ],
+      [
+        "again.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Every decision, retrievable.",
+      "Straight from your chats."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-006",
+    "kicker": "Open source · Apache 2.0",
+    "head": [
+      [
+        "Your knowledge,",
+        "dark"
+      ],
+      [
+        "yours to keep.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Self-hosted, inspectable,",
+      "zero lock-in."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-007",
+    "kicker": "New hire, day one.",
+    "head": [
+      [
+        "Onboarding,",
+        "dark"
+      ],
+      [
+        "self-serve.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "They ask the wiki —",
+      "not the whole team."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-008",
+    "kicker": "Stop re-answering.",
+    "head": [
+      [
+        "Ask once.",
+        "dark"
+      ],
+      [
+        "Answered forever.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Beever Atlas remembers",
+      "so your team doesn't repeat."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-009",
+    "kicker": "Tribal knowledge dies in DMs.",
+    "head": [
+      [
+        "Capture",
+        "dark"
+      ],
+      [
+        "what's lost.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Turn scattered chats into",
+      "a living knowledge base."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-010",
+    "kicker": "MCP-native.",
+    "head": [
+      [
+        "Plug into",
+        "dark"
+      ],
+      [
+        "any AI.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Bring your team wiki",
+      "into Claude & Cursor."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-011",
+    "kicker": "Zero upkeep.",
+    "head": [
+      [
+        "Docs that",
+        "dark"
+      ],
+      [
+        "never go stale.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "The wiki maintains itself,",
+      "automatically."
+    ],
+    "used": false
+  },
+  {
+    "id": "beever-012",
+    "kicker": "Every claim, cited.",
+    "head": [
+      [
+        "Answers you",
+        "dark"
+      ],
+      [
+        "can trust.",
+        "accent"
+      ]
+    ],
+    "sub": [
+      "Traced to the exact",
+      "source message."
+    ],
+    "used": false
+  }
+]
