@@ -47,10 +47,7 @@ _ALL_QA_TOOL_NAMES = {
     "search_external_knowledge",
 }
 
-# None of the current QA_TOOLS names contain any of the denylist fragments
-# (`tavily`, `web_search`, `write`, `create`, `update`, `delete`, `send`,
-# `post`), so the filter is a no-op over `QA_TOOLS` today.
-_EXPECTED_FILTERED_QA_TOOL_NAMES = set(_ALL_QA_TOOL_NAMES)
+_EXPECTED_FILTERED_QA_TOOL_NAMES = _ALL_QA_TOOL_NAMES - {"search_external_knowledge"}
 
 _EXPECTED_WIKI_TOOLS_NAMES = {"get_wiki_page", "get_topic_overview"}
 _EXPECTED_SUMMARIZE_TOOLS_NAMES = {
@@ -77,10 +74,9 @@ def test_filter_tools_for_untrusted_pins_expected_set():
     """`_filter_tools_for_untrusted` over the three mode tool-sets must
     return exactly the pinned name-sets derived from current `qa_agent.py`.
 
-    Current state: no QA tool name contains any denylist fragment, so
-    the filter is a no-op on each subset. This test also proves the
-    filter *would* drop a synthetic write/egress tool, locking in the
-    substring-match contract.
+    Current state: external search is removed under untrusted context. This
+    test also proves the filter drops synthetic write/egress tools, locking in
+    the substring-match contract.
     """
     # Deep mode (all QA_TOOLS)
     deep_filtered = _filter_tools_for_untrusted(list(QA_TOOLS))

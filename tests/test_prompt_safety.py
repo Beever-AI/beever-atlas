@@ -42,3 +42,14 @@ def test_filter_tools_for_untrusted_drops_writes_and_egress():
     assert "tavily_search" not in kept_names
     assert "create_document" not in kept_names
     assert "send_message" not in kept_names
+
+
+def test_external_search_query_cleaning_bounds_model_output():
+    from beever_atlas.agents.tools.external_tools import (
+        MAX_EXTERNAL_SEARCH_QUERY_LENGTH,
+        _clean_external_search_query,
+    )
+
+    assert _clean_external_search_query("  hello\n   world  ") == "hello world"
+    assert _clean_external_search_query(None) == ""
+    assert len(_clean_external_search_query("x" * 1000)) == MAX_EXTERNAL_SEARCH_QUERY_LENGTH

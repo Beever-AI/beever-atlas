@@ -805,9 +805,13 @@ async def _run_agent_stream(
         get_agent_for_mode,
         _tool_name,
     )
+    from beever_atlas.agents.prompt_safety import wrap_untrusted
     from beever_atlas.agents.tools import QA_TOOLS, QA_TOOL_DESCRIPTORS
 
     disabled_tools = disabled_tools or []
+    has_untrusted_attachments = any(
+        bool(str(att.get("extracted_text", "")).strip()) for att in (attachments or [])
+    )
     if disabled_tools:
         known_names = {d["name"] for d in QA_TOOL_DESCRIPTORS}
         effective_disabled: list[str] = []
@@ -829,11 +833,12 @@ async def _run_agent_stream(
                 tools=filtered,
                 extra_instruction=refusal_clause,
                 disabled_names=set(effective_disabled),
+                untrusted_context=has_untrusted_attachments,
             )
         else:
-            agent = get_agent_for_mode(mode)
+            agent = get_agent_for_mode(mode, untrusted_context=has_untrusted_attachments)
     else:
-        agent = get_agent_for_mode(mode)
+        agent = get_agent_for_mode(mode, untrusted_context=has_untrusted_attachments)
     runner = create_runner(agent)
     session = await create_session(user_id=user_id)
 
@@ -921,7 +926,7 @@ async def _run_agent_stream(
                 f"## User-attached file: {att.get('filename', 'unknown')}\n"
                 f"(The user uploaded this file in this turn. Questions about "
                 f'"this image/file/document" refer to the content below.)\n'
-                f"{att.get('extracted_text', '')}"
+                f"{wrap_untrusted(str(att.get('extracted_text', '')))}"
             )
         prompt_text += "\n\n" + "\n\n".join(attachment_sections)
 

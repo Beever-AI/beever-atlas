@@ -56,7 +56,7 @@ def test_new_prompt_cached_independently():
 
     call_count = {"n": 0}
 
-    def fake_create(mode="deep"):
+    def fake_create(mode="deep", **_kwargs):
         call_count["n"] += 1
         return mock_agent_off if call_count["n"] == 1 else mock_agent_on
 

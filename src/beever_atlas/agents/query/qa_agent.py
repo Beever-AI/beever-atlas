@@ -29,6 +29,7 @@ from beever_atlas.infra.config import ConfigurationError
 # match any fragment and are therefore preserved under untrusted context.
 _UNTRUSTED_TOOL_DENYLIST_FRAGMENTS = (
     "tavily",
+    "external",
     "web_search",
     "write",
     "create",
@@ -155,8 +156,9 @@ _SUMMARIZE_TOOLS_NAMES = {
     "search_qa_history",
 }
 
-# Cached agent instances keyed on (mode, citation_registry_enabled, qa_new_prompt) so
-# flipping either flag at runtime produces a freshly-built agent.
+# Cached agent instances keyed on (mode, citation_registry_enabled, qa_new_prompt,
+# qa_skills_enabled, untrusted_context) so flipping any prompt/toolset safety flag
+# at runtime produces a freshly-built agent.
 #
 # IMPORTANT: the cache key does NOT include the resolved model — an Assignment
 # switch in the Settings UI updates LLMProvider's overrides but leaves THIS
@@ -165,7 +167,7 @@ _SUMMARIZE_TOOLS_NAMES = {
 # (see :func:`reset_agent_cache`). Without this, an operator who switches
 # qa_agent gemini→glm sees the resolve log line ("qa_ask start: …
 # resolved_model=openai/glm-4.5-flash") but the actual call still hits Gemini.
-_agents: dict[tuple[str, bool, bool, bool], LlmAgent] = {}
+_agents: dict[tuple[str, bool, bool, bool, bool], LlmAgent] = {}
 
 
 def reset_agent_cache() -> None:
@@ -244,6 +246,7 @@ def create_qa_agent(
     tools: list | None = None,
     extra_instruction: str = "",
     disabled_names: set[str] | None = None,
+    untrusted_context: bool = False,
 ) -> LlmAgent:
     """Create a QA LlmAgent for the specified answer mode.
 
@@ -255,6 +258,8 @@ def create_qa_agent(
         extra_instruction: Optional trailing text appended to the mode's
             system prompt (e.g. per-request refusal clause for disabled
             tools).
+        untrusted_context: When true, remove tools with write or network egress
+            capability before exposing the agent to user-supplied content.
 
     Returns:
         LlmAgent configured for the specified mode.
@@ -294,6 +299,8 @@ def create_qa_agent(
         tools_list = [t for t in base_tools if getattr(t, "__name__", "") in _SUMMARIZE_TOOLS_NAMES]
         tools_list = [*tools_list, *registry.tools]
         tools_list = _maybe_add_follow_ups_tool(tools_list, include_follow_ups=True)
+        if untrusted_context:
+            tools_list = _filter_tools_for_untrusted(tools_list)
         prompt = (
             build_qa_system_prompt(max_tool_calls=4, include_follow_ups=True, mode="summarize")
             + QA_SUMMARIZE_SUFFIX
@@ -320,6 +327,8 @@ def create_qa_agent(
             orch_tools = [t for t in ORCHESTRATION_TOOLS if _tool_name(t) not in disabled_names]
         all_tools = [*base_tools, *orch_tools, *registry.tools]
         all_tools = _maybe_add_follow_ups_tool(all_tools, include_follow_ups=True)
+        if untrusted_context:
+            all_tools = _filter_tools_for_untrusted(all_tools)
         prompt = build_qa_system_prompt(max_tool_calls=8, include_follow_ups=True)
         prompt = prompt + extra_instruction
         planner = _create_thinking_planner()
@@ -362,11 +371,11 @@ def _create_thinking_planner():
         return None
 
 
-def get_agent_for_mode(mode: str = "deep") -> LlmAgent:
+def get_agent_for_mode(mode: str = "deep", untrusted_context: bool = False) -> LlmAgent:
     """Get or create a cached QA agent for the specified mode.
 
     Cache key is `(mode, citation_registry_enabled, qa_new_prompt,
-    qa_skills_enabled)` so flipping any of those flags at runtime
+    qa_skills_enabled, untrusted_context)` so flipping any of those flags at runtime
     produces a new agent with the correct tool-set — avoids stale
     prompt/tool mismatch during rollout.
     """
@@ -375,9 +384,10 @@ def get_agent_for_mode(mode: str = "deep") -> LlmAgent:
         _current_registry_flag(),
         _current_new_prompt_flag(),
         _current_skills_flag(),
+        untrusted_context,
     )
     if key not in _agents:
-        _agents[key] = create_qa_agent(mode)
+        _agents[key] = create_qa_agent(mode, untrusted_context=untrusted_context)
     return _agents[key]
 
 
