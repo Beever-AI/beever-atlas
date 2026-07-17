@@ -396,6 +396,26 @@ class Settings(BaseSettings):
         le=60,
         description="Hard cap on messages per batch. Derived from observed bench data — successful batches had ≤65 msgs; failure cluster started at 89. Prevents output truncation at the source.",
     )
+    # RES-945 — the known-entity registry injected into every extraction batch
+    # (``get_all_canonical()``) grows unbounded with the corpus. On the RLP
+    # 36k-doc run it ballooned the serialised prompt past Gemini's 1,048,576-token
+    # input ceiling, so LiteLLM rejected every batch and extraction produced 0
+    # facts. Cap how many known entities are carried as cross-batch coreference
+    # context; the most-connected entities (most aliases) are kept first so
+    # coreference quality degrades gracefully. Set to 0 to disable the cap
+    # (legacy unbounded behaviour).
+    #
+    # Default 500 (~15-20k serialised tokens) is sized to fit BOTH windows: it
+    # leaves ample headroom under Gemini's 1,048,576-token input ceiling AND
+    # under the self-hosted Qwen 64k window that the no-cloud path (RES-944 / F1)
+    # targets — so this cap does not reintroduce the overflow on Qwen. The head
+    # of the entity-frequency distribution (the few hundred most-referenced
+    # orgs/people/projects) carries almost all real cross-batch coreference.
+    extraction_known_entities_max: int = Field(
+        default=500,
+        ge=0,
+        description="Max canonical entities injected into an extraction batch prompt as coreference context. Prevents the entity registry from pushing the prompt past the model input-token ceiling on large corpora. Sized to fit both the Gemini 1M and self-hosted Qwen 64k windows. 0 disables the cap.",
+    )
     llm_outage_breaker_threshold: int = Field(
         default=3,
         ge=1,
