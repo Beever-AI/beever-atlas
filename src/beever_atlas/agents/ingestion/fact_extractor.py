@@ -22,7 +22,8 @@ def create_fact_extractor(model=None) -> LlmAgent:
     """
     agent_kwargs: dict = {
         "name": "fact_extractor",
-        "model": model or get_llm_provider().resolve_model("fact_extractor"),
+        "model": model
+        or get_llm_provider().resolve_model("fact_extractor", force_json_object=True),
         "instruction": FACT_EXTRACTOR_INSTRUCTION,
         "output_key": "extracted_facts",
         "generate_content_config": types.GenerateContentConfig(

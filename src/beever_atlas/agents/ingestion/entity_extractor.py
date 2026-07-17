@@ -28,7 +28,8 @@ def create_entity_extractor(model=None) -> LlmAgent:
     """
     agent_kwargs: dict = {
         "name": "entity_extractor",
-        "model": model or get_llm_provider().resolve_model("entity_extractor"),
+        "model": model
+        or get_llm_provider().resolve_model("entity_extractor", force_json_object=True),
         "instruction": ENTITY_EXTRACTOR_INSTRUCTION,
         "output_key": "extracted_entities",
         "generate_content_config": types.GenerateContentConfig(

@@ -97,13 +97,18 @@ class LLMProvider:
             raise ValueError(f"Unknown tier: {tier}")
         return self._resolve_alias(model, f"tier={tier}")
 
-    def resolve_model(self, agent_name: str) -> Any:
+    def resolve_model(self, agent_name: str, *, force_json_object: bool = False) -> Any:
         """Resolve the model for a specific agent.
 
         Priority: MongoDB Assignment → legacy MongoDB override → default map → LLM_FAST_MODEL.
         Returns a string (Gemini bare strings, flag-off path) or a
         ``LiteLlm`` instance (every other path, including Gemini when
         ``LLM_USE_LITELLM_FOR_GEMINI=True``).
+
+        RES-944: ``force_json_object`` is forwarded to ``resolve_model_object``
+        so JSON-mode extractors keep structured output when routed to a
+        self-hosted OpenAI-compatible endpoint (vLLM/Qwen). No-op for the
+        native-Gemini path.
 
         PR-ν.1: when the agent has an Assignment, also looks up the
         Assignment's endpoint to fetch its base_url + runtime credential
@@ -254,7 +259,12 @@ class LLMProvider:
                 # skip its client-side check.
                 api_key = "placeholder-no-auth"
 
-        return resolve_model_object(model_str, api_key=api_key, api_base=api_base)
+        return resolve_model_object(
+            model_str,
+            api_key=api_key,
+            api_base=api_base,
+            force_json_object=force_json_object,
+        )
 
     def get_model_string(self, agent_name: str) -> str:
         """Get the raw model string for an agent (without LiteLlm wrapping).
