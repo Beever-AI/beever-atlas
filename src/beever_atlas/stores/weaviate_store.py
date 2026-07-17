@@ -1189,82 +1189,79 @@ class WeaviateStore:
     async def iter_unclustered_facts(
         self,
         channel_id: str,
-        page_size: int = 200,
+        page_size: int = 200,  # retained for API compatibility; cursor iteration self-batches
     ) -> AsyncIterator[AtomicFact]:
-        """Yield unclustered atomic facts (with vectors), one page at a time.
+        """Yield unclustered atomic facts (with vectors) for a channel.
 
-        Uses offset pagination with small pages so each gRPC response stays well
-        under Weaviate's 10MB cap. (Cursor ``after=`` is unavailable here because
-        Weaviate rejects ``after`` combined with a ``where`` filter.)
+        Walks the collection with Weaviate v4's ``collection.iterator()`` (cursor
+        pagination) and applies the ``channel_id`` / ``tier`` / ``cluster_id``
+        predicates CLIENT-SIDE, because ``iterator()`` does not accept a
+        ``filters=`` kwarg in weaviate-client v4 (same idiom as
+        ``iter_atomic_fact_ids_and_text`` / ``snapshot_all_facts_for_reembed``).
 
-        Note: Weaviate's ``QUERY_MAXIMUM_RESULTS`` (default 10000) caps the total
-        number of results an offset query can traverse. Channels above that size
-        require a schema-level bump of that setting.
+        Cursor iteration walks by object UUID, so — unlike the offset pagination
+        this replaced — it has NO ``QUERY_MAXIMUM_RESULTS`` (default 10000)
+        ceiling and no 10MB-per-page risk (the client batches internally). A
+        channel with >10k unclustered facts previously failed consolidation with
+        ``query maximum results exceeded``; it now streams through.
+
+        Scaling note: ``iterator()`` cannot filter server-side, so this scans the
+        whole MemoryFact collection to yield one channel's unclustered facts —
+        fine at Atlas's documented scale (~5k–50k facts). A very large
+        multi-channel install wants channel-scoped keyset pagination, which needs
+        an indexed unique monotonic property (a schema migration, out of scope).
         """
-        weaviate_filter = (
-            Filter.by_property("channel_id").equal(channel_id)
-            & Filter.by_property("tier").equal("atomic")
-            & Filter.by_property("cluster_id").equal("__none__")
-        )
 
-        def _fetch_page(offset: int) -> list[Any]:
+        def _walk() -> list[AtomicFact]:
             collection = self._collection()
-            return list(
-                collection.query.fetch_objects(
-                    filters=weaviate_filter,
-                    limit=page_size,
-                    offset=offset,
-                    include_vector=True,
-                ).objects
-            )
+            out: list[AtomicFact] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=True,
+            ):
+                props = getattr(obj, "properties", {}) or {}
+                if (
+                    props.get("channel_id") != channel_id
+                    or props.get("tier") != "atomic"
+                    or props.get("cluster_id") != "__none__"
+                ):
+                    continue
+                out.append(self._obj_to_fact(obj, include_vector=True))
+            return out
 
-        offset = 0
-        while True:
-            page = await asyncio.to_thread(_fetch_page, offset)
-            if not page:
-                return
-            for obj in page:
-                yield self._obj_to_fact(obj, include_vector=True)
-            if len(page) < page_size:
-                return
-            offset += page_size
+        for fact in await asyncio.to_thread(_walk):
+            yield fact
 
     async def iter_all_fact_ids(
         self,
         channel_id: str,
-        page_size: int = 500,
+        page_size: int = 500,  # retained for API compatibility; cursor iteration self-batches
     ) -> AsyncIterator[tuple[str, str]]:
         """Yield ``(uuid, cluster_id)`` pairs for every atomic fact in a channel.
 
-        Returns only the two fields needed for cluster resets — no vectors, no
-        text — so each page is a few KB. Uses offset pagination (cursor ``after``
-        is incompatible with filters in Weaviate).
+        Returns only ``(uuid, cluster_id)`` — no vectors, no text. Walks the
+        collection with Weaviate v4's ``collection.iterator()`` (cursor
+        pagination) and filters ``channel_id`` / ``tier`` CLIENT-SIDE, because
+        ``iterator()`` takes no ``filters=`` kwarg. Unlike the offset pagination
+        this replaced, cursor iteration has NO ``QUERY_MAXIMUM_RESULTS`` (10k)
+        ceiling — the first failure point of ``full_reconsolidate`` on large
+        channels. See ``iter_unclustered_facts`` for the full-collection-scan
+        scaling caveat.
         """
-        weaviate_filter = Filter.by_property("channel_id").equal(channel_id) & Filter.by_property(
-            "tier"
-        ).equal("atomic")
 
-        def _fetch_page(offset: int) -> list[Any]:
+        def _walk() -> list[tuple[str, str]]:
             collection = self._collection()
-            return list(
-                collection.query.fetch_objects(
-                    filters=weaviate_filter,
-                    limit=page_size,
-                    offset=offset,
-                    return_properties=["cluster_id"],
-                ).objects
-            )
+            out: list[tuple[str, str]] = []
+            for obj in collection.iterator(  # type: ignore[arg-type]
+                include_vector=False,
+            ):
+                props = getattr(obj, "properties", {}) or {}
+                if props.get("channel_id") != channel_id or props.get("tier") != "atomic":
+                    continue
+                out.append((str(obj.uuid), props.get("cluster_id") or ""))
+            return out
 
-        offset = 0
-        while True:
-            page = await asyncio.to_thread(_fetch_page, offset)
-            if not page:
-                return
-            for obj in page:
-                yield str(obj.uuid), obj.properties.get("cluster_id") or ""
-            if len(page) < page_size:
-                return
-            offset += page_size
+        for pair in await asyncio.to_thread(_walk):
+            yield pair
 
     async def upsert_cluster(self, cluster: "TopicCluster") -> str:
         """Upsert a topic cluster as a MemoryFact with tier='topic'."""
