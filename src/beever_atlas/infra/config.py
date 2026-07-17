@@ -142,6 +142,26 @@ class Settings(BaseSettings):
     # close the cutover. Until that lands, False is the only safe default.
     llm_use_litellm_for_gemini: bool = Field(default=False)
 
+    # RES-944 — no-cloud mode. The ADK ingestion agents resolve their model via
+    # ``LLMProvider.resolve_model``, whose default map ``DEFAULT_AGENT_MODELS``
+    # hardcodes ``gemini-*`` and SHADOWS ``llm_fast_model``. So setting
+    # ``LLM_FAST_MODEL=openai/vllm-qwen`` does NOT redirect the agents — they
+    # keep calling cloud Gemini. When ``llm_self_hosted_only`` is True the
+    # provider bypasses that map (uses ``llm_fast_model`` for every un-assigned
+    # agent), treats ``llm_default_endpoint_id`` as the fallback endpoint for
+    # base_url/credential routing, and FAILS CLOSED — ``resolve_model`` raises
+    # ``ConfigurationError`` if any agent still resolves to a cloud model, so a
+    # misconfiguration can never silently leak inference to Gemini. Default
+    # False → zero behaviour change for existing cloud installs.
+    llm_self_hosted_only: bool = Field(
+        default=False,
+        description="No-cloud mode: force every ADK agent to the self-hosted model (llm_fast_model / llm_default_endpoint_id) and fail closed if any agent resolves to a cloud (Gemini/Vertex) model.",
+    )
+    llm_default_endpoint_id: str = Field(
+        default="",
+        description="Endpoint id used for base_url + credential routing of any agent without an explicit per-agent Assignment. Primarily used with llm_self_hosted_only to point all agents at the self-hosted vLLM endpoint. Must reference a loaded Endpoint.",
+    )
+
     # SSRF guard for the operator-facing Endpoint Test/Discover routes. When
     # True, ``base_url`` is resolved + validated against ``infra.http_safe``
     # before any outbound probe — private/link-local/metadata IPs are refused.

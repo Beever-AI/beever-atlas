@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from beever_atlas.infra.config import Settings
+from beever_atlas.infra.config import ConfigurationError, Settings
 from beever_atlas.llm.model_resolver import (
     AGENT_NAMES,
     DEFAULT_AGENT_MODELS,
@@ -15,6 +15,18 @@ from beever_atlas.llm.model_resolver import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_cloud_model(model_str: str) -> bool:
+    """True if a resolved model string points at a hosted cloud LLM (Gemini /
+    Vertex / Google PaLM) rather than a self-hosted endpoint.
+
+    RES-944: used by the ``llm_self_hosted_only`` fail-closed guard. Substring
+    (not just prefix) so it also catches an OpenAI-compat shim that still points
+    at Google, e.g. ``openai/gemini-2.5-flash`` after ``route_for_endpoint``.
+    """
+    m = (model_str or "").lower()
+    return "gemini" in m or "vertex" in m or m.startswith(("google/", "google_ai/", "palm/"))
 
 _MODEL_ALIASES: dict[str, str] = {
     # Gemini 2.0 Flash Lite is retired for new users.
@@ -97,13 +109,62 @@ class LLMProvider:
             raise ValueError(f"Unknown tier: {tier}")
         return self._resolve_alias(model, f"tier={tier}")
 
-    def resolve_model(self, agent_name: str) -> Any:
+    def _base_model_string(self, agent_name: str) -> str:
+        """Resolve an agent's model string: Assignment → default map → env.
+
+        RES-944: in no-cloud mode (``llm_self_hosted_only``) the hardcoded
+        Gemini ``DEFAULT_AGENT_MODELS`` map is bypassed — it otherwise shadows
+        ``llm_fast_model`` and pins every un-assigned ADK agent to cloud Gemini
+        regardless of ``LLM_FAST_MODEL``. The operator-configured self-hosted
+        model (``llm_fast_model``) is then used directly. An explicit per-agent
+        Assignment (``_agent_overrides``) still wins in either mode.
+        """
+        model_str = self._agent_overrides.get(agent_name)
+        if not model_str:
+            if self._settings.llm_self_hosted_only:
+                model_str = self._settings.llm_fast_model
+            else:
+                model_str = DEFAULT_AGENT_MODELS.get(agent_name)
+        if not model_str:
+            model_str = self._settings.llm_fast_model
+        return model_str
+
+    def assert_self_hosted_only(self) -> None:
+        """Fail closed if no-cloud mode is on but any agent resolves to a cloud
+        model (RES-944).
+
+        Intended as a startup assertion so a misconfigured no-cloud deployment
+        is caught before ingest begins, rather than silently leaking inference
+        to Gemini at the first agent call. No-op when ``llm_self_hosted_only``
+        is off. Uses the raw model strings (no LiteLlm construction / no
+        credentials needed).
+        """
+        if not self._settings.llm_self_hosted_only:
+            return
+        offenders = {
+            name: model
+            for name, model in self.get_all_model_strings().items()
+            if _is_cloud_model(model)
+        }
+        if offenders:
+            raise ConfigurationError(
+                "llm_self_hosted_only is set but these agents still resolve to "
+                f"cloud models: {offenders}. Set LLM_FAST_MODEL to the self-hosted "
+                "model (e.g. openai/vllm-qwen) or add per-agent Assignments."
+            )
+
+    def resolve_model(self, agent_name: str, *, force_json_object: bool = False) -> Any:
         """Resolve the model for a specific agent.
 
         Priority: MongoDB Assignment → legacy MongoDB override → default map → LLM_FAST_MODEL.
         Returns a string (Gemini bare strings, flag-off path) or a
         ``LiteLlm`` instance (every other path, including Gemini when
         ``LLM_USE_LITELLM_FOR_GEMINI=True``).
+
+        RES-944: ``force_json_object`` is forwarded to ``resolve_model_object``
+        so JSON-mode extractors keep structured output when routed to a
+        self-hosted OpenAI-compatible endpoint (vLLM/Qwen). No-op for the
+        native-Gemini path.
 
         PR-ν.1: when the agent has an Assignment, also looks up the
         Assignment's endpoint to fetch its base_url + runtime credential
@@ -113,16 +174,9 @@ class LLMProvider:
         ``AuthenticationError`` while LiteLLM falls back to
         ``OPENAI_API_KEY`` from env.
         """
-        # 1. Check MongoDB overrides (Assignment-derived + legacy)
-        model_str = self._agent_overrides.get(agent_name)
-        # 2. Fall back to default map
-        if not model_str:
-            model_str = DEFAULT_AGENT_MODELS.get(agent_name)
-        # 3. Fall back to env var
-        if not model_str:
-            model_str = self._settings.llm_fast_model
-
-        model_str = self._resolve_alias(model_str, f"agent={agent_name}")
+        model_str = self._resolve_alias(
+            self._base_model_string(agent_name), f"agent={agent_name}"
+        )
 
         # Ollama fallback: if model is Ollama but service is unreachable
         if is_ollama_model(model_str):
@@ -142,6 +196,11 @@ class LLMProvider:
         api_key: str | None = None
         api_base: str | None = None
         ep_id = self._agent_endpoint_overrides.get(agent_name)
+        # RES-944: in no-cloud mode, an agent without an explicit per-agent
+        # Assignment routes through the configured default endpoint so its
+        # base_url + credential reach the self-hosted vLLM upstream.
+        if not ep_id and self._settings.llm_self_hosted_only:
+            ep_id = self._settings.llm_default_endpoint_id or None
         if ep_id:
             ep_meta = self._endpoint_meta.get(ep_id)
             if ep_meta and isinstance(ep_meta.get("base_url"), str):
@@ -254,19 +313,49 @@ class LLMProvider:
                 # skip its client-side check.
                 api_key = "placeholder-no-auth"
 
-        return resolve_model_object(model_str, api_key=api_key, api_base=api_base)
+        # RES-944: fail closed. In no-cloud mode the resolved model must never
+        # reach a cloud upstream. ``route_for_endpoint`` above has already
+        # rewritten OpenAI-compat shims, so this checks the final, post-routing
+        # values. Two egress paths to block:
+        if self._settings.llm_self_hosted_only:
+            # (1) A model that still resolves to Gemini/Vertex — e.g. an operator
+            #     left LLM_FAST_MODEL at its gemini default.
+            if _is_cloud_model(model_str):
+                raise ConfigurationError(
+                    f"llm_self_hosted_only is set but agent {agent_name!r} resolved to "
+                    f"cloud model {model_str!r}. Set LLM_FAST_MODEL to the self-hosted "
+                    "model (e.g. openai/vllm-qwen) or add a per-agent Assignment."
+                )
+            # (2) An OpenAI-compat model with no base_url. litellm's ``openai/``
+            #     provider then DEFAULTS to https://api.openai.com — i.e. it would
+            #     silently ship on-prem document text to OpenAI cloud. This happens
+            #     when llm_default_endpoint_id is unset, typo'd, or not yet loaded
+            #     into _endpoint_meta (so no api_base was attached). Require a
+            #     resolved self-hosted base_url instead of leaking.
+            if model_str.startswith("openai/") and not api_base:
+                raise ConfigurationError(
+                    f"llm_self_hosted_only is set but agent {agent_name!r} resolved to "
+                    f"OpenAI-compatible model {model_str!r} with no base_url — litellm "
+                    "would default to the OpenAI cloud host. Point llm_default_endpoint_id "
+                    "at a loaded self-hosted endpoint (or add a per-agent Assignment) so a "
+                    "base_url is attached."
+                )
+
+        return resolve_model_object(
+            model_str,
+            api_key=api_key,
+            api_base=api_base,
+            force_json_object=force_json_object,
+        )
 
     def get_model_string(self, agent_name: str) -> str:
         """Get the raw model string for an agent (without LiteLlm wrapping).
 
         Useful for API responses and display.
         """
-        model_str = self._agent_overrides.get(agent_name)
-        if not model_str:
-            model_str = DEFAULT_AGENT_MODELS.get(agent_name)
-        if not model_str:
-            model_str = self._settings.llm_fast_model
-        return self._resolve_alias(model_str, f"agent={agent_name}")
+        return self._resolve_alias(
+            self._base_model_string(agent_name), f"agent={agent_name}"
+        )
 
     def get_all_model_strings(self) -> dict[str, str]:
         """Get the effective model string for every known agent."""

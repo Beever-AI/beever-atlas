@@ -95,11 +95,66 @@ SUPPORTED_PROVIDERS: tuple[str, ...] = (
 )
 
 
+# RES-944 — cached lazily so importing this module doesn't pull in ADK's
+# ``lite_llm`` (and litellm) at load time, matching the lazy imports already
+# used throughout ``resolve_model_object``.
+_JSON_AWARE_LITELLM_CLS: Any = None
+
+
+def _json_aware_litellm_cls() -> Any:
+    """Return (and memoise) a ``LiteLlm`` subclass that forces JSON-object output.
+
+    RES-944: ADK's ``LiteLlm`` derives ``response_format`` only from
+    ``LlmRequest.config.response_schema`` and *ignores*
+    ``response_mime_type='application/json'`` — which the fact/entity extractors
+    set (they deliberately avoid ``response_schema``/``output_schema`` because
+    ADK raises on those before the recovery callback can run). On ADK's native
+    Gemini path the mime type is honoured directly, so cloud extraction worked;
+    but the moment an extractor is routed to a self-hosted OpenAI-compatible
+    endpoint (vLLM/Qwen) the mime type is dropped, the model returns prose, the
+    recovery parser finds no fact array, and extraction yields **0 facts**.
+
+    ADK stores constructor kwargs in ``_additional_args`` and merges them *over*
+    the computed completion args (``completion_args.update(self._additional_args)``),
+    so baking ``response_format={'type': 'json_object'}`` in makes ADK emit it on
+    every completion for this (per-agent) model object — and it wins even when the
+    computed ``response_format`` is ``None``. vLLM honours ``json_object`` via
+    guided decoding; litellm maps it back to ``response_mime_type`` for Gemini, so
+    the cloud path is unaffected. Immutable after construction → concurrency-safe
+    across the pipeline's parallel batches.
+    """
+    global _JSON_AWARE_LITELLM_CLS
+    if _JSON_AWARE_LITELLM_CLS is not None:
+        return _JSON_AWARE_LITELLM_CLS
+
+    from google.adk.models.lite_llm import LiteLlm
+
+    class JsonAwareLiteLlm(LiteLlm):
+        """LiteLlm that always requests OpenAI-style ``json_object`` output."""
+
+        def __init__(self, model: str, **kwargs: Any) -> None:
+            kwargs.setdefault("response_format", {"type": "json_object"})
+            super().__init__(model=model, **kwargs)
+
+    _JSON_AWARE_LITELLM_CLS = JsonAwareLiteLlm
+    return JsonAwareLiteLlm
+
+
+def _make_litellm(model_string: str, extra: dict[str, Any], force_json_object: bool) -> Any:
+    """Construct an ADK LiteLlm wrapper, JSON-forcing when requested (RES-944)."""
+    if force_json_object:
+        return _json_aware_litellm_cls()(model=model_string, **extra)
+    from google.adk.models.lite_llm import LiteLlm
+
+    return LiteLlm(model=model_string, **extra)
+
+
 def resolve_model_object(
     model_string: str,
     *,
     api_key: str | None = None,
     api_base: str | None = None,
+    force_json_object: bool = False,
 ) -> Any:
     """Convert a model string to an ADK-compatible model object.
 
@@ -124,6 +179,15 @@ def resolve_model_object(
     400s with ``AuthenticationError``. Pass-through is optional so the
     legacy callers that don't know about per-Endpoint credentials still
     work.
+
+    RES-944: ``force_json_object`` — when True and the model is wrapped in
+    LiteLlm (any OpenAI-compatible endpoint, incl. self-hosted vLLM/Qwen and
+    Gemini-via-litellm), the wrapper is a ``JsonAwareLiteLlm`` that bakes
+    ``response_format={'type': 'json_object'}`` into every completion. This is a
+    no-op for the native-Gemini bare-string path (ADK honours the agent's
+    ``response_mime_type`` there already). Used by the fact/entity extractors so
+    JSON-mode survives the route to a no-cloud endpoint instead of silently
+    degrading to prose → 0 facts.
     """
     settings = get_settings()
 
@@ -135,9 +199,7 @@ def resolve_model_object(
 
     if model_string.startswith("ollama_chat/"):
         os.environ.setdefault("OLLAMA_API_BASE", settings.ollama_api_base)
-        from google.adk.models.lite_llm import LiteLlm
-
-        return LiteLlm(model=model_string, **extra)
+        return _make_litellm(model_string, extra, force_json_object)
 
     if not settings.llm_use_litellm_for_gemini:
         # The flag name is Gemini-specific. When False:
@@ -164,9 +226,7 @@ def resolve_model_object(
             # Any non-Gemini provider prefix → LiteLlm wrap. The flag only
             # disables LiteLlm for Gemini; OpenAI/Anthropic/Mistral/etc.
             # have no native ADK client and must go through LiteLLM.
-            from google.adk.models.lite_llm import LiteLlm
-
-            return LiteLlm(model=model_string, **extra)
+            return _make_litellm(model_string, extra, force_json_object)
         # Bare non-Gemini string (no prefix, no provider) — return as-is and
         # let ADK figure it out. ``validate_model_string`` upstream should
         # have rejected this shape already.
@@ -182,9 +242,7 @@ def resolve_model_object(
         # ``validate_model_string`` should have caught this upstream.
         return model_string
 
-    from google.adk.models.lite_llm import LiteLlm
-
-    return LiteLlm(model=model_string, **extra)
+    return _make_litellm(model_string, extra, force_json_object)
 
 
 def is_ollama_model(model_string: str) -> bool:
