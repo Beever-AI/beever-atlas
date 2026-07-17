@@ -2695,6 +2695,29 @@ def _escape_control_chars_inside_strings(text: str) -> str:
     return "".join(result)
 
 
+def _is_stream_repetition_abort(exc: BaseException) -> bool:
+    """True when litellm aborted a streamed generation stuck repeating a chunk.
+
+    Dense OCR'd tables prime the model to reproduce giant ``---`` GFM separator
+    walls; litellm's ``raise_on_model_repetition`` guard (streaming handler only)
+    then aborts with ``litellm.MidStreamFallbackError: ... The model is repeating
+    the same chunk = ...``. The message substring is the robust primary signal —
+    ``MidStreamFallbackError`` is not exported at ``litellm`` top level (only via
+    ``litellm.exceptions``), so an ``isinstance`` check alone is fragile.
+    """
+    if "repeating the same chunk" in str(exc):
+        return True
+    try:
+        import litellm.exceptions as _lex
+
+        cls = getattr(_lex, "MidStreamFallbackError", None)
+        if cls is not None and isinstance(exc, cls):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def _is_degenerate_content(content: str) -> tuple[bool, str]:
     """Detect degenerate LLM output (too short, low alnum ratio, dash-wall, visuals-only).
 
@@ -3479,8 +3502,17 @@ class WikiCompiler:
         prompt: str,
         temperature: float = 0.2,
         page_kind: str = "topic",
+        stream_override: bool | None = None,
     ) -> str:
-        """Call the configured LLM and return raw text. Supports Gemini and Ollama."""
+        """Call the configured LLM and return raw text. Supports Gemini and Ollama.
+
+        ``stream_override`` forces streaming on/off for this call (``None`` = use
+        ``settings.wiki_llm_streaming``). When a streamed call is aborted by
+        litellm's repetition guard (dense OCR separator walls make the model
+        repeat a ``---`` row), we transparently retry the call non-streamed once
+        rather than letting the abort crash the page compile — the repetition
+        guard only runs in the streaming handler.
+        """
         from beever_atlas.infra.config import get_settings
 
         settings = get_settings()
@@ -3544,17 +3576,40 @@ class WikiCompiler:
                 kwargs = {"response_format": {"type": "json_object"}}
                 content = prompt
 
-            response = await dispatch_completion(
-                provider=sniff_provider(self._model_name),
-                model=normalize_litellm_model(self._model_name),
-                messages=[{"role": "user", "content": content}],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                # Issue #223: stream this (up to 32k-token) page compile so a long
-                # generation never idles into the ~130s edge-proxy disconnect.
-                stream=settings.wiki_llm_streaming,
-                **kwargs,
+            stream = (
+                settings.wiki_llm_streaming if stream_override is None else stream_override
             )
+
+            async def _dispatch(use_stream: bool):
+                return await dispatch_completion(
+                    provider=sniff_provider(self._model_name),
+                    model=normalize_litellm_model(self._model_name),
+                    messages=[{"role": "user", "content": content}],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    # Issue #223: stream this (up to 32k-token) page compile so a
+                    # long generation never idles into the ~130s edge-proxy
+                    # disconnect.
+                    stream=use_stream,
+                    **kwargs,
+                )
+
+            try:
+                response = await _dispatch(stream)
+            except BaseException as exc:  # noqa: BLE001
+                # litellm aborts a streamed generation that gets stuck repeating a
+                # chunk (dense OCR ``---`` separator walls). The repetition guard
+                # only runs in the streaming handler, so retry once non-streamed —
+                # the full (possibly still dash-heavy) content then flows to
+                # ``_call_llm``'s existing degenerate guard / deterministic splice
+                # instead of crashing the page compile ("failed hard").
+                if not stream or not _is_stream_repetition_abort(exc):
+                    raise
+                logger.warning(
+                    "WikiCompiler: stream_repetition_abort page_kind=%s — retrying non-streamed",
+                    page_kind,
+                )
+                response = await _dispatch(False)
             return response.choices[0].message.content or "{}"  # type: ignore[index, union-attr]
 
     async def _call_llm(
