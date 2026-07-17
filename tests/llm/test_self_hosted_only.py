@@ -81,3 +81,29 @@ def test_assert_self_hosted_only_passes_when_all_self_hosted() -> None:
 def test_assert_self_hosted_only_is_noop_when_flag_off() -> None:
     p = _provider(llm_fast_model="gemini-2.5-flash", llm_self_hosted_only=False)
     p.assert_self_hosted_only()  # cloud is fine when the flag is off → no raise
+
+
+# ── egress guard: OpenAI-compat model with no base_url would leak to cloud ──
+def test_openai_shim_without_base_url_fails_closed() -> None:
+    # No endpoint configured → api_base stays None → litellm openai/ provider
+    # would default to api.openai.com. No-cloud mode must refuse, not leak.
+    p = _provider(llm_fast_model="openai/vllm-qwen", llm_self_hosted_only=True)
+    with pytest.raises(ConfigurationError, match="no base_url"):
+        p.resolve_model("fact_extractor")
+
+
+def test_openai_shim_with_loaded_endpoint_base_url_passes() -> None:
+    # A loaded default endpoint supplies base_url → on-prem, no leak → no raise.
+    p = _provider(
+        llm_fast_model="openai/vllm-qwen",
+        llm_self_hosted_only=True,
+        llm_default_endpoint_id="ep-vllm",
+    )
+    p._endpoint_meta["ep-vllm"] = {
+        "base_url": "https://vllm.votee.dev/v1",
+        "preset": "vllm",
+    }
+    from google.adk.models.lite_llm import LiteLlm
+
+    obj = p.resolve_model("fact_extractor")  # egress guard must NOT raise
+    assert isinstance(obj, LiteLlm)

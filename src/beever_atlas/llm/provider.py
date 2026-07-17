@@ -313,17 +313,33 @@ class LLMProvider:
                 # skip its client-side check.
                 api_key = "placeholder-no-auth"
 
-        # RES-944: fail closed. In no-cloud mode a model that still resolves to
-        # Gemini/Vertex (e.g. an operator left LLM_FAST_MODEL at its gemini
-        # default) must never reach the wire — raise instead of silently calling
-        # cloud. ``route_for_endpoint`` above has already rewritten OpenAI-compat
-        # shims, so this checks the final, post-routing model string.
-        if self._settings.llm_self_hosted_only and _is_cloud_model(model_str):
-            raise ConfigurationError(
-                f"llm_self_hosted_only is set but agent {agent_name!r} resolved to "
-                f"cloud model {model_str!r}. Set LLM_FAST_MODEL to the self-hosted "
-                "model (e.g. openai/vllm-qwen) or add a per-agent Assignment."
-            )
+        # RES-944: fail closed. In no-cloud mode the resolved model must never
+        # reach a cloud upstream. ``route_for_endpoint`` above has already
+        # rewritten OpenAI-compat shims, so this checks the final, post-routing
+        # values. Two egress paths to block:
+        if self._settings.llm_self_hosted_only:
+            # (1) A model that still resolves to Gemini/Vertex — e.g. an operator
+            #     left LLM_FAST_MODEL at its gemini default.
+            if _is_cloud_model(model_str):
+                raise ConfigurationError(
+                    f"llm_self_hosted_only is set but agent {agent_name!r} resolved to "
+                    f"cloud model {model_str!r}. Set LLM_FAST_MODEL to the self-hosted "
+                    "model (e.g. openai/vllm-qwen) or add a per-agent Assignment."
+                )
+            # (2) An OpenAI-compat model with no base_url. litellm's ``openai/``
+            #     provider then DEFAULTS to https://api.openai.com — i.e. it would
+            #     silently ship on-prem document text to OpenAI cloud. This happens
+            #     when llm_default_endpoint_id is unset, typo'd, or not yet loaded
+            #     into _endpoint_meta (so no api_base was attached). Require a
+            #     resolved self-hosted base_url instead of leaking.
+            if model_str.startswith("openai/") and not api_base:
+                raise ConfigurationError(
+                    f"llm_self_hosted_only is set but agent {agent_name!r} resolved to "
+                    f"OpenAI-compatible model {model_str!r} with no base_url — litellm "
+                    "would default to the OpenAI cloud host. Point llm_default_endpoint_id "
+                    "at a loaded self-hosted endpoint (or add a per-agent Assignment) so a "
+                    "base_url is attached."
+                )
 
         return resolve_model_object(
             model_str,
