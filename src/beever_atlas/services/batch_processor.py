@@ -158,6 +158,42 @@ def _thread_aware_batches(messages: list[Any], batch_size: int) -> list[list[Any
     return batches
 
 
+def _cap_known_entities(
+    entities: list[dict[str, Any]], max_entities: int
+) -> list[dict[str, Any]]:
+    """Bound the known-entity registry injected into an extraction batch prompt.
+
+    RES-945: ``entity_registry.get_all_canonical()`` grows without limit as a
+    channel ingests more documents. The full list is JSON-serialised into every
+    extraction batch prompt as cross-batch coreference context, so on a large
+    corpus (RLP: 36k docs) the prompt overran Gemini's 1,048,576-token input
+    ceiling and LiteLLM rejected every batch → 0 facts extracted.
+
+    Keep the most-connected entities first — an entity with more aliases has
+    been referenced/merged more often, so it is the most valuable coreference
+    anchor — and drop the long tail. Ties break on name for deterministic
+    output (important for cache stability and tests). ``max_entities <= 0``
+    disables the cap (legacy unbounded behaviour).
+    """
+    if max_entities <= 0 or len(entities) <= max_entities:
+        return entities
+
+    def _prominence(entity: dict[str, Any]) -> tuple[int, str]:
+        aliases = entity.get("aliases") or []
+        alias_count = len(aliases) if isinstance(aliases, (list, tuple, set)) else 0
+        # Negative alias_count → most-aliased first; name ascending for ties.
+        return (-alias_count, str(entity.get("name") or ""))
+
+    capped = sorted(entities, key=_prominence)[:max_entities]
+    logger.info(
+        "BatchProcessor: capped known-entity coreference context %d→%d "
+        "(extraction_known_entities_max) to stay under the model input-token ceiling",
+        len(entities),
+        len(capped),
+    )
+    return capped
+
+
 def _summarize_exception(exc: Exception) -> str:
     """Create a compact, actionable error message for logs and sync status."""
     if isinstance(exc, ExceptionGroup):
@@ -516,7 +552,10 @@ class BatchProcessor:
             else None
         )
 
-        known_entities: list[dict[str, Any]] = await stores.entity_registry.get_all_canonical()
+        known_entities: list[dict[str, Any]] = _cap_known_entities(
+            await stores.entity_registry.get_all_canonical(),
+            settings.extraction_known_entities_max,
+        )
         cumulative_timings: dict[str, float] = {}
 
         # ── Bounded-concurrency batch execution ───────────────────────────────
@@ -2044,7 +2083,10 @@ class BatchProcessor:
                             cumulative_timings.get(stage_key, 0.0) + duration
                         )
                     if entities_persisted:
-                        known_entities = await stores.entity_registry.get_all_canonical()
+                        known_entities = _cap_known_entities(
+                            await stores.entity_registry.get_all_canonical(),
+                            settings.extraction_known_entities_max,
+                        )
             processed_so_far += len(batch)
             await stores.mongodb.update_sync_progress(
                 job_id=sync_job_id,
