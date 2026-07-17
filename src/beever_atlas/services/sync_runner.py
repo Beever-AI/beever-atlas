@@ -113,6 +113,14 @@ def _coerce_since_timestamp(value: Any | None) -> datetime | None:
 class SyncRunner:
     """Orchestrates channel sync jobs using BatchProcessor and ADK pipeline."""
 
+    # A ``status=="running"`` sync_jobs row started within this window is treated
+    # as an active concurrent run even if this process's in-memory task registry
+    # does not know about it (a concurrent trigger, or a run owned by another
+    # worker process). Prevents a burst of triggers from each mis-recovering the
+    # others' fresh rows and piling up dozens of concurrent "running" jobs on one
+    # channel (RES-948).
+    _RECENT_RUNNING_GRACE_SECONDS = 120
+
     def __init__(self) -> None:
         self._batch_processor = BatchProcessor()
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
@@ -127,6 +135,28 @@ class SyncRunner:
             self._active_tasks.pop(channel_id, None)
             return False
         return True
+
+    def _running_row_is_active(self, existing: Any, channel_id: str) -> bool:
+        """Whether a ``status=="running"`` sync_jobs row should block a new sync.
+
+        A running row is treated as active if EITHER this process is running its
+        task, OR it was started within :attr:`_RECENT_RUNNING_GRACE_SECONDS` — a
+        concurrent/other-process run whose task this process's in-memory registry
+        cannot see yet. Only a row that is BOTH not task-active here AND older than
+        the grace window is a genuine crashed/restart leftover safe to recover.
+        Without the recency check, concurrent triggers each mis-recover the
+        others' fresh rows and pile up dozens of "running" jobs (RES-948).
+        """
+        if self._is_task_active(channel_id):
+            return True
+        started = getattr(existing, "started_at", None)
+        if started is None:
+            return False
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return (datetime.now(tz=UTC) - started) < timedelta(
+            seconds=self._RECENT_RUNNING_GRACE_SECONDS
+        )
 
     def has_active_sync(self, channel_id: str) -> bool:
         """Public check used by API status endpoints."""
@@ -213,10 +243,14 @@ class SyncRunner:
                     failed_stage="stale_recovery",
                 )
 
-        # 1. Guard: no concurrent sync for the same channel.
+        # 1. Guard: no concurrent sync for the same channel. See
+        # ``_running_row_is_active`` — a recently-started running row counts as
+        # active even if this process's task registry hasn't seen it yet, so a
+        # burst of triggers can't each mis-recover the others' fresh rows and pile
+        # up dozens of concurrent "running" jobs (RES-948).
         existing = await stores.mongodb.get_sync_status(channel_id)
         if existing is not None and existing.status == "running":
-            if self._is_task_active(channel_id):
+            if self._running_row_is_active(existing, channel_id):
                 raise ValueError(
                     f"Sync already running for channel {channel_id} (job_id={existing.id})."
                 )
