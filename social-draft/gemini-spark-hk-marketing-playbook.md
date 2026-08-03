@@ -1,85 +1,64 @@
 # Social draft — Gemini Spark / HK marketing playbook
 
-**Source:** [How Google Gemini Spark is rewiring the HK marketing playbook](https://www.marketing-interactive.com/how-google-gemini-spark-is-rewiring-the-hk-marketing-playbook)
+**Source:** "How Google Gemini Spark is rewiring the HK marketing playbook"
 Marketing-Interactive · by Karen Wong · published 3 August 2026
-**Surface:** LinkedIn (Votee AI company account) · ~360 words
-**Status:** first draft — not posted
+**Status:** second draft — fact-checked against the source article only. Not posted.
 
 > **Byline note:** this is a Marketing-Interactive news analysis by Karen Wong, *not* a Jacky Chan
 > thought piece. The standard `by Jacky Chan, CoFounder and CTO…` byline does not apply — Jacky is a
 > quoted source. Framed instead as Votee sharing coverage that features its CTO.
 
+> **Titles used** (as given in the source): Jacky Chan — CTO of Votee AI & Beever AI · Nathan
+> Petralia — former country head of Hong Kong at Ogilvy One · CARMA — media intelligence firm ·
+> Karen Wong — the article's author. The source gives **no job title** for Karen Wong, so none was
+> invented. "CoFounder" is Votee house style, not in the source — see the fact-check log.
+
 ---
 
-## Teaser
+## LinkedIn teaser (~375 words)
 
 How Google Gemini Spark is rewiring the HK marketing playbook
 Marketing-Interactive · by Karen Wong · 3 August 2026
 Featuring Jacky Chan, CoFounder and CTO at Votee AI and Beever AI
 
-Google's Gemini Spark has landed in Hong Kong, and most of the coverage is busy counting the hours it saves. Our CoFounder and CTO Jacky Chan called that "the boring half of the story." The interesting half is what it does to the org chart.
+Google's Gemini Spark has officially launched in Hong Kong, and most of the coverage is busy counting the hours it saves. Our CoFounder and CTO Jacky Chan calls basic productivity gains "the boring half of the story."
 
-What actually shipped is an agent, not a chatbot. Powered by the Gemini 3.6 Flash model, Spark executes multi-step tasks under user direction — summarising long email threads, logging customer feedback into structured charts — running on Google's cloud even while your laptop is shut. Google AI Ultra subscribers in Hong Kong get it first, with AI Pro following over the coming weeks. It's only possible because Google lifted its regional geofences in March: no VPN, no third-party workaround.
+What shipped is an agent, not a chatbot — a shift from reactive Q&A toward autonomous task execution. Powered by the Gemini 3.6 Flash model, Spark handles multi-step tasks independently under user direction: summarising long email threads, logging customer feedback into structured charts. In Chan's words, it "researches, drafts and organises around the clock on Google's cloud, even while your laptop is shut." Google AI Ultra subscribers in Hong Kong get it first, with AI Pro following over the coming weeks — all of it possible because Google lifted its regional geofencing in March. No VPN, no third-party platform.
 
-Media intelligence firm CARMA found sentiment overwhelmingly positive, with productivity potential outweighing concerns about data privacy and AI autonomy. The loudest open question isn't philosophical — it's why Workspace business accounts still can't touch it while personal AI Ultra accounts can.
+Media intelligence firm CARMA reports overwhelmingly positive sentiment, with users weighing productivity potential over minor concerns about data privacy and AI autonomy. One open question keeps recurring: why Workspace business accounts can't access it yet while personal accounts on the AI Ultra tier get in immediately.
 
-The real repricing, though, is in the agency model. Nathan Petralia, former Hong Kong country head at Ogilvy One, argues productivity gains are a byproduct of something bigger: complete workflow redesign, with always-on loops between insight, briefing, client reporting and campaign optimisation. That moves agency value from billable execution hours to orchestration, governance and measurable outcomes.
+The bigger repricing is in the agency model. Nathan Petralia, former country head of Hong Kong at Ogilvy One, argues productivity gains are a byproduct of a much bigger opportunity — complete workflow redesign. With agents running natively across Gmail, Docs, Sheets and Calendar, he says teams can "finally build always-on loops between insight, briefing, client reporting and campaign optimisation." That repackages agency value from billable execution hours toward orchestration, governance and measurable outcomes.
 
-Chan's read is blunter — the opportunity is a whole new service line: designing and running your clients' AI agents for them. Point Spark at a team's Gmail and Drive and buried knowledge turns into working pipelines.
+Chan's read is blunter: "The real opportunity for agencies is a new service line — designing and running your clients' AI agents for them."
 
-The mental model has to change: stop counting how many employees you have, and start counting how many agents you run.
+And the mental model has to change with it. As Chan puts it: "Stop counting how many employees you have, and start counting how many agents you run."
 
-The full piece has CARMA's sentiment breakdown, Petralia's three forces shaping the next 12 months, and where the moat actually sits — so you're not caught selling billable hours into an agent-mediated market.
+The full piece has CARMA's sentiment breakdown, Petralia's three core forces shaping the next 12 months, and where the moat actually sits — so you're not caught selling billable hours into an agent-mediated market.
 
-Open-source your tools. Keep your recipe. How you orchestrate the agents — and the proprietary data you feed them — stays behind the counter.
+Open-source your tools, keep your recipe. As Chan frames it, how you orchestrate the agents — plus the custom skills and proprietary data you feed them — is the moat, and it should stay behind the counter.
 
 Read the full breakdown here 👇
 [link]
 
 ---
 
-## Fact-check log
-
-| Claim | Verdict | Source |
-|---|---|---|
-| Article title, author (Karen Wong), date (3 Aug 2026) | Confirmed | Source PDF |
-| Gemini Spark launched in Hong Kong | Confirmed | Source PDF; [SCMP](https://www.scmp.com/tech/article/3362278/google-makes-gemini-spark-ai-agent-available-hongkongers-it-lowers-geofences) |
-| Powered by Gemini 3.6 Flash | Confirmed | Source PDF; corroborated by HK tech press |
-| AI Ultra first, AI Pro "over the coming weeks" | Confirmed | Source PDF |
-| Google lifted regional geofences in March | Confirmed | Source PDF; [SCMP](https://www.scmp.com/news/hong-kong/hong-kong-economy/article/3346766/google-open-gemini-chatbot-all-hong-kong-users-amid-citys-ai-push) — rollout began 16 Mar 2026 |
-| First unveiled in the US in May | Confirmed | Source PDF; matches Google I/O 2026 coverage |
-| CARMA is a media intelligence firm | Confirmed | [carma.com](https://carma.com/) — founded 1984, 600+ staff |
-| CARMA sentiment finding (positive; privacy/autonomy minor) | Reported | Source PDF only — CARMA has not published this dataset; attribute to the article |
-| Workspace business accounts excluded while personal AI Ultra gets access | Reported | Source PDF (user chatter, not a Google statement) |
-| Nathan Petralia, *former* HK country head, Ogilvy One | Confirmed | [Marketing-Interactive](https://www.marketing-interactive.com/ogilvy-one-verticurl-s-hk-country-head-departs) — departure reported May 2026 |
-| All Petralia and Chan quotes | Confirmed verbatim | Source PDF |
-| Animoca Brands "Minds" — up to US$10M | Confirmed | [Animoca Brands](https://www.animocabrands.com/announcement/animoca-brands-launches-up-to-us-10m-investment-programme-for-developers-building-with-persistent-ai-agent-platform-minds) — announced at Consensus 2026; note "**up to** US$10M" |
-| Microsoft Frontier Success Framework | Confirmed | [Microsoft Source Asia](https://news.microsoft.com/source/asia/2026/04/22/from-ai-experiments-to-frontier-success-microsoft-brings-agentic-ai-to-hong-kong-organizations/) — HK launch 22 Apr 2026 |
-| Jacky Chan is CoFounder **and** CTO | Confirmed | [Crunchbase](https://www.crunchbase.com/person/jacky-chan-2) — article says only "CTO"; house style restored |
-
-**Not used in the teaser** (available if you want a longer cut): the Animoca Minds and Microsoft
-Frontier Success context paragraph, and Petralia's closing "man through machine" line.
-
-**Handles verified:** `@jhkchan` (Jacky Chan) — X bio reads "CTO & Co-Founder of @HelloVotee".
-Votee's own account is `@HelloVotee`.
-
----
-
 ## Instagram caption
 
-Google's Gemini Spark just landed in Hong Kong — and everyone's busy counting the hours it saves.
+Google's Gemini Spark has officially launched in Hong Kong — and everyone's busy counting the hours it saves.
 
-Our CoFounder & CTO Jacky Chan calls that "the boring half of the story."
+Our CoFounder & CTO Jacky Chan calls basic productivity gains "the boring half of the story."
 
-⚡ What actually shipped: an agent, not a chatbot. Gemini 3.6 Flash, executing multi-step tasks — summarising long email threads, logging customer feedback into structured charts — on Google's cloud, even while your laptop is shut.
+⚡ What shipped: an agent, not a chatbot. Powered by Gemini 3.6 Flash, Spark handles multi-step tasks independently under user direction — summarising long email threads, logging customer feedback into structured charts. In Chan's words, it works "around the clock on Google's cloud, even while your laptop is shut."
 
-🌏 Why now: Google lifted its regional geofences in March. No VPN. No third-party workaround. AI Ultra subscribers first, AI Pro over the coming weeks.
+🌏 Why now: Google lifted its regional geofencing in March. No VPN, no third-party platform. AI Ultra subscribers first, AI Pro over the coming weeks.
 
-🧠 The shift that actually matters: stop counting how many employees you have. Start counting how many agents you run.
+📊 Media intelligence firm CARMA reports overwhelmingly positive sentiment — productivity potential outweighing minor concerns about data privacy and AI autonomy.
 
-🔒 And the part most people miss — open-source your tools, keep your recipe. How you orchestrate the agents, and the proprietary data you feed them, is the moat. That stays behind the counter.
+🧠 The shift that matters, per Chan: "Stop counting how many employees you have, and start counting how many agents you run."
 
-Jacky, quoted in Marketing-Interactive's analysis by Karen Wong 👇
+🔒 And the part most people miss — open-source your tools, keep your recipe. How you orchestrate the agents, plus the proprietary data you feed them, is the moat. It should stay behind the counter.
+
+Jacky Chan, CTO of Votee AI & Beever AI, quoted alongside Nathan Petralia, former country head of Hong Kong at Ogilvy One, in Karen Wong's analysis for Marketing-Interactive 👇
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
@@ -91,24 +70,79 @@ Ready to scale your AI securely? Let's talk.
 
 ## X / Twitter — single long-form post
 
-Google's Gemini Spark is live in Hong Kong — and most of the coverage is busy counting the hours it saves.
+Google's Gemini Spark has officially launched in Hong Kong — and most of the coverage is busy counting the hours it saves.
 
-Our CoFounder & CTO Jacky Chan (@jhkchan), quoted in Marketing-Interactive, calls that "the boring half of the story."
+Our CoFounder & CTO Jacky Chan (@jhkchan), quoted in Karen Wong's analysis for Marketing-Interactive, calls basic productivity gains "the boring half of the story."
 
-What shipped is an agent, not a chatbot. Powered by the Gemini 3.6 Flash model, Spark executes multi-step tasks under user direction — summarising long email threads, logging customer feedback into structured charts — running on Google's cloud even while your laptop is shut. Google AI Ultra subscribers in Hong Kong get it first, with AI Pro following over the coming weeks. It's only possible because Google lifted its regional geofences in March: no VPN, no third-party workaround.
+What shipped is an agent, not a chatbot — a shift from reactive Q&A toward autonomous task execution. Powered by the Gemini 3.6 Flash model, Spark handles multi-step tasks independently under user direction: summarising long email threads, logging customer feedback into structured charts. In Chan's words, it "researches, drafts and organises around the clock on Google's cloud, even while your laptop is shut." Google AI Ultra subscribers in Hong Kong get it first, with AI Pro following over the coming weeks — possible because Google lifted its regional geofencing in March. No VPN, no third-party platform.
 
-Media intelligence firm CARMA found sentiment overwhelmingly positive, with productivity potential outweighing concerns about data privacy and AI autonomy. The loudest open question isn't philosophical — it's why Workspace business accounts still can't touch it while personal AI Ultra accounts can.
+Media intelligence firm CARMA reports overwhelmingly positive sentiment, with users weighing productivity potential over minor concerns about data privacy and AI autonomy. One question keeps recurring: why Workspace business accounts can't access it yet while personal accounts on the AI Ultra tier get in immediately.
 
-The real repricing, though, is in the agency model. Nathan Petralia, former Hong Kong country head at Ogilvy One, argues productivity gains are a byproduct of something bigger: complete workflow redesign, with always-on loops between insight, briefing, client reporting and campaign optimisation. That moves agency value from billable execution hours to orchestration, governance and measurable outcomes.
+The bigger repricing is in the agency model. Nathan Petralia, former country head of Hong Kong at Ogilvy One, argues productivity gains are a byproduct of a much bigger opportunity — complete workflow redesign. With agents running natively across Gmail, Docs, Sheets and Calendar, teams can "finally build always-on loops between insight, briefing, client reporting and campaign optimisation." That repackages agency value from billable execution hours toward orchestration, governance and measurable outcomes.
 
-Jacky's read is blunter — the opportunity is a whole new service line: designing and running your clients' AI agents for them. Point Spark at a team's Gmail and Drive and buried knowledge turns into working pipelines.
+Chan's read is blunter: "The real opportunity for agencies is a new service line — designing and running your clients' AI agents for them."
 
-The mental model has to change: stop counting how many employees you have, and start counting how many agents you run.
+And the mental model has to change with it. As Chan puts it: "Stop counting how many employees you have, and start counting how many agents you run."
 
-Open-source your tools. Keep your recipe. How you orchestrate the agents — and the proprietary data you feed them — stays behind the counter.
+Open-source your tools, keep your recipe. How you orchestrate the agents — plus the custom skills and proprietary data you feed them — is the moat, and it should stay behind the counter.
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 🔗 [link]
 
 #AgenticAI #GeminiSpark #SovereignAI #HongKong
+
+---
+
+## Fact-check log — source-only pass
+
+Checked against the article alone. ✅ supported · ⚠️ fixed in this draft · ❗ still needs your call.
+
+### Attribution — what the first draft got wrong
+
+| Line | Issue | Status |
+|---|---|---|
+| "stop counting how many employees you have, and start counting how many agents you run" | **Verbatim Chan quote** presented as Votee's own narration, unquoted | ⚠️ Now quoted and attributed |
+| "always-on loops between insight, briefing, client reporting and campaign optimisation" | **Verbatim Petralia quote**, unquoted | ⚠️ Now quoted and attributed |
+| "a whole new service line: designing and running your clients' AI agents for them" | Near-verbatim of the article's pull quote, unquoted | ⚠️ Now quoted to Chan |
+| "even while your laptop is shut" | Chan's phrasing presented as neutral product description | ⚠️ Now attributed to Chan |
+| "moves agency value from billable execution hours to orchestration, governance and measurable outcomes" | Near-verbatim of the article's own sentence | ⚠️ Reworded, verb changed to the source's "repackages" with attribution |
+
+### Factual claims
+
+| Claim | Verdict |
+|---|---|
+| Google officially launched Gemini Spark in Hong Kong | ✅ Stated in source |
+| Powered by the Gemini 3.6 Flash model | ✅ Stated in source |
+| Shift from reactive Q&A chatbots to autonomous task execution | ✅ Stated in source |
+| Multi-step tasks under user direction; email summaries, feedback into charts | ✅ Stated in source |
+| AI Ultra first in HK, AI Pro over the coming weeks | ✅ Stated in source |
+| Geofencing lifted in March; no VPN or third-party platform needed | ✅ Stated in source |
+| CARMA is a media intelligence firm | ✅ Stated in source |
+| Sentiment overwhelmingly positive; privacy/autonomy concerns described as **minor** | ✅ Stated in source — first draft dropped "minor"; ⚠️ restored |
+| Workspace business accounts excluded while personal AI Ultra accounts get in | ✅ Stated in source. First draft called it "the loudest open question" — the source doesn't rank it; ⚠️ softened to "keeps recurring" |
+| Nathan Petralia, **former** country head of Hong Kong at Ogilvy One | ✅ Exact title from source |
+| Productivity gains a byproduct of "a much bigger opportunity: complete workflow redesign" | ✅ Stated in source |
+| Petralia's three core forces shaping the next 12 months | ✅ Stated in source |
+| Agents run natively across Gmail, Docs, Sheets and Calendar | ✅ From Petralia's quote |
+| Chan: "the boring half of the story" — attached to **basic productivity gains** | ✅ Exact context from source; first draft attached it loosely to "counting hours"; ⚠️ corrected |
+
+### ❗ Needs your call
+
+1. **"CoFounder" is not in the source.** The article calls Jacky "CTO of Votee AI & Beever AI" — no cofounder mention. The posts use "CoFounder & CTO" as Votee house style. Not a contradiction, but it is a claim the source doesn't carry. Drop it, or keep it as your own account describing your own CTO.
+2. **No job title exists for Karen Wong in the source** — only the byline. None was invented; she is credited as the analysis's author.
+3. **`[link]` placeholder** — the canonical URL is still unconfirmed.
+
+### Not carried into any post (available for a longer cut)
+
+Animoca Brands' Minds initiative and Microsoft's Frontier Success Framework; Petralia's "the skills gap is managerial, not technical" and "man through machine" lines; Chan's "one-person company" reference.
+
+### Mechanical checks
+
+| Post | Chars | Words | Platform limit |
+|---|---|---|---|
+| LinkedIn | ~2,500 | ~375 | 3,000 ✅ |
+| Instagram | ~1,500 | ~230 | 2,200 ✅ |
+| X | ~2,300 | ~350 | 280 free / 25,000 Premium — **needs Premium** |
+
+Handles: `@jhkchan` (Jacky Chan). Instagram carries no clickable link, hence "Link in bio".
