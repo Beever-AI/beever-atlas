@@ -2,7 +2,7 @@
 
 **Source:** "How Google Gemini Spark is rewiring the HK marketing playbook"
 Marketing-Interactive · published 3 August 2026
-**Status:** third draft — fact-checked against the source article only. Not posted.
+**Status:** fourth draft — fact-checked against the source article only. Not posted.
 
 > **Titles used:** Jacky Chan — CoFounder and CTO at Votee AI and Beever AI · Nathan Petralia —
 > former country head of Hong Kong at Ogilvy One · CARMA — media intelligence firm.
@@ -37,7 +37,7 @@ The full piece has CARMA's sentiment breakdown, Petralia's three core forces sha
 Open-source your tools, keep your recipe. As Chan frames it, how you orchestrate the agents — plus the custom skills and proprietary data you feed them — is the moat, and it should stay behind the counter.
 
 Read the full breakdown here 👇
-[link]
+https://www.marketing-interactive.com/how-google-gemini-spark-is-rewiring-the-hk-marketing-playbook
 
 ---
 
@@ -87,7 +87,7 @@ Open-source your tools, keep your recipe. How you orchestrate the agents — plu
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
-🔗 [link]
+🔗 https://www.marketing-interactive.com/how-google-gemini-spark-is-rewiring-the-hk-marketing-playbook
 
 #AgenticAI #GeminiSpark #SovereignAI #HongKong
 
@@ -129,7 +129,7 @@ Checked against the article alone. ✅ supported · ⚠️ fixed in an earlier r
 
 ### ❗ Open
 
-**`[link]` placeholder** — the canonical article URL is still unconfirmed, and this environment can't reach the publisher's domain to check it. Needs filling before publication, and parking in the Instagram bio.
+**`https://www.marketing-interactive.com/how-google-gemini-spark-is-rewiring-the-hk-marketing-playbook` placeholder** — the canonical article URL is still unconfirmed, and this environment can't reach the publisher's domain to check it. Needs filling before publication, and parking in the Instagram bio.
 
 ### Not carried into any post (available for a longer cut)
 
