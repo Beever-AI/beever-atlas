@@ -70,9 +70,11 @@ signup does the same job without the public list. Worth raising with whoever run
 
 ### LinkedIn
 
+🤝 **Votee AI × Kids Power Academy — Volume 5**
+
 🎬 A seven-year-old prompt engineer premiered her first film this morning — and then a room full of kids built products from its open ending.
 
-Kids Power Academy Volume 5 landed today at Animoca Brands' Hong Kong office: **"Meet the Cat to Find Your Originality,"** written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
+Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: **"Meet the Cat to Find Your Originality,"** written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
 The format is the interesting part 👇
 
@@ -81,6 +83,8 @@ The format is the interesting part 👇
 🎤 **The coaches pitch the kids, not the other way round.** This is the inversion that makes the whole format work. **Jack Ng** and **Jason Mak** each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation. No assignment. If your pitch didn't land, you didn't get a team.
 
 Being pitched by a seven-year-old's peer group is a harder room than most investor meetings. Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY].
+
+🤝 **Where Votee AI came in.** We joined Volume 5 as a coaching partner — [WHICH COACH] represented Votee AI, pitching [SPECIALTY] to the room. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why backing Gen Alpha technologists matters to us, and whether this continues beyond Volume 5.]
 
 🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
 
@@ -102,9 +106,11 @@ Ready to scale your AI securely? Let's talk.
 
 ### Instagram
 
+🤝 **Votee AI × Kids Power Academy — Vol 5**
+
 🎬 A 7-year-old prompt engineer premiered her first film this morning — then a room full of kids built products from its open ending.
 
-Kids Power Academy Vol 5, today at Animoca Brands' Hong Kong office.
+Votee AI joined as a coaching partner, today at Animoca Brands' Hong Kong office.
 
 🐱 **"Meet the Cat to Find Your Originality"** — written by Elyse, alongside the upcoming 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
@@ -113,6 +119,8 @@ Kids Power Academy Vol 5, today at Animoca Brands' Hong Kong office.
 🎤 Coaches pitched the kids, not the other way round — the inversion that makes the format work. **Jack Ng** and **Jason Mak** each got five minutes to sell their skill, then the kids decided who was worth hiring. No assignment. If your pitch didn't land, you didn't get a team.
 
 Jack Ng — [TITLE, ORG] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORG] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
+
+🤝 Where Votee AI came in — [WHICH COACH] represented us, pitching [SPECIALTY]. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why Gen Alpha technologists matter to us.]
 
 🛠️ One hour to tinker. Groups built a product, service or invention from their coach's specialty and their story ending.
 
@@ -134,9 +142,11 @@ Ready to scale your AI securely? Let's talk.
 
 ### X — single long-form post
 
+🤝 Votee AI × Kids Power Academy — Volume 5
+
 🎬 A 7-year-old prompt engineer premiered her first film this morning — and then a room full of kids built products from its open ending.
 
-Kids Power Academy Volume 5 ran today at Animoca Brands' Hong Kong office: "Meet the Cat to Find Your Originality," written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
+Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: "Meet the Cat to Find Your Originality," written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
 The format is the interesting part:
 
@@ -145,6 +155,8 @@ The format is the interesting part:
 🎤 The coaches pitch the kids, not the other way round — the inversion that makes the whole format work. Jack Ng and Jason Mak each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team.
 
 Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
+
+🤝 Where Votee AI came in. We joined Volume 5 as a coaching partner — [WHICH COACH] represented Votee AI, pitching [SPECIALTY] to the room. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why backing Gen Alpha technologists matters to us.]
 
 🛠️ One hour to tinker. Groups build a product, service or invention tied to their coach's specialty and their chosen ending.
 
@@ -168,9 +180,11 @@ Ready to scale your AI securely? Let's talk.
 > **Do not publish today.** The event it advertises is over. Kept for reuse if the workshop repeats,
 > with `[DATE]` and `[DAY]` left as placeholders so it cannot go out with a stale date by accident.
 
+🤝 **Votee AI × Kids Power Academy — Volume 5**
+
 🐱 A seven-year-old prompt engineer is premiering her first film — and you're invited to finish the story.
 
-Kids Power Academy Volume 5 comes to Animoca Brands' Hong Kong office on **[DATE]**.
+Votee AI joins Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office on **[DATE]**.
 
 **"Meet the Cat to Find Your Originality"** premieres, written by Elyse — alongside our upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆. The film has an open ending. Participants finish it — not by writing, but by building.
 
