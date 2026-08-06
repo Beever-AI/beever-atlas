@@ -78,7 +78,9 @@ The format is the interesting part 👇
 
 🎥 **An open ending, on purpose.** The film stops before the resolution. Participants finish the story themselves — not as a writing exercise, but by building something.
 
-🎤 **The coaches pitch the kids, not the other way round.** Each coach gets five minutes to sell their skill — AI tools, products, services — and participants choose who to work with. Jack Ng and Jason Mak coached.
+🎤 **The coaches pitch the kids, not the other way round.** This is the inversion that makes the whole format work. **Jack Ng** and **Jason Mak** each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation. No assignment. If your pitch didn't land, you didn't get a team.
+
+Being pitched by a seven-year-old's peer group is a harder room than most investor meetings. Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY].
 
 🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
 
@@ -108,7 +110,9 @@ Kids Power Academy Vol 5, today at Animoca Brands' Hong Kong office.
 
 🎥 The film ends before the ending. That's the point — participants finish it by building something.
 
-🎤 Coaches pitched the kids, not the other way round. Five minutes each to sell their skill. Kids picked who to hire. Jack Ng and Jason Mak coached.
+🎤 Coaches pitched the kids, not the other way round — the inversion that makes the format work. **Jack Ng** and **Jason Mak** each got five minutes to sell their skill, then the kids decided who was worth hiring. No assignment. If your pitch didn't land, you didn't get a team.
+
+Jack Ng — [TITLE, ORG] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORG] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
 
 🛠️ One hour to tinker. Groups built a product, service or invention from their coach's specialty and their story ending.
 
@@ -138,7 +142,9 @@ The format is the interesting part:
 
 🎥 An open ending, on purpose. The film stops before the resolution, and participants finish the story themselves — not by writing it, but by building something.
 
-🎤 The coaches pitch the kids, not the other way round. Each coach gets five minutes to sell their skill — AI tools, products, services — and participants choose who to work with. Jack Ng and Jason Mak coached.
+🎤 The coaches pitch the kids, not the other way round — the inversion that makes the whole format work. Jack Ng and Jason Mak each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team.
+
+Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
 
 🛠️ One hour to tinker. Groups build a product, service or invention tied to their coach's specialty and their chosen ending.
 
@@ -170,7 +176,7 @@ Kids Power Academy Volume 5 comes to Animoca Brands' Hong Kong office on **[DATE
 
 📋 **The format**
 
-🎤 Coaches pitch you, not the other way round. Five minutes each to sell their skill — AI tools, products, services. You choose who to hire.
+🎤 Coaches pitch you, not the other way round. **Jack Ng** — [TITLE, ORGANISATION] — and **Jason Mak** — [TITLE, ORGANISATION] — each get five minutes to sell their skill, from AI tools to products to services. Then you decide who's worth hiring. If their pitch doesn't land, they don't get a team.
 
 🛠️ One hour to tinker. Build a product, service or invention from your coach's specialty and your story ending.
 
