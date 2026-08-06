@@ -82,9 +82,13 @@ The format is the interesting part 👇
 
 🎤 **The coaches pitch the kids, not the other way round.** This is the inversion that makes the whole format work. **Jack Ng** and **Jason Mak** each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation. No assignment. If your pitch didn't land, you didn't get a team.
 
-Being pitched by a seven-year-old's peer group is a harder room than most investor meetings. Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY].
+Being pitched by a seven-year-old's peer group is a harder room than most investor meetings.
 
-🤝 **Where Votee AI came in.** We joined Volume 5 as a coaching partner — [WHICH COACH] represented Votee AI, pitching [SPECIALTY] to the room. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why backing Gen Alpha technologists matters to us, and whether this continues beyond Volume 5.]
+🤝 **Where Votee AI came in — both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
+
+Jason is 16. He was pitching a room of 7-to-16-year-olds — which is to say, he was pitching his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
+
+We think that's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build. [WHAT THE GROUPS BUILT]
 
 🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
 
@@ -118,9 +122,11 @@ Votee AI joined as a coaching partner, today at Animoca Brands' Hong Kong office
 
 🎤 Coaches pitched the kids, not the other way round — the inversion that makes the format work. **Jack Ng** and **Jason Mak** each got five minutes to sell their skill, then the kids decided who was worth hiring. No assignment. If your pitch didn't land, you didn't get a team.
 
-Jack Ng — [TITLE, ORG] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORG] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
+🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
 
-🤝 Where Votee AI came in — [WHICH COACH] represented us, pitching [SPECIALTY]. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why Gen Alpha technologists matter to us.]
+Jason is 16 — pitching a room of 7-to-16-year-olds. His own age group.
+
+The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously. [WHAT THE GROUPS BUILT]
 
 🛠️ One hour to tinker. Groups built a product, service or invention from their coach's specialty and their story ending.
 
@@ -154,9 +160,13 @@ The format is the interesting part:
 
 🎤 The coaches pitch the kids, not the other way round — the inversion that makes the whole format work. Jack Ng and Jason Mak each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team.
 
-Jack Ng — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Jason Mak — [TITLE, ORGANISATION] — pitched [SPECIALTY]. Being pitched by a room of kids is a harder audience than most investor meetings.
+Being pitched by a room of kids is a harder audience than most investor meetings.
 
-🤝 Where Votee AI came in. We joined Volume 5 as a coaching partner — [WHICH COACH] represented Votee AI, pitching [SPECIALTY] to the room. The groups who hired us built [WHAT THEY BUILT]. [ONE LINE: why backing Gen Alpha technologists matters to us.]
+🤝 Where Votee AI came in — both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
+
+Jason is 16. He was pitching a room of 7-to-16-year-olds — his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
+
+You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build. [WHAT THE GROUPS BUILT]
 
 🛠️ One hour to tinker. Groups build a product, service or invention tied to their coach's specialty and their chosen ending.
 
@@ -190,7 +200,7 @@ Votee AI joins Kids Power Academy Volume 5 as a coaching partner, at Animoca Bra
 
 📋 **The format**
 
-🎤 Coaches pitch you, not the other way round. **Jack Ng** — [TITLE, ORGANISATION] — and **Jason Mak** — [TITLE, ORGANISATION] — each get five minutes to sell their skill, from AI tools to products to services. Then you decide who's worth hiring. If their pitch doesn't land, they don't get a team.
+🎤 Coaches pitch you, not the other way round. Both of ours come from Votee AI: **Jack Ng**, Head of Corporate Communications, and **Jason Mak**, Security Research Apprentice — who is 16, and will be pitching his own age group. Each gets five minutes to sell their skill. Then you decide who's worth hiring. If their pitch doesn't land, they don't get a team.
 
 🛠️ One hour to tinker. Build a product, service or invention from your coach's specialty and your story ending.
 
