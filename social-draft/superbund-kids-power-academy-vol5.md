@@ -184,7 +184,7 @@ Kids Power Academy Volume 5 comes to Animoca Brands' Hong Kong office on **[DATE
 
 🧒 Gen Alpha runs it. Keynote on the technologist's mindset from Ryder, 12. System registration and closing from Alia, 15, founder of the Superbund Alpha Project.
 
-Coaches include Jack Ng and Jason Mak. Everyone — coaches, students, parents — is on the Superbund Technology Ecosystem Superapp throughout.
+Everyone — coaches, students, parents — is on the Superbund Technology Ecosystem Superapp throughout.
 
 📅 **Details**
 Date: **[DAY], [DATE]**
