@@ -28,11 +28,13 @@ still forthcoming, so that angle doesn't decay.
 ✅ **Consent resolved.** Jason Mak has consented to being named with his age and role, and posts
 publicly under his own name on LinkedIn. The age line stays.
 
-❓ **One link to check.** A LinkedIn post of Jason's was offered as the consent record. Its URL slug
-reads `aisecurity-redteaming-generativeai`, which suggests it is about his security research rather
-than the Kids Power Academy workshop. It is therefore **not** linked from the copy — a "he wrote
-about it himself" pointer that lands on an unrelated post would confuse readers. If he has a post
-specifically about the workshop, send that URL and it becomes a strong addition.
+🔗 **Jason's own post covers the workshop.** An earlier reading of its URL slug suggested it was about
+his security research; the post text confirms it is about this event. It is a good candidate to link
+or reshare alongside the company post.
+
+⚠️ **Title discrepancy — resolved in his favour.** His role was passed to us as "Security Research
+Apprentice"; his own public post says **"AI Security Apprentice at Votee AI"**. The copy uses his
+wording. Correct it if the internal title is the official one.
 
 ---
 
@@ -93,11 +95,13 @@ The format is the interesting part 👇
 
 Being pitched by a seven-year-old's peer group is a harder room than most investor meetings.
 
-🤝 **Where Votee AI came in — both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
+🤝 **Where Votee AI came in — both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
-Jason is 16. He was pitching a room of 7-to-16-year-olds — which is to say, he was pitching his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
+Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset to the room. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
-We think that's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
+He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
+
+That's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
 
 🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
 
@@ -105,7 +109,7 @@ We think that's the whole argument for this format. You don't prepare the next g
 
 🧒 **Run by Gen Alpha, not for them.** Keynote on the technologist's mindset from Ryder, 12. System registration and closing from Alia, 15 — founder of the Superbund Alpha Project and initiator of Kids Power Society, a non-profit that has already published four books with contributions from 125 children worldwide.
 
-The Superbund Blueprint Initiative explores how technology and creativity shape the future of identity and learning. The premise: the next generation won't just use AI — they'll develop "AI selves" that collaborate with technology to expand creativity, thinking and identity.
+The Superbund Blueprint Initiative's premise: the next generation won't just use AI — they'll develop "AI selves" that expand creativity, thinking and identity.
 
 Volume 5 publishes soon. Follow **@superbundgenalpha** for the release and the next workshop.
 
@@ -131,9 +135,11 @@ Votee AI joined as a coaching partner, on 4 August at Animoca Brands' Hong Kong 
 
 🎤 Coaches pitched the kids, not the other way round — the inversion that makes the format work. **Jack Ng** and **Jason Mak** each got five minutes to sell their skill, then the kids decided who was worth hiring. No assignment. If your pitch didn't land, you didn't get a team.
 
-🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
+🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
-Jason is 16 — pitching a room of 7-to-16-year-olds. His own age group.
+🔐 Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
+
+He's 16 — pitching a room of 7-to-16-year-olds. His own age group.
 
 The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
@@ -171,9 +177,11 @@ The format is the interesting part:
 
 Being pitched by a room of kids is a harder audience than most investor meetings.
 
-🤝 Where Votee AI came in — both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our Security Research Apprentice.
+🤝 Where Votee AI came in — both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
-Jason is 16. He was pitching a room of 7-to-16-year-olds — his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
+Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset to the room. As he put it: building robust, secure AI starts with understanding how it can be broken.
+
+He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
 
 You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
 
@@ -209,7 +217,7 @@ Votee AI joins Kids Power Academy Volume 5 as a coaching partner, at Animoca Bra
 
 📋 **The format**
 
-🎤 Coaches pitch you, not the other way round. Both of ours come from Votee AI: **Jack Ng**, Head of Corporate Communications, and **Jason Mak**, Security Research Apprentice — who is 16, and will be pitching his own age group. Each gets five minutes to sell their skill. Then you decide who's worth hiring. If their pitch doesn't land, they don't get a team.
+🎤 Coaches pitch you, not the other way round. Both of ours come from Votee AI: **Jack Ng**, Head of Corporate Communications, and **Jason Mak**, AI Security Apprentice — who is 16, and will be pitching his own age group. Jason's day job is offensive AI red teaming; he brings the security mindset. Each gets five minutes to sell their skill. Then you decide who's worth hiring. If their pitch doesn't land, they don't get a team.
 
 🛠️ One hour to tinker. Build a product, service or invention from your coach's specialty and your story ending.
 
