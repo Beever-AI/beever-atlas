@@ -112,11 +112,11 @@ Votee AI joined Volume 5 as a coaching partner at Animoca Brands' Hong Kong offi
 
 🎤 Then the inversion that makes it work: **the coaches pitch the kids.** Five minutes each to sell your skill, and the kids decide who's worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team. It's a harder room than most investor meetings.
 
-🤝 **Both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
+🤝 **Both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our 16-year-old AI Security Apprentice.
 
 Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
-He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
+He was pitching a room of 7-to-16-year-olds — his own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
 🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of the Superbund Alpha Project, closed it.
 
@@ -148,11 +148,11 @@ Votee AI joined as a coaching partner, on 4 August at Animoca Brands' Hong Kong 
 
 🎤 Then the inversion that makes it work: **the coaches pitch the kids.** Five minutes each to sell your skill, and the kids decide who's worth hiring. If your pitch didn't land, you didn't get a team. A harder room than most investor meetings.
 
-🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
+🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our 16-year-old AI Security Apprentice.
 
 🔐 Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
-He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
+He was pitching a room of 7-to-16-year-olds — his own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
 🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of Superbund Alpha Project, closed it.
 
@@ -182,11 +182,11 @@ Votee AI joined Volume 5 as a coaching partner at Animoca Brands' Hong Kong offi
 
 🎤 Then the inversion that makes it work: the coaches pitch the kids. Five minutes each to sell your skill, and the kids decide who's worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team. It's a harder room than most investor meetings.
 
-🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
+🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our 16-year-old AI Security Apprentice.
 
 Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
-He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
+He was pitching a room of 7-to-16-year-olds — his own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
 🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of the Superbund Alpha Project, closed it.
 
