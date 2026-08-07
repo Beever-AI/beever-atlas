@@ -36,6 +36,18 @@ or reshare alongside the company post.
 Apprentice"; his own public post says **"AI Security Apprentice at Votee AI"**. The copy uses his
 wording. Correct it if the internal title is the official one.
 
+⚠️ **Third-party names need clearance.** The thanks block names three people at other companies:
+Benson Wong (Managing Director, JP Morgan), Lobson Chan (COO, Animoca Brands) and Shine Li (Social
+Media Manager, Animoca Brands). Two points before publishing:
+
+- **JP Morgan** in particular has strict policies on employees appearing in third-party marketing.
+  Confirm Benson Wong is cleared to be named with his title.
+- The bank styles itself **"J.P. Morgan"** (with points) or "JPMorgan Chase" depending on the entity.
+  The copy currently uses the plain "JP Morgan" as supplied — worth matching their house style.
+
+Version B carries the "at Animoca" title but **no thanks block** — it advertises a future workshop, so
+thanking people for it in advance would not make sense.
+
 ---
 
 ## Fact-check log
@@ -81,7 +93,7 @@ signup does the same job without the public list. Worth raising with whoever run
 
 ### LinkedIn
 
-🤝 **Votee AI × Kids Power Academy — Volume 5**
+🤝 **Votee AI × Kids Power Academy — Volume 5, at Animoca**
 
 🎬 A seven-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
@@ -101,19 +113,21 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
+🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan; **Lobson Chan**, Chief Operating Officer at Animoca Brands; and **Shine Li**, Social Media Manager at Animoca Brands.
+
 Volume 5 publishes soon. Follow **@superbundgenalpha**.
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 🔗 Link in bio
 
-#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI
+#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI #AnimocaBrands
 
 ---
 
 ### Instagram
 
-🤝 **Votee AI × Kids Power Academy — Vol 5**
+🤝 **Votee AI × Kids Power Academy — Vol 5, at Animoca**
 
 🎬 A 7-year-old prompt engineer premiered her first film on Tuesday — then a room full of kids built products from its open ending.
 
@@ -135,19 +149,21 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
+🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan; **Lobson Chan**, Chief Operating Officer at Animoca Brands; and **Shine Li**, Social Media Manager at Animoca Brands.
+
 Volume 5 publishes soon 👇
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 🔗 Link in bio
 
-#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI #SuperKitty
+#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI #AnimocaBrands #SuperKitty
 
 ---
 
 ### X — single long-form post
 
-🤝 Votee AI × Kids Power Academy — Volume 5
+🤝 Votee AI × Kids Power Academy — Volume 5, at Animoca
 
 🎬 A 7-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
@@ -167,12 +183,14 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
+🙏 Special thanks to Benson Wong, Managing Director at JP Morgan; Lobson Chan, Chief Operating Officer at Animoca Brands; and Shine Li, Social Media Manager at Animoca Brands.
+
 Volume 5 publishes soon. Follow @superbundgenalpha.
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 
-#SuperbundGenAlpha #GenAlpha #AIEducation #HongKong #VoteeAI
+#SuperbundGenAlpha #GenAlpha #AIEducation #HongKong #VoteeAI #AnimocaBrands
 
 ---
 
@@ -181,7 +199,7 @@ Ready to scale your AI securely? Let's talk.
 > **Do not publish today.** The event it advertises is over. Kept for reuse if the workshop repeats,
 > with `[DATE]` and `[DAY]` left as placeholders so it cannot go out with a stale date by accident.
 
-🤝 **Votee AI × Kids Power Academy — Volume 5**
+🤝 **Votee AI × Kids Power Academy — Volume 5, at Animoca**
 
 🐱 A seven-year-old prompt engineer is premiering her first film — and you're invited to finish the story.
 
