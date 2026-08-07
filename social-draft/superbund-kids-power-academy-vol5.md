@@ -85,39 +85,29 @@ signup does the same job without the public list. Worth raising with whoever run
 
 🎬 A seven-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
-Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: **"Meet the Cat to Find Your Originality,"** written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
+Votee AI joined Volume 5 as a coaching partner at Animoca Brands' Hong Kong office, for the premiere of **"Meet the Cat to Find Your Originality"** by Elyse — alongside the upcoming 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
-The format is the interesting part 👇
+🎥 The film stops before the resolution. Participants finish the story by building something.
 
-🎥 **An open ending, on purpose.** The film stops before the resolution. Participants finish the story themselves — not as a writing exercise, but by building something.
+🎤 Then the inversion that makes it work: **the coaches pitch the kids.** Five minutes each to sell your skill, and the kids decide who's worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team. It's a harder room than most investor meetings.
 
-🎤 **The coaches pitch the kids, not the other way round.** This is the inversion that makes the whole format work. **Jack Ng** and **Jason Mak** each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation. No assignment. If your pitch didn't land, you didn't get a team.
+🤝 **Both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
-Being pitched by a seven-year-old's peer group is a harder room than most investor meetings.
-
-🤝 **Where Votee AI came in — both coaches were ours.** Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
-
-Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset to the room. As he put it: building robust, secure AI starts with understanding how it can be broken.
+Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
 He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
 
-That's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
+🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of the Superbund Alpha Project, closed it.
 
-🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
+You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-💰 **Then they pitch to investors.** Five minutes each, followed by a vote and a winner.
-
-🧒 **Run by Gen Alpha, not for them.** Keynote on the technologist's mindset from Ryder, 12. System registration and closing from Alia, 15 — founder of the Superbund Alpha Project and initiator of Kids Power Society, a non-profit that has already published four books with contributions from 125 children worldwide.
-
-The Superbund Blueprint Initiative's premise: the next generation won't just use AI — they'll develop "AI selves" that expand creativity, thinking and identity.
-
-Volume 5 publishes soon. Follow **@superbundgenalpha** for the release and the next workshop.
+Volume 5 publishes soon. Follow **@superbundgenalpha**.
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 🔗 Link in bio
 
-#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #PromptEngineering #HongKong #AnimocaBrands #VoteeAI #FutureOfLearning
+#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI
 
 ---
 
@@ -133,23 +123,17 @@ Votee AI joined as a coaching partner, on 4 August at Animoca Brands' Hong Kong 
 
 🎥 The film ends before the ending. That's the point — participants finish it by building something.
 
-🎤 Coaches pitched the kids, not the other way round — the inversion that makes the format work. **Jack Ng** and **Jason Mak** each got five minutes to sell their skill, then the kids decided who was worth hiring. No assignment. If your pitch didn't land, you didn't get a team.
+🎤 Then the inversion that makes it work: **the coaches pitch the kids.** Five minutes each to sell your skill, and the kids decide who's worth hiring. If your pitch didn't land, you didn't get a team. A harder room than most investor meetings.
 
 🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
 🔐 Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
-He's 16 — pitching a room of 7-to-16-year-olds. His own age group.
+He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
 
-The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
+🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of Superbund Alpha Project, closed it.
 
-🛠️ One hour to tinker. Groups built a product, service or invention from their coach's specialty and their story ending.
-
-💰 Then they pitched investors. Five minutes, a vote, a winner.
-
-🧒 Gen Alpha ran it. Ryder, 12, on the technologist's mindset. Alia, 15 — founder of Superbund Alpha Project — on system registration and the close.
-
-The bet behind it: the next generation won't just use AI. They'll build "AI selves" that expand creativity, thinking and identity.
+You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
 Volume 5 publishes soon 👇
 
@@ -157,7 +141,7 @@ Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 🔗 Link in bio
 
-#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #PromptEngineering #HongKong #AnimocaBrands #VoteeAI #FutureOfLearning #SuperKitty
+#SuperbundGenAlpha #KidsPowerAcademy #GenAlpha #AIEducation #HongKong #VoteeAI #SuperKitty
 
 ---
 
@@ -167,38 +151,28 @@ Ready to scale your AI securely? Let's talk.
 
 🎬 A 7-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
-Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: "Meet the Cat to Find Your Originality," written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
+Votee AI joined Volume 5 as a coaching partner at Animoca Brands' Hong Kong office, for the premiere of "Meet the Cat to Find Your Originality" by Elyse — alongside the upcoming 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
-The format is the interesting part:
+🎥 The film stops before the resolution. Participants finish the story by building something.
 
-🎥 An open ending, on purpose. The film stops before the resolution, and participants finish the story themselves — not by writing it, but by building something.
+🎤 Then the inversion that makes it work: the coaches pitch the kids. Five minutes each to sell your skill, and the kids decide who's worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team. It's a harder room than most investor meetings.
 
-🎤 The coaches pitch the kids, not the other way round — the inversion that makes the whole format work. Jack Ng and Jason Mak each got five minutes on stage to sell their skill — AI tools, products, services — and then the kids decided who was worth hiring. No allocation, no assignment. If your pitch didn't land, you didn't get a team.
+🤝 Both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
 
-Being pitched by a room of kids is a harder audience than most investor meetings.
-
-🤝 Where Votee AI came in — both coaches were ours. Jack Ng, our Head of Corporate Communications, pitched alongside Jason Mak, our AI Security Apprentice.
-
-Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset to the room. As he put it: building robust, secure AI starts with understanding how it can be broken.
+Jason's day job is offensive AI red teaming — adversarial threat modelling and breaking LLMs, the work he presented at BSides HK. He pitched the security mindset. As he put it: building robust, secure AI starts with understanding how it can be broken.
 
 He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career — it's a couple of years and somebody deciding to take them seriously.
 
-You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
+🧒 Gen Alpha ran the day. Ryder, 12, keynoted on the technologist's mindset. Alia, 15, founder of the Superbund Alpha Project, closed it.
 
-🛠️ One hour to tinker. Groups build a product, service or invention tied to their coach's specialty and their chosen ending.
+You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-💰 Then they pitch to investors. Five minutes each, then a vote and a winner.
-
-🧒 Run by Gen Alpha, not for them. Keynote on the technologist's mindset from Ryder, 12. System registration and closing from Alia, 15 — founder of the Superbund Alpha Project and initiator of Kids Power Society, a non-profit that has published four books with contributions from 125 children worldwide.
-
-The Superbund Blueprint Initiative explores how technology and creativity shape the future of identity and learning. The premise: the next generation won't just use AI — they'll develop "AI selves" that collaborate with technology to expand creativity, thinking and identity.
-
-Volume 5 publishes soon. Follow @superbundgenalpha for the release and the next workshop.
+Volume 5 publishes soon. Follow @superbundgenalpha.
 
 Ready to scale your AI securely? Let's talk.
 📧 hello@votee.com
 
-#SuperbundGenAlpha #GenAlpha #AIEducation #PromptEngineering #HongKong
+#SuperbundGenAlpha #GenAlpha #AIEducation #HongKong #VoteeAI
 
 ---
 
@@ -254,8 +228,8 @@ Ready to scale your AI securely? Let's talk.
 
 - "9:00am to 13:00pm" → "9:00am – 1:00pm". The original is not a valid time.
 - "supported by Animoca Brands" → "hosted at Animoca Brands' Hong Kong office" — see flag 1.
-- "jack ng and jason mak" → "Jack Ng and Jason Mak". **Still needs their titles and affiliations** —
-  every other named person in this post carries a role, and these two currently don't.
+- "jack ng and jason mak" → "Jack Ng and Jason Mak", with titles: Head of Corporate Communications
+  and AI Security Apprentice, both Votee AI.
 - Added the LeapEast Startup programme selection and the four-books/125-children figure as credibility
   markers. Both check out and neither was in the brief.
 
@@ -264,10 +238,13 @@ Ready to scale your AI securely? Let's talk.
 The detailed agenda timings, the "secret special feature," and the coach requirements list — all
 internal-facing rather than audience-facing, so they're out of the public copy.
 
-**Length**
+**Length** — all three recap cuts trimmed to ~300 words.
 
-| Post | Platform limit |
-|---|---|
-| LinkedIn (recap) | 3,000 ✅ |
-| Instagram (recap) | 2,200 ✅ |
-| X (recap) | 280 free / 25,000 Premium — **needs Premium**, one post never a thread |
+| Post | Words | Chars | Platform limit |
+|---|---|---|---|
+| LinkedIn | 307 | 1,858 | 3,000 ✅ |
+| Instagram | 303 | 1,791 | 2,200 ✅ |
+| X | 302 | 1,802 | 280 free / 25,000 Premium — **needs Premium**, one post never a thread |
+
+Version B (the promo template) is left at full length — it carries logistics that a reader needs in
+order to attend, so trimming it would cost information rather than padding.
