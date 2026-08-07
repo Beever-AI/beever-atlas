@@ -5,25 +5,25 @@
 
 ---
 
-## 🛑 Read this before anything else: the event has already happened
+## 🛑 The event date is confirmed as past
 
-The brief asks for a **"join for free — comment to register"** promotional post for a workshop on
-**4 August 2026, 09:00–13:00**. That is **today**, and it is now **16:44 HKT**. The workshop finished
-roughly three and three-quarter hours ago.
+The brief asked for a **"join for free — comment to register"** promotional post for a workshop on
+**Tuesday 4 August 2026, 09:00–13:00**. The date is confirmed. Today is **Friday 7 August** — the
+workshop ran three days ago.
 
-A registration call-to-action published now is dead on arrival — it invites people to sign up for
-something that is over, and the "comment Join on the post" mechanic will collect responses nobody can
-honour. Publishing it as written would look careless rather than promotional.
+A registration call-to-action is therefore unusable: it would invite people to sign up for something
+that is over, and the "comment Join on the post" mechanic would collect responses nobody can honour.
 
 So this file carries **two versions**:
 
-- **Version A — post-event recap.** What actually ships today. Same material, past tense, CTA changed
-  from "register" to "follow for Volume 5 and the next workshop."
-- **Version B — the promo as briefed.** Verbatim to the request, for reuse if this workshop repeats or
-  if the date in the brief was a typo. **Do not publish as-is today.**
+- **Version A — post-event recap.** The publishable one. Past tense, dated to Tuesday rather than
+  "today", CTA changed from "register" to "follow for Volume 5 and the next workshop."
+- **Version B — the promo as briefed.** Kept as a reusable template for the next workshop, with
+  `[DATE]` and `[DAY]` as placeholders. **Not publishable for the 4 August event.**
 
-If the date was wrong and the event is still upcoming, tell me the real date and I'll make Version B
-the primary.
+⏳ **Recency note:** three days is already stale for a "look what we did" post. If it slips much
+further, drop the day reference entirely and lead on Volume 5's publication instead — the book is
+still forthcoming, so that angle doesn't decay.
 
 ---
 
@@ -72,7 +72,7 @@ signup does the same job without the public list. Worth raising with whoever run
 
 🤝 **Votee AI × Kids Power Academy — Volume 5**
 
-🎬 A seven-year-old prompt engineer premiered her first film this morning — and then a room full of kids built products from its open ending.
+🎬 A seven-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
 Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: **"Meet the Cat to Find Your Originality,"** written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
@@ -112,9 +112,9 @@ Ready to scale your AI securely? Let's talk.
 
 🤝 **Votee AI × Kids Power Academy — Vol 5**
 
-🎬 A 7-year-old prompt engineer premiered her first film this morning — then a room full of kids built products from its open ending.
+🎬 A 7-year-old prompt engineer premiered her first film on Tuesday — then a room full of kids built products from its open ending.
 
-Votee AI joined as a coaching partner, today at Animoca Brands' Hong Kong office.
+Votee AI joined as a coaching partner, on 4 August at Animoca Brands' Hong Kong office.
 
 🐱 **"Meet the Cat to Find Your Originality"** — written by Elyse, alongside the upcoming 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
@@ -150,7 +150,7 @@ Ready to scale your AI securely? Let's talk.
 
 🤝 Votee AI × Kids Power Academy — Volume 5
 
-🎬 A 7-year-old prompt engineer premiered her first film this morning — and then a room full of kids built products from its open ending.
+🎬 A 7-year-old prompt engineer premiered her first film on Tuesday — and then a room full of kids built products from its open ending.
 
 Votee AI joined Kids Power Academy Volume 5 as a coaching partner, at Animoca Brands' Hong Kong office: "Meet the Cat to Find Your Originality," written by Elyse, alongside the upcoming publication 𝗘𝗹𝘆𝘀𝗲 𝗮𝗻𝗱 𝗛𝗲𝗿 𝗦𝘂𝗽𝗲𝗿𝗸𝗶𝘁𝘁𝘆.
 
