@@ -48,6 +48,15 @@ Media Manager, Animoca Brands). Two points before publishing:
 Version B carries the "at Animoca" title but **no thanks block** — it advertises a future workshop, so
 thanking people for it in advance would not make sense.
 
+❓ **Lobson Chan's credit is unstated.** The instruction thanked Benson Wong and Shine Li specifically
+for speaking; Lobson Chan came from the earlier list with no stated reason. He is kept in the block
+but without a role attached, since inventing one — "for hosting us", say — would be a guess. Tell me
+what he should be credited for, or whether to drop him.
+
+📝 **Wording note.** "for talking at Animoca" became "for speaking on the day": the title already ends
+"at Animoca" and the opening line names Animoca Brands' Hong Kong office, so a third mention in the
+thanks read as repetition rather than emphasis. Say the word if you want the venue restated there.
+
 ---
 
 ## Fact-check log
@@ -113,7 +122,7 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan; **Lobson Chan**, Chief Operating Officer at Animoca Brands; and **Shine Li**, Social Media Manager at Animoca Brands.
+🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon. Follow **@superbundgenalpha**.
 
@@ -149,7 +158,7 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan; **Lobson Chan**, Chief Operating Officer at Animoca Brands; and **Shine Li**, Social Media Manager at Animoca Brands.
+🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon 👇
 
@@ -183,7 +192,7 @@ He's 16, pitching a room of 7-to-16-year-olds. His own age group. The distance b
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to Benson Wong, Managing Director at JP Morgan; Lobson Chan, Chief Operating Officer at Animoca Brands; and Shine Li, Social Media Manager at Animoca Brands.
+🙏 Special thanks to Benson Wong, Managing Director at JP Morgan, and Shine Li, Social Media Manager at Animoca Brands, for speaking on the day — and to Lobson Chan, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon. Follow @superbundgenalpha.
 
