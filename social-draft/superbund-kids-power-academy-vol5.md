@@ -25,6 +25,15 @@ So this file carries **two versions**:
 further, drop the day reference entirely and lead on Volume 5's publication instead — the book is
 still forthcoming, so that angle doesn't decay.
 
+✅ **Consent resolved.** Jason Mak has consented to being named with his age and role, and posts
+publicly under his own name on LinkedIn. The age line stays.
+
+❓ **One link to check.** A LinkedIn post of Jason's was offered as the consent record. Its URL slug
+reads `aisecurity-redteaming-generativeai`, which suggests it is about his security research rather
+than the Kids Power Academy workshop. It is therefore **not** linked from the copy — a "he wrote
+about it himself" pointer that lands on an unrelated post would confuse readers. If he has a post
+specifically about the workshop, send that URL and it becomes a strong addition.
+
 ---
 
 ## Fact-check log
@@ -88,7 +97,7 @@ Being pitched by a seven-year-old's peer group is a harder room than most invest
 
 Jason is 16. He was pitching a room of 7-to-16-year-olds — which is to say, he was pitching his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
-We think that's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build. [WHAT THE GROUPS BUILT]
+We think that's the whole argument for this format. You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
 
 🛠️ **One hour to tinker.** Groups build a product, service or invention tied to their coach's specialty and their chosen story ending.
 
@@ -126,7 +135,7 @@ Votee AI joined as a coaching partner, on 4 August at Animoca Brands' Hong Kong 
 
 Jason is 16 — pitching a room of 7-to-16-year-olds. His own age group.
 
-The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously. [WHAT THE GROUPS BUILT]
+The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
 🛠️ One hour to tinker. Groups built a product, service or invention from their coach's specialty and their story ending.
 
@@ -166,7 +175,7 @@ Being pitched by a room of kids is a harder audience than most investor meetings
 
 Jason is 16. He was pitching a room of 7-to-16-year-olds — his own age group. That's the part worth sitting with. The distance between a Votee AI apprentice and a Kids Power Academy participant isn't a career. It's a couple of years and somebody deciding to take them seriously.
 
-You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build. [WHAT THE GROUPS BUILT]
+You don't prepare the next generation of technologists by lecturing them. You hand them a real brief, let them hire and fire their own coaches, and find out what they build.
 
 🛠️ One hour to tinker. Groups build a product, service or invention tied to their coach's specialty and their chosen ending.
 
