@@ -37,13 +37,14 @@ Apprentice"; his own public post says **"AI Security Apprentice at Votee AI"**. 
 wording. Correct it if the internal title is the official one.
 
 ⚠️ **Third-party names need clearance.** The thanks block names three people at other companies:
-Benson Wong (Managing Director, JP Morgan), Lobson Chan (COO, Animoca Brands) and Shine Li (Social
+Benson Wong (Managing Director, J.P. Morgan), Lobson Chan (COO, Animoca Brands) and Shine Li (Social
 Media Manager, Animoca Brands). Two points before publishing:
 
-- **JP Morgan** in particular has strict policies on employees appearing in third-party marketing.
-  Confirm Benson Wong is cleared to be named with his title.
-- The bank styles itself **"J.P. Morgan"** (with points) or "JPMorgan Chase" depending on the entity.
-  The copy currently uses the plain "JP Morgan" as supplied — worth matching their house style.
+- **J.P. Morgan** in particular has strict policies on employees appearing in third-party marketing.
+  Confirm Benson Wong is cleared to be named with his title. ❗ **Still open.**
+- ✅ **Styling applied.** The copy now reads **"J.P. Morgan"** with points, matching the bank's own
+  house style for its investment banking and asset management brand. "JPMorgan Chase" is the parent
+  entity name and is not the right form here.
 
 Version B carries the "at Animoca" title but **no thanks block** — it advertises a future workshop, so
 thanking people for it in advance would not make sense.
@@ -122,7 +123,7 @@ He was pitching a room of 7-to-16-year-olds — his own age group. The distance 
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
+🙏 Special thanks to **Benson Wong**, Managing Director at J.P. Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon. Follow **@superbundgenalpha**.
 
@@ -158,7 +159,7 @@ He was pitching a room of 7-to-16-year-olds — his own age group. The distance 
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to **Benson Wong**, Managing Director at JP Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
+🙏 Special thanks to **Benson Wong**, Managing Director at J.P. Morgan, and **Shine Li**, Social Media Manager at Animoca Brands, for speaking on the day — and to **Lobson Chan**, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon 👇
 
@@ -192,7 +193,7 @@ He was pitching a room of 7-to-16-year-olds — his own age group. The distance 
 
 You don't prepare the next generation by lecturing them. You hand them a real brief and find out what they build.
 
-🙏 Special thanks to Benson Wong, Managing Director at JP Morgan, and Shine Li, Social Media Manager at Animoca Brands, for speaking on the day — and to Lobson Chan, Chief Operating Officer at Animoca Brands.
+🙏 Special thanks to Benson Wong, Managing Director at J.P. Morgan, and Shine Li, Social Media Manager at Animoca Brands, for speaking on the day — and to Lobson Chan, Chief Operating Officer at Animoca Brands.
 
 Volume 5 publishes soon. Follow @superbundgenalpha.
 
