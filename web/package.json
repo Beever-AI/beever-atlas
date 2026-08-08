@@ -20,7 +20,7 @@
     "fast-uri": "^3.1.2"
   },
   "dependencies": {
-    "@base-ui/react": "^1.4.1",
+    "@base-ui/react": "^1.5.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource/encode-sans-expanded": "^5.2.7",
     "@fontsource/fraunces": "^5.2.9",
