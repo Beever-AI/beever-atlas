@@ -17,7 +17,7 @@
   "overrides": {
     "dompurify": "^3.4.0",
     "hono": "^4.12.14",
-    "fast-uri": "^3.1.2"
+    "fast-uri": "^3.1.7"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
