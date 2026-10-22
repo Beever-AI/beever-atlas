@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import logging
 import math
@@ -30,6 +31,43 @@ _ADDITIONAL_CONFIG = AdditionalConfig(grpc_config=GrpcConfig(channel_options=_GR
 
 COLLECTION_NAME = "MemoryFact"
 logger = logging.getLogger(__name__)
+
+# Sent as the ``X-Weaviate-Client-Integration`` header (``{name}/{version}``)
+# so Weaviate (>= 1.38) can attribute requests to Beever Atlas.
+_INTEGRATION_NAME = "beever-atlas"
+
+
+def _integration_version() -> str:
+    """Installed ``beever-atlas`` version, or ``"unknown"`` if unresolvable."""
+    try:
+        return importlib.metadata.version("beever-atlas").strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def register_integration(client: Any) -> None:
+    """Best-effort: tag ``client`` with the ``X-Weaviate-Client-Integration`` header.
+
+    ``client.integrations.configure`` sets the header on both the REST and the
+    gRPC transport. ``_IntegrationConfig`` is private ``weaviate-client`` API,
+    so any failure is logged and swallowed — telemetry must never break the
+    store.
+    """
+    try:
+        from pydantic import Field
+        from weaviate.connect.integrations import _IntegrationConfig
+
+        value = f"{_INTEGRATION_NAME}/{_integration_version()}"
+
+        class _BeeverAtlasIntegration(_IntegrationConfig):
+            integration: str = Field(
+                default=value,
+                serialization_alias="X-Weaviate-Client-Integration",
+            )
+
+        client.integrations.configure(_BeeverAtlasIntegration())
+    except Exception:
+        logger.debug("Could not register the Weaviate integration header", exc_info=True)
 
 
 class WeaviateStore:
@@ -77,6 +115,7 @@ class WeaviateStore:
             )
 
         self._client = await asyncio.to_thread(_connect)
+        register_integration(self._client)
         await self.ensure_schema()
 
     async def shutdown(self) -> None:

@@ -12,6 +12,8 @@ import weaviate
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.classes.query import Filter
 
+from beever_atlas.stores.weaviate_store import register_integration
+
 logger = logging.getLogger(__name__)
 
 QA_HISTORY_COLLECTION = "QAHistory"
@@ -112,6 +114,7 @@ class QAHistoryStore:
             )
 
         self._client = await asyncio.to_thread(_connect)
+        register_integration(self._client)
         await self.ensure_schema()
 
     async def shutdown(self) -> None:

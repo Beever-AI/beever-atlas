@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`LLM_ENDPOINT_SSRF_GUARD`, default off) that refuses private /
     metadata `base_url` targets before any operator-triggered probe;
     generic (non-leaking) 503 when the credential encryptor is unconfigured.
+- Weaviate clients (`WeaviateStore`, `QAHistoryStore`) send the
+  `X-Weaviate-Client-Integration: beever-atlas/<version>` header on REST and
+  gRPC so Weaviate (>= 1.38) can attribute requests to Beever Atlas.
+  Best-effort: a failure to register it is logged at debug level and ignored.
 
 ### Deprecated
 - `Settings → Embedding` and `Settings → Agent Models` tabs (relabeled
