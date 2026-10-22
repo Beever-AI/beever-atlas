@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LLM_USE_LITELLM_FOR_GEMINI` env flag — temporary cutover lever; removed after
   the soak completes (see `docs/runbooks/litellm-cutover.md`).
 
+### Security
+- Weaviate image bumped 1.28.0 → 1.39.13 (digest-pinned) in
+  `docker-compose.yml`. 1.39.13 is built with Go 1.26.10, which rejects the
+  leaked eMudhra intermediate certificates (CVE-2026-111943); no 1.28.x build
+  carries that fix. **Upgrade note:** Weaviate upgrades one minor version at a
+  time, so an existing `weaviate_data` volume created by 1.28 cannot jump
+  straight to 1.39. Either step the image through each minor (1.29, 1.30, …,
+  1.38, then 1.39.13), or start Weaviate on a fresh volume and re-sync the
+  channels.
+
 ## [0.1.2] - 2026-04-30
 
 ### Added
