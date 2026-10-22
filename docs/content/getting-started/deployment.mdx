@@ -96,7 +96,7 @@ services:
       - ./ssl:/etc/nginx/ssl:ro
 
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.39.13
     ports: ["8080:8080", "50051:50051"]
     volumes:
       - weaviate_data:/var/lib/weaviate

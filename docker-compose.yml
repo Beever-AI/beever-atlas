@@ -77,7 +77,7 @@ services:
   # it, only containers that happen to have a policy (previously just the
   # bot) survive a reboot and everything else needs manual `docker start`.
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.28.0@sha256:58b576d36eace6a33f1a0866b9fd13fd58abfb9ce1eaaa419758c70b6a427e36
+    image: cr.weaviate.io/semitechnologies/weaviate:1.39.13@sha256:ad2b986bbe4666fbd5302a5ee0cc6c74a048c4c769198d46147ea232d46a2dd8
     restart: unless-stopped
     ports: ["127.0.0.1:8080:8080", "127.0.0.1:50051:50051"]
     volumes: [weaviate_data:/var/lib/weaviate]
